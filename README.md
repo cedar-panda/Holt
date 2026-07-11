@@ -10,6 +10,16 @@ models, with deep prompt-caching optimisation to keep long-conversation
 costs down. Build and signing instructions below; privacy details in
 [PRIVACY.md](PRIVACY.md).
 
+## Screenshots
+
+<p>
+  <img src="screenshots/chat.png" width="200">
+  <img src="screenshots/chars.png" width="200">
+  <img src="screenshots/call.png" width="200">
+  <img src="screenshots/theme.png" width="200">
+  <img src="screenshots/me.png" width="200">
+</p>
+
 ## Features
 
 - Multiple remote API providers and OpenAI-compatible endpoints
