@@ -1,0 +1,2251 @@
+{
+  "schema_version": 1,
+  "source_report": "build/app/outputs/sdk-dependencies/release/sdkDependencies.txt",
+  "source_report_sha256": "67e582fb35b83ea8ab087841130dde52fb0ff02d3e9349352436c245a4f9c90f",
+  "source_report_mtime_utc": "2026-07-11T01:22:52Z",
+  "stale_against_pubspec_lock": false,
+  "component_count": 140,
+  "components": [
+    {
+      "group": "androidx.activity",
+      "artifact": "activity",
+      "version": "1.12.4",
+      "coordinate": "androidx.activity:activity:1.12.4",
+      "pom_url": "https://dl.google.com/dl/android/maven2/androidx/activity/activity/1.12.4/activity-1.12.4.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/androidx.activity/activity/1.12.4/93abd9b9a96ba639dbde2e19f0ce2751b4655ed1/activity-1.12.4.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "androidx.activity",
+      "artifact": "activity-ktx",
+      "version": "1.12.4",
+      "coordinate": "androidx.activity:activity-ktx:1.12.4",
+      "pom_url": "https://dl.google.com/dl/android/maven2/androidx/activity/activity-ktx/1.12.4/activity-ktx-1.12.4.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/androidx.activity/activity-ktx/1.12.4/ac363c89ffb71e6c5437efc2954c7304a7a53169/activity-ktx-1.12.4.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "androidx.annotation",
+      "artifact": "annotation",
+      "version": "1.10.0",
+      "coordinate": "androidx.annotation:annotation:1.10.0",
+      "pom_url": "https://dl.google.com/dl/android/maven2/androidx/annotation/annotation/1.10.0/annotation-1.10.0.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/androidx.annotation/annotation/1.10.0/5c94600349507212aa9caf9f173348e7629db184/annotation-1.10.0.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "androidx.annotation",
+      "artifact": "annotation-experimental",
+      "version": "1.4.1",
+      "coordinate": "androidx.annotation:annotation-experimental:1.4.1",
+      "pom_url": "https://dl.google.com/dl/android/maven2/androidx/annotation/annotation-experimental/1.4.1/annotation-experimental-1.4.1.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/androidx.annotation/annotation-experimental/1.4.1/9e57caeeb7f02cecfe51c27d11352284b5161276/annotation-experimental-1.4.1.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "androidx.annotation",
+      "artifact": "annotation-jvm",
+      "version": "1.10.0",
+      "coordinate": "androidx.annotation:annotation-jvm:1.10.0",
+      "pom_url": "https://dl.google.com/dl/android/maven2/androidx/annotation/annotation-jvm/1.10.0/annotation-jvm-1.10.0.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/androidx.annotation/annotation-jvm/1.10.0/5bc0942d5f2e5d5b34799e60f29aa657b281261c/annotation-jvm-1.10.0.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "androidx.appcompat",
+      "artifact": "appcompat",
+      "version": "1.1.0",
+      "coordinate": "androidx.appcompat:appcompat:1.1.0",
+      "pom_url": "https://dl.google.com/dl/android/maven2/androidx/appcompat/appcompat/1.1.0/appcompat-1.1.0.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/androidx.appcompat/appcompat/1.1.0/83765254bf5e6aa04bb1f35960db460afd70b048/appcompat-1.1.0.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "androidx.appcompat",
+      "artifact": "appcompat-resources",
+      "version": "1.1.0",
+      "coordinate": "androidx.appcompat:appcompat-resources:1.1.0",
+      "pom_url": "https://dl.google.com/dl/android/maven2/androidx/appcompat/appcompat-resources/1.1.0/appcompat-resources-1.1.0.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/androidx.appcompat/appcompat-resources/1.1.0/4d25219b17a53da24285e9560bbf5c587abee38/appcompat-resources-1.1.0.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "androidx.arch.core",
+      "artifact": "core-common",
+      "version": "2.2.0",
+      "coordinate": "androidx.arch.core:core-common:2.2.0",
+      "pom_url": "https://dl.google.com/dl/android/maven2/androidx/arch/core/core-common/2.2.0/core-common-2.2.0.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/androidx.arch.core/core-common/2.2.0/9627f64db0ba64e3c2432a274b83d23e1c0c627e/core-common-2.2.0.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "androidx.arch.core",
+      "artifact": "core-runtime",
+      "version": "2.2.0",
+      "coordinate": "androidx.arch.core:core-runtime:2.2.0",
+      "pom_url": "https://dl.google.com/dl/android/maven2/androidx/arch/core/core-runtime/2.2.0/core-runtime-2.2.0.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/androidx.arch.core/core-runtime/2.2.0/d9cb0beb2de910cd9922535b6028054786fea928/core-runtime-2.2.0.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "androidx.asynclayoutinflater",
+      "artifact": "asynclayoutinflater",
+      "version": "1.0.0",
+      "coordinate": "androidx.asynclayoutinflater:asynclayoutinflater:1.0.0",
+      "pom_url": "https://dl.google.com/dl/android/maven2/androidx/asynclayoutinflater/asynclayoutinflater/1.0.0/asynclayoutinflater-1.0.0.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/androidx.asynclayoutinflater/asynclayoutinflater/1.0.0/fddbfd83af5c2af0884a3a36a91ad8113d7bd3a4/asynclayoutinflater-1.0.0.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "androidx.browser",
+      "artifact": "browser",
+      "version": "1.9.0",
+      "coordinate": "androidx.browser:browser:1.9.0",
+      "pom_url": "https://dl.google.com/dl/android/maven2/androidx/browser/browser/1.9.0/browser-1.9.0.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/androidx.browser/browser/1.9.0/fb6161de6c8433d6d959e83f314f5d1adb06bdda/browser-1.9.0.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "androidx.collection",
+      "artifact": "collection",
+      "version": "1.4.2",
+      "coordinate": "androidx.collection:collection:1.4.2",
+      "pom_url": "https://dl.google.com/dl/android/maven2/androidx/collection/collection/1.4.2/collection-1.4.2.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/androidx.collection/collection/1.4.2/2d810dcf15ab275cd1ccfd1e04d5daf88cc804fd/collection-1.4.2.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "androidx.collection",
+      "artifact": "collection-jvm",
+      "version": "1.4.2",
+      "coordinate": "androidx.collection:collection-jvm:1.4.2",
+      "pom_url": "https://dl.google.com/dl/android/maven2/androidx/collection/collection-jvm/1.4.2/collection-jvm-1.4.2.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/androidx.collection/collection-jvm/1.4.2/2ee54d139ec5d569288dc61b6b3f54a88f7243c/collection-jvm-1.4.2.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "androidx.collection",
+      "artifact": "collection-ktx",
+      "version": "1.4.2",
+      "coordinate": "androidx.collection:collection-ktx:1.4.2",
+      "pom_url": "https://dl.google.com/dl/android/maven2/androidx/collection/collection-ktx/1.4.2/collection-ktx-1.4.2.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/androidx.collection/collection-ktx/1.4.2/f21f7a773db6b9f6ab2dbbada3c46517a69374ca/collection-ktx-1.4.2.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "androidx.compose.runtime",
+      "artifact": "runtime-annotation",
+      "version": "1.9.0",
+      "coordinate": "androidx.compose.runtime:runtime-annotation:1.9.0",
+      "pom_url": "https://dl.google.com/dl/android/maven2/androidx/compose/runtime/runtime-annotation/1.9.0/runtime-annotation-1.9.0.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/androidx.compose.runtime/runtime-annotation/1.9.0/afd9416f9a3df57f4fc461c97439b29492f09bb/runtime-annotation-1.9.0.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "androidx.compose.runtime",
+      "artifact": "runtime-annotation-android",
+      "version": "1.9.0",
+      "coordinate": "androidx.compose.runtime:runtime-annotation-android:1.9.0",
+      "pom_url": "https://dl.google.com/dl/android/maven2/androidx/compose/runtime/runtime-annotation-android/1.9.0/runtime-annotation-android-1.9.0.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/androidx.compose.runtime/runtime-annotation-android/1.9.0/92e7f6774ab210fbaea7068d9e1e4dacf9c42458/runtime-annotation-android-1.9.0.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "androidx.concurrent",
+      "artifact": "concurrent-futures",
+      "version": "1.3.0",
+      "coordinate": "androidx.concurrent:concurrent-futures:1.3.0",
+      "pom_url": "https://dl.google.com/dl/android/maven2/androidx/concurrent/concurrent-futures/1.3.0/concurrent-futures-1.3.0.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/androidx.concurrent/concurrent-futures/1.3.0/98132ac6d34348b0634d6db9733c135653680552/concurrent-futures-1.3.0.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "androidx.concurrent",
+      "artifact": "concurrent-futures-ktx",
+      "version": "1.3.0",
+      "coordinate": "androidx.concurrent:concurrent-futures-ktx:1.3.0",
+      "pom_url": "https://dl.google.com/dl/android/maven2/androidx/concurrent/concurrent-futures-ktx/1.3.0/concurrent-futures-ktx-1.3.0.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/androidx.concurrent/concurrent-futures-ktx/1.3.0/380f95c8f863f2758986d8dfdacbe9e7dc67c54d/concurrent-futures-ktx-1.3.0.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "androidx.coordinatorlayout",
+      "artifact": "coordinatorlayout",
+      "version": "1.0.0",
+      "coordinate": "androidx.coordinatorlayout:coordinatorlayout:1.0.0",
+      "pom_url": "https://dl.google.com/dl/android/maven2/androidx/coordinatorlayout/coordinatorlayout/1.0.0/coordinatorlayout-1.0.0.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/androidx.coordinatorlayout/coordinatorlayout/1.0.0/7136717d5fb751f308e9f9acf25a1f89d897c67f/coordinatorlayout-1.0.0.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "androidx.core",
+      "artifact": "core",
+      "version": "1.18.0",
+      "coordinate": "androidx.core:core:1.18.0",
+      "pom_url": "https://dl.google.com/dl/android/maven2/androidx/core/core/1.18.0/core-1.18.0.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/androidx.core/core/1.18.0/a9ca3930f6d8aa5eab54c69b4dcd5567af2d32ca/core-1.18.0.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "androidx.core",
+      "artifact": "core-ktx",
+      "version": "1.18.0",
+      "coordinate": "androidx.core:core-ktx:1.18.0",
+      "pom_url": "https://dl.google.com/dl/android/maven2/androidx/core/core-ktx/1.18.0/core-ktx-1.18.0.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/androidx.core/core-ktx/1.18.0/4bc6d913767f38c3f6c245eaf1aee21dd6e981b/core-ktx-1.18.0.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "androidx.core",
+      "artifact": "core-viewtree",
+      "version": "1.0.0",
+      "coordinate": "androidx.core:core-viewtree:1.0.0",
+      "pom_url": "https://dl.google.com/dl/android/maven2/androidx/core/core-viewtree/1.0.0/core-viewtree-1.0.0.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/androidx.core/core-viewtree/1.0.0/4867db2b46b603ace8f822e6d476977300c98c21/core-viewtree-1.0.0.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "androidx.cursoradapter",
+      "artifact": "cursoradapter",
+      "version": "1.0.0",
+      "coordinate": "androidx.cursoradapter:cursoradapter:1.0.0",
+      "pom_url": "https://dl.google.com/dl/android/maven2/androidx/cursoradapter/cursoradapter/1.0.0/cursoradapter-1.0.0.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/androidx.cursoradapter/cursoradapter/1.0.0/b1d8c36333871395c98e157e903881d44a509899/cursoradapter-1.0.0.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "androidx.customview",
+      "artifact": "customview",
+      "version": "1.1.0",
+      "coordinate": "androidx.customview:customview:1.1.0",
+      "pom_url": "https://dl.google.com/dl/android/maven2/androidx/customview/customview/1.1.0/customview-1.1.0.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/androidx.customview/customview/1.1.0/2b33b98e3c4f981405f39fbbbf65645722ebd0c1/customview-1.1.0.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "androidx.datastore",
+      "artifact": "datastore",
+      "version": "1.1.7",
+      "coordinate": "androidx.datastore:datastore:1.1.7",
+      "pom_url": "https://dl.google.com/dl/android/maven2/androidx/datastore/datastore/1.1.7/datastore-1.1.7.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/androidx.datastore/datastore/1.1.7/d12c8563312544a10c4d12793aaa266df4bdf748/datastore-1.1.7.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "androidx.datastore",
+      "artifact": "datastore-android",
+      "version": "1.1.7",
+      "coordinate": "androidx.datastore:datastore-android:1.1.7",
+      "pom_url": "https://dl.google.com/dl/android/maven2/androidx/datastore/datastore-android/1.1.7/datastore-android-1.1.7.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/androidx.datastore/datastore-android/1.1.7/19bb9e197a34b9f843a0604440fbd76b206319b3/datastore-android-1.1.7.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "androidx.datastore",
+      "artifact": "datastore-core",
+      "version": "1.1.7",
+      "coordinate": "androidx.datastore:datastore-core:1.1.7",
+      "pom_url": "https://dl.google.com/dl/android/maven2/androidx/datastore/datastore-core/1.1.7/datastore-core-1.1.7.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/androidx.datastore/datastore-core/1.1.7/7f0e062f50318953e6d9e5fecc4dc3e77eb6cd53/datastore-core-1.1.7.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "androidx.datastore",
+      "artifact": "datastore-core-android",
+      "version": "1.1.7",
+      "coordinate": "androidx.datastore:datastore-core-android:1.1.7",
+      "pom_url": "https://dl.google.com/dl/android/maven2/androidx/datastore/datastore-core-android/1.1.7/datastore-core-android-1.1.7.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/androidx.datastore/datastore-core-android/1.1.7/c7fa2329686e805638408c2b7a227de3045c0951/datastore-core-android-1.1.7.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "androidx.datastore",
+      "artifact": "datastore-core-okio",
+      "version": "1.1.7",
+      "coordinate": "androidx.datastore:datastore-core-okio:1.1.7",
+      "pom_url": "https://dl.google.com/dl/android/maven2/androidx/datastore/datastore-core-okio/1.1.7/datastore-core-okio-1.1.7.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/androidx.datastore/datastore-core-okio/1.1.7/3ff5ef6b8dbed0813e5e436a62a6deb617816068/datastore-core-okio-1.1.7.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "androidx.datastore",
+      "artifact": "datastore-core-okio-jvm",
+      "version": "1.1.7",
+      "coordinate": "androidx.datastore:datastore-core-okio-jvm:1.1.7",
+      "pom_url": "https://dl.google.com/dl/android/maven2/androidx/datastore/datastore-core-okio-jvm/1.1.7/datastore-core-okio-jvm-1.1.7.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/androidx.datastore/datastore-core-okio-jvm/1.1.7/2818c7a4e7a367a213a69ce7fe8832862e6d0ac6/datastore-core-okio-jvm-1.1.7.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "androidx.datastore",
+      "artifact": "datastore-preferences",
+      "version": "1.1.7",
+      "coordinate": "androidx.datastore:datastore-preferences:1.1.7",
+      "pom_url": "https://dl.google.com/dl/android/maven2/androidx/datastore/datastore-preferences/1.1.7/datastore-preferences-1.1.7.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/androidx.datastore/datastore-preferences/1.1.7/c22418b8d65535202ce6ebdfcadfee725d9d251d/datastore-preferences-1.1.7.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "androidx.datastore",
+      "artifact": "datastore-preferences-android",
+      "version": "1.1.7",
+      "coordinate": "androidx.datastore:datastore-preferences-android:1.1.7",
+      "pom_url": "https://dl.google.com/dl/android/maven2/androidx/datastore/datastore-preferences-android/1.1.7/datastore-preferences-android-1.1.7.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/androidx.datastore/datastore-preferences-android/1.1.7/a8d0033a320dce0e6f3fdf8d3a91ea729a07bf6a/datastore-preferences-android-1.1.7.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "androidx.datastore",
+      "artifact": "datastore-preferences-core",
+      "version": "1.1.7",
+      "coordinate": "androidx.datastore:datastore-preferences-core:1.1.7",
+      "pom_url": "https://dl.google.com/dl/android/maven2/androidx/datastore/datastore-preferences-core/1.1.7/datastore-preferences-core-1.1.7.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/androidx.datastore/datastore-preferences-core/1.1.7/95ec7be6786f65e9e981d95f9c37141efdbbfc14/datastore-preferences-core-1.1.7.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "androidx.datastore",
+      "artifact": "datastore-preferences-core-android",
+      "version": "1.1.7",
+      "coordinate": "androidx.datastore:datastore-preferences-core-android:1.1.7",
+      "pom_url": "https://dl.google.com/dl/android/maven2/androidx/datastore/datastore-preferences-core-android/1.1.7/datastore-preferences-core-android-1.1.7.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/androidx.datastore/datastore-preferences-core-android/1.1.7/5828a9a9200a4944ae2e68f6175e9e0253ab396a/datastore-preferences-core-android-1.1.7.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "androidx.datastore",
+      "artifact": "datastore-preferences-external-protobuf",
+      "version": "1.1.7",
+      "coordinate": "androidx.datastore:datastore-preferences-external-protobuf:1.1.7",
+      "pom_url": "https://dl.google.com/dl/android/maven2/androidx/datastore/datastore-preferences-external-protobuf/1.1.7/datastore-preferences-external-protobuf-1.1.7.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/androidx.datastore/datastore-preferences-external-protobuf/1.1.7/a818fa20f3e3420e7d4989e01ab860b848abc8e3/datastore-preferences-external-protobuf-1.1.7.pom",
+      "license_declarations": [
+        {
+          "name": "BSD-3-Clause",
+          "url": "https://opensource.org/licenses/BSD-3-Clause",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "androidx.datastore",
+      "artifact": "datastore-preferences-proto",
+      "version": "1.1.7",
+      "coordinate": "androidx.datastore:datastore-preferences-proto:1.1.7",
+      "pom_url": "https://dl.google.com/dl/android/maven2/androidx/datastore/datastore-preferences-proto/1.1.7/datastore-preferences-proto-1.1.7.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/androidx.datastore/datastore-preferences-proto/1.1.7/fa80ba85b3befa2b28a7b1062ebb19f8ba7cf938/datastore-preferences-proto-1.1.7.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "androidx.documentfile",
+      "artifact": "documentfile",
+      "version": "1.0.0",
+      "coordinate": "androidx.documentfile:documentfile:1.0.0",
+      "pom_url": "https://dl.google.com/dl/android/maven2/androidx/documentfile/documentfile/1.0.0/documentfile-1.0.0.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/androidx.documentfile/documentfile/1.0.0/8cb912559da493946f05d1b5aa17a4b409a3e6eb/documentfile-1.0.0.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "androidx.drawerlayout",
+      "artifact": "drawerlayout",
+      "version": "1.0.0",
+      "coordinate": "androidx.drawerlayout:drawerlayout:1.0.0",
+      "pom_url": "https://dl.google.com/dl/android/maven2/androidx/drawerlayout/drawerlayout/1.0.0/drawerlayout-1.0.0.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/androidx.drawerlayout/drawerlayout/1.0.0/436d14f0b503b411431a0c38e5368ba4ec4b1e62/drawerlayout-1.0.0.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "androidx.exifinterface",
+      "artifact": "exifinterface",
+      "version": "1.4.2",
+      "coordinate": "androidx.exifinterface:exifinterface:1.4.2",
+      "pom_url": "https://dl.google.com/dl/android/maven2/androidx/exifinterface/exifinterface/1.4.2/exifinterface-1.4.2.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/androidx.exifinterface/exifinterface/1.4.2/501cdbc01189a271d536149e203cbb0d9d0aac8b/exifinterface-1.4.2.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "androidx.fragment",
+      "artifact": "fragment",
+      "version": "1.7.1",
+      "coordinate": "androidx.fragment:fragment:1.7.1",
+      "pom_url": "https://dl.google.com/dl/android/maven2/androidx/fragment/fragment/1.7.1/fragment-1.7.1.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/androidx.fragment/fragment/1.7.1/99ba2e26985c1b5b04c3e1ea10f41a6b9fc98ab7/fragment-1.7.1.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "androidx.fragment",
+      "artifact": "fragment-ktx",
+      "version": "1.7.1",
+      "coordinate": "androidx.fragment:fragment-ktx:1.7.1",
+      "pom_url": "https://dl.google.com/dl/android/maven2/androidx/fragment/fragment-ktx/1.7.1/fragment-ktx-1.7.1.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/androidx.fragment/fragment-ktx/1.7.1/351884a1bedafe1e013099361a715df234ff784e/fragment-ktx-1.7.1.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "androidx.interpolator",
+      "artifact": "interpolator",
+      "version": "1.0.0",
+      "coordinate": "androidx.interpolator:interpolator:1.0.0",
+      "pom_url": "https://dl.google.com/dl/android/maven2/androidx/interpolator/interpolator/1.0.0/interpolator-1.0.0.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/androidx.interpolator/interpolator/1.0.0/dfa9c6b5826fbf2f910e1720ce2b0421d7aafec3/interpolator-1.0.0.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "androidx.legacy",
+      "artifact": "legacy-support-core-ui",
+      "version": "1.0.0",
+      "coordinate": "androidx.legacy:legacy-support-core-ui:1.0.0",
+      "pom_url": "https://dl.google.com/dl/android/maven2/androidx/legacy/legacy-support-core-ui/1.0.0/legacy-support-core-ui-1.0.0.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/androidx.legacy/legacy-support-core-ui/1.0.0/6bda132303af80266ef7f6d8e86b0712f76f8d28/legacy-support-core-ui-1.0.0.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "androidx.legacy",
+      "artifact": "legacy-support-core-utils",
+      "version": "1.0.0",
+      "coordinate": "androidx.legacy:legacy-support-core-utils:1.0.0",
+      "pom_url": "https://dl.google.com/dl/android/maven2/androidx/legacy/legacy-support-core-utils/1.0.0/legacy-support-core-utils-1.0.0.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/androidx.legacy/legacy-support-core-utils/1.0.0/838c7839cc6df6d56f594ddc2050bd36f7f0c1f3/legacy-support-core-utils-1.0.0.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "androidx.lifecycle",
+      "artifact": "lifecycle-common",
+      "version": "2.7.0",
+      "coordinate": "androidx.lifecycle:lifecycle-common:2.7.0",
+      "pom_url": "https://dl.google.com/dl/android/maven2/androidx/lifecycle/lifecycle-common/2.7.0/lifecycle-common-2.7.0.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/androidx.lifecycle/lifecycle-common/2.7.0/cf1e95a48ca41ed0dd1933fbd6d5487c8d99f3b2/lifecycle-common-2.7.0.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "androidx.lifecycle",
+      "artifact": "lifecycle-common-java8",
+      "version": "2.7.0",
+      "coordinate": "androidx.lifecycle:lifecycle-common-java8:2.7.0",
+      "pom_url": "https://dl.google.com/dl/android/maven2/androidx/lifecycle/lifecycle-common-java8/2.7.0/lifecycle-common-java8-2.7.0.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/androidx.lifecycle/lifecycle-common-java8/2.7.0/6c8164e6c7ca6d6a29d6fdde2fa84b6a9b27d797/lifecycle-common-java8-2.7.0.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "androidx.lifecycle",
+      "artifact": "lifecycle-livedata",
+      "version": "2.7.0",
+      "coordinate": "androidx.lifecycle:lifecycle-livedata:2.7.0",
+      "pom_url": "https://dl.google.com/dl/android/maven2/androidx/lifecycle/lifecycle-livedata/2.7.0/lifecycle-livedata-2.7.0.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/androidx.lifecycle/lifecycle-livedata/2.7.0/f584b093789241c24cac1882461dc933ad3cb515/lifecycle-livedata-2.7.0.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "androidx.lifecycle",
+      "artifact": "lifecycle-livedata-core",
+      "version": "2.7.0",
+      "coordinate": "androidx.lifecycle:lifecycle-livedata-core:2.7.0",
+      "pom_url": "https://dl.google.com/dl/android/maven2/androidx/lifecycle/lifecycle-livedata-core/2.7.0/lifecycle-livedata-core-2.7.0.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/androidx.lifecycle/lifecycle-livedata-core/2.7.0/161bdbfc1d6f04016aef6ed7989cfe0bb70c3d3b/lifecycle-livedata-core-2.7.0.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "androidx.lifecycle",
+      "artifact": "lifecycle-livedata-core-ktx",
+      "version": "2.7.0",
+      "coordinate": "androidx.lifecycle:lifecycle-livedata-core-ktx:2.7.0",
+      "pom_url": "https://dl.google.com/dl/android/maven2/androidx/lifecycle/lifecycle-livedata-core-ktx/2.7.0/lifecycle-livedata-core-ktx-2.7.0.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/androidx.lifecycle/lifecycle-livedata-core-ktx/2.7.0/b8ebd68913782b390c4b8f94bdfd536adaff0d9a/lifecycle-livedata-core-ktx-2.7.0.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "androidx.lifecycle",
+      "artifact": "lifecycle-process",
+      "version": "2.7.0",
+      "coordinate": "androidx.lifecycle:lifecycle-process:2.7.0",
+      "pom_url": "https://dl.google.com/dl/android/maven2/androidx/lifecycle/lifecycle-process/2.7.0/lifecycle-process-2.7.0.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/androidx.lifecycle/lifecycle-process/2.7.0/1f1ebf1e1232f28aeddcb2af297ae6817015383b/lifecycle-process-2.7.0.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "androidx.lifecycle",
+      "artifact": "lifecycle-runtime",
+      "version": "2.7.0",
+      "coordinate": "androidx.lifecycle:lifecycle-runtime:2.7.0",
+      "pom_url": "https://dl.google.com/dl/android/maven2/androidx/lifecycle/lifecycle-runtime/2.7.0/lifecycle-runtime-2.7.0.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/androidx.lifecycle/lifecycle-runtime/2.7.0/e439f9559a92242407e4f22ab5b394efa198a6e6/lifecycle-runtime-2.7.0.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "androidx.lifecycle",
+      "artifact": "lifecycle-runtime-ktx",
+      "version": "2.7.0",
+      "coordinate": "androidx.lifecycle:lifecycle-runtime-ktx:2.7.0",
+      "pom_url": "https://dl.google.com/dl/android/maven2/androidx/lifecycle/lifecycle-runtime-ktx/2.7.0/lifecycle-runtime-ktx-2.7.0.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/androidx.lifecycle/lifecycle-runtime-ktx/2.7.0/fa4166df024a475af1e6c2638535ce68c5f3c776/lifecycle-runtime-ktx-2.7.0.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "androidx.lifecycle",
+      "artifact": "lifecycle-service",
+      "version": "2.7.0",
+      "coordinate": "androidx.lifecycle:lifecycle-service:2.7.0",
+      "pom_url": "https://dl.google.com/dl/android/maven2/androidx/lifecycle/lifecycle-service/2.7.0/lifecycle-service-2.7.0.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/androidx.lifecycle/lifecycle-service/2.7.0/bb38901d639d00071e197977d26bf50d9c58f63c/lifecycle-service-2.7.0.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "androidx.lifecycle",
+      "artifact": "lifecycle-viewmodel",
+      "version": "2.7.0",
+      "coordinate": "androidx.lifecycle:lifecycle-viewmodel:2.7.0",
+      "pom_url": "https://dl.google.com/dl/android/maven2/androidx/lifecycle/lifecycle-viewmodel/2.7.0/lifecycle-viewmodel-2.7.0.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/androidx.lifecycle/lifecycle-viewmodel/2.7.0/aabb0abd70a787dddff0daeac3361f991251c24b/lifecycle-viewmodel-2.7.0.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "androidx.lifecycle",
+      "artifact": "lifecycle-viewmodel-ktx",
+      "version": "2.7.0",
+      "coordinate": "androidx.lifecycle:lifecycle-viewmodel-ktx:2.7.0",
+      "pom_url": "https://dl.google.com/dl/android/maven2/androidx/lifecycle/lifecycle-viewmodel-ktx/2.7.0/lifecycle-viewmodel-ktx-2.7.0.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/androidx.lifecycle/lifecycle-viewmodel-ktx/2.7.0/b5cafd092f2ccc667203b7053bd507c8f15c46ac/lifecycle-viewmodel-ktx-2.7.0.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "androidx.lifecycle",
+      "artifact": "lifecycle-viewmodel-savedstate",
+      "version": "2.7.0",
+      "coordinate": "androidx.lifecycle:lifecycle-viewmodel-savedstate:2.7.0",
+      "pom_url": "https://dl.google.com/dl/android/maven2/androidx/lifecycle/lifecycle-viewmodel-savedstate/2.7.0/lifecycle-viewmodel-savedstate-2.7.0.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/androidx.lifecycle/lifecycle-viewmodel-savedstate/2.7.0/ba20baa4a136bed0e48f23b966dc8b94f21087f7/lifecycle-viewmodel-savedstate-2.7.0.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "androidx.loader",
+      "artifact": "loader",
+      "version": "1.0.0",
+      "coordinate": "androidx.loader:loader:1.0.0",
+      "pom_url": "https://dl.google.com/dl/android/maven2/androidx/loader/loader/1.0.0/loader-1.0.0.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/androidx.loader/loader/1.0.0/4b1418669a3392afe77045f85ba870f0c3148f67/loader-1.0.0.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "androidx.localbroadcastmanager",
+      "artifact": "localbroadcastmanager",
+      "version": "1.0.0",
+      "coordinate": "androidx.localbroadcastmanager:localbroadcastmanager:1.0.0",
+      "pom_url": "https://dl.google.com/dl/android/maven2/androidx/localbroadcastmanager/localbroadcastmanager/1.0.0/localbroadcastmanager-1.0.0.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/androidx.localbroadcastmanager/localbroadcastmanager/1.0.0/afb1a15f5669db4cc43e19ec2e67e6fb77500234/localbroadcastmanager-1.0.0.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "androidx.navigationevent",
+      "artifact": "navigationevent",
+      "version": "1.0.2",
+      "coordinate": "androidx.navigationevent:navigationevent:1.0.2",
+      "pom_url": "https://dl.google.com/dl/android/maven2/androidx/navigationevent/navigationevent/1.0.2/navigationevent-1.0.2.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/androidx.navigationevent/navigationevent/1.0.2/903dad43a55c3768c10aa588d2240243ef1a3bbc/navigationevent-1.0.2.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "androidx.navigationevent",
+      "artifact": "navigationevent-android",
+      "version": "1.0.2",
+      "coordinate": "androidx.navigationevent:navigationevent-android:1.0.2",
+      "pom_url": "https://dl.google.com/dl/android/maven2/androidx/navigationevent/navigationevent-android/1.0.2/navigationevent-android-1.0.2.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/androidx.navigationevent/navigationevent-android/1.0.2/ed4ac8087857cf1e59fbf148a68570b66da66562/navigationevent-android-1.0.2.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "androidx.preference",
+      "artifact": "preference",
+      "version": "1.2.1",
+      "coordinate": "androidx.preference:preference:1.2.1",
+      "pom_url": "https://dl.google.com/dl/android/maven2/androidx/preference/preference/1.2.1/preference-1.2.1.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/androidx.preference/preference/1.2.1/171cb4a99d12ad103adfaca89b3faf70611c88fc/preference-1.2.1.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "androidx.preference",
+      "artifact": "preference-ktx",
+      "version": "1.2.1",
+      "coordinate": "androidx.preference:preference-ktx:1.2.1",
+      "pom_url": "https://dl.google.com/dl/android/maven2/androidx/preference/preference-ktx/1.2.1/preference-ktx-1.2.1.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/androidx.preference/preference-ktx/1.2.1/9ae09041bdd704c351da602dc266adb969ee5ee8/preference-ktx-1.2.1.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "androidx.print",
+      "artifact": "print",
+      "version": "1.0.0",
+      "coordinate": "androidx.print:print:1.0.0",
+      "pom_url": "https://dl.google.com/dl/android/maven2/androidx/print/print/1.0.0/print-1.0.0.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/androidx.print/print/1.0.0/f0031001c95427f3e6a85661f5c3560131ef8145/print-1.0.0.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "androidx.profileinstaller",
+      "artifact": "profileinstaller",
+      "version": "1.4.0",
+      "coordinate": "androidx.profileinstaller:profileinstaller:1.4.0",
+      "pom_url": "https://dl.google.com/dl/android/maven2/androidx/profileinstaller/profileinstaller/1.4.0/profileinstaller-1.4.0.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/androidx.profileinstaller/profileinstaller/1.4.0/ce5ab72a997e0ddfb08e1cbdc39f77ac5ed315cf/profileinstaller-1.4.0.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "androidx.recyclerview",
+      "artifact": "recyclerview",
+      "version": "1.0.0",
+      "coordinate": "androidx.recyclerview:recyclerview:1.0.0",
+      "pom_url": "https://dl.google.com/dl/android/maven2/androidx/recyclerview/recyclerview/1.0.0/recyclerview-1.0.0.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/androidx.recyclerview/recyclerview/1.0.0/f703fc85e864a92fb72e4bd5996b8024a824e20a/recyclerview-1.0.0.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "androidx.room",
+      "artifact": "room-common",
+      "version": "2.7.0",
+      "coordinate": "androidx.room:room-common:2.7.0",
+      "pom_url": "https://dl.google.com/dl/android/maven2/androidx/room/room-common/2.7.0/room-common-2.7.0.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/androidx.room/room-common/2.7.0/19742ee67d1d43e368890aa9a07dfb4fc5458ada/room-common-2.7.0.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "androidx.room",
+      "artifact": "room-common-jvm",
+      "version": "2.7.0",
+      "coordinate": "androidx.room:room-common-jvm:2.7.0",
+      "pom_url": "https://dl.google.com/dl/android/maven2/androidx/room/room-common-jvm/2.7.0/room-common-jvm-2.7.0.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/androidx.room/room-common-jvm/2.7.0/41cf8d32e1034e03e17d5d902b5a7719cd24798c/room-common-jvm-2.7.0.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "androidx.room",
+      "artifact": "room-runtime",
+      "version": "2.7.0",
+      "coordinate": "androidx.room:room-runtime:2.7.0",
+      "pom_url": "https://dl.google.com/dl/android/maven2/androidx/room/room-runtime/2.7.0/room-runtime-2.7.0.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/androidx.room/room-runtime/2.7.0/6c74757a3f7daf96a4d5f06658ae791bef74419a/room-runtime-2.7.0.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "androidx.room",
+      "artifact": "room-runtime-android",
+      "version": "2.7.0",
+      "coordinate": "androidx.room:room-runtime-android:2.7.0",
+      "pom_url": "https://dl.google.com/dl/android/maven2/androidx/room/room-runtime-android/2.7.0/room-runtime-android-2.7.0.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/androidx.room/room-runtime-android/2.7.0/6b4c21be2079620bf5a9bc1f6f0dc8a3966801c1/room-runtime-android-2.7.0.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "androidx.savedstate",
+      "artifact": "savedstate",
+      "version": "1.2.1",
+      "coordinate": "androidx.savedstate:savedstate:1.2.1",
+      "pom_url": "https://dl.google.com/dl/android/maven2/androidx/savedstate/savedstate/1.2.1/savedstate-1.2.1.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/androidx.savedstate/savedstate/1.2.1/5e0129ba74cc5915d14be13f07790b4a2470d7ea/savedstate-1.2.1.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "androidx.savedstate",
+      "artifact": "savedstate-ktx",
+      "version": "1.2.1",
+      "coordinate": "androidx.savedstate:savedstate-ktx:1.2.1",
+      "pom_url": "https://dl.google.com/dl/android/maven2/androidx/savedstate/savedstate-ktx/1.2.1/savedstate-ktx-1.2.1.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/androidx.savedstate/savedstate-ktx/1.2.1/a5fe896789ff12b746f0c502579bc34516be7d2a/savedstate-ktx-1.2.1.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "androidx.slidingpanelayout",
+      "artifact": "slidingpanelayout",
+      "version": "1.2.0",
+      "coordinate": "androidx.slidingpanelayout:slidingpanelayout:1.2.0",
+      "pom_url": "https://dl.google.com/dl/android/maven2/androidx/slidingpanelayout/slidingpanelayout/1.2.0/slidingpanelayout-1.2.0.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/androidx.slidingpanelayout/slidingpanelayout/1.2.0/6f2ad9248e380d32cda2c036d8bd2e78e823355c/slidingpanelayout-1.2.0.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "androidx.sqlite",
+      "artifact": "sqlite",
+      "version": "2.5.0",
+      "coordinate": "androidx.sqlite:sqlite:2.5.0",
+      "pom_url": "https://dl.google.com/dl/android/maven2/androidx/sqlite/sqlite/2.5.0/sqlite-2.5.0.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/androidx.sqlite/sqlite/2.5.0/8ea48f343c320bba058cd1186a680f6552a292a4/sqlite-2.5.0.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "androidx.sqlite",
+      "artifact": "sqlite-android",
+      "version": "2.5.0",
+      "coordinate": "androidx.sqlite:sqlite-android:2.5.0",
+      "pom_url": "https://dl.google.com/dl/android/maven2/androidx/sqlite/sqlite-android/2.5.0/sqlite-android-2.5.0.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/androidx.sqlite/sqlite-android/2.5.0/4fb69b47de1fb1392503864401b5ba1f79830b2/sqlite-android-2.5.0.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "androidx.sqlite",
+      "artifact": "sqlite-framework",
+      "version": "2.5.0",
+      "coordinate": "androidx.sqlite:sqlite-framework:2.5.0",
+      "pom_url": "https://dl.google.com/dl/android/maven2/androidx/sqlite/sqlite-framework/2.5.0/sqlite-framework-2.5.0.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/androidx.sqlite/sqlite-framework/2.5.0/af47e11f44997f8dab5096d787bf60976c3c7c9d/sqlite-framework-2.5.0.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "androidx.sqlite",
+      "artifact": "sqlite-framework-android",
+      "version": "2.5.0",
+      "coordinate": "androidx.sqlite:sqlite-framework-android:2.5.0",
+      "pom_url": "https://dl.google.com/dl/android/maven2/androidx/sqlite/sqlite-framework-android/2.5.0/sqlite-framework-android-2.5.0.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/androidx.sqlite/sqlite-framework-android/2.5.0/6511de844a899fc8e7e1493f1b70d3472bfd28b7/sqlite-framework-android-2.5.0.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "androidx.startup",
+      "artifact": "startup-runtime",
+      "version": "1.1.1",
+      "coordinate": "androidx.startup:startup-runtime:1.1.1",
+      "pom_url": "https://dl.google.com/dl/android/maven2/androidx/startup/startup-runtime/1.1.1/startup-runtime-1.1.1.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/androidx.startup/startup-runtime/1.1.1/1ee5722679a9f73d27bb12d0ed4711745d4345b9/startup-runtime-1.1.1.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "androidx.swiperefreshlayout",
+      "artifact": "swiperefreshlayout",
+      "version": "1.0.0",
+      "coordinate": "androidx.swiperefreshlayout:swiperefreshlayout:1.0.0",
+      "pom_url": "https://dl.google.com/dl/android/maven2/androidx/swiperefreshlayout/swiperefreshlayout/1.0.0/swiperefreshlayout-1.0.0.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/androidx.swiperefreshlayout/swiperefreshlayout/1.0.0/96828e94bba119dabf4bff993f79f2fa45351efa/swiperefreshlayout-1.0.0.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "androidx.test",
+      "artifact": "monitor",
+      "version": "1.8.0",
+      "coordinate": "androidx.test:monitor:1.8.0",
+      "pom_url": "https://dl.google.com/dl/android/maven2/androidx/test/monitor/1.8.0/monitor-1.8.0.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/androidx.test/monitor/1.8.0/ca5088a458e73129956622342efeb4cdd612d434/monitor-1.8.0.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "androidx.tracing",
+      "artifact": "tracing",
+      "version": "1.2.0",
+      "coordinate": "androidx.tracing:tracing:1.2.0",
+      "pom_url": "https://dl.google.com/dl/android/maven2/androidx/tracing/tracing/1.2.0/tracing-1.2.0.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/androidx.tracing/tracing/1.2.0/141eea2b77be286c2f1821af2c5b4992aaef964a/tracing-1.2.0.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "androidx.tracing",
+      "artifact": "tracing-ktx",
+      "version": "1.2.0",
+      "coordinate": "androidx.tracing:tracing-ktx:1.2.0",
+      "pom_url": "https://dl.google.com/dl/android/maven2/androidx/tracing/tracing-ktx/1.2.0/tracing-ktx-1.2.0.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/androidx.tracing/tracing-ktx/1.2.0/b4ff2671cd314e5a32657c1a72d15957fa8ffe68/tracing-ktx-1.2.0.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "androidx.transition",
+      "artifact": "transition",
+      "version": "1.4.1",
+      "coordinate": "androidx.transition:transition:1.4.1",
+      "pom_url": "https://dl.google.com/dl/android/maven2/androidx/transition/transition/1.4.1/transition-1.4.1.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/androidx.transition/transition/1.4.1/d1bb2df4aa2ce8862c3ba4920db1554f38e1e0bc/transition-1.4.1.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "androidx.vectordrawable",
+      "artifact": "vectordrawable",
+      "version": "1.1.0",
+      "coordinate": "androidx.vectordrawable:vectordrawable:1.1.0",
+      "pom_url": "https://dl.google.com/dl/android/maven2/androidx/vectordrawable/vectordrawable/1.1.0/vectordrawable-1.1.0.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/androidx.vectordrawable/vectordrawable/1.1.0/8b15e03d94f7d9a07cbea653ad7f524315d1d507/vectordrawable-1.1.0.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "androidx.vectordrawable",
+      "artifact": "vectordrawable-animated",
+      "version": "1.1.0",
+      "coordinate": "androidx.vectordrawable:vectordrawable-animated:1.1.0",
+      "pom_url": "https://dl.google.com/dl/android/maven2/androidx/vectordrawable/vectordrawable-animated/1.1.0/vectordrawable-animated-1.1.0.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/androidx.vectordrawable/vectordrawable-animated/1.1.0/2c40e16427f4e94ea471526868ba5ac4bd13de6d/vectordrawable-animated-1.1.0.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "androidx.versionedparcelable",
+      "artifact": "versionedparcelable",
+      "version": "1.1.1",
+      "coordinate": "androidx.versionedparcelable:versionedparcelable:1.1.1",
+      "pom_url": "https://dl.google.com/dl/android/maven2/androidx/versionedparcelable/versionedparcelable/1.1.1/versionedparcelable-1.1.1.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/androidx.versionedparcelable/versionedparcelable/1.1.1/301263729256e9f19b144ce00f83d600ba14c38b/versionedparcelable-1.1.1.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "androidx.viewpager",
+      "artifact": "viewpager",
+      "version": "1.0.0",
+      "coordinate": "androidx.viewpager:viewpager:1.0.0",
+      "pom_url": "https://dl.google.com/dl/android/maven2/androidx/viewpager/viewpager/1.0.0/viewpager-1.0.0.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/androidx.viewpager/viewpager/1.0.0/42452223b3d46c0e3bf2c67f226144ce64551be9/viewpager-1.0.0.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "androidx.window",
+      "artifact": "window",
+      "version": "1.2.0",
+      "coordinate": "androidx.window:window:1.2.0",
+      "pom_url": "https://dl.google.com/dl/android/maven2/androidx/window/window/1.2.0/window-1.2.0.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/androidx.window/window/1.2.0/7ce048ac19d66d0cc746bfd342d569c59dc40e73/window-1.2.0.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "androidx.window",
+      "artifact": "window-java",
+      "version": "1.2.0",
+      "coordinate": "androidx.window:window-java:1.2.0",
+      "pom_url": "https://dl.google.com/dl/android/maven2/androidx/window/window-java/1.2.0/window-java-1.2.0.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/androidx.window/window-java/1.2.0/ce7fd4835c59a9c7a14e2eea33b87c285052754f/window-java-1.2.0.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "androidx.window.extensions.core",
+      "artifact": "core",
+      "version": "1.0.0",
+      "coordinate": "androidx.window.extensions.core:core:1.0.0",
+      "pom_url": "https://dl.google.com/dl/android/maven2/androidx/window/extensions/core/core/1.0.0/core-1.0.0.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/androidx.window.extensions.core/core/1.0.0/a058dd96be376fce2e53c8d8fc719c5680a9c15e/core-1.0.0.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "androidx.work",
+      "artifact": "work-runtime",
+      "version": "2.11.0",
+      "coordinate": "androidx.work:work-runtime:2.11.0",
+      "pom_url": "https://dl.google.com/dl/android/maven2/androidx/work/work-runtime/2.11.0/work-runtime-2.11.0.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/androidx.work/work-runtime/2.11.0/b998b3e9e322c2ff18f58963fa52bedb5f76953e/work-runtime-2.11.0.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "androidx.work",
+      "artifact": "work-runtime-ktx",
+      "version": "2.11.0",
+      "coordinate": "androidx.work:work-runtime-ktx:2.11.0",
+      "pom_url": "https://dl.google.com/dl/android/maven2/androidx/work/work-runtime-ktx/2.11.0/work-runtime-ktx-2.11.0.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/androidx.work/work-runtime-ktx/2.11.0/5c1977d27bbb1b422a1b9605ce10dfd6f95b14fb/work-runtime-ktx-2.11.0.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "com.getkeepsafe.relinker",
+      "artifact": "relinker",
+      "version": "1.4.5",
+      "coordinate": "com.getkeepsafe.relinker:relinker:1.4.5",
+      "pom_url": "https://repo1.maven.org/maven2/com/getkeepsafe/relinker/relinker/1.4.5/relinker-1.4.5.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/com.getkeepsafe.relinker/relinker/1.4.5/2eed608a0e29d2c8b8e71778cd6c30ecec50f6a0/relinker-1.4.5.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "com.google.android.datatransport",
+      "artifact": "transport-api",
+      "version": "3.0.0",
+      "coordinate": "com.google.android.datatransport:transport-api:3.0.0",
+      "pom_url": "https://repo1.maven.org/maven2/com/google/android/datatransport/transport-api/3.0.0/transport-api-3.0.0.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/com.google.android.datatransport/transport-api/3.0.0/153cf38690003fe8e553852f791d363324e02df9/transport-api-3.0.0.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "com.google.android.datatransport",
+      "artifact": "transport-backend-cct",
+      "version": "3.1.0",
+      "coordinate": "com.google.android.datatransport:transport-backend-cct:3.1.0",
+      "pom_url": "https://repo1.maven.org/maven2/com/google/android/datatransport/transport-backend-cct/3.1.0/transport-backend-cct-3.1.0.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/com.google.android.datatransport/transport-backend-cct/3.1.0/504ea8304d9f114192c90013b0fd5fb32cec459/transport-backend-cct-3.1.0.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "com.google.android.datatransport",
+      "artifact": "transport-runtime",
+      "version": "3.1.0",
+      "coordinate": "com.google.android.datatransport:transport-runtime:3.1.0",
+      "pom_url": "https://repo1.maven.org/maven2/com/google/android/datatransport/transport-runtime/3.1.0/transport-runtime-3.1.0.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/com.google.android.datatransport/transport-runtime/3.1.0/981543a53321f73fc116749f9c5f47072f5b5687/transport-runtime-3.1.0.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "com.google.code.findbugs",
+      "artifact": "jsr305",
+      "version": "3.0.2",
+      "coordinate": "com.google.code.findbugs:jsr305:3.0.2",
+      "pom_url": "https://repo1.maven.org/maven2/com/google/code/findbugs/jsr305/3.0.2/jsr305-3.0.2.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/com.google.code.findbugs/jsr305/3.0.2/8d93cdf4d84d7e1de736df607945c6df0730a10f/jsr305-3.0.2.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "com.google.code.gson",
+      "artifact": "gson",
+      "version": "2.13.2",
+      "coordinate": "com.google.code.gson:gson:2.13.2",
+      "pom_url": "https://repo1.maven.org/maven2/com/google/code/gson/gson/2.13.2/gson-2.13.2.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/com.google.code.gson/gson/2.13.2/bf590b4d5dbf4eab3e0654e6db5de8e70947edb3/gson-2.13.2.pom",
+      "license_declarations": [
+        {
+          "name": "Apache-2.0",
+          "url": "https://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "com.google.crypto.tink",
+      "artifact": "tink-android",
+      "version": "1.21.0",
+      "coordinate": "com.google.crypto.tink:tink-android:1.21.0",
+      "pom_url": "https://repo1.maven.org/maven2/com/google/crypto/tink/tink-android/1.21.0/tink-android-1.21.0.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/com.google.crypto.tink/tink-android/1.21.0/fa9a076d85a65c07a5b5ed73c6b66164f9f97db6/tink-android-1.21.0.pom",
+      "license_declarations": [
+        {
+          "name": "Apache License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "com.google.errorprone",
+      "artifact": "error_prone_annotations",
+      "version": "2.41.0",
+      "coordinate": "com.google.errorprone:error_prone_annotations:2.41.0",
+      "pom_url": "https://repo1.maven.org/maven2/com/google/errorprone/error_prone_annotations/2.41.0/error_prone_annotations-2.41.0.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/com.google.errorprone/error_prone_annotations/2.41.0/3035cf6cd44cac9ae600cabb1fe4a494d9c264e4/error_prone_annotations-2.41.0.pom",
+      "license_declarations": [
+        {
+          "name": "Apache 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "com.google.firebase",
+      "artifact": "firebase-encoders",
+      "version": "17.0.0",
+      "coordinate": "com.google.firebase:firebase-encoders:17.0.0",
+      "pom_url": "https://repo1.maven.org/maven2/com/google/firebase/firebase-encoders/17.0.0/firebase-encoders-17.0.0.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/com.google.firebase/firebase-encoders/17.0.0/860a97137bed444e73ab31478797fa5415eaf564/firebase-encoders-17.0.0.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "com.google.firebase",
+      "artifact": "firebase-encoders-json",
+      "version": "18.0.0",
+      "coordinate": "com.google.firebase:firebase-encoders-json:18.0.0",
+      "pom_url": "https://repo1.maven.org/maven2/com/google/firebase/firebase-encoders-json/18.0.0/firebase-encoders-json-18.0.0.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/com.google.firebase/firebase-encoders-json/18.0.0/b2d4da0cbd5f4b53da51d5aaa25011da98e4e198/firebase-encoders-json-18.0.0.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "com.google.firebase",
+      "artifact": "firebase-encoders-proto",
+      "version": "16.0.0",
+      "coordinate": "com.google.firebase:firebase-encoders-proto:16.0.0",
+      "pom_url": "https://repo1.maven.org/maven2/com/google/firebase/firebase-encoders-proto/16.0.0/firebase-encoders-proto-16.0.0.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/com.google.firebase/firebase-encoders-proto/16.0.0/3b39278f0d341e0045dc42c86133175d5b6c8c3b/firebase-encoders-proto-16.0.0.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "com.google.flogger",
+      "artifact": "flogger",
+      "version": "0.6",
+      "coordinate": "com.google.flogger:flogger:0.6",
+      "pom_url": "https://repo1.maven.org/maven2/com/google/flogger/flogger/0.6/flogger-0.6.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/com.google.flogger/flogger/0.6/f71ce891b1c590c1ab23293fd2ccacd93941bec0/flogger-0.6.pom",
+      "license_declarations": [
+        {
+          "name": "Apache 2.0",
+          "url": "https://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "com.google.flogger",
+      "artifact": "flogger-system-backend",
+      "version": "0.6",
+      "coordinate": "com.google.flogger:flogger-system-backend:0.6",
+      "pom_url": "https://repo1.maven.org/maven2/com/google/flogger/flogger-system-backend/0.6/flogger-system-backend-0.6.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/com.google.flogger/flogger-system-backend/0.6/83c73a4b2ac54b3a6659258080a402f70b32abd1/flogger-system-backend-0.6.pom",
+      "license_declarations": [
+        {
+          "name": "Apache 2.0",
+          "url": "https://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "com.google.guava",
+      "artifact": "failureaccess",
+      "version": "1.0.1",
+      "coordinate": "com.google.guava:failureaccess:1.0.1",
+      "pom_url": "https://repo1.maven.org/maven2/com/google/guava/failureaccess/1.0.1/failureaccess-1.0.1.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/com.google.guava/failureaccess/1.0.1/e8160e78fdaaf7088621dc1649d9dd2dfcf8d0e8/failureaccess-1.0.1.pom",
+      "license_declarations": [
+        {
+          "name": "Apache License 2.0",
+          "url": "https://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "Guava project declaration fallback"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "com.google.guava",
+      "artifact": "guava",
+      "version": "27.0.1-android",
+      "coordinate": "com.google.guava:guava:27.0.1-android",
+      "pom_url": "https://repo1.maven.org/maven2/com/google/guava/guava/27.0.1-android/guava-27.0.1-android.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/com.google.guava/guava/27.0.1-android/705c4ba035f86e8e883ce4892db3fecbf2a90b16/guava-27.0.1-android.pom",
+      "license_declarations": [
+        {
+          "name": "Apache License 2.0",
+          "url": "https://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "Guava project declaration fallback"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "com.google.guava",
+      "artifact": "listenablefuture",
+      "version": "9999.0-empty-to-avoid-conflict-with-guava",
+      "coordinate": "com.google.guava:listenablefuture:9999.0-empty-to-avoid-conflict-with-guava",
+      "pom_url": "https://repo1.maven.org/maven2/com/google/guava/listenablefuture/9999.0-empty-to-avoid-conflict-with-guava/listenablefuture-9999.0-empty-to-avoid-conflict-with-guava.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/com.google.guava/listenablefuture/9999.0-empty-to-avoid-conflict-with-guava/1b77ba79f9b2b7dfd4e15ea7bb0d568d5eb9cb8d/listenablefuture-9999.0-empty-to-avoid-conflict-with-guava.pom",
+      "license_declarations": [
+        {
+          "name": "Apache License 2.0",
+          "url": "https://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "Guava project declaration fallback"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "com.google.j2objc",
+      "artifact": "j2objc-annotations",
+      "version": "1.1",
+      "coordinate": "com.google.j2objc:j2objc-annotations:1.1",
+      "pom_url": "https://repo1.maven.org/maven2/com/google/j2objc/j2objc-annotations/1.1/j2objc-annotations-1.1.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/com.google.j2objc/j2objc-annotations/1.1/b964a9414771661bdf35a3f10692a2fb0dd2c866/j2objc-annotations-1.1.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "com.google.mediapipe",
+      "artifact": "tasks-core",
+      "version": "0.10.26.1",
+      "coordinate": "com.google.mediapipe:tasks-core:0.10.26.1",
+      "pom_url": "https://repo1.maven.org/maven2/com/google/mediapipe/tasks-core/0.10.26.1/tasks-core-0.10.26.1.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/com.google.mediapipe/tasks-core/0.10.26.1/f7c4049e1be230ef3b8836fc1920e3017f33a9fc/tasks-core-0.10.26.1.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "com.google.mediapipe",
+      "artifact": "tasks-genai",
+      "version": "0.10.33",
+      "coordinate": "com.google.mediapipe:tasks-genai:0.10.33",
+      "pom_url": "https://repo1.maven.org/maven2/com/google/mediapipe/tasks-genai/0.10.33/tasks-genai-0.10.33.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/com.google.mediapipe/tasks-genai/0.10.33/6e426ddd8c3ffe59722bcb6752592e4e3b14bf9a/tasks-genai-0.10.33.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "com.google.mediapipe",
+      "artifact": "tasks-vision-image-generator",
+      "version": "0.10.26.1",
+      "coordinate": "com.google.mediapipe:tasks-vision-image-generator:0.10.26.1",
+      "pom_url": "https://repo1.maven.org/maven2/com/google/mediapipe/tasks-vision-image-generator/0.10.26.1/tasks-vision-image-generator-0.10.26.1.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/com.google.mediapipe/tasks-vision-image-generator/0.10.26.1/f21ec2568d5b8af3fe545d2cafc8ec2380eb8a0f/tasks-vision-image-generator-0.10.26.1.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "com.google.protobuf",
+      "artifact": "protobuf-javalite",
+      "version": "4.26.1",
+      "coordinate": "com.google.protobuf:protobuf-javalite:4.26.1",
+      "pom_url": "https://repo1.maven.org/maven2/com/google/protobuf/protobuf-javalite/4.26.1/protobuf-javalite-4.26.1.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/com.google.protobuf/protobuf-javalite/4.26.1/9bf91f70dfa4c9b7ac825d934abef44c911adfb8/protobuf-javalite-4.26.1.pom",
+      "license_declarations": [
+        {
+          "name": "BSD-3-Clause",
+          "url": "https://github.com/protocolbuffers/protobuf/blob/v26.1/LICENSE",
+          "source": "Official upstream fallback"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "com.squareup.okhttp3",
+      "artifact": "okhttp",
+      "version": "4.9.0",
+      "coordinate": "com.squareup.okhttp3:okhttp:4.9.0",
+      "pom_url": "https://repo1.maven.org/maven2/com/squareup/okhttp3/okhttp/4.9.0/okhttp-4.9.0.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/com.squareup.okhttp3/okhttp/4.9.0/8806abdf57ce7ec2d72b5a89eb79ec8907af7eb0/okhttp-4.9.0.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "com.squareup.okio",
+      "artifact": "okio",
+      "version": "3.4.0",
+      "coordinate": "com.squareup.okio:okio:3.4.0",
+      "pom_url": "https://repo1.maven.org/maven2/com/squareup/okio/okio/3.4.0/okio-3.4.0.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/com.squareup.okio/okio/3.4.0/10df463795f884e8f616849ef57229603f116f80/okio-3.4.0.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "com.squareup.okio",
+      "artifact": "okio-jvm",
+      "version": "3.4.0",
+      "coordinate": "com.squareup.okio:okio-jvm:3.4.0",
+      "pom_url": "https://repo1.maven.org/maven2/com/squareup/okio/okio-jvm/3.4.0/okio-jvm-3.4.0.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/com.squareup.okio/okio-jvm/3.4.0/5863f748d245d922f99b22c24e3d0c00455f6687/okio-jvm-3.4.0.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "io.flutter",
+      "artifact": "arm64_v8a_release",
+      "version": "1.0.0-77e2e94772b6eb43759e34ed1ad7da4674e19cab",
+      "coordinate": "io.flutter:arm64_v8a_release:1.0.0-77e2e94772b6eb43759e34ed1ad7da4674e19cab",
+      "pom_url": "https://repo1.maven.org/maven2/io/flutter/arm64_v8a_release/1.0.0-77e2e94772b6eb43759e34ed1ad7da4674e19cab/arm64_v8a_release-1.0.0-77e2e94772b6eb43759e34ed1ad7da4674e19cab.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/io.flutter/arm64_v8a_release/1.0.0-77e2e94772b6eb43759e34ed1ad7da4674e19cab/1857fd262fbf90e351d25646db58824e639e6a02/arm64_v8a_release-1.0.0-77e2e94772b6eb43759e34ed1ad7da4674e19cab.pom",
+      "license_declarations": [
+        {
+          "name": "Flutter BSD-3-Clause and engine composite notices",
+          "source": "Pinned Flutter SDK snapshot"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "io.flutter",
+      "artifact": "armeabi_v7a_release",
+      "version": "1.0.0-77e2e94772b6eb43759e34ed1ad7da4674e19cab",
+      "coordinate": "io.flutter:armeabi_v7a_release:1.0.0-77e2e94772b6eb43759e34ed1ad7da4674e19cab",
+      "pom_url": "https://repo1.maven.org/maven2/io/flutter/armeabi_v7a_release/1.0.0-77e2e94772b6eb43759e34ed1ad7da4674e19cab/armeabi_v7a_release-1.0.0-77e2e94772b6eb43759e34ed1ad7da4674e19cab.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/io.flutter/armeabi_v7a_release/1.0.0-77e2e94772b6eb43759e34ed1ad7da4674e19cab/bfb81f13467ec30323b1e24097248bbfb6255a86/armeabi_v7a_release-1.0.0-77e2e94772b6eb43759e34ed1ad7da4674e19cab.pom",
+      "license_declarations": [
+        {
+          "name": "Flutter BSD-3-Clause and engine composite notices",
+          "source": "Pinned Flutter SDK snapshot"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "io.flutter",
+      "artifact": "flutter_embedding_release",
+      "version": "1.0.0-77e2e94772b6eb43759e34ed1ad7da4674e19cab",
+      "coordinate": "io.flutter:flutter_embedding_release:1.0.0-77e2e94772b6eb43759e34ed1ad7da4674e19cab",
+      "pom_url": "https://repo1.maven.org/maven2/io/flutter/flutter_embedding_release/1.0.0-77e2e94772b6eb43759e34ed1ad7da4674e19cab/flutter_embedding_release-1.0.0-77e2e94772b6eb43759e34ed1ad7da4674e19cab.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/io.flutter/flutter_embedding_release/1.0.0-77e2e94772b6eb43759e34ed1ad7da4674e19cab/c7136cceb17ec47965b51f2ca691474f5ae8aac6/flutter_embedding_release-1.0.0-77e2e94772b6eb43759e34ed1ad7da4674e19cab.pom",
+      "license_declarations": [
+        {
+          "name": "Flutter BSD-3-Clause and engine composite notices",
+          "source": "Pinned Flutter SDK snapshot"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "io.flutter",
+      "artifact": "x86_64_release",
+      "version": "1.0.0-77e2e94772b6eb43759e34ed1ad7da4674e19cab",
+      "coordinate": "io.flutter:x86_64_release:1.0.0-77e2e94772b6eb43759e34ed1ad7da4674e19cab",
+      "pom_url": "https://repo1.maven.org/maven2/io/flutter/x86_64_release/1.0.0-77e2e94772b6eb43759e34ed1ad7da4674e19cab/x86_64_release-1.0.0-77e2e94772b6eb43759e34ed1ad7da4674e19cab.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/io.flutter/x86_64_release/1.0.0-77e2e94772b6eb43759e34ed1ad7da4674e19cab/cc3f043aecbe237fe0fa32f6464b68921e18f46d/x86_64_release-1.0.0-77e2e94772b6eb43759e34ed1ad7da4674e19cab.pom",
+      "license_declarations": [
+        {
+          "name": "Flutter BSD-3-Clause and engine composite notices",
+          "source": "Pinned Flutter SDK snapshot"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "javax.inject",
+      "artifact": "javax.inject",
+      "version": "1",
+      "coordinate": "javax.inject:javax.inject:1",
+      "pom_url": "https://repo1.maven.org/maven2/javax/inject/javax.inject/1/javax.inject-1.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/javax.inject/javax.inject/1/b8e00a8a0deb0ebef447570e37ff8146ccd92cbe/javax.inject-1.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "org.apache.commons",
+      "artifact": "commons-imaging",
+      "version": "1.0-alpha3",
+      "coordinate": "org.apache.commons:commons-imaging:1.0-alpha3",
+      "pom_url": "https://repo1.maven.org/maven2/org/apache/commons/commons-imaging/1.0-alpha3/commons-imaging-1.0-alpha3.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/org.apache.commons/commons-imaging/1.0-alpha3/b09a6c389145ae935edf31137f394887dc92b654/commons-imaging-1.0-alpha3.pom",
+      "license_declarations": [
+        {
+          "name": "Apache License 2.0",
+          "url": "https://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "Apache Commons project declaration fallback"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "org.checkerframework",
+      "artifact": "checker-compat-qual",
+      "version": "2.5.3",
+      "coordinate": "org.checkerframework:checker-compat-qual:2.5.3",
+      "pom_url": "https://repo1.maven.org/maven2/org/checkerframework/checker-compat-qual/2.5.3/checker-compat-qual-2.5.3.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/org.checkerframework/checker-compat-qual/2.5.3/cc075e163616b8284602e9fa9cadbd62b9c04374/checker-compat-qual-2.5.3.pom",
+      "license_declarations": [
+        {
+          "name": "GNU General Public License, version 2 (GPL2), with the classpath exception",
+          "url": "http://www.gnu.org/software/classpath/license.html",
+          "source": "POM"
+        },
+        {
+          "name": "The MIT License",
+          "url": "http://opensource.org/licenses/MIT",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "org.codehaus.mojo",
+      "artifact": "animal-sniffer-annotations",
+      "version": "1.17",
+      "coordinate": "org.codehaus.mojo:animal-sniffer-annotations:1.17",
+      "pom_url": "https://repo1.maven.org/maven2/org/codehaus/mojo/animal-sniffer-annotations/1.17/animal-sniffer-annotations-1.17.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/org.codehaus.mojo/animal-sniffer-annotations/1.17/80948bd07c5db60753d8d5a9164b8b2272e0842a/animal-sniffer-annotations-1.17.pom",
+      "license_declarations": [
+        {
+          "name": "MIT",
+          "url": "https://opensource.org/license/mit",
+          "source": "License text embedded in artifact POM header"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "org.jetbrains",
+      "artifact": "annotations",
+      "version": "23.0.0",
+      "coordinate": "org.jetbrains:annotations:23.0.0",
+      "pom_url": "https://repo1.maven.org/maven2/org/jetbrains/annotations/23.0.0/annotations-23.0.0.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/org.jetbrains/annotations/23.0.0/deb853be3c9e05ed99fbbf83e49d349d08a6d10e/annotations-23.0.0.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "https://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "artifact": "kotlin-android-extensions-runtime",
+      "version": "1.9.22",
+      "coordinate": "org.jetbrains.kotlin:kotlin-android-extensions-runtime:1.9.22",
+      "pom_url": "https://repo1.maven.org/maven2/org/jetbrains/kotlin/kotlin-android-extensions-runtime/1.9.22/kotlin-android-extensions-runtime-1.9.22.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/org.jetbrains.kotlin/kotlin-android-extensions-runtime/1.9.22/a9b8c69d4293098afccf7442ff50c1601167a337/kotlin-android-extensions-runtime-1.9.22.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "artifact": "kotlin-parcelize-runtime",
+      "version": "1.9.22",
+      "coordinate": "org.jetbrains.kotlin:kotlin-parcelize-runtime:1.9.22",
+      "pom_url": "https://repo1.maven.org/maven2/org/jetbrains/kotlin/kotlin-parcelize-runtime/1.9.22/kotlin-parcelize-runtime-1.9.22.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/org.jetbrains.kotlin/kotlin-parcelize-runtime/1.9.22/281cfb2081d9e6f03266ad74329f71c3f82fae1e/kotlin-parcelize-runtime-1.9.22.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "artifact": "kotlin-stdlib",
+      "version": "2.2.20",
+      "coordinate": "org.jetbrains.kotlin:kotlin-stdlib:2.2.20",
+      "pom_url": "https://repo1.maven.org/maven2/org/jetbrains/kotlin/kotlin-stdlib/2.2.20/kotlin-stdlib-2.2.20.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/org.jetbrains.kotlin/kotlin-stdlib/2.2.20/62f87c4f4a53f249cb42926a1ef24bffdf190557/kotlin-stdlib-2.2.20.pom",
+      "license_declarations": [
+        {
+          "name": "Apache-2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "artifact": "kotlin-stdlib-common",
+      "version": "2.2.20",
+      "coordinate": "org.jetbrains.kotlin:kotlin-stdlib-common:2.2.20",
+      "pom_url": "https://repo1.maven.org/maven2/org/jetbrains/kotlin/kotlin-stdlib-common/2.2.20/kotlin-stdlib-common-2.2.20.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/org.jetbrains.kotlin/kotlin-stdlib-common/2.2.20/80c14f97000c48b7d6bbcc3abeb39a28e59b697a/kotlin-stdlib-common-2.2.20.pom",
+      "license_declarations": [
+        {
+          "name": "Apache-2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "artifact": "kotlin-stdlib-jdk7",
+      "version": "1.8.0",
+      "coordinate": "org.jetbrains.kotlin:kotlin-stdlib-jdk7:1.8.0",
+      "pom_url": "https://repo1.maven.org/maven2/org/jetbrains/kotlin/kotlin-stdlib-jdk7/1.8.0/kotlin-stdlib-jdk7-1.8.0.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/org.jetbrains.kotlin/kotlin-stdlib-jdk7/1.8.0/b8a4b9c31ec89be4e5806db4aa92192a9d592bf0/kotlin-stdlib-jdk7-1.8.0.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "org.jetbrains.kotlin",
+      "artifact": "kotlin-stdlib-jdk8",
+      "version": "1.8.0",
+      "coordinate": "org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.8.0",
+      "pom_url": "https://repo1.maven.org/maven2/org/jetbrains/kotlin/kotlin-stdlib-jdk8/1.8.0/kotlin-stdlib-jdk8-1.8.0.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/org.jetbrains.kotlin/kotlin-stdlib-jdk8/1.8.0/fb9dbe3343144298825b8d9f23a51f4af4be6cb0/kotlin-stdlib-jdk8-1.8.0.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "org.jetbrains.kotlinx",
+      "artifact": "kotlinx-coroutines-android",
+      "version": "1.9.0",
+      "coordinate": "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0",
+      "pom_url": "https://repo1.maven.org/maven2/org/jetbrains/kotlinx/kotlinx-coroutines-android/1.9.0/kotlinx-coroutines-android-1.9.0.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/org.jetbrains.kotlinx/kotlinx-coroutines-android/1.9.0/187cc3d609748256a6d887d5dba0569d414ad611/kotlinx-coroutines-android-1.9.0.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "https://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "org.jetbrains.kotlinx",
+      "artifact": "kotlinx-coroutines-bom",
+      "version": "1.9.0",
+      "coordinate": "org.jetbrains.kotlinx:kotlinx-coroutines-bom:1.9.0",
+      "pom_url": "https://repo1.maven.org/maven2/org/jetbrains/kotlinx/kotlinx-coroutines-bom/1.9.0/kotlinx-coroutines-bom-1.9.0.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/org.jetbrains.kotlinx/kotlinx-coroutines-bom/1.9.0/11a86a1aa2fb0ecb72e865e4e0b421be56eb30fb/kotlinx-coroutines-bom-1.9.0.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "https://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "org.jetbrains.kotlinx",
+      "artifact": "kotlinx-coroutines-core",
+      "version": "1.9.0",
+      "coordinate": "org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0",
+      "pom_url": "https://repo1.maven.org/maven2/org/jetbrains/kotlinx/kotlinx-coroutines-core/1.9.0/kotlinx-coroutines-core-1.9.0.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/org.jetbrains.kotlinx/kotlinx-coroutines-core/1.9.0/d3fdd34e883e3a68fb4c10f33ab3abc4d66bdb28/kotlinx-coroutines-core-1.9.0.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "https://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "org.jetbrains.kotlinx",
+      "artifact": "kotlinx-coroutines-core-jvm",
+      "version": "1.9.0",
+      "coordinate": "org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm:1.9.0",
+      "pom_url": "https://repo1.maven.org/maven2/org/jetbrains/kotlinx/kotlinx-coroutines-core-jvm/1.9.0/kotlinx-coroutines-core-jvm-1.9.0.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/org.jetbrains.kotlinx/kotlinx-coroutines-core-jvm/1.9.0/f3febcf3224434beeb65f4d19de553b6b9db6fd/kotlinx-coroutines-core-jvm-1.9.0.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "https://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "org.jetbrains.kotlinx",
+      "artifact": "kotlinx-serialization-bom",
+      "version": "1.9.0",
+      "coordinate": "org.jetbrains.kotlinx:kotlinx-serialization-bom:1.9.0",
+      "pom_url": "https://repo1.maven.org/maven2/org/jetbrains/kotlinx/kotlinx-serialization-bom/1.9.0/kotlinx-serialization-bom-1.9.0.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/org.jetbrains.kotlinx/kotlinx-serialization-bom/1.9.0/38636808e823e9d41643e3b1b52435b5fac79b51/kotlinx-serialization-bom-1.9.0.pom",
+      "license_declarations": [
+        {
+          "name": "Apache-2.0",
+          "url": "https://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "org.jetbrains.kotlinx",
+      "artifact": "kotlinx-serialization-core",
+      "version": "1.9.0",
+      "coordinate": "org.jetbrains.kotlinx:kotlinx-serialization-core:1.9.0",
+      "pom_url": "https://repo1.maven.org/maven2/org/jetbrains/kotlinx/kotlinx-serialization-core/1.9.0/kotlinx-serialization-core-1.9.0.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/org.jetbrains.kotlinx/kotlinx-serialization-core/1.9.0/742ecb5d0e656dc694478d08d90046af1c37a4af/kotlinx-serialization-core-1.9.0.pom",
+      "license_declarations": [
+        {
+          "name": "Apache-2.0",
+          "url": "https://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "org.jetbrains.kotlinx",
+      "artifact": "kotlinx-serialization-core-jvm",
+      "version": "1.9.0",
+      "coordinate": "org.jetbrains.kotlinx:kotlinx-serialization-core-jvm:1.9.0",
+      "pom_url": "https://repo1.maven.org/maven2/org/jetbrains/kotlinx/kotlinx-serialization-core-jvm/1.9.0/kotlinx-serialization-core-jvm-1.9.0.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/org.jetbrains.kotlinx/kotlinx-serialization-core-jvm/1.9.0/6c1ce119847d3b7c405ca64f855bbc2a34ef8638/kotlinx-serialization-core-jvm-1.9.0.pom",
+      "license_declarations": [
+        {
+          "name": "Apache-2.0",
+          "url": "https://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "org.jetbrains.kotlinx",
+      "artifact": "kotlinx-serialization-json",
+      "version": "1.9.0",
+      "coordinate": "org.jetbrains.kotlinx:kotlinx-serialization-json:1.9.0",
+      "pom_url": "https://repo1.maven.org/maven2/org/jetbrains/kotlinx/kotlinx-serialization-json/1.9.0/kotlinx-serialization-json-1.9.0.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/org.jetbrains.kotlinx/kotlinx-serialization-json/1.9.0/ae01f8e58429803ba2182a0aa0c0d47ddec48dbd/kotlinx-serialization-json-1.9.0.pom",
+      "license_declarations": [
+        {
+          "name": "Apache-2.0",
+          "url": "https://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "org.jetbrains.kotlinx",
+      "artifact": "kotlinx-serialization-json-jvm",
+      "version": "1.9.0",
+      "coordinate": "org.jetbrains.kotlinx:kotlinx-serialization-json-jvm:1.9.0",
+      "pom_url": "https://repo1.maven.org/maven2/org/jetbrains/kotlinx/kotlinx-serialization-json-jvm/1.9.0/kotlinx-serialization-json-jvm-1.9.0.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/org.jetbrains.kotlinx/kotlinx-serialization-json-jvm/1.9.0/9d3a0449895b3944084cbc432bd04d2deb742a9d/kotlinx-serialization-json-jvm-1.9.0.pom",
+      "license_declarations": [
+        {
+          "name": "Apache-2.0",
+          "url": "https://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    },
+    {
+      "group": "org.jspecify",
+      "artifact": "jspecify",
+      "version": "1.0.0",
+      "coordinate": "org.jspecify:jspecify:1.0.0",
+      "pom_url": "https://repo1.maven.org/maven2/org/jspecify/jspecify/1.0.0/jspecify-1.0.0.pom",
+      "local_pom": "$GRADLE_MODULE_CACHE/org.jspecify/jspecify/1.0.0/fae4a252aeee8a649653b2f239067bcead8f80cb/jspecify-1.0.0.pom",
+      "license_declarations": [
+        {
+          "name": "The Apache License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt",
+          "source": "POM"
+        }
+      ],
+      "license_status": "DECLARATION_FOUND"
+    }
+  ]
+}

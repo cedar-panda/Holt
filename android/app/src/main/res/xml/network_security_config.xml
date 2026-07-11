@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 取代原本全局的 usesCleartextTraffic="true"：
+     默認禁止明文 HTTP，只對本機/模擬器例外。
+
+     注意：Dart 層（http 套件 / dart:io）不受 Android 這個策略約束，
+     所以「局域網 LM Studio 用 http://192.168.x.x」依然可用——
+     這裡限制的是原生層網絡棧（下載器、WebView、原生插件），
+     防止任何原生組件被降級到明文。 -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false" />
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">localhost</domain>
+        <domain includeSubdomains="false">127.0.0.1</domain>
+        <!-- Android 模擬器訪問宿主機 -->
+        <domain includeSubdomains="false">10.0.2.2</domain>
+    </domain-config>
+</network-security-config>

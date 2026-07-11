@@ -1,0 +1,3873 @@
+{
+  "schema_version": 1,
+  "generated_at_utc": "2026-07-11T01:32:13Z",
+  "scope": {
+    "source_tree": "All packages resolved in pubspec.lock, including dev and non-Android platform transitive packages",
+    "binary_release": "Android only; Maven/native snapshots must be regenerated from the final release build"
+  },
+  "inputs": {
+    "pubspec_yaml_sha256": "3e34d3c0db9fa0cd6d0410ef885b843a00bda286e557df7d8bc750251f2d253e",
+    "pubspec_lock_sha256": "c28911a4248eaea5782d69a224e55890c4aedba63233cb822ad114f940bea806",
+    "package_config_sha256": "9b1c62fb92d7600b7f19d7e9e00b1e1b2005bb5fa1004e9d45c6be4697bce439",
+    "android_maven_report_sha256": "67e582fb35b83ea8ab087841130dde52fb0ff02d3e9349352436c245a4f9c90f"
+  },
+  "flutter": {
+    "frameworkVersion": "3.44.2",
+    "channel": "stable",
+    "repositoryUrl": "https://github.com/flutter/flutter.git",
+    "frameworkRevision": "c9a6c484230f8b5e408ec57be1ef71dee1e77020",
+    "frameworkCommitDate": "2026-06-10 15:52:41 -0700",
+    "engineRevision": "77e2e94772b6eb43759e34ed1ad7da4674e19cab",
+    "engineCommitDate": "2026-06-10 19:59:06.000Z",
+    "engineContentHash": "04efd7c093d4e9281d5526ebcad6ecc60ba8badf",
+    "engineBuildDate": "2026-06-10 13:49:23.194",
+    "dartSdkVersion": "3.12.2",
+    "devToolsVersion": "2.57.0",
+    "flutterVersion": "3.44.2"
+  },
+  "counts": {
+    "dart_flutter_packages": 148,
+    "android_maven_components": 140,
+    "native_component_groups": 6,
+    "unresolved_dart_flutter_licenses": 0,
+    "unresolved_android_maven_declarations": 0,
+    "blocked_or_unresolved_native_groups": 0
+  },
+  "packages": [
+    {
+      "name": "app_links",
+      "version": "6.4.1",
+      "dependency": "direct main",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/app_links/versions/6.4.1",
+        "license_page": "https://pub.dev/packages/app_links/versions/6.4.1/license",
+        "archive": "https://pub.dev/api/archives/app_links-6.4.1.tar.gz"
+      },
+      "hosted_sha256": "5f88447519add627fe1cbcab4fd1da3d4fed15b9baf29f28b22535c95ecee3e8",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "Apache-2.0"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/app_links-6.4.1/LICENSE",
+            "sha256": "1eb85fc97224598dad1852b5d6483bbcf0aa8608790dcc657a5a2a761ae9c8c6",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/app_links-6.4.1/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "app_links_linux",
+      "version": "1.0.3",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/app_links_linux/versions/1.0.3",
+        "license_page": "https://pub.dev/packages/app_links_linux/versions/1.0.3/license",
+        "archive": "https://pub.dev/api/archives/app_links_linux-1.0.3.tar.gz"
+      },
+      "hosted_sha256": "f5f7173a78609f3dfd4c2ff2c95bd559ab43c80a87dc6a095921d96c05688c81",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "Apache-2.0"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/app_links_linux-1.0.3/LICENSE",
+            "sha256": "1eb85fc97224598dad1852b5d6483bbcf0aa8608790dcc657a5a2a761ae9c8c6",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/app_links_linux-1.0.3/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "app_links_platform_interface",
+      "version": "2.0.3",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/app_links_platform_interface/versions/2.0.3",
+        "license_page": "https://pub.dev/packages/app_links_platform_interface/versions/2.0.3/license",
+        "archive": "https://pub.dev/api/archives/app_links_platform_interface-2.0.3.tar.gz"
+      },
+      "hosted_sha256": "78a18580eecac98108d1eef52a7db668bc317714f5205e616973363326efe333",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "Apache-2.0"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/app_links_platform_interface-2.0.3/LICENSE",
+            "sha256": "1eb85fc97224598dad1852b5d6483bbcf0aa8608790dcc657a5a2a761ae9c8c6",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/app_links_platform_interface-2.0.3/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "app_links_web",
+      "version": "1.0.4",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/app_links_web/versions/1.0.4",
+        "license_page": "https://pub.dev/packages/app_links_web/versions/1.0.4/license",
+        "archive": "https://pub.dev/api/archives/app_links_web-1.0.4.tar.gz"
+      },
+      "hosted_sha256": "af060ed76183f9e2b87510a9480e56a5352b6c249778d07bd2c95fc35632a555",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "Apache-2.0"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/app_links_web-1.0.4/LICENSE",
+            "sha256": "1eb85fc97224598dad1852b5d6483bbcf0aa8608790dcc657a5a2a761ae9c8c6",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/app_links_web-1.0.4/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "archive",
+      "version": "4.0.9",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/archive/versions/4.0.9",
+        "license_page": "https://pub.dev/packages/archive/versions/4.0.9/license",
+        "archive": "https://pub.dev/api/archives/archive-4.0.9.tar.gz"
+      },
+      "hosted_sha256": "a96e8b390886ee8abb49b7bd3ac8df6f451c621619f52a26e815fdcf568959ff",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-2-Clause",
+          "MIT"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/archive-4.0.9/LICENSE",
+            "sha256": "32f97d332eae7453ec4079858e6f1d74be85beeb6d3881068b47d02a379cccea",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/archive-4.0.9/LICENSE"
+          },
+          {
+            "path": "third_party/licenses/dart/archive-4.0.9/LICENSE-other.md",
+            "sha256": "ebe5a199af245d7e3e761673fbf3db341427060407e50713861ab24bb2cb1552",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/archive-4.0.9/LICENSE-other.md"
+          }
+        ]
+      }
+    },
+    {
+      "name": "args",
+      "version": "2.7.0",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/args/versions/2.7.0",
+        "license_page": "https://pub.dev/packages/args/versions/2.7.0/license",
+        "archive": "https://pub.dev/api/archives/args-2.7.0.tar.gz"
+      },
+      "hosted_sha256": "d0481093c50b1da8910eb0bb301626d4d8eb7284aa739614d2b394ee09e3ea04",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/args-2.7.0/LICENSE",
+            "sha256": "dfb09c74e29386cd3e2719f32d4995d59526179753931d31840757c77fbf2791",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/args-2.7.0/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "async",
+      "version": "2.13.1",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/async/versions/2.13.1",
+        "license_page": "https://pub.dev/packages/async/versions/2.13.1/license",
+        "archive": "https://pub.dev/api/archives/async-2.13.1.tar.gz"
+      },
+      "hosted_sha256": "e2eb0491ba5ddb6177742d2da23904574082139b07c1e33b8503b9f46f3e1a37",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/async-2.13.1/LICENSE",
+            "sha256": "ff15faa32a2e638107b7789592b14426162a75ba620044ee2340a20ec6ce5e73",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/async-2.13.1/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "audioplayers",
+      "version": "6.8.1",
+      "dependency": "direct main",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/audioplayers/versions/6.8.1",
+        "license_page": "https://pub.dev/packages/audioplayers/versions/6.8.1/license",
+        "archive": "https://pub.dev/api/archives/audioplayers-6.8.1.tar.gz"
+      },
+      "hosted_sha256": "2ba4bb2944baacbdd5372ff8254a8e7feb8c10d7739545e392f5605a8f618745",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "MIT"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/audioplayers-6.8.1/LICENSE",
+            "sha256": "d6c0bdbc83e6bb5f02eed5caf25e6edf174cb56d0ecd6fe19a2cd05b62bbda41",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/audioplayers-6.8.1/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "audioplayers_android",
+      "version": "5.3.0",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/audioplayers_android/versions/5.3.0",
+        "license_page": "https://pub.dev/packages/audioplayers_android/versions/5.3.0/license",
+        "archive": "https://pub.dev/api/archives/audioplayers_android-5.3.0.tar.gz"
+      },
+      "hosted_sha256": "f5ff5b15620fbab8cb0849e9636c48e2b96c3f0f71723bbbe2ad3c761b205f05",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "MIT"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/audioplayers_android-5.3.0/LICENSE",
+            "sha256": "d6c0bdbc83e6bb5f02eed5caf25e6edf174cb56d0ecd6fe19a2cd05b62bbda41",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/audioplayers_android-5.3.0/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "audioplayers_darwin",
+      "version": "6.5.0",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/audioplayers_darwin/versions/6.5.0",
+        "license_page": "https://pub.dev/packages/audioplayers_darwin/versions/6.5.0/license",
+        "archive": "https://pub.dev/api/archives/audioplayers_darwin-6.5.0.tar.gz"
+      },
+      "hosted_sha256": "1ca553add991384ecf421b9569da850f3ab2472ffb83f6970b0416365abc51be",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "MIT"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/audioplayers_darwin-6.5.0/LICENSE",
+            "sha256": "d6c0bdbc83e6bb5f02eed5caf25e6edf174cb56d0ecd6fe19a2cd05b62bbda41",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/audioplayers_darwin-6.5.0/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "audioplayers_linux",
+      "version": "4.3.0",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/audioplayers_linux/versions/4.3.0",
+        "license_page": "https://pub.dev/packages/audioplayers_linux/versions/4.3.0/license",
+        "archive": "https://pub.dev/api/archives/audioplayers_linux-4.3.0.tar.gz"
+      },
+      "hosted_sha256": "15178b726b7cdee5364d0463c8d445630c4e0fb7d26612b73c767e7d25de9417",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "MIT"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/audioplayers_linux-4.3.0/LICENSE",
+            "sha256": "d6c0bdbc83e6bb5f02eed5caf25e6edf174cb56d0ecd6fe19a2cd05b62bbda41",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/audioplayers_linux-4.3.0/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "audioplayers_platform_interface",
+      "version": "7.2.0",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/audioplayers_platform_interface/versions/7.2.0",
+        "license_page": "https://pub.dev/packages/audioplayers_platform_interface/versions/7.2.0/license",
+        "archive": "https://pub.dev/api/archives/audioplayers_platform_interface-7.2.0.tar.gz"
+      },
+      "hosted_sha256": "765f6f0e6dca55cb471c9483fc77700564b3484d19198aca4ebb5147c6c85acb",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "MIT"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/audioplayers_platform_interface-7.2.0/LICENSE",
+            "sha256": "d6c0bdbc83e6bb5f02eed5caf25e6edf174cb56d0ecd6fe19a2cd05b62bbda41",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/audioplayers_platform_interface-7.2.0/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "audioplayers_web",
+      "version": "5.3.0",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/audioplayers_web/versions/5.3.0",
+        "license_page": "https://pub.dev/packages/audioplayers_web/versions/5.3.0/license",
+        "archive": "https://pub.dev/api/archives/audioplayers_web-5.3.0.tar.gz"
+      },
+      "hosted_sha256": "ae1e0103c865a03e273f6d13d97b93f5595eac09915729cd5e37ef96e2857319",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "MIT"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/audioplayers_web-5.3.0/LICENSE",
+            "sha256": "d6c0bdbc83e6bb5f02eed5caf25e6edf174cb56d0ecd6fe19a2cd05b62bbda41",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/audioplayers_web-5.3.0/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "audioplayers_windows",
+      "version": "4.4.1",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/audioplayers_windows/versions/4.4.1",
+        "license_page": "https://pub.dev/packages/audioplayers_windows/versions/4.4.1/license",
+        "archive": "https://pub.dev/api/archives/audioplayers_windows-4.4.1.tar.gz"
+      },
+      "hosted_sha256": "a70ae82bba2dfcb6eb03dd4815d737a2d46d33ea5a96a03f535cfcaac490e413",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "MIT"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/audioplayers_windows-4.4.1/LICENSE",
+            "sha256": "d6c0bdbc83e6bb5f02eed5caf25e6edf174cb56d0ecd6fe19a2cd05b62bbda41",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/audioplayers_windows-4.4.1/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "background_downloader",
+      "version": "9.5.5",
+      "dependency": "direct main",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/background_downloader/versions/9.5.5",
+        "license_page": "https://pub.dev/packages/background_downloader/versions/9.5.5/license",
+        "archive": "https://pub.dev/api/archives/background_downloader-9.5.5.tar.gz"
+      },
+      "hosted_sha256": "aceacec2b2a72ec3a8862ab5895fcbbc71ab33765f3619d57963f3110dd268e3",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-3-Clause",
+          "MIT"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/background_downloader-9.5.5/LICENSE",
+            "sha256": "1436a440db343fe8af42524d3201b694748f2ae4c32487513b6858c85e219a4b",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/background_downloader-9.5.5/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "boolean_selector",
+      "version": "2.1.2",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/boolean_selector/versions/2.1.2",
+        "license_page": "https://pub.dev/packages/boolean_selector/versions/2.1.2/license",
+        "archive": "https://pub.dev/api/archives/boolean_selector-2.1.2.tar.gz"
+      },
+      "hosted_sha256": "8aab1771e1243a5063b8b0ff68042d67334e3feab9e95b9490f9a6ebf73b42ea",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/boolean_selector-2.1.2/LICENSE",
+            "sha256": "b71519245009a3b8f126196a5408ec031e216e8e0d985085958c6543f82a8a2a",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/boolean_selector-2.1.2/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "characters",
+      "version": "1.4.1",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/characters/versions/1.4.1",
+        "license_page": "https://pub.dev/packages/characters/versions/1.4.1/license",
+        "archive": "https://pub.dev/api/archives/characters-1.4.1.tar.gz"
+      },
+      "hosted_sha256": "faf38497bda5ead2a8c7615f4f7939df04333478bf32e4173fcb06d428b5716b",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/characters-1.4.1/LICENSE",
+            "sha256": "0371d1da6a57fb791db29d29b95333429205f51f3cb2eb3a0c12d91838a38744",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/characters-1.4.1/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "clock",
+      "version": "1.1.2",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/clock/versions/1.1.2",
+        "license_page": "https://pub.dev/packages/clock/versions/1.1.2/license",
+        "archive": "https://pub.dev/api/archives/clock-1.1.2.tar.gz"
+      },
+      "hosted_sha256": "fddb70d9b5277016c77a80201021d40a2247104d9f4aa7bab7157b7e3f05b84b",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "Apache-2.0"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/clock-1.1.2/LICENSE",
+            "sha256": "58d1e17ffe5109a7ae296caafcadfdbe6a7d176f0bc4ab01e12a689b0499d8bd",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/clock-1.1.2/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "code_assets",
+      "version": "1.0.0",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/code_assets/versions/1.0.0",
+        "license_page": "https://pub.dev/packages/code_assets/versions/1.0.0/license",
+        "archive": "https://pub.dev/api/archives/code_assets-1.0.0.tar.gz"
+      },
+      "hosted_sha256": "83ccdaa064c980b5596c35dd64a8d3ecc68620174ab9b90b6343b753aa721687",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/code_assets-1.0.0/LICENSE",
+            "sha256": "21ae23b0b9ff67a2dc75ab085d1e8db8ac548c5faf370af17f28dd2ef3b52b7b",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/code_assets-1.0.0/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "collection",
+      "version": "1.19.1",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/collection/versions/1.19.1",
+        "license_page": "https://pub.dev/packages/collection/versions/1.19.1/license",
+        "archive": "https://pub.dev/api/archives/collection-1.19.1.tar.gz"
+      },
+      "hosted_sha256": "2f5709ae4d3d59dd8f7cd309b4e023046b57d8a6c82130785d2b0e5868084e76",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/collection-1.19.1/LICENSE",
+            "sha256": "ff15faa32a2e638107b7789592b14426162a75ba620044ee2340a20ec6ce5e73",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/collection-1.19.1/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "cross_file",
+      "version": "0.3.5+2",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/cross_file/versions/0.3.5+2",
+        "license_page": "https://pub.dev/packages/cross_file/versions/0.3.5+2/license",
+        "archive": "https://pub.dev/api/archives/cross_file-0.3.5+2.tar.gz"
+      },
+      "hosted_sha256": "28bb3ae56f117b5aec029d702a90f57d285cd975c3c5c281eaca38dbc47c5937",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/cross_file-0.3.5+2/LICENSE",
+            "sha256": "420f7739f169097f0aad1242045169cd643c8f1d94e62866fad265ae4c369b7d",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/cross_file-0.3.5+2/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "crypto",
+      "version": "3.0.7",
+      "dependency": "direct main",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/crypto/versions/3.0.7",
+        "license_page": "https://pub.dev/packages/crypto/versions/3.0.7/license",
+        "archive": "https://pub.dev/api/archives/crypto-3.0.7.tar.gz"
+      },
+      "hosted_sha256": "c8ea0233063ba03258fbcf2ca4d6dadfefe14f02fab57702265467a19f27fadf",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/crypto-3.0.7/LICENSE",
+            "sha256": "ad6a71997da90924b2cfb1fb47ec46537f70faf469efe016168794ae45ed6888",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/crypto-3.0.7/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "cupertino_icons",
+      "version": "1.0.9",
+      "dependency": "direct main",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/cupertino_icons/versions/1.0.9",
+        "license_page": "https://pub.dev/packages/cupertino_icons/versions/1.0.9/license",
+        "archive": "https://pub.dev/api/archives/cupertino_icons-1.0.9.tar.gz"
+      },
+      "hosted_sha256": "41e005c33bd814be4d3096aff55b1908d419fde52ca656c8c47719ec745873cd",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "MIT"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/cupertino_icons-1.0.9/LICENSE",
+            "sha256": "310d6ab6483280280c9db122bded0a63c09558bc5743720f61dbcbb494db370a",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/cupertino_icons-1.0.9/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "dart_sentencepiece_tokenizer",
+      "version": "1.3.2",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/dart_sentencepiece_tokenizer/versions/1.3.2",
+        "license_page": "https://pub.dev/packages/dart_sentencepiece_tokenizer/versions/1.3.2/license",
+        "archive": "https://pub.dev/api/archives/dart_sentencepiece_tokenizer-1.3.2.tar.gz"
+      },
+      "hosted_sha256": "85825632845cf6427ea0cd13dfba96b4341cf63525165155e5b9b97011239289",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "MIT"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/dart_sentencepiece_tokenizer-1.3.2/LICENSE",
+            "sha256": "b128361743a06ca90fe7f29489319f79a7702609b2e4a8766bc5904c4aa1cb62",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/dart_sentencepiece_tokenizer-1.3.2/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "dinja",
+      "version": "1.0.0",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/dinja/versions/1.0.0",
+        "license_page": "https://pub.dev/packages/dinja/versions/1.0.0/license",
+        "archive": "https://pub.dev/api/archives/dinja-1.0.0.tar.gz"
+      },
+      "hosted_sha256": "34d4e569ceb3d900ab061f16cae947223968cc63d2484a8a4710d5ecfa4ae3a2",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "MIT"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/dinja-1.0.0/LICENSE",
+            "sha256": "52a79b73bf86ee8794bd8eab8179761e8f4f8d16e7f1d77168c67629c46163c5",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/dinja-1.0.0/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "fake_async",
+      "version": "1.3.3",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/fake_async/versions/1.3.3",
+        "license_page": "https://pub.dev/packages/fake_async/versions/1.3.3/license",
+        "archive": "https://pub.dev/api/archives/fake_async-1.3.3.tar.gz"
+      },
+      "hosted_sha256": "5368f224a74523e8d2e7399ea1638b37aecfca824a3cc4dfdf77bf1fa905ac44",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "Apache-2.0"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/fake_async-1.3.3/LICENSE",
+            "sha256": "58d1e17ffe5109a7ae296caafcadfdbe6a7d176f0bc4ab01e12a689b0499d8bd",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/fake_async-1.3.3/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ffi",
+      "version": "2.2.0",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/ffi/versions/2.2.0",
+        "license_page": "https://pub.dev/packages/ffi/versions/2.2.0/license",
+        "archive": "https://pub.dev/api/archives/ffi-2.2.0.tar.gz"
+      },
+      "hosted_sha256": "6d7fd89431262d8f3125e81b50d3847a091d846eafcd4fdb88dd06f36d705a45",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/ffi-2.2.0/LICENSE",
+            "sha256": "0371d1da6a57fb791db29d29b95333429205f51f3cb2eb3a0c12d91838a38744",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/ffi-2.2.0/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "file",
+      "version": "7.0.1",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/file/versions/7.0.1",
+        "license_page": "https://pub.dev/packages/file/versions/7.0.1/license",
+        "archive": "https://pub.dev/api/archives/file-7.0.1.tar.gz"
+      },
+      "hosted_sha256": "a3b4f84adafef897088c160faf7dfffb7696046cb13ae90b508c2cbc95d3b8d4",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/file-7.0.1/LICENSE",
+            "sha256": "f6df86b1412172537273e8e80ee2fb8a66aa7307ce0b39ea5ddab47ca41b8c49",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/file-7.0.1/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "file_picker",
+      "version": "9.2.3",
+      "dependency": "direct main",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/file_picker/versions/9.2.3",
+        "license_page": "https://pub.dev/packages/file_picker/versions/9.2.3/license",
+        "archive": "https://pub.dev/api/archives/file_picker-9.2.3.tar.gz"
+      },
+      "hosted_sha256": "09b474c0c8117484b80cbebc043801ff91e05cfbd2874d512825c899e1754694",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "MIT"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/file_picker-9.2.3/LICENSE",
+            "sha256": "6278994817bd65fa32404e53c3a62a09d824d3f9a71f7fadcaca3e4f02641d66",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/file_picker-9.2.3/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "file_selector_linux",
+      "version": "0.9.4",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/file_selector_linux/versions/0.9.4",
+        "license_page": "https://pub.dev/packages/file_selector_linux/versions/0.9.4/license",
+        "archive": "https://pub.dev/api/archives/file_selector_linux-0.9.4.tar.gz"
+      },
+      "hosted_sha256": "2567f398e06ac72dcf2e98a0c95df2a9edd03c2c2e0cacd4780f20cdf56263a0",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/file_selector_linux-0.9.4/LICENSE",
+            "sha256": "420f7739f169097f0aad1242045169cd643c8f1d94e62866fad265ae4c369b7d",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/file_selector_linux-0.9.4/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "file_selector_macos",
+      "version": "0.9.5",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/file_selector_macos/versions/0.9.5",
+        "license_page": "https://pub.dev/packages/file_selector_macos/versions/0.9.5/license",
+        "archive": "https://pub.dev/api/archives/file_selector_macos-0.9.5.tar.gz"
+      },
+      "hosted_sha256": "5e0bbe9c312416f1787a68259ea1505b52f258c587f12920422671807c4d618a",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/file_selector_macos-0.9.5/LICENSE",
+            "sha256": "420f7739f169097f0aad1242045169cd643c8f1d94e62866fad265ae4c369b7d",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/file_selector_macos-0.9.5/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "file_selector_platform_interface",
+      "version": "2.7.0",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/file_selector_platform_interface/versions/2.7.0",
+        "license_page": "https://pub.dev/packages/file_selector_platform_interface/versions/2.7.0/license",
+        "archive": "https://pub.dev/api/archives/file_selector_platform_interface-2.7.0.tar.gz"
+      },
+      "hosted_sha256": "35e0bd61ebcdb91a3505813b055b09b79dfdc7d0aee9c09a7ba59ae4bb13dc85",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/file_selector_platform_interface-2.7.0/LICENSE",
+            "sha256": "420f7739f169097f0aad1242045169cd643c8f1d94e62866fad265ae4c369b7d",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/file_selector_platform_interface-2.7.0/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "file_selector_windows",
+      "version": "0.9.3+5",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/file_selector_windows/versions/0.9.3+5",
+        "license_page": "https://pub.dev/packages/file_selector_windows/versions/0.9.3+5/license",
+        "archive": "https://pub.dev/api/archives/file_selector_windows-0.9.3+5.tar.gz"
+      },
+      "hosted_sha256": "62197474ae75893a62df75939c777763d39c2bc5f73ce5b88497208bc269abfd",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/file_selector_windows-0.9.3+5/LICENSE",
+            "sha256": "420f7739f169097f0aad1242045169cd643c8f1d94e62866fad265ae4c369b7d",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/file_selector_windows-0.9.3+5/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "fixnum",
+      "version": "1.1.1",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/fixnum/versions/1.1.1",
+        "license_page": "https://pub.dev/packages/fixnum/versions/1.1.1/license",
+        "archive": "https://pub.dev/api/archives/fixnum-1.1.1.tar.gz"
+      },
+      "hosted_sha256": "b6dc7065e46c974bc7c5f143080a6764ec7a4be6da1285ececdc37be96de53be",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/fixnum-1.1.1/LICENSE",
+            "sha256": "ff0b91d4f3c32b25cb6ec84985e8da89b0ba2a2b2f7eef353cda5e5423a20390",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/fixnum-1.1.1/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "flame",
+      "version": "1.37.0",
+      "dependency": "direct main",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/flame/versions/1.37.0",
+        "license_page": "https://pub.dev/packages/flame/versions/1.37.0/license",
+        "archive": "https://pub.dev/api/archives/flame-1.37.0.tar.gz"
+      },
+      "hosted_sha256": "b9e65f6d7d06a301d6ea3cde03731cad3cdc255d56e0fb53c56c1e7806aaaf6a",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "MIT"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/flame-1.37.0/LICENSE",
+            "sha256": "a53bdfb9afc14859e8d0526dfc8880831de8cfa599b300ddbbe122441dec30e3",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/flame-1.37.0/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "flutter",
+      "version": "0.0.0",
+      "dependency": "direct main",
+      "source": "sdk",
+      "source_links": {},
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/flutter/flutter-3.44.2-LICENSE.txt",
+            "sha256": "a598db94b6290ffbe10b5ecf911057b6a943351c727fdda9e5f2891d68700a20"
+          }
+        ],
+        "official_source": "https://raw.githubusercontent.com/flutter/flutter/c9a6c484230f8b5e408ec57be1ef71dee1e77020/LICENSE"
+      }
+    },
+    {
+      "name": "flutter_gemma",
+      "version": "0.16.5",
+      "dependency": "direct main",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/flutter_gemma/versions/0.16.5",
+        "license_page": "https://pub.dev/packages/flutter_gemma/versions/0.16.5/license",
+        "archive": "https://pub.dev/api/archives/flutter_gemma-0.16.5.tar.gz"
+      },
+      "hosted_sha256": "984960b54bbc0ff7e36cf568a02652b1d4bc016d6c75575b027fb6102fab48c3",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "MIT"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/flutter_gemma-0.16.5/LICENSE",
+            "sha256": "32ea46effed11648de8248fe69c5cd44119bdbaf38db5b901fb11064dc263a40",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/flutter_gemma-0.16.5/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "flutter_lints",
+      "version": "6.0.0",
+      "dependency": "direct dev",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/flutter_lints/versions/6.0.0",
+        "license_page": "https://pub.dev/packages/flutter_lints/versions/6.0.0/license",
+        "archive": "https://pub.dev/api/archives/flutter_lints-6.0.0.tar.gz"
+      },
+      "hosted_sha256": "3105dc8492f6183fb076ccf1f351ac3d60564bff92e20bfc4af9cc1651f4e7e1",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/flutter_lints-6.0.0/LICENSE",
+            "sha256": "89519eca6f7b9529b35bdddd623a58c3af06a88c458dbd6531ddb4675acf75a9",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/flutter_lints-6.0.0/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "flutter_localizations",
+      "version": "0.0.0",
+      "dependency": "direct main",
+      "source": "sdk",
+      "source_links": {},
+      "license": {
+        "status": "INHERITED_FROM_FLUTTER_SDK",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/flutter/flutter-3.44.2-LICENSE.txt",
+            "sha256": "a598db94b6290ffbe10b5ecf911057b6a943351c727fdda9e5f2891d68700a20"
+          }
+        ],
+        "official_source": "https://raw.githubusercontent.com/flutter/flutter/c9a6c484230f8b5e408ec57be1ef71dee1e77020/LICENSE"
+      }
+    },
+    {
+      "name": "flutter_markdown",
+      "version": "0.7.7+1",
+      "dependency": "direct main",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/flutter_markdown/versions/0.7.7+1",
+        "license_page": "https://pub.dev/packages/flutter_markdown/versions/0.7.7+1/license",
+        "archive": "https://pub.dev/api/archives/flutter_markdown-0.7.7+1.tar.gz"
+      },
+      "hosted_sha256": "08fb8315236099ff8e90cb87bb2b935e0a724a3af1623000a9cec930468e0f27",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/flutter_markdown-0.7.7+1/LICENSE",
+            "sha256": "89519eca6f7b9529b35bdddd623a58c3af06a88c458dbd6531ddb4675acf75a9",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/flutter_markdown-0.7.7+1/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "flutter_plugin_android_lifecycle",
+      "version": "2.0.35",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/flutter_plugin_android_lifecycle/versions/2.0.35",
+        "license_page": "https://pub.dev/packages/flutter_plugin_android_lifecycle/versions/2.0.35/license",
+        "archive": "https://pub.dev/api/archives/flutter_plugin_android_lifecycle-2.0.35.tar.gz"
+      },
+      "hosted_sha256": "3854fe5e3bff0b113c658f260b90c95dea17c92db0f2addeac2e343dd9969785",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/flutter_plugin_android_lifecycle-2.0.35/LICENSE",
+            "sha256": "420f7739f169097f0aad1242045169cd643c8f1d94e62866fad265ae4c369b7d",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/flutter_plugin_android_lifecycle-2.0.35/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "flutter_secure_storage",
+      "version": "10.3.1",
+      "dependency": "direct main",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/flutter_secure_storage/versions/10.3.1",
+        "license_page": "https://pub.dev/packages/flutter_secure_storage/versions/10.3.1/license",
+        "archive": "https://pub.dev/api/archives/flutter_secure_storage-10.3.1.tar.gz"
+      },
+      "hosted_sha256": "7686b1d6a29985dcbb808c59518226e603e3bfa7c0ddfd1a0d00e4cda77c868e",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/flutter_secure_storage-10.3.1/LICENSE",
+            "sha256": "55dafb084270616f95b9bea53654adda8bdcad95c022a83c4cf8769073f829fa",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/flutter_secure_storage-10.3.1/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "flutter_secure_storage_darwin",
+      "version": "0.3.2",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/flutter_secure_storage_darwin/versions/0.3.2",
+        "license_page": "https://pub.dev/packages/flutter_secure_storage_darwin/versions/0.3.2/license",
+        "archive": "https://pub.dev/api/archives/flutter_secure_storage_darwin-0.3.2.tar.gz"
+      },
+      "hosted_sha256": "82329fa5cdf343773b1b6897dea959105a29f092454259edff92f9f6637e8149",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/flutter_secure_storage_darwin-0.3.2/LICENSE",
+            "sha256": "3754c516086c62307896512b68024837bee5d2bea42a55cfd03f7448b92b06c8",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/flutter_secure_storage_darwin-0.3.2/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "flutter_secure_storage_linux",
+      "version": "3.0.1",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/flutter_secure_storage_linux/versions/3.0.1",
+        "license_page": "https://pub.dev/packages/flutter_secure_storage_linux/versions/3.0.1/license",
+        "archive": "https://pub.dev/api/archives/flutter_secure_storage_linux-3.0.1.tar.gz"
+      },
+      "hosted_sha256": "a5f35ddab43cf5c8215d2feb4ce1957851f28c5c37e6f04335066a0602087bf5",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/flutter_secure_storage_linux-3.0.1/LICENSE",
+            "sha256": "55dafb084270616f95b9bea53654adda8bdcad95c022a83c4cf8769073f829fa",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/flutter_secure_storage_linux-3.0.1/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "flutter_secure_storage_platform_interface",
+      "version": "2.0.1",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/flutter_secure_storage_platform_interface/versions/2.0.1",
+        "license_page": "https://pub.dev/packages/flutter_secure_storage_platform_interface/versions/2.0.1/license",
+        "archive": "https://pub.dev/api/archives/flutter_secure_storage_platform_interface-2.0.1.tar.gz"
+      },
+      "hosted_sha256": "8ceea1223bee3c6ac1a22dabd8feefc550e4729b3675de4b5900f55afcb435d6",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/flutter_secure_storage_platform_interface-2.0.1/LICENSE",
+            "sha256": "55dafb084270616f95b9bea53654adda8bdcad95c022a83c4cf8769073f829fa",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/flutter_secure_storage_platform_interface-2.0.1/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "flutter_secure_storage_web",
+      "version": "2.1.1",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/flutter_secure_storage_web/versions/2.1.1",
+        "license_page": "https://pub.dev/packages/flutter_secure_storage_web/versions/2.1.1/license",
+        "archive": "https://pub.dev/api/archives/flutter_secure_storage_web-2.1.1.tar.gz"
+      },
+      "hosted_sha256": "073a62b3aeb866ab4ce795f960413948e51e5a42a9b0c8333b6daf5bb3208a1c",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/flutter_secure_storage_web-2.1.1/LICENSE",
+            "sha256": "55dafb084270616f95b9bea53654adda8bdcad95c022a83c4cf8769073f829fa",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/flutter_secure_storage_web-2.1.1/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "flutter_secure_storage_windows",
+      "version": "4.1.0",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/flutter_secure_storage_windows/versions/4.1.0",
+        "license_page": "https://pub.dev/packages/flutter_secure_storage_windows/versions/4.1.0/license",
+        "archive": "https://pub.dev/api/archives/flutter_secure_storage_windows-4.1.0.tar.gz"
+      },
+      "hosted_sha256": "3b7c8e068875dfd46719ff57c90d8c459c87f2302ed6b00ff006b3c9fcad1613",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/flutter_secure_storage_windows-4.1.0/LICENSE",
+            "sha256": "55dafb084270616f95b9bea53654adda8bdcad95c022a83c4cf8769073f829fa",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/flutter_secure_storage_windows-4.1.0/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "flutter_soloud",
+      "version": "4.0.12",
+      "dependency": "direct main",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/flutter_soloud/versions/4.0.12",
+        "license_page": "https://pub.dev/packages/flutter_soloud/versions/4.0.12/license",
+        "archive": "https://pub.dev/api/archives/flutter_soloud-4.0.12.tar.gz"
+      },
+      "hosted_sha256": "5ffc8db6d9e5751ff2e8c3b7934b1973dc788fb541b9000561b1168c7798dae0",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "MIT"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/flutter_soloud-4.0.12/LICENSE",
+            "sha256": "b9dc28c049f389da9771414b0c30f5369c110b81765b12affed857a68efa04e4",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/flutter_soloud-4.0.12/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "flutter_test",
+      "version": "0.0.0",
+      "dependency": "direct dev",
+      "source": "sdk",
+      "source_links": {},
+      "license": {
+        "status": "INHERITED_FROM_FLUTTER_SDK",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/flutter/flutter-3.44.2-LICENSE.txt",
+            "sha256": "a598db94b6290ffbe10b5ecf911057b6a943351c727fdda9e5f2891d68700a20"
+          }
+        ],
+        "official_source": "https://raw.githubusercontent.com/flutter/flutter/c9a6c484230f8b5e408ec57be1ef71dee1e77020/LICENSE"
+      }
+    },
+    {
+      "name": "flutter_web_plugins",
+      "version": "0.0.0",
+      "dependency": "transitive",
+      "source": "sdk",
+      "source_links": {},
+      "license": {
+        "status": "INHERITED_FROM_FLUTTER_SDK",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/flutter/flutter-3.44.2-LICENSE.txt",
+            "sha256": "a598db94b6290ffbe10b5ecf911057b6a943351c727fdda9e5f2891d68700a20"
+          }
+        ],
+        "official_source": "https://raw.githubusercontent.com/flutter/flutter/c9a6c484230f8b5e408ec57be1ef71dee1e77020/LICENSE"
+      }
+    },
+    {
+      "name": "gal",
+      "version": "2.3.2",
+      "dependency": "direct main",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/gal/versions/2.3.2",
+        "license_page": "https://pub.dev/packages/gal/versions/2.3.2/license",
+        "archive": "https://pub.dev/api/archives/gal-2.3.2.tar.gz"
+      },
+      "hosted_sha256": "969598f986789127fd407a750413249e1352116d4c2be66e81837ffeeaafdfee",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/gal-2.3.2/LICENSE",
+            "sha256": "4a963156383f276c9214aed3beee1a57e12947c63b58dae134fdae6abd01b3da",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/gal-2.3.2/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "glob",
+      "version": "2.1.3",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/glob/versions/2.1.3",
+        "license_page": "https://pub.dev/packages/glob/versions/2.1.3/license",
+        "archive": "https://pub.dev/api/archives/glob-2.1.3.tar.gz"
+      },
+      "hosted_sha256": "c3f1ee72c96f8f78935e18aa8cecced9ab132419e8625dc187e1c2408efc20de",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/glob-2.1.3/LICENSE",
+            "sha256": "3c32b53167c7dae9190c38dab5dd9fe1789c53623ebc7d1babcb29914c5b3f16",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/glob-2.1.3/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "gtk",
+      "version": "2.2.0",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/gtk/versions/2.2.0",
+        "license_page": "https://pub.dev/packages/gtk/versions/2.2.0/license",
+        "archive": "https://pub.dev/api/archives/gtk-2.2.0.tar.gz"
+      },
+      "hosted_sha256": "4ff85b2a16724029dd9e5bbb5a94b6918f9973f74ba571c949d2002801879cf5",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "MPL-2.0"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/gtk-2.2.0/LICENSE",
+            "sha256": "1f256ecad192880510e84ad60474eab7589218784b9a50bc7ceee34c2b91f1d5",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/gtk-2.2.0/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "hooks",
+      "version": "1.0.3",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/hooks/versions/1.0.3",
+        "license_page": "https://pub.dev/packages/hooks/versions/1.0.3/license",
+        "archive": "https://pub.dev/api/archives/hooks-1.0.3.tar.gz"
+      },
+      "hosted_sha256": "025f060e86d2d4c3c47b56e33caf7f93bf9283340f26d23424ebcfccf34f621e",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/hooks-1.0.3/LICENSE",
+            "sha256": "21ae23b0b9ff67a2dc75ab085d1e8db8ac548c5faf370af17f28dd2ef3b52b7b",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/hooks-1.0.3/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "http",
+      "version": "1.6.0",
+      "dependency": "direct main",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/http/versions/1.6.0",
+        "license_page": "https://pub.dev/packages/http/versions/1.6.0/license",
+        "archive": "https://pub.dev/api/archives/http-1.6.0.tar.gz"
+      },
+      "hosted_sha256": "87721a4a50b19c7f1d49001e51409bddc46303966ce89a65af4f4e6004896412",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/http-1.6.0/LICENSE",
+            "sha256": "3c32b53167c7dae9190c38dab5dd9fe1789c53623ebc7d1babcb29914c5b3f16",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/http-1.6.0/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "http_parser",
+      "version": "4.1.2",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/http_parser/versions/4.1.2",
+        "license_page": "https://pub.dev/packages/http_parser/versions/4.1.2/license",
+        "archive": "https://pub.dev/api/archives/http_parser-4.1.2.tar.gz"
+      },
+      "hosted_sha256": "178d74305e7866013777bab2c3d8726205dc5a4dd935297175b19a23a2e66571",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/http_parser-4.1.2/LICENSE",
+            "sha256": "3c32b53167c7dae9190c38dab5dd9fe1789c53623ebc7d1babcb29914c5b3f16",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/http_parser-4.1.2/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "image",
+      "version": "4.9.1",
+      "dependency": "direct main",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/image/versions/4.9.1",
+        "license_page": "https://pub.dev/packages/image/versions/4.9.1/license",
+        "archive": "https://pub.dev/api/archives/image-4.9.1.tar.gz"
+      },
+      "hosted_sha256": "6300175e00616bbc832e2fc91bfa4d776af5402c81c7151bee6905bb08473c52",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "Apache-2.0",
+          "BSD-3-Clause",
+          "MIT"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/image-4.9.1/LICENSE",
+            "sha256": "f3c17da84e0780e1c334325c73098257c32221d62498ed55ef3c1361904925aa",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/image-4.9.1/LICENSE"
+          },
+          {
+            "path": "third_party/licenses/dart/image-4.9.1/LICENSE-other.md",
+            "sha256": "dea0e9e446e57c0987d241d5471e47e7b66796fb286706ec993c3fa6696cb08e",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/image-4.9.1/LICENSE-other.md"
+          }
+        ]
+      }
+    },
+    {
+      "name": "image_picker",
+      "version": "1.2.2",
+      "dependency": "direct main",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/image_picker/versions/1.2.2",
+        "license_page": "https://pub.dev/packages/image_picker/versions/1.2.2/license",
+        "archive": "https://pub.dev/api/archives/image_picker-1.2.2.tar.gz"
+      },
+      "hosted_sha256": "91c025426c2881c551100bce834e201c835a170151545f58d17da5180ca7d9ac",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "Apache-2.0",
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/image_picker-1.2.2/LICENSE",
+            "sha256": "8e22fae63e4e8ac897f0cb3018ed94ed730b3e5da5d42c6856a26ba524f0fd88",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/image_picker-1.2.2/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "image_picker_android",
+      "version": "0.8.13+19",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/image_picker_android/versions/0.8.13+19",
+        "license_page": "https://pub.dev/packages/image_picker_android/versions/0.8.13+19/license",
+        "archive": "https://pub.dev/api/archives/image_picker_android-0.8.13+19.tar.gz"
+      },
+      "hosted_sha256": "6f3a1995eafb000333174fae92202622033b0ee7fd917a6cd3730295264df84a",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "Apache-2.0",
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/image_picker_android-0.8.13+19/LICENSE",
+            "sha256": "8e22fae63e4e8ac897f0cb3018ed94ed730b3e5da5d42c6856a26ba524f0fd88",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/image_picker_android-0.8.13+19/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "image_picker_for_web",
+      "version": "3.1.1",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/image_picker_for_web/versions/3.1.1",
+        "license_page": "https://pub.dev/packages/image_picker_for_web/versions/3.1.1/license",
+        "archive": "https://pub.dev/api/archives/image_picker_for_web-3.1.1.tar.gz"
+      },
+      "hosted_sha256": "66257a3191ab360d23a55c8241c91a6e329d31e94efa7be9cf7a212e65850214",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/image_picker_for_web-3.1.1/LICENSE",
+            "sha256": "420f7739f169097f0aad1242045169cd643c8f1d94e62866fad265ae4c369b7d",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/image_picker_for_web-3.1.1/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "image_picker_ios",
+      "version": "0.8.13+6",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/image_picker_ios/versions/0.8.13+6",
+        "license_page": "https://pub.dev/packages/image_picker_ios/versions/0.8.13+6/license",
+        "archive": "https://pub.dev/api/archives/image_picker_ios-0.8.13+6.tar.gz"
+      },
+      "hosted_sha256": "b9c4a438a9ff4f60808c9cf0039b93a42bb6c2211ef6ebb647394b2b3fa84588",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "Apache-2.0",
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/image_picker_ios-0.8.13+6/LICENSE",
+            "sha256": "8e22fae63e4e8ac897f0cb3018ed94ed730b3e5da5d42c6856a26ba524f0fd88",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/image_picker_ios-0.8.13+6/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "image_picker_linux",
+      "version": "0.2.2",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/image_picker_linux/versions/0.2.2",
+        "license_page": "https://pub.dev/packages/image_picker_linux/versions/0.2.2/license",
+        "archive": "https://pub.dev/api/archives/image_picker_linux-0.2.2.tar.gz"
+      },
+      "hosted_sha256": "1f81c5f2046b9ab724f85523e4af65be1d47b038160a8c8deed909762c308ed4",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/image_picker_linux-0.2.2/LICENSE",
+            "sha256": "89519eca6f7b9529b35bdddd623a58c3af06a88c458dbd6531ddb4675acf75a9",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/image_picker_linux-0.2.2/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "image_picker_macos",
+      "version": "0.2.2+1",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/image_picker_macos/versions/0.2.2+1",
+        "license_page": "https://pub.dev/packages/image_picker_macos/versions/0.2.2+1/license",
+        "archive": "https://pub.dev/api/archives/image_picker_macos-0.2.2+1.tar.gz"
+      },
+      "hosted_sha256": "86f0f15a309de7e1a552c12df9ce5b59fe927e71385329355aec4776c6a8ec91",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/image_picker_macos-0.2.2+1/LICENSE",
+            "sha256": "420f7739f169097f0aad1242045169cd643c8f1d94e62866fad265ae4c369b7d",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/image_picker_macos-0.2.2+1/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "image_picker_platform_interface",
+      "version": "2.11.1",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/image_picker_platform_interface/versions/2.11.1",
+        "license_page": "https://pub.dev/packages/image_picker_platform_interface/versions/2.11.1/license",
+        "archive": "https://pub.dev/api/archives/image_picker_platform_interface-2.11.1.tar.gz"
+      },
+      "hosted_sha256": "567e056716333a1647c64bb6bd873cff7622233a5c3f694be28a583d4715690c",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/image_picker_platform_interface-2.11.1/LICENSE",
+            "sha256": "420f7739f169097f0aad1242045169cd643c8f1d94e62866fad265ae4c369b7d",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/image_picker_platform_interface-2.11.1/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "image_picker_windows",
+      "version": "0.2.2",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/image_picker_windows/versions/0.2.2",
+        "license_page": "https://pub.dev/packages/image_picker_windows/versions/0.2.2/license",
+        "archive": "https://pub.dev/api/archives/image_picker_windows-0.2.2.tar.gz"
+      },
+      "hosted_sha256": "d248c86554a72b5495a31c56f060cf73a41c7ff541689327b1a7dbccc33adfae",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/image_picker_windows-0.2.2/LICENSE",
+            "sha256": "89519eca6f7b9529b35bdddd623a58c3af06a88c458dbd6531ddb4675acf75a9",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/image_picker_windows-0.2.2/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "intl",
+      "version": "0.20.2",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/intl/versions/0.20.2",
+        "license_page": "https://pub.dev/packages/intl/versions/0.20.2/license",
+        "archive": "https://pub.dev/api/archives/intl-0.20.2.tar.gz"
+      },
+      "hosted_sha256": "3df61194eb431efc39c4ceba583b95633a403f46c9fd341e550ce0bfa50e9aa5",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/intl-0.20.2/LICENSE",
+            "sha256": "7e124af6a556f045cb3a20cafbdaa31602ac2c82cbcb3c3b15faaaf514b06028",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/intl-0.20.2/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "jni",
+      "version": "1.0.0",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/jni/versions/1.0.0",
+        "license_page": "https://pub.dev/packages/jni/versions/1.0.0/license",
+        "archive": "https://pub.dev/api/archives/jni-1.0.0.tar.gz"
+      },
+      "hosted_sha256": "c2230682d5bc2362c1c9e8d3c7f406d9cbba23ab3f2e203a025dd47e0fb2e68f",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/jni-1.0.0/LICENSE",
+            "sha256": "08a004aa8956c3cf3b24f7f69c966247233953e18e6afaa61191ea47b7eb70f6",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/jni-1.0.0/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "jni_flutter",
+      "version": "1.0.1",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/jni_flutter/versions/1.0.1",
+        "license_page": "https://pub.dev/packages/jni_flutter/versions/1.0.1/license",
+        "archive": "https://pub.dev/api/archives/jni_flutter-1.0.1.tar.gz"
+      },
+      "hosted_sha256": "8b59e590786050b1cd866677dddaf76b1ade5e7bc751abe04b86e84d379d3ba6",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/jni_flutter-1.0.1/LICENSE",
+            "sha256": "b1fcb475d67817411f335ac92872507011e574c4cb29cfdaaf7707b75641932c",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/jni_flutter-1.0.1/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "json_annotation",
+      "version": "4.12.0",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/json_annotation/versions/4.12.0",
+        "license_page": "https://pub.dev/packages/json_annotation/versions/4.12.0/license",
+        "archive": "https://pub.dev/api/archives/json_annotation-4.12.0.tar.gz"
+      },
+      "hosted_sha256": "2a743920d81b7910627f68ee2c9ac1fc0bfee32b9fc3403587d7c6791ca12f80",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/json_annotation-4.12.0/LICENSE",
+            "sha256": "143839f62c9b7f88143ea9f688361c27050888acde7696b34e04414bd254fafc",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/json_annotation-4.12.0/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "large_file_handler",
+      "version": "0.4.0",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/large_file_handler/versions/0.4.0",
+        "license_page": "https://pub.dev/packages/large_file_handler/versions/0.4.0/license",
+        "archive": "https://pub.dev/api/archives/large_file_handler-0.4.0.tar.gz"
+      },
+      "hosted_sha256": "1657db12b4591242b186c23eee437997be91e655ab0d803fd74829074460757f",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "MIT"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/large_file_handler-0.4.0/LICENSE",
+            "sha256": "32ea46effed11648de8248fe69c5cd44119bdbaf38db5b901fb11064dc263a40",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/large_file_handler-0.4.0/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "leak_tracker",
+      "version": "11.0.2",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/leak_tracker/versions/11.0.2",
+        "license_page": "https://pub.dev/packages/leak_tracker/versions/11.0.2/license",
+        "archive": "https://pub.dev/api/archives/leak_tracker-11.0.2.tar.gz"
+      },
+      "hosted_sha256": "33e2e26bdd85a0112ec15400c8cbffea70d0f9c3407491f672a2fad47915e2de",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/leak_tracker-11.0.2/LICENSE",
+            "sha256": "08a004aa8956c3cf3b24f7f69c966247233953e18e6afaa61191ea47b7eb70f6",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/leak_tracker-11.0.2/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "leak_tracker_flutter_testing",
+      "version": "3.0.10",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/leak_tracker_flutter_testing/versions/3.0.10",
+        "license_page": "https://pub.dev/packages/leak_tracker_flutter_testing/versions/3.0.10/license",
+        "archive": "https://pub.dev/api/archives/leak_tracker_flutter_testing-3.0.10.tar.gz"
+      },
+      "hosted_sha256": "1dbc140bb5a23c75ea9c4811222756104fbcd1a27173f0c34ca01e16bea473c1",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/leak_tracker_flutter_testing-3.0.10/LICENSE",
+            "sha256": "08a004aa8956c3cf3b24f7f69c966247233953e18e6afaa61191ea47b7eb70f6",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/leak_tracker_flutter_testing-3.0.10/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "leak_tracker_testing",
+      "version": "3.0.2",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/leak_tracker_testing/versions/3.0.2",
+        "license_page": "https://pub.dev/packages/leak_tracker_testing/versions/3.0.2/license",
+        "archive": "https://pub.dev/api/archives/leak_tracker_testing-3.0.2.tar.gz"
+      },
+      "hosted_sha256": "8d5a2d49f4a66b49744b23b018848400d23e54caf9463f4eb20df3eb8acb2eb1",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/leak_tracker_testing-3.0.2/LICENSE",
+            "sha256": "08a004aa8956c3cf3b24f7f69c966247233953e18e6afaa61191ea47b7eb70f6",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/leak_tracker_testing-3.0.2/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "lints",
+      "version": "6.1.0",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/lints/versions/6.1.0",
+        "license_page": "https://pub.dev/packages/lints/versions/6.1.0/license",
+        "archive": "https://pub.dev/api/archives/lints-6.1.0.tar.gz"
+      },
+      "hosted_sha256": "12f842a479589fea194fe5c5a3095abc7be0c1f2ddfa9a0e76aed1dbd26a87df",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/lints-6.1.0/LICENSE",
+            "sha256": "421fe78c3b5df297f8b4ab2c74f2450a274ee6d245a113091f6b9f90570af193",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/lints-6.1.0/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "llamadart",
+      "version": "0.8.11",
+      "dependency": "direct main",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/llamadart/versions/0.8.11",
+        "license_page": "https://pub.dev/packages/llamadart/versions/0.8.11/license",
+        "archive": "https://pub.dev/api/archives/llamadart-0.8.11.tar.gz"
+      },
+      "hosted_sha256": "669224b573fa369d14494910c7a4be48d30676ec04e418fb0501a1d3c70b78f7",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "MIT"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/llamadart-0.8.11/LICENSE",
+            "sha256": "52a79b73bf86ee8794bd8eab8179761e8f4f8d16e7f1d77168c67629c46163c5",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/llamadart-0.8.11/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "llamadart_llama_cpp_flutter",
+      "version": "0.0.7",
+      "dependency": "direct main",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/llamadart_llama_cpp_flutter/versions/0.0.7",
+        "license_page": "https://pub.dev/packages/llamadart_llama_cpp_flutter/versions/0.0.7/license",
+        "archive": "https://pub.dev/api/archives/llamadart_llama_cpp_flutter-0.0.7.tar.gz"
+      },
+      "hosted_sha256": "1b810efaf52a23825ef6cc6b2946625e37f7e61862257071ea8fc2bd829c7158",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "MIT"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/llamadart_llama_cpp_flutter-0.0.7/LICENSE",
+            "sha256": "52a79b73bf86ee8794bd8eab8179761e8f4f8d16e7f1d77168c67629c46163c5",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/llamadart_llama_cpp_flutter-0.0.7/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "local_hnsw",
+      "version": "1.0.0",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/local_hnsw/versions/1.0.0",
+        "license_page": "https://pub.dev/packages/local_hnsw/versions/1.0.0/license",
+        "archive": "https://pub.dev/api/archives/local_hnsw-1.0.0.tar.gz"
+      },
+      "hosted_sha256": "7fb0988e3f850121774d9dfe94068f843d87908d6b1e9ed5039710d8d9ae3f7a",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "MIT"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/local_hnsw-1.0.0/LICENSE",
+            "sha256": "8a65849e31a2dd120341caf2efa3a46d6418c95727375460e315398b84379e13",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/local_hnsw-1.0.0/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "logging",
+      "version": "1.3.0",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/logging/versions/1.3.0",
+        "license_page": "https://pub.dev/packages/logging/versions/1.3.0/license",
+        "archive": "https://pub.dev/api/archives/logging-1.3.0.tar.gz"
+      },
+      "hosted_sha256": "c8245ada5f1717ed44271ed1c26b8ce85ca3228fd2ffdb75468ab01979309d61",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/logging-1.3.0/LICENSE",
+            "sha256": "dfb09c74e29386cd3e2719f32d4995d59526179753931d31840757c77fbf2791",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/logging-1.3.0/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "markdown",
+      "version": "7.3.1",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/markdown/versions/7.3.1",
+        "license_page": "https://pub.dev/packages/markdown/versions/7.3.1/license",
+        "archive": "https://pub.dev/api/archives/markdown-7.3.1.tar.gz"
+      },
+      "hosted_sha256": "ee85086ad7698b42522c6ad42fe195f1b9898e4d974a1af4576c1a3a176cada9",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/markdown-7.3.1/LICENSE",
+            "sha256": "0aa335b5e036b9efbb35ad7a35835cd32e4eb656c08bfe040550a9f6fa84fcc7",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/markdown-7.3.1/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "matcher",
+      "version": "0.12.19",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/matcher/versions/0.12.19",
+        "license_page": "https://pub.dev/packages/matcher/versions/0.12.19/license",
+        "archive": "https://pub.dev/api/archives/matcher-0.12.19.tar.gz"
+      },
+      "hosted_sha256": "dc0b7dc7651697ea4ff3e69ef44b0407ea32c487a39fff6a4004fa585e901861",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/matcher-0.12.19/LICENSE",
+            "sha256": "3c32b53167c7dae9190c38dab5dd9fe1789c53623ebc7d1babcb29914c5b3f16",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/matcher-0.12.19/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "material_color_utilities",
+      "version": "0.13.0",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/material_color_utilities/versions/0.13.0",
+        "license_page": "https://pub.dev/packages/material_color_utilities/versions/0.13.0/license",
+        "archive": "https://pub.dev/api/archives/material_color_utilities-0.13.0.tar.gz"
+      },
+      "hosted_sha256": "9c337007e82b1889149c82ed242ed1cb24a66044e30979c44912381e9be4c48b",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "Apache-2.0"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/material_color_utilities-0.13.0/LICENSE",
+            "sha256": "d103f246ef4c18dab8af0c1dcf6a8af884e5cff554da7261a48ac43c17d98f2e",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/material_color_utilities-0.13.0/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "meta",
+      "version": "1.18.0",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/meta/versions/1.18.0",
+        "license_page": "https://pub.dev/packages/meta/versions/1.18.0/license",
+        "archive": "https://pub.dev/api/archives/meta-1.18.0.tar.gz"
+      },
+      "hosted_sha256": "1741988757a65eb6b36abe716829688cf01910bbf91c34354ff7ec1c3de2b349",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/meta-1.18.0/LICENSE",
+            "sha256": "b71519245009a3b8f126196a5408ec031e216e8e0d985085958c6543f82a8a2a",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/meta-1.18.0/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "mime",
+      "version": "2.0.0",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/mime/versions/2.0.0",
+        "license_page": "https://pub.dev/packages/mime/versions/2.0.0/license",
+        "archive": "https://pub.dev/api/archives/mime-2.0.0.tar.gz"
+      },
+      "hosted_sha256": "41a20518f0cb1256669420fdba0cd90d21561e560ac240f26ef8322e45bb7ed6",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/mime-2.0.0/LICENSE",
+            "sha256": "ff15faa32a2e638107b7789592b14426162a75ba620044ee2340a20ec6ce5e73",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/mime-2.0.0/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "mutex",
+      "version": "3.1.0",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/mutex/versions/3.1.0",
+        "license_page": "https://pub.dev/packages/mutex/versions/3.1.0/license",
+        "archive": "https://pub.dev/api/archives/mutex-3.1.0.tar.gz"
+      },
+      "hosted_sha256": "8827da25de792088eb33e572115a5eb0d61d61a3c01acbc8bcbe76ed78f1a1f2",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/mutex-3.1.0/LICENSE",
+            "sha256": "5999604f3993274baa9edf2decc982467c85b257c6bdecca4c81bbc515c090b6",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/mutex-3.1.0/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "native_toolchain_c",
+      "version": "0.18.0",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/native_toolchain_c/versions/0.18.0",
+        "license_page": "https://pub.dev/packages/native_toolchain_c/versions/0.18.0/license",
+        "archive": "https://pub.dev/api/archives/native_toolchain_c-0.18.0.tar.gz"
+      },
+      "hosted_sha256": "8aaead321425bd3f03bd5894aa27c8ea6993eab95531da7e59f5d39c6e5708ec",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/native_toolchain_c-0.18.0/LICENSE",
+            "sha256": "aa81abb1ac43e40d2f5a606385edd37e974a5858d4109f7f439dd43d964487a7",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/native_toolchain_c-0.18.0/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ordered_set",
+      "version": "8.0.0",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/ordered_set/versions/8.0.0",
+        "license_page": "https://pub.dev/packages/ordered_set/versions/8.0.0/license",
+        "archive": "https://pub.dev/api/archives/ordered_set-8.0.0.tar.gz"
+      },
+      "hosted_sha256": "d6c1d053a533e84931a388cbf03f1ad21a0543bf06c7a281859d3ffacd8e15f2",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "MIT"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/ordered_set-8.0.0/LICENSE",
+            "sha256": "14b47c0a458967bb9fbf45375258f7f1fb2dd877a65a37dc23f271d008a52d0a",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/ordered_set-8.0.0/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "package_config",
+      "version": "2.2.0",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/package_config/versions/2.2.0",
+        "license_page": "https://pub.dev/packages/package_config/versions/2.2.0/license",
+        "archive": "https://pub.dev/api/archives/package_config-2.2.0.tar.gz"
+      },
+      "hosted_sha256": "f096c55ebb7deb7e384101542bfba8c52696c1b56fca2eb62827989ef2353bbc",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/package_config-2.2.0/LICENSE",
+            "sha256": "0371d1da6a57fb791db29d29b95333429205f51f3cb2eb3a0c12d91838a38744",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/package_config-2.2.0/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "path",
+      "version": "1.9.1",
+      "dependency": "direct main",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/path/versions/1.9.1",
+        "license_page": "https://pub.dev/packages/path/versions/1.9.1/license",
+        "archive": "https://pub.dev/api/archives/path-1.9.1.tar.gz"
+      },
+      "hosted_sha256": "75cca69d1490965be98c73ceaea117e8a04dd21217b37b292c9ddbec0d955bc5",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/path-1.9.1/LICENSE",
+            "sha256": "3c32b53167c7dae9190c38dab5dd9fe1789c53623ebc7d1babcb29914c5b3f16",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/path-1.9.1/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "path_provider",
+      "version": "2.1.6",
+      "dependency": "direct main",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/path_provider/versions/2.1.6",
+        "license_page": "https://pub.dev/packages/path_provider/versions/2.1.6/license",
+        "archive": "https://pub.dev/api/archives/path_provider-2.1.6.tar.gz"
+      },
+      "hosted_sha256": "a7f4874f987173da295a61c181b8ee71dab59b332a486b391babf26a1b884825",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/path_provider-2.1.6/LICENSE",
+            "sha256": "420f7739f169097f0aad1242045169cd643c8f1d94e62866fad265ae4c369b7d",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/path_provider-2.1.6/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "path_provider_android",
+      "version": "2.3.1",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/path_provider_android/versions/2.3.1",
+        "license_page": "https://pub.dev/packages/path_provider_android/versions/2.3.1/license",
+        "archive": "https://pub.dev/api/archives/path_provider_android-2.3.1.tar.gz"
+      },
+      "hosted_sha256": "69cbd515a62b94d32a7944f086b2f82b4ac40a1d45bebfc00813a430ab2dabcd",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/path_provider_android-2.3.1/LICENSE",
+            "sha256": "420f7739f169097f0aad1242045169cd643c8f1d94e62866fad265ae4c369b7d",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/path_provider_android-2.3.1/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "path_provider_foundation",
+      "version": "2.5.1",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/path_provider_foundation/versions/2.5.1",
+        "license_page": "https://pub.dev/packages/path_provider_foundation/versions/2.5.1/license",
+        "archive": "https://pub.dev/api/archives/path_provider_foundation-2.5.1.tar.gz"
+      },
+      "hosted_sha256": "6d13aece7b3f5c5a9731eaf553ff9dcbc2eff41087fd2df587fd0fed9a3eb0c4",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/path_provider_foundation-2.5.1/LICENSE",
+            "sha256": "420f7739f169097f0aad1242045169cd643c8f1d94e62866fad265ae4c369b7d",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/path_provider_foundation-2.5.1/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "path_provider_linux",
+      "version": "2.2.2",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/path_provider_linux/versions/2.2.2",
+        "license_page": "https://pub.dev/packages/path_provider_linux/versions/2.2.2/license",
+        "archive": "https://pub.dev/api/archives/path_provider_linux-2.2.2.tar.gz"
+      },
+      "hosted_sha256": "58c2005f147315b11e9b4a7bc889cd5203e250cba8e3f012dae259b4972b5c16",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/path_provider_linux-2.2.2/LICENSE",
+            "sha256": "420f7739f169097f0aad1242045169cd643c8f1d94e62866fad265ae4c369b7d",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/path_provider_linux-2.2.2/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "path_provider_platform_interface",
+      "version": "2.1.3",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/path_provider_platform_interface/versions/2.1.3",
+        "license_page": "https://pub.dev/packages/path_provider_platform_interface/versions/2.1.3/license",
+        "archive": "https://pub.dev/api/archives/path_provider_platform_interface-2.1.3.tar.gz"
+      },
+      "hosted_sha256": "484838772624c3a4b94f1e44a3e19897fee738f2d5c4ce448443b0417f7c9dda",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/path_provider_platform_interface-2.1.3/LICENSE",
+            "sha256": "420f7739f169097f0aad1242045169cd643c8f1d94e62866fad265ae4c369b7d",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/path_provider_platform_interface-2.1.3/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "path_provider_windows",
+      "version": "2.3.0",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/path_provider_windows/versions/2.3.0",
+        "license_page": "https://pub.dev/packages/path_provider_windows/versions/2.3.0/license",
+        "archive": "https://pub.dev/api/archives/path_provider_windows-2.3.0.tar.gz"
+      },
+      "hosted_sha256": "bd6f00dbd873bfb70d0761682da2b3a2c2fccc2b9e84c495821639601d81afe7",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/path_provider_windows-2.3.0/LICENSE",
+            "sha256": "89519eca6f7b9529b35bdddd623a58c3af06a88c458dbd6531ddb4675acf75a9",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/path_provider_windows-2.3.0/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "petitparser",
+      "version": "7.0.2",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/petitparser/versions/7.0.2",
+        "license_page": "https://pub.dev/packages/petitparser/versions/7.0.2/license",
+        "archive": "https://pub.dev/api/archives/petitparser-7.0.2.tar.gz"
+      },
+      "hosted_sha256": "91bd59303e9f769f108f8df05e371341b15d59e995e6806aefab827b58336675",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "MIT"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/petitparser-7.0.2/LICENSE",
+            "sha256": "d2e8ffdbe89acbc10d5d1f2b03e7dbddf0a9f1742e809176682b62ef3d573b3e",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/petitparser-7.0.2/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "platform",
+      "version": "3.1.6",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/platform/versions/3.1.6",
+        "license_page": "https://pub.dev/packages/platform/versions/3.1.6/license",
+        "archive": "https://pub.dev/api/archives/platform-3.1.6.tar.gz"
+      },
+      "hosted_sha256": "5d6b1b0036a5f331ebc77c850ebc8506cbc1e9416c27e59b439f917a902a4984",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/platform-3.1.6/LICENSE",
+            "sha256": "143839f62c9b7f88143ea9f688361c27050888acde7696b34e04414bd254fafc",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/platform-3.1.6/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "plugin_platform_interface",
+      "version": "2.1.8",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/plugin_platform_interface/versions/2.1.8",
+        "license_page": "https://pub.dev/packages/plugin_platform_interface/versions/2.1.8/license",
+        "archive": "https://pub.dev/api/archives/plugin_platform_interface-2.1.8.tar.gz"
+      },
+      "hosted_sha256": "4820fbfdb9478b1ebae27888254d445073732dae3d6ea81f0b7e06d5dedc3f02",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/plugin_platform_interface-2.1.8/LICENSE",
+            "sha256": "89519eca6f7b9529b35bdddd623a58c3af06a88c458dbd6531ddb4675acf75a9",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/plugin_platform_interface-2.1.8/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "posix",
+      "version": "6.5.0",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/posix/versions/6.5.0",
+        "license_page": "https://pub.dev/packages/posix/versions/6.5.0/license",
+        "archive": "https://pub.dev/api/archives/posix-6.5.0.tar.gz"
+      },
+      "hosted_sha256": "185ef7606574f789b40f289c233efa52e96dead518aed988e040a10737febb07",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "MIT"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/posix-6.5.0/LICENSE",
+            "sha256": "aaf6271abd048deb3125828613f1797b7556472de6c7acd7103bd43e9cb6a84b",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/posix-6.5.0/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "pub_semver",
+      "version": "2.2.0",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/pub_semver/versions/2.2.0",
+        "license_page": "https://pub.dev/packages/pub_semver/versions/2.2.0/license",
+        "archive": "https://pub.dev/api/archives/pub_semver-2.2.0.tar.gz"
+      },
+      "hosted_sha256": "5bfcf68ca79ef689f8990d1160781b4bad40a3bd5e5218ad4076ddb7f4081585",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/pub_semver-2.2.0/LICENSE",
+            "sha256": "3c32b53167c7dae9190c38dab5dd9fe1789c53623ebc7d1babcb29914c5b3f16",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/pub_semver-2.2.0/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "record_use",
+      "version": "0.6.0",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/record_use/versions/0.6.0",
+        "license_page": "https://pub.dev/packages/record_use/versions/0.6.0/license",
+        "archive": "https://pub.dev/api/archives/record_use-0.6.0.tar.gz"
+      },
+      "hosted_sha256": "2551bd8eecfe95d14ae75f6021ad0248be5c27f138c2ec12fcb52b500b3ba1ed",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/record_use-0.6.0/LICENSE",
+            "sha256": "1cda25a8de6880c5338de0b4a06ee89e8537c213eb1379c16a4c035bfd198b5c",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/record_use-0.6.0/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "share_plus",
+      "version": "12.0.2",
+      "dependency": "direct main",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/share_plus/versions/12.0.2",
+        "license_page": "https://pub.dev/packages/share_plus/versions/12.0.2/license",
+        "archive": "https://pub.dev/api/archives/share_plus-12.0.2.tar.gz"
+      },
+      "hosted_sha256": "223873d106614442ea6f20db5a038685cc5b32a2fba81cdecaefbbae0523f7fa",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/share_plus-12.0.2/LICENSE",
+            "sha256": "eb9741a672906ebd01fd9b3bef38f6c82eff250e91149cf404539ee7981079fd",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/share_plus-12.0.2/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "share_plus_platform_interface",
+      "version": "6.1.0",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/share_plus_platform_interface/versions/6.1.0",
+        "license_page": "https://pub.dev/packages/share_plus_platform_interface/versions/6.1.0/license",
+        "archive": "https://pub.dev/api/archives/share_plus_platform_interface-6.1.0.tar.gz"
+      },
+      "hosted_sha256": "88023e53a13429bd65d8e85e11a9b484f49d4c190abbd96c7932b74d6927cc9a",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/share_plus_platform_interface-6.1.0/LICENSE",
+            "sha256": "3b38d48befd0af70b892e13d10c9e34679416c24a9277f962629951c64d71f4c",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/share_plus_platform_interface-6.1.0/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "shared_preferences",
+      "version": "2.5.5",
+      "dependency": "direct main",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/shared_preferences/versions/2.5.5",
+        "license_page": "https://pub.dev/packages/shared_preferences/versions/2.5.5/license",
+        "archive": "https://pub.dev/api/archives/shared_preferences-2.5.5.tar.gz"
+      },
+      "hosted_sha256": "c3025c5534b01739267eb7d76959bbc25a6d10f6988e1c2a3036940133dd10bf",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/shared_preferences-2.5.5/LICENSE",
+            "sha256": "420f7739f169097f0aad1242045169cd643c8f1d94e62866fad265ae4c369b7d",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/shared_preferences-2.5.5/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "shared_preferences_android",
+      "version": "2.4.26",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/shared_preferences_android/versions/2.4.26",
+        "license_page": "https://pub.dev/packages/shared_preferences_android/versions/2.4.26/license",
+        "archive": "https://pub.dev/api/archives/shared_preferences_android-2.4.26.tar.gz"
+      },
+      "hosted_sha256": "93ae5884a9df5d3bb696825bceb3a17590754548b5d740eba51500afc8d088f5",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/shared_preferences_android-2.4.26/LICENSE",
+            "sha256": "420f7739f169097f0aad1242045169cd643c8f1d94e62866fad265ae4c369b7d",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/shared_preferences_android-2.4.26/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "shared_preferences_foundation",
+      "version": "2.5.6",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/shared_preferences_foundation/versions/2.5.6",
+        "license_page": "https://pub.dev/packages/shared_preferences_foundation/versions/2.5.6/license",
+        "archive": "https://pub.dev/api/archives/shared_preferences_foundation-2.5.6.tar.gz"
+      },
+      "hosted_sha256": "4e7eaffc2b17ba398759f1151415869a34771ba11ebbccd1b0145472a619a64f",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/shared_preferences_foundation-2.5.6/LICENSE",
+            "sha256": "420f7739f169097f0aad1242045169cd643c8f1d94e62866fad265ae4c369b7d",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/shared_preferences_foundation-2.5.6/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "shared_preferences_linux",
+      "version": "2.4.1",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/shared_preferences_linux/versions/2.4.1",
+        "license_page": "https://pub.dev/packages/shared_preferences_linux/versions/2.4.1/license",
+        "archive": "https://pub.dev/api/archives/shared_preferences_linux-2.4.1.tar.gz"
+      },
+      "hosted_sha256": "580abfd40f415611503cae30adf626e6656dfb2f0cee8f465ece7b6defb40f2f",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/shared_preferences_linux-2.4.1/LICENSE",
+            "sha256": "89519eca6f7b9529b35bdddd623a58c3af06a88c458dbd6531ddb4675acf75a9",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/shared_preferences_linux-2.4.1/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "shared_preferences_platform_interface",
+      "version": "2.4.2",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/shared_preferences_platform_interface/versions/2.4.2",
+        "license_page": "https://pub.dev/packages/shared_preferences_platform_interface/versions/2.4.2/license",
+        "archive": "https://pub.dev/api/archives/shared_preferences_platform_interface-2.4.2.tar.gz"
+      },
+      "hosted_sha256": "649dc798a33931919ea356c4305c2d1f81619ea6e92244070b520187b5140ef9",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/shared_preferences_platform_interface-2.4.2/LICENSE",
+            "sha256": "420f7739f169097f0aad1242045169cd643c8f1d94e62866fad265ae4c369b7d",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/shared_preferences_platform_interface-2.4.2/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "shared_preferences_web",
+      "version": "2.4.3",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/shared_preferences_web/versions/2.4.3",
+        "license_page": "https://pub.dev/packages/shared_preferences_web/versions/2.4.3/license",
+        "archive": "https://pub.dev/api/archives/shared_preferences_web-2.4.3.tar.gz"
+      },
+      "hosted_sha256": "c49bd060261c9a3f0ff445892695d6212ff603ef3115edbb448509d407600019",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/shared_preferences_web-2.4.3/LICENSE",
+            "sha256": "89519eca6f7b9529b35bdddd623a58c3af06a88c458dbd6531ddb4675acf75a9",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/shared_preferences_web-2.4.3/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "shared_preferences_windows",
+      "version": "2.4.1",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/shared_preferences_windows/versions/2.4.1",
+        "license_page": "https://pub.dev/packages/shared_preferences_windows/versions/2.4.1/license",
+        "archive": "https://pub.dev/api/archives/shared_preferences_windows-2.4.1.tar.gz"
+      },
+      "hosted_sha256": "94ef0f72b2d71bc3e700e025db3710911bd51a71cefb65cc609dd0d9a982e3c1",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/shared_preferences_windows-2.4.1/LICENSE",
+            "sha256": "89519eca6f7b9529b35bdddd623a58c3af06a88c458dbd6531ddb4675acf75a9",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/shared_preferences_windows-2.4.1/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "sky_engine",
+      "version": "0.0.0",
+      "dependency": "transitive",
+      "source": "sdk",
+      "source_links": {},
+      "license": {
+        "status": "VERIFIED_LOCAL_COMPOSITE_NOTICES",
+        "summary": [
+          "COMPOSITE-FLUTTER-ENGINE-NOTICES"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/flutter/flutter-engine-77e2e94772b6eb43759e34ed1ad7da4674e19cab-NOTICES.txt",
+            "sha256": "82a5f93f918f99ff82af18c8be176c709dc812cb3f5e1e1cd93847bdeb0f9369"
+          }
+        ],
+        "engine_revision": "77e2e94772b6eb43759e34ed1ad7da4674e19cab"
+      }
+    },
+    {
+      "name": "source_span",
+      "version": "1.10.2",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/source_span/versions/1.10.2",
+        "license_page": "https://pub.dev/packages/source_span/versions/1.10.2/license",
+        "archive": "https://pub.dev/api/archives/source_span-1.10.2.tar.gz"
+      },
+      "hosted_sha256": "56a02f1f4cd1a2d96303c0144c93bd6d909eea6bee6bf5a0e0b685edbd4c47ab",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/source_span-1.10.2/LICENSE",
+            "sha256": "3c32b53167c7dae9190c38dab5dd9fe1789c53623ebc7d1babcb29914c5b3f16",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/source_span-1.10.2/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "speech_to_text",
+      "version": "7.4.0",
+      "dependency": "direct main",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/speech_to_text/versions/7.4.0",
+        "license_page": "https://pub.dev/packages/speech_to_text/versions/7.4.0/license",
+        "archive": "https://pub.dev/api/archives/speech_to_text-7.4.0.tar.gz"
+      },
+      "hosted_sha256": "75587f7400f485fdf166beacd471549d98fe5d58e634f708916bb65dec05d6a4",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/speech_to_text-7.4.0/LICENSE",
+            "sha256": "93c167d88e0073150ec077ce1a04052032e4a811a589b724a6a9bb157ac75152",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/speech_to_text-7.4.0/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "speech_to_text_platform_interface",
+      "version": "2.4.0",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/speech_to_text_platform_interface/versions/2.4.0",
+        "license_page": "https://pub.dev/packages/speech_to_text_platform_interface/versions/2.4.0/license",
+        "archive": "https://pub.dev/api/archives/speech_to_text_platform_interface-2.4.0.tar.gz"
+      },
+      "hosted_sha256": "a7e16e02853853ed7534ac2bde9a1c4f39c8879970a7974ac6ff832d4bdaa4b0",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/speech_to_text_platform_interface-2.4.0/LICENSE",
+            "sha256": "93c167d88e0073150ec077ce1a04052032e4a811a589b724a6a9bb157ac75152",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/speech_to_text_platform_interface-2.4.0/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "speech_to_text_windows",
+      "version": "1.0.1",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/speech_to_text_windows/versions/1.0.1",
+        "license_page": "https://pub.dev/packages/speech_to_text_windows/versions/1.0.1/license",
+        "archive": "https://pub.dev/api/archives/speech_to_text_windows-1.0.1.tar.gz"
+      },
+      "hosted_sha256": "2d1d10565b23262386b453b33656299608dc7a66784453735d6c1318f13f44d7",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/speech_to_text_windows-1.0.1/LICENSE",
+            "sha256": "d909ce2bb1e39a78df3beedc414cd9fe192fded499db2929d16a26a3854183ae",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/speech_to_text_windows-1.0.1/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "sqflite",
+      "version": "2.4.3",
+      "dependency": "direct main",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/sqflite/versions/2.4.3",
+        "license_page": "https://pub.dev/packages/sqflite/versions/2.4.3/license",
+        "archive": "https://pub.dev/api/archives/sqflite-2.4.3.tar.gz"
+      },
+      "hosted_sha256": "58a799e6ac17dd32fbab93813d39ed835a75ccc0f8f85b8955fe318c6712b082",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-2-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/sqflite-2.4.3/LICENSE",
+            "sha256": "c81f9454cf3107c116bc3c1fd22b7d751523a2b11e17cf90c0db3327d3c9e0da",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/sqflite-2.4.3/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "sqflite_android",
+      "version": "2.4.3",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/sqflite_android/versions/2.4.3",
+        "license_page": "https://pub.dev/packages/sqflite_android/versions/2.4.3/license",
+        "archive": "https://pub.dev/api/archives/sqflite_android-2.4.3.tar.gz"
+      },
+      "hosted_sha256": "d0548f9d7422a2dae99ec6f8b0a3074463b132d216fa5ba0d230eeefc901983b",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-2-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/sqflite_android-2.4.3/LICENSE",
+            "sha256": "c81f9454cf3107c116bc3c1fd22b7d751523a2b11e17cf90c0db3327d3c9e0da",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/sqflite_android-2.4.3/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "sqflite_common",
+      "version": "2.5.11",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/sqflite_common/versions/2.5.11",
+        "license_page": "https://pub.dev/packages/sqflite_common/versions/2.5.11/license",
+        "archive": "https://pub.dev/api/archives/sqflite_common-2.5.11.tar.gz"
+      },
+      "hosted_sha256": "5bf6a55c166e73bf651ba7ec3ed486e577620e3dc8f3a9c6a258a8031b624590",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-2-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/sqflite_common-2.5.11/LICENSE",
+            "sha256": "c81f9454cf3107c116bc3c1fd22b7d751523a2b11e17cf90c0db3327d3c9e0da",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/sqflite_common-2.5.11/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "sqflite_common_ffi",
+      "version": "2.4.2",
+      "dependency": "direct dev",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/sqflite_common_ffi/versions/2.4.2",
+        "license_page": "https://pub.dev/packages/sqflite_common_ffi/versions/2.4.2/license",
+        "archive": "https://pub.dev/api/archives/sqflite_common_ffi-2.4.2.tar.gz"
+      },
+      "hosted_sha256": "5ccd38136edb9beb3213f6927775d52db70dfdadcdb28dad1f625ca9f2b9824f",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-2-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/sqflite_common_ffi-2.4.2/LICENSE",
+            "sha256": "c81f9454cf3107c116bc3c1fd22b7d751523a2b11e17cf90c0db3327d3c9e0da",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/sqflite_common_ffi-2.4.2/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "sqflite_darwin",
+      "version": "2.4.3+1",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/sqflite_darwin/versions/2.4.3+1",
+        "license_page": "https://pub.dev/packages/sqflite_darwin/versions/2.4.3+1/license",
+        "archive": "https://pub.dev/api/archives/sqflite_darwin-2.4.3+1.tar.gz"
+      },
+      "hosted_sha256": "c86ca18b8f666bbf903924687fe21cc16fc385d086005067e26619ca530bef9f",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-2-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/sqflite_darwin-2.4.3+1/LICENSE",
+            "sha256": "c81f9454cf3107c116bc3c1fd22b7d751523a2b11e17cf90c0db3327d3c9e0da",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/sqflite_darwin-2.4.3+1/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "sqflite_platform_interface",
+      "version": "2.4.1",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/sqflite_platform_interface/versions/2.4.1",
+        "license_page": "https://pub.dev/packages/sqflite_platform_interface/versions/2.4.1/license",
+        "archive": "https://pub.dev/api/archives/sqflite_platform_interface-2.4.1.tar.gz"
+      },
+      "hosted_sha256": "f84939f84350d92d04416f8bc4dc52d3896aec7716cc9e80cf0146342139dc50",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-2-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/sqflite_platform_interface-2.4.1/LICENSE",
+            "sha256": "c81f9454cf3107c116bc3c1fd22b7d751523a2b11e17cf90c0db3327d3c9e0da",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/sqflite_platform_interface-2.4.1/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "sqlite3",
+      "version": "3.3.3",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/sqlite3/versions/3.3.3",
+        "license_page": "https://pub.dev/packages/sqlite3/versions/3.3.3/license",
+        "archive": "https://pub.dev/api/archives/sqlite3-3.3.3.tar.gz"
+      },
+      "hosted_sha256": "37356bcb56ce0d9404d602c41e4bdb7765e7e9732a3e47adb3d98c556a6abdad",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "MIT"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/sqlite3-3.3.3/LICENSE",
+            "sha256": "67e5d73a3a0c6e41f33d688a672b1161bf7f16e04da9ae48a7a14f1ba7436a4d",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/sqlite3-3.3.3/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "stack_trace",
+      "version": "1.12.1",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/stack_trace/versions/1.12.1",
+        "license_page": "https://pub.dev/packages/stack_trace/versions/1.12.1/license",
+        "archive": "https://pub.dev/api/archives/stack_trace-1.12.1.tar.gz"
+      },
+      "hosted_sha256": "8b27215b45d22309b5cddda1aa2b19bdfec9df0e765f2de506401c071d38d1b1",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/stack_trace-1.12.1/LICENSE",
+            "sha256": "ff0b91d4f3c32b25cb6ec84985e8da89b0ba2a2b2f7eef353cda5e5423a20390",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/stack_trace-1.12.1/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "stream_channel",
+      "version": "2.1.4",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/stream_channel/versions/2.1.4",
+        "license_page": "https://pub.dev/packages/stream_channel/versions/2.1.4/license",
+        "archive": "https://pub.dev/api/archives/stream_channel-2.1.4.tar.gz"
+      },
+      "hosted_sha256": "969e04c80b8bcdf826f8f16579c7b14d780458bd97f56d107d3950fdbeef059d",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/stream_channel-2.1.4/LICENSE",
+            "sha256": "ff15faa32a2e638107b7789592b14426162a75ba620044ee2340a20ec6ce5e73",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/stream_channel-2.1.4/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "string_scanner",
+      "version": "1.4.1",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/string_scanner/versions/1.4.1",
+        "license_page": "https://pub.dev/packages/string_scanner/versions/1.4.1/license",
+        "archive": "https://pub.dev/api/archives/string_scanner-1.4.1.tar.gz"
+      },
+      "hosted_sha256": "921cd31725b72fe181906c6a94d987c78e3b98c2e205b397ea399d4054872b43",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/string_scanner-1.4.1/LICENSE",
+            "sha256": "3c32b53167c7dae9190c38dab5dd9fe1789c53623ebc7d1babcb29914c5b3f16",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/string_scanner-1.4.1/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "synchronized",
+      "version": "3.4.1",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/synchronized/versions/3.4.1",
+        "license_page": "https://pub.dev/packages/synchronized/versions/3.4.1/license",
+        "archive": "https://pub.dev/api/archives/synchronized-3.4.1.tar.gz"
+      },
+      "hosted_sha256": "93b153dcb6a26dcddee6ca087dd634b53e38c10b5aa163e8e49501a776456153",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "MIT"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/synchronized-3.4.1/LICENSE",
+            "sha256": "6d07c6bb60afb906049d507e19fcc4c6b59e35c0dd0f8a7302e87b3fb0576900",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/synchronized-3.4.1/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "term_glyph",
+      "version": "1.2.2",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/term_glyph/versions/1.2.2",
+        "license_page": "https://pub.dev/packages/term_glyph/versions/1.2.2/license",
+        "archive": "https://pub.dev/api/archives/term_glyph-1.2.2.tar.gz"
+      },
+      "hosted_sha256": "7f554798625ea768a7518313e58f83891c7f5024f88e46e7182a4558850a4b8e",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/term_glyph-1.2.2/LICENSE",
+            "sha256": "ea97a7558a7bd7cee4e2355f7529e3cbebb0dcbb546ddb9a90f10c9eb6b08da5",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/term_glyph-1.2.2/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "test_api",
+      "version": "0.7.11",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/test_api/versions/0.7.11",
+        "license_page": "https://pub.dev/packages/test_api/versions/0.7.11/license",
+        "archive": "https://pub.dev/api/archives/test_api-0.7.11.tar.gz"
+      },
+      "hosted_sha256": "949a932224383300f01be9221c39180316445ecb8e7547f70a41a35bf421fb9e",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/test_api-0.7.11/LICENSE",
+            "sha256": "ff1b9f0df9036c04be424b1e3ce12789bea880ad5ffc3a48e069ae2d40a087a4",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/test_api-0.7.11/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "typed_data",
+      "version": "1.4.0",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/typed_data/versions/1.4.0",
+        "license_page": "https://pub.dev/packages/typed_data/versions/1.4.0/license",
+        "archive": "https://pub.dev/api/archives/typed_data-1.4.0.tar.gz"
+      },
+      "hosted_sha256": "f9049c039ebfeb4cf7a7104a675823cd72dba8297f264b6637062516699fa006",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/typed_data-1.4.0/LICENSE",
+            "sha256": "ff15faa32a2e638107b7789592b14426162a75ba620044ee2340a20ec6ce5e73",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/typed_data-1.4.0/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "url_launcher",
+      "version": "6.3.2",
+      "dependency": "direct main",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/url_launcher/versions/6.3.2",
+        "license_page": "https://pub.dev/packages/url_launcher/versions/6.3.2/license",
+        "archive": "https://pub.dev/api/archives/url_launcher-6.3.2.tar.gz"
+      },
+      "hosted_sha256": "f6a7e5c4835bb4e3026a04793a4199ca2d14c739ec378fdfe23fc8075d0439f8",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/url_launcher-6.3.2/LICENSE",
+            "sha256": "89519eca6f7b9529b35bdddd623a58c3af06a88c458dbd6531ddb4675acf75a9",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/url_launcher-6.3.2/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "url_launcher_android",
+      "version": "6.3.32",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/url_launcher_android/versions/6.3.32",
+        "license_page": "https://pub.dev/packages/url_launcher_android/versions/6.3.32/license",
+        "archive": "https://pub.dev/api/archives/url_launcher_android-6.3.32.tar.gz"
+      },
+      "hosted_sha256": "b413d49b73867ac08dd2f9890efd3cc11f2a0e577618d50843440a1fb3776c32",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/url_launcher_android-6.3.32/LICENSE",
+            "sha256": "420f7739f169097f0aad1242045169cd643c8f1d94e62866fad265ae4c369b7d",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/url_launcher_android-6.3.32/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "url_launcher_ios",
+      "version": "6.4.1",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/url_launcher_ios/versions/6.4.1",
+        "license_page": "https://pub.dev/packages/url_launcher_ios/versions/6.4.1/license",
+        "archive": "https://pub.dev/api/archives/url_launcher_ios-6.4.1.tar.gz"
+      },
+      "hosted_sha256": "580fe5dfb51671ae38191d316e027f6b76272b026370708c2d898799750a02b0",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/url_launcher_ios-6.4.1/LICENSE",
+            "sha256": "420f7739f169097f0aad1242045169cd643c8f1d94e62866fad265ae4c369b7d",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/url_launcher_ios-6.4.1/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "url_launcher_linux",
+      "version": "3.2.2",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/url_launcher_linux/versions/3.2.2",
+        "license_page": "https://pub.dev/packages/url_launcher_linux/versions/3.2.2/license",
+        "archive": "https://pub.dev/api/archives/url_launcher_linux-3.2.2.tar.gz"
+      },
+      "hosted_sha256": "d5e14138b3bc193a0f63c10a53c94b91d399df0512b1f29b94a043db7482384a",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/url_launcher_linux-3.2.2/LICENSE",
+            "sha256": "420f7739f169097f0aad1242045169cd643c8f1d94e62866fad265ae4c369b7d",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/url_launcher_linux-3.2.2/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "url_launcher_macos",
+      "version": "3.2.5",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/url_launcher_macos/versions/3.2.5",
+        "license_page": "https://pub.dev/packages/url_launcher_macos/versions/3.2.5/license",
+        "archive": "https://pub.dev/api/archives/url_launcher_macos-3.2.5.tar.gz"
+      },
+      "hosted_sha256": "368adf46f71ad3c21b8f06614adb38346f193f3a59ba8fe9a2fd74133070ba18",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/url_launcher_macos-3.2.5/LICENSE",
+            "sha256": "420f7739f169097f0aad1242045169cd643c8f1d94e62866fad265ae4c369b7d",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/url_launcher_macos-3.2.5/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "url_launcher_platform_interface",
+      "version": "2.3.2",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/url_launcher_platform_interface/versions/2.3.2",
+        "license_page": "https://pub.dev/packages/url_launcher_platform_interface/versions/2.3.2/license",
+        "archive": "https://pub.dev/api/archives/url_launcher_platform_interface-2.3.2.tar.gz"
+      },
+      "hosted_sha256": "552f8a1e663569be95a8190206a38187b531910283c3e982193e4f2733f01029",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/url_launcher_platform_interface-2.3.2/LICENSE",
+            "sha256": "89519eca6f7b9529b35bdddd623a58c3af06a88c458dbd6531ddb4675acf75a9",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/url_launcher_platform_interface-2.3.2/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "url_launcher_web",
+      "version": "2.4.3",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/url_launcher_web/versions/2.4.3",
+        "license_page": "https://pub.dev/packages/url_launcher_web/versions/2.4.3/license",
+        "archive": "https://pub.dev/api/archives/url_launcher_web-2.4.3.tar.gz"
+      },
+      "hosted_sha256": "85c81589622fbc87c1c683aaea164d3604a7777495a79d91e39ffcdec39ddb34",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/url_launcher_web-2.4.3/LICENSE",
+            "sha256": "420f7739f169097f0aad1242045169cd643c8f1d94e62866fad265ae4c369b7d",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/url_launcher_web-2.4.3/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "url_launcher_windows",
+      "version": "3.1.5",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/url_launcher_windows/versions/3.1.5",
+        "license_page": "https://pub.dev/packages/url_launcher_windows/versions/3.1.5/license",
+        "archive": "https://pub.dev/api/archives/url_launcher_windows-3.1.5.tar.gz"
+      },
+      "hosted_sha256": "712c70ab1b99744ff066053cbe3e80c73332b38d46e5e945c98689b2e66fc15f",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/url_launcher_windows-3.1.5/LICENSE",
+            "sha256": "420f7739f169097f0aad1242045169cd643c8f1d94e62866fad265ae4c369b7d",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/url_launcher_windows-3.1.5/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "uuid",
+      "version": "4.5.3",
+      "dependency": "direct main",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/uuid/versions/4.5.3",
+        "license_page": "https://pub.dev/packages/uuid/versions/4.5.3/license",
+        "archive": "https://pub.dev/api/archives/uuid-4.5.3.tar.gz"
+      },
+      "hosted_sha256": "1fef9e8e11e2991bb773070d4656b7bd5d850967a2456cfc83cf47925ba79489",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "MIT"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/uuid-4.5.3/LICENSE",
+            "sha256": "ad3e5523e51004e94ba9ce728805b1b4242dbccdb65e62b523800e35a8a7cfdc",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/uuid-4.5.3/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "vector_math",
+      "version": "2.2.0",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/vector_math/versions/2.2.0",
+        "license_page": "https://pub.dev/packages/vector_math/versions/2.2.0/license",
+        "archive": "https://pub.dev/api/archives/vector_math-2.2.0.tar.gz"
+      },
+      "hosted_sha256": "d530bd74fea330e6e364cda7a85019c434070188383e1cd8d9777ee586914c5b",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/vector_math-2.2.0/LICENSE",
+            "sha256": "b5d856a1e27e9ebea4957fc3526f1c65782a04894b113c6b3b0fb1321dbdec55",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/vector_math-2.2.0/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "vm_service",
+      "version": "15.2.0",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/vm_service/versions/15.2.0",
+        "license_page": "https://pub.dev/packages/vm_service/versions/15.2.0/license",
+        "archive": "https://pub.dev/api/archives/vm_service-15.2.0.tar.gz"
+      },
+      "hosted_sha256": "0016aef94fc66495ac78af5859181e3f3bf2026bd8eecc72b9565601e19ab360",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/vm_service-15.2.0/LICENSE",
+            "sha256": "ad6a71997da90924b2cfb1fb47ec46537f70faf469efe016168794ae45ed6888",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/vm_service-15.2.0/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "web",
+      "version": "1.1.1",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/web/versions/1.1.1",
+        "license_page": "https://pub.dev/packages/web/versions/1.1.1/license",
+        "archive": "https://pub.dev/api/archives/web-1.1.1.tar.gz"
+      },
+      "hosted_sha256": "868d88a33d8a87b18ffc05f9f030ba328ffefba92d6c127917a2ba740f9cfe4a",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/web-1.1.1/LICENSE",
+            "sha256": "aa913ff50d7542eb8cc35b9f48a80928ac6819ba9057f85d424655e3e8dc271c",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/web-1.1.1/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "win32",
+      "version": "5.15.0",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/win32/versions/5.15.0",
+        "license_page": "https://pub.dev/packages/win32/versions/5.15.0/license",
+        "archive": "https://pub.dev/api/archives/win32-5.15.0.tar.gz"
+      },
+      "hosted_sha256": "d7cb55e04cd34096cd3a79b3330245f54cb96a370a1c27adb3c84b917de8b08e",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/win32-5.15.0/LICENSE",
+            "sha256": "87ef8bccdd619f2345ba5b9026cf1d6cccb305e36ab83849a8a3af9293abde7e",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/win32-5.15.0/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "workmanager",
+      "version": "0.9.0+3",
+      "dependency": "direct main",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/workmanager/versions/0.9.0+3",
+        "license_page": "https://pub.dev/packages/workmanager/versions/0.9.0+3/license",
+        "archive": "https://pub.dev/api/archives/workmanager-0.9.0+3.tar.gz"
+      },
+      "hosted_sha256": "065673b2a465865183093806925419d311a9a5e0995aa74ccf8920fd695e2d10",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "MIT"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/workmanager-0.9.0+3/LICENSE",
+            "sha256": "6d84f32d46fd394cb0bdba22b79b02445d8d33f9bbd134c25ac7f8c9a0aa79d5",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/workmanager-0.9.0+3/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "workmanager_android",
+      "version": "0.9.0+2",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/workmanager_android/versions/0.9.0+2",
+        "license_page": "https://pub.dev/packages/workmanager_android/versions/0.9.0+2/license",
+        "archive": "https://pub.dev/api/archives/workmanager_android-0.9.0+2.tar.gz"
+      },
+      "hosted_sha256": "9ae744db4ef891f5fcd2fb8671fccc712f4f96489a487a1411e0c8675e5e8cb7",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "MIT"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/workmanager_android-0.9.0+2/LICENSE",
+            "sha256": "1f5154d475922d6c1537bdf82ab083826bf407622132ab8fd28ab213becbf840",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/workmanager_android-0.9.0+2/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "workmanager_apple",
+      "version": "0.9.1+2",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/workmanager_apple/versions/0.9.1+2",
+        "license_page": "https://pub.dev/packages/workmanager_apple/versions/0.9.1+2/license",
+        "archive": "https://pub.dev/api/archives/workmanager_apple-0.9.1+2.tar.gz"
+      },
+      "hosted_sha256": "1cc12ae3cbf5535e72f7ba4fde0c12dd11b757caf493a28e22d684052701f2ca",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "MIT"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/workmanager_apple-0.9.1+2/LICENSE",
+            "sha256": "1f5154d475922d6c1537bdf82ab083826bf407622132ab8fd28ab213becbf840",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/workmanager_apple-0.9.1+2/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "workmanager_platform_interface",
+      "version": "0.9.1+1",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/workmanager_platform_interface/versions/0.9.1+1",
+        "license_page": "https://pub.dev/packages/workmanager_platform_interface/versions/0.9.1+1/license",
+        "archive": "https://pub.dev/api/archives/workmanager_platform_interface-0.9.1+1.tar.gz"
+      },
+      "hosted_sha256": "f40422f10b970c67abb84230b44da22b075147637532ac501729256fcea10a47",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "MIT"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/workmanager_platform_interface-0.9.1+1/LICENSE",
+            "sha256": "1f5154d475922d6c1537bdf82ab083826bf407622132ab8fd28ab213becbf840",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/workmanager_platform_interface-0.9.1+1/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "xdg_directories",
+      "version": "1.1.0",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/xdg_directories/versions/1.1.0",
+        "license_page": "https://pub.dev/packages/xdg_directories/versions/1.1.0/license",
+        "archive": "https://pub.dev/api/archives/xdg_directories-1.1.0.tar.gz"
+      },
+      "hosted_sha256": "7a3f37b05d989967cdddcbb571f1ea834867ae2faa29725fd085180e0883aa15",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/xdg_directories-1.1.0/LICENSE",
+            "sha256": "89519eca6f7b9529b35bdddd623a58c3af06a88c458dbd6531ddb4675acf75a9",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/xdg_directories-1.1.0/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "xml",
+      "version": "7.0.1",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/xml/versions/7.0.1",
+        "license_page": "https://pub.dev/packages/xml/versions/7.0.1/license",
+        "archive": "https://pub.dev/api/archives/xml-7.0.1.tar.gz"
+      },
+      "hosted_sha256": "67f0aff7be013d107995e9b75bf4e7f2c3ef2dfdb2c8e68024bba0a7fd5756a4",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "MIT"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/xml-7.0.1/LICENSE",
+            "sha256": "0be767174b97278f17da4923a74169e8645631f03ea3d8482ec3523c9b1a0dd3",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/xml-7.0.1/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "yaml",
+      "version": "3.1.3",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/yaml/versions/3.1.3",
+        "license_page": "https://pub.dev/packages/yaml/versions/3.1.3/license",
+        "archive": "https://pub.dev/api/archives/yaml-3.1.3.tar.gz"
+      },
+      "hosted_sha256": "b9da305ac7c39faa3f030eccd175340f968459dae4af175130b3fc47e40d76ce",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "MIT"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/yaml-3.1.3/LICENSE",
+            "sha256": "d47b93335401b052d79a2f5a3710e4cf7b5aed782faedf84d40fbdd6eb934ec7",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/yaml-3.1.3/LICENSE"
+          }
+        ]
+      }
+    }
+  ]
+}

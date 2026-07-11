@@ -1,0 +1,18 @@
+# ═══ 正式簽名配置 ═══
+# 使用步驟（一次性）：
+#
+# 1. 生成你自己的鑰匙庫（終端執行，密碼自己定、記牢）：
+#    keytool -genkey -v -keystore ~/holt-release.jks -keyalg RSA -keysize 2048 -validity 10000 -alias holt
+#
+# 2. 把本文件複製一份，改名為 key.properties（同目錄），填入你的值。
+#
+# 3. 之後 flutter build apk --release 會自動用正式簽名；
+#    沒有 key.properties 時自動退回 debug 簽名（開發不受影響）。
+#
+# ⚠️ holt-release.jks 丟了就永遠無法給同一個 app 發更新——備份到不會丟的地方。
+# ⚠️ key.properties 和 .jks 都不要提交進 git（.gitignore 已配置）。
+
+storePassword=在這裡填鑰匙庫密碼
+keyPassword=在這裡填密鑰密碼（keytool 沒單獨設就跟上面一樣）
+keyAlias=holt
+storeFile=/Users/你的用戶名/holt-release.jks

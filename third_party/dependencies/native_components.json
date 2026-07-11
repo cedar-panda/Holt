@@ -1,0 +1,431 @@
+{
+  "schema_version": 1,
+  "scope": "Android arm64 dependency caches; final APK must be re-audited",
+  "components": [
+    {
+      "name": "flutter_soloud native stack",
+      "version": "4.0.12",
+      "status": "LICENSE_TEXTS_INCLUDED_BINARY_VERSIONS_UNAVAILABLE",
+      "source": "https://pub.dev/packages/flutter_soloud",
+      "binary_snapshot": [
+        {
+          "name": "libFLAC.so",
+          "size": 264400,
+          "sha256": "dcc5a02154a918f47198358132bcc22e406e695177cf345a34389ca202afb17d"
+        },
+        {
+          "name": "libogg.so",
+          "size": 29968,
+          "sha256": "e1e05a287dd32277f438a28d88983b09e89a026a15870cd0e9c7d516cda0e747"
+        },
+        {
+          "name": "libopus.so",
+          "size": 437008,
+          "sha256": "cebaf864e5b0383d798b8b14b69f54aafeeebfb7ccbd4663a81ee7d3958bea4b"
+        },
+        {
+          "name": "libvorbis.so",
+          "size": 191768,
+          "sha256": "9436de8fb2d727eb6ed0bf38542040d9b9ded3c0e554bbe5a0a4fd52f5b87eea"
+        },
+        {
+          "name": "libvorbisfile.so",
+          "size": 31624,
+          "sha256": "65ed94461f2c76a0b66a74acfc4ec64e63fff72c008f37d1f1824caa9deaadf3"
+        }
+      ],
+      "license_files": [
+        {
+          "path": "third_party/licenses/native/flutter_soloud/flutter_soloud-4.0.12-LICENSE.txt",
+          "sha256": "b9dc28c049f389da9771414b0c30f5369c110b81765b12affed857a68efa04e4"
+        },
+        {
+          "path": "third_party/licenses/native/flutter_soloud/SoLoud-LICENSE.txt",
+          "sha256": "27e5dfcca945edeff8ed2ac9808baf53ab6c34cfae5d87b48410181b5af57968"
+        },
+        {
+          "path": "third_party/licenses/native/flutter_soloud/Signalsmith-Linear-LICENSE.txt",
+          "sha256": "072b5e9eb5b22880bdf6256324654cf3ce53dba828edb911921121e1be09d9c3"
+        },
+        {
+          "path": "third_party/licenses/native/flutter_soloud/Signalsmith-Stretch-LICENSE.txt",
+          "sha256": "ee2ef82481ffb445ecdd4b3a4c1f82c0cddb2da8fe39d8e8dc384fffb3e7f06f"
+        },
+        {
+          "path": "third_party/licenses/native/flutter_soloud/PFFFT-FFTPACK-LICENSE.txt",
+          "sha256": "c52a1263204dc55b9c9e5b52834313811618aa9bda9afd918a9d56abac6c031f"
+        },
+        {
+          "path": "third_party/licenses/native/flutter_soloud/SoLoud-Wide-Open-License.txt",
+          "sha256": "c085c571b3ddf6896c421f0cbb1955ee6f03c2d5b6cd359bf688ee2e3acb5fdb"
+        },
+        {
+          "path": "third_party/licenses/native/flutter_soloud/miniaudio-LICENSE.txt",
+          "sha256": "8ee059f719506d610d0e11e15a36d5c6fd9a55801931b80215f9d26ed019e0d1"
+        },
+        {
+          "path": "third_party/licenses/native/flutter_soloud/dr_flac-LICENSE.txt",
+          "sha256": "7e4847ffcf45faaaa8d01ffb2c2c7d2f59e0a82205b9ccd0d6061e8a1fdc4881"
+        },
+        {
+          "path": "third_party/licenses/native/flutter_soloud/dr_mp3-LICENSE.txt",
+          "sha256": "36e01e976d4f8afbfe15d682063015719ec3fab3478674fbf2ef4910579ef98f"
+        },
+        {
+          "path": "third_party/licenses/native/flutter_soloud/dr_wav-LICENSE.txt",
+          "sha256": "7e4847ffcf45faaaa8d01ffb2c2c7d2f59e0a82205b9ccd0d6061e8a1fdc4881"
+        },
+        {
+          "path": "third_party/licenses/native/flutter_soloud/stb_vorbis-LICENSE.txt",
+          "sha256": "bb1e1697b7f9036762d0af164c96ccc5699692cf1fd8131aab99a93390f967d8"
+        },
+        {
+          "path": "third_party/licenses/native/flutter_soloud/FLAC-COPYING.Xiph.txt",
+          "sha256": "7866ee98760fc1f0156b4fe6bf530257e02be487ab3fd94e2b63799dd32d6b2c"
+        },
+        {
+          "path": "third_party/licenses/native/flutter_soloud/Ogg-COPYING.txt",
+          "sha256": "d2ab5758336489da61c12cc5bb757da5339c4ae9001f9bb0562b4370249af814"
+        },
+        {
+          "path": "third_party/licenses/native/flutter_soloud/Opus-COPYING.txt",
+          "sha256": "01e1167d54a096d123cf6dfbbeb19587278845c6481d2d66d545669846079551"
+        },
+        {
+          "path": "third_party/licenses/native/flutter_soloud/Vorbis-COPYING.txt",
+          "sha256": "ec1815db59fcd302846df949d7424876cb2e2dc5ed1606c5fb0b36787b1cf43a"
+        }
+      ],
+      "notes": [
+        "Plugin, SoLoud, Signalsmith, PFFFT/FFTPACK, miniaudio, dr_libs and stb_vorbis texts were copied/extracted from the exact package cache.",
+        "The prebuilt FLAC/Ogg/Opus/Vorbis libraries do not ship a versioned license manifest; they remain unresolved until upstream supplies one."
+      ]
+    },
+    {
+      "name": "llamadart native / llama.cpp / ggml",
+      "version": "0.8.11 / native-tag b9829",
+      "status": "LICENSES_VERIFIED_UPSTREAM_TAG_PINNED",
+      "source": "https://github.com/leehack/llamadart-native/releases/tag/b9829",
+      "binary_snapshot": [
+        {
+          "name": "libggml-base.so",
+          "size": 1060712,
+          "sha256": "7138773fea1c44920771586b48904c0f759a356a57865f65e783f9e65c4dd804"
+        },
+        {
+          "name": "libggml-cpu-android_armv8.0_1.so",
+          "size": 7734784,
+          "sha256": "d00af0ac270e1674bee227bde5b7259a7302756101ae7b66396b235af755395f"
+        },
+        {
+          "name": "libggml-cpu-android_armv8.2_1.so",
+          "size": 8074000,
+          "sha256": "5400bf845cf944775f0e76af5f28894922ec63b56b501fd18ad41dc7e2f5ca3f"
+        },
+        {
+          "name": "libggml-cpu-android_armv8.2_2.so",
+          "size": 8074352,
+          "sha256": "1a5d143a54bbd916d3c8d0dde1aa1e3f278c61bf7a937f78d257d154ff049a00"
+        },
+        {
+          "name": "libggml-cpu-android_armv8.6_1.so",
+          "size": 8239928,
+          "sha256": "990792f5a7516454d0f68f3ef6d4c6114b26024a9061597131241f5675e71660"
+        },
+        {
+          "name": "libggml-cpu-android_armv9.0_1.so",
+          "size": 8315616,
+          "sha256": "c1af3a18f837eb23fcfa799c18c98b3a32e1fc36a4de1bcb96f2cb01e994833a"
+        },
+        {
+          "name": "libggml-cpu-android_armv9.2_1.so",
+          "size": 8446472,
+          "sha256": "a95e651a6e50698a167a938d68d231553315871e5a3ead1787ff908f5be4f6f3"
+        },
+        {
+          "name": "libggml-cpu-android_armv9.2_2.so",
+          "size": 8446512,
+          "sha256": "bac6cc1a8721bbdc3981484593bab9dc8fb9c4223255c3f92944d5a238564a37"
+        },
+        {
+          "name": "libggml-opencl.so",
+          "size": 9194416,
+          "sha256": "10a0bc0320278c1b5e4607a7ef2bd8284315f4a54e1cd427c3abb21480d066c7"
+        },
+        {
+          "name": "libggml-vulkan.so",
+          "size": 54076568,
+          "sha256": "7f1f4e7f7e03a4ab4034da862d1348f4f483fd91bfeae2c990f342ef993e9608"
+        },
+        {
+          "name": "libggml.so",
+          "size": 119600,
+          "sha256": "c17bcfb888c9adb955b107597dbc5ef6bd48ee7ec3e201d34dd8ea069808fb90"
+        },
+        {
+          "name": "libllama-common.so",
+          "size": 3870784,
+          "sha256": "7ea69b69080e2539efb14fe56b9390ed3fb7843636833ecbd7fe2fc3daf2e9b3"
+        },
+        {
+          "name": "libllama.so",
+          "size": 2989568,
+          "sha256": "5f5cf07973740ae7ca9606e5695df1f1203a1ae1f1ba85e47b59102607146f3d"
+        },
+        {
+          "name": "libllamadart.so",
+          "size": 35904,
+          "sha256": "27a2d8155eb8481efcb5f5cec3e82b26c856146df3f2ac5ea82643017d64c4fe"
+        },
+        {
+          "name": "libmtmd.so",
+          "size": 983880,
+          "sha256": "050a16e20cf7ccc1e8a903fdd107c844e53afef6c2c78857c166db989f9ef067"
+        }
+      ],
+      "license_files": [
+        {
+          "path": "third_party/licenses/native/llamadart-native-b9829-LICENSE.txt",
+          "sha256": "52a79b73bf86ee8794bd8eab8179761e8f4f8d16e7f1d77168c67629c46163c5"
+        },
+        {
+          "path": "third_party/licenses/native/llama.cpp-b9829-LICENSE.txt",
+          "sha256": "94f29bbed6a22c35b992c5c6ebf0e7c92f13b836b90f36f461c9cf2f0f1d010d"
+        }
+      ],
+      "notes": [
+        "The wrapper pins native tag b9829; llamadart-native documents that raw upstream tags identify the llama.cpp source ref used for release assets.",
+        "Exact MIT license texts for both llamadart-native and llama.cpp at tag b9829 are stored locally."
+      ]
+    },
+    {
+      "name": "flutter_gemma LiteRT-LM bundle",
+      "version": "0.16.5 / native-v0.12.0-a",
+      "status": "PRIMARY_APACHE_LICENSE_VERIFIED_TRANSITIVE_NOTICES_PARTIAL",
+      "source": "https://github.com/DenisovAV/flutter_gemma/releases/tag/native-v0.12.0-a",
+      "binary_snapshot": [
+        {
+          "name": "libGemmaModelConstraintProvider.so",
+          "size": 20092072,
+          "sha256": "45ca57e55d52976e5d2dadfc0e874499fc0671c169a28077772c25264f9d81f6"
+        },
+        {
+          "name": "libLiteRtDispatch_Qualcomm.so",
+          "size": 429704,
+          "sha256": "fadf7f0a1b4add782745a3647ee3daf0da506e2eebd69d891b53b73d714f4ca9"
+        },
+        {
+          "name": "libLiteRtGpuAccelerator.so",
+          "size": 8287840,
+          "sha256": "a658cbd4fc86f4fcc6cc4b41619b15a567d2b6b324e88de2bd64dccd4ac05251"
+        },
+        {
+          "name": "libLiteRtLm.so",
+          "size": 39483808,
+          "sha256": "3e41ec42e5bef6d39d45046a98b248d79805618092bb8c557084e0100b1c3596"
+        },
+        {
+          "name": "libLiteRtOpenClAccelerator.so",
+          "size": 2663384,
+          "sha256": "90095e23f91d36f334fb48574b833872bca334832f9c7e259635572766cdafc5"
+        },
+        {
+          "name": "libLiteRtTopKOpenClSampler.so",
+          "size": 1252809,
+          "sha256": "cb3fd8c56bbbe44609567f2016be5855581926aca7829daef6e9a9953ef37a97"
+        },
+        {
+          "name": "libLiteRtTopKWebGpuSampler.so",
+          "size": 1318465,
+          "sha256": "bc80303076f6477ffabf76252428db74518af16e7cae24f74423cfa74dcbc2d2"
+        },
+        {
+          "name": "libLiteRtWebGpuAccelerator.so",
+          "size": 8074848,
+          "sha256": "62b463789c5d14900bcf4a91630d3cbcfc11b77b881abf871455ad33e12367e3"
+        },
+        {
+          "name": "libQnnHtp.so",
+          "size": 2778176,
+          "sha256": "090e993822564851eab1405aff171643b21e644e3f696c95c96f2732aaed813a"
+        },
+        {
+          "name": "libQnnHtpV73Skel.so",
+          "size": 10761464,
+          "sha256": "11c76e1d9bcc8a3168e47f73e48baba0da8e1ca03b7c429e4a5777eab5d20c5a"
+        },
+        {
+          "name": "libQnnHtpV73Stub.so",
+          "size": 679168,
+          "sha256": "ef0d0cbbdd423a81c19fb0f60d1451b602bcd60c08b3564f1c82e632fb59f157"
+        },
+        {
+          "name": "libQnnHtpV75Skel.so",
+          "size": 10794236,
+          "sha256": "3997e70b0409060756d8c4e45068ca3f5b8dc405f1978db0b2b03a74b79f4b6a"
+        },
+        {
+          "name": "libQnnHtpV75Stub.so",
+          "size": 679168,
+          "sha256": "07eb7cd2e68f6fb82bfbcd6e2cf09455670fb5ca31537e9b6725d044d378c306"
+        },
+        {
+          "name": "libQnnHtpV79Skel.so",
+          "size": 10975268,
+          "sha256": "41f83395ed4b1bcfc43417a1b82f3f137c825747711c9ab4c9d50034ed198f98"
+        },
+        {
+          "name": "libQnnHtpV79Stub.so",
+          "size": 679168,
+          "sha256": "005bd3de462851ce3dde55260d7d8560d6d07dbc309f554780b1f6412e6d9df1"
+        },
+        {
+          "name": "libQnnHtpV81Skel.so",
+          "size": 11797220,
+          "sha256": "66719325303f22562679edfed509d540cbff53ac59127b6e4ead84b62f1dc655"
+        },
+        {
+          "name": "libQnnHtpV81Stub.so",
+          "size": 755464,
+          "sha256": "f85cc467bda23b8253f085c4fa2680a1428e5b94c6c5a3e572abaa20c5b13ba1"
+        },
+        {
+          "name": "libQnnSystem.so",
+          "size": 2983560,
+          "sha256": "7e69258e1278cc9b2bb62dbc6e2a52c227a100d6505a13fd6324a87993d0bba8"
+        },
+        {
+          "name": "libStreamProxy.so",
+          "size": 7392,
+          "sha256": "f44ac23a77275532f25f82a572fde1e90bad9e1e19d56b7c9322d5bbadcfa880"
+        }
+      ],
+      "license_files": [
+        {
+          "path": "third_party/licenses/native/LiteRT-LM-v0.12.0-LICENSE.txt",
+          "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+        }
+      ],
+      "notes": [
+        "The exact Apache-2.0 text from LiteRT-LM v0.12.0 is stored locally.",
+        "The downloaded binary bundle does not provide a complete native transitive SBOM; Android Maven dependencies are inventoried separately.",
+        "Qualcomm QNN binaries are excluded from Holt release APKs."
+      ]
+    },
+    {
+      "name": "Qualcomm QNN libraries distributed by flutter_gemma bundle",
+      "version": "unknown; extracted upstream from Google AI Edge Gallery APKs",
+      "status": "EXCLUDED_FROM_ANDROID_RELEASE_REDISTRIBUTION_UNVERIFIED",
+      "source": "No authoritative redistributable source identified",
+      "binary_snapshot": [
+        {
+          "name": "libLiteRtDispatch_Qualcomm.so",
+          "size": 429704,
+          "sha256": "fadf7f0a1b4add782745a3647ee3daf0da506e2eebd69d891b53b73d714f4ca9"
+        },
+        {
+          "name": "libQnnHtp.so",
+          "size": 2778176,
+          "sha256": "090e993822564851eab1405aff171643b21e644e3f696c95c96f2732aaed813a"
+        },
+        {
+          "name": "libQnnHtpV73Skel.so",
+          "size": 10761464,
+          "sha256": "11c76e1d9bcc8a3168e47f73e48baba0da8e1ca03b7c429e4a5777eab5d20c5a"
+        },
+        {
+          "name": "libQnnHtpV73Stub.so",
+          "size": 679168,
+          "sha256": "ef0d0cbbdd423a81c19fb0f60d1451b602bcd60c08b3564f1c82e632fb59f157"
+        },
+        {
+          "name": "libQnnHtpV75Skel.so",
+          "size": 10794236,
+          "sha256": "3997e70b0409060756d8c4e45068ca3f5b8dc405f1978db0b2b03a74b79f4b6a"
+        },
+        {
+          "name": "libQnnHtpV75Stub.so",
+          "size": 679168,
+          "sha256": "07eb7cd2e68f6fb82bfbcd6e2cf09455670fb5ca31537e9b6725d044d378c306"
+        },
+        {
+          "name": "libQnnHtpV79Skel.so",
+          "size": 10975268,
+          "sha256": "41f83395ed4b1bcfc43417a1b82f3f137c825747711c9ab4c9d50034ed198f98"
+        },
+        {
+          "name": "libQnnHtpV79Stub.so",
+          "size": 679168,
+          "sha256": "005bd3de462851ce3dde55260d7d8560d6d07dbc309f554780b1f6412e6d9df1"
+        },
+        {
+          "name": "libQnnHtpV81Skel.so",
+          "size": 11797220,
+          "sha256": "66719325303f22562679edfed509d540cbff53ac59127b6e4ead84b62f1dc655"
+        },
+        {
+          "name": "libQnnHtpV81Stub.so",
+          "size": 755464,
+          "sha256": "f85cc467bda23b8253f085c4fa2680a1428e5b94c6c5a3e572abaa20c5b13ba1"
+        },
+        {
+          "name": "libQnnSystem.so",
+          "size": 2983560,
+          "sha256": "7e69258e1278cc9b2bb62dbc6e2a52c227a100d6505a13fd6324a87993d0bba8"
+        }
+      ],
+      "license_files": [],
+      "notes": [
+        "flutter_gemma hook comments state these binaries were extracted from Google AI Edge Gallery APKs.",
+        "No Qualcomm/Google redistribution license, NOTICE, version manifest, or SBOM is present. A generic Apache license cannot cure this.",
+        "android/app/build.gradle.kts excludes libQnn*.so and libLiteRtDispatch_Qualcomm.so; the release verifier rejects an APK containing either."
+      ]
+    },
+    {
+      "name": "qdrant-edge native FFI",
+      "version": "0.7.2",
+      "status": "EXCLUDED_FROM_ANDROID_RELEASE",
+      "source": "https://github.com/DenisovAV/flutter_gemma/releases/tag/qdrant-edge-v0.7.2",
+      "binary_snapshot": [
+        {
+          "name": "libqdrant_edge_ffi.so",
+          "size": 19237208,
+          "sha256": "ec7156923343da7d248838e525adda0f4fb7ea316ff4b3ce08af79c2829dd836"
+        }
+      ],
+      "license_files": [],
+      "notes": [
+        "The binary embeds many Rust crates but the release/cache has no Cargo.lock, cargo-about output, or THIRD_PARTY_LICENSES.",
+        "android/app/build.gradle.kts excludes libqdrant_edge_ffi.so; the release verifier rejects an APK containing it."
+      ]
+    },
+    {
+      "name": "sqlite3 native library",
+      "version": "3.3.3",
+      "status": "PRIMARY_LICENSE_VERIFIED_BINARY_BUILD_METADATA_PARTIAL",
+      "source": "https://pub.dev/packages/sqlite3/versions/3.3.3",
+      "binary_snapshot": [
+        {
+          "name": "libsqlite3.so",
+          "size": 1824456,
+          "sha256": "9c4b75c2f7798d9aa6306811b3b412d1a0e54bd41f2304780daa4748b27a971e"
+        },
+        {
+          "name": "libsqlite3.so",
+          "size": 1865016,
+          "sha256": "807999cfe7e0ccf811e7c820d6b11d31c6bb2388c6659fbc6829cd18dae4f61e"
+        },
+        {
+          "name": "libsqlite3.so",
+          "size": 1802504,
+          "sha256": "52c7183d99b1d85df5d09d9cf11613213f92121756df2562e7319fbe6b2a00b3"
+        }
+      ],
+      "license_files": [],
+      "notes": [
+        "sqlite3.dart is MIT; upstream SQLite is public domain.",
+        "The exact SQLite source ID should be captured from the final release binary."
+      ]
+    }
+  ]
+}
