@@ -54,3 +54,23 @@ android/key.properties
 *.keystore
 _archive_dev/
 *.apk
+
+# ═══ 非 Android 平台：未啟用 ═══
+ios/
+web/
+linux/
+macos/
+windows/
+
+# ═══ 內部文檔/筆記：不公開 ═══
+.agents/
+*.SKILL.md
+晏辭最想你注意的.md
+OpenRouter緩存命中經驗與避坑指南.docx
+holt_caching_audit_report.docx
+cache_fix_定索清單.md
+cache完整攻略指南_*.md
+prompt-caching-guide.md
+prompt-caching-guide.pdf
+lib_major_categories_guide.md
+fix_db.dart

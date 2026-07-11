@@ -3,10 +3,12 @@
 Holt is a local-first, multi-provider AI companion app built with Flutter. The
 currently supported distributable target is Android arm64.
 
-本地優先的 AI 伴侶應用：對話、記憶、情緒數據全部留在你自己的設備上，
-網絡請求只發往**你自己配置的 API**，無統計、無廣告、無遙測。
-支援多家模型接入與離線本地模型，深度優化 prompt 緩存以壓低長對話成本。
-構建與簽名見下文；隱私細節見 [PRIVACY.md](PRIVACY.md)。
+Conversations, memories and emotion data stay entirely on your device.
+Network requests go only to API endpoints **you** configure — no analytics,
+no ads, no telemetry. Supports multiple model providers and offline local
+models, with deep prompt-caching optimisation to keep long-conversation
+costs down. Build and signing instructions below; privacy details in
+[PRIVACY.md](PRIVACY.md).
 
 ## Features
 
@@ -44,7 +46,7 @@ the Holt JSON backup format. Existing exports remain importable.
 
 ## Licensing
 
-Holt source code is available under the [GNU GPL-3.0](LICENSE) — free to use
+Holt source code is available under the [GNU AGPL-3.0](LICENSE) — free to use
 and modify, but derivative works must remain open source under the same
 license. Third-party
 components, native libraries, fonts and their notices remain under their own
