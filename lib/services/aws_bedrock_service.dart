@@ -15,6 +15,7 @@ class BedrockService implements ApiAdapter {
   final String region;
   final String modelId;
   final Duration streamIdleTimeout;
+  http.Client? _activeClient;
 
   static const String _service = 'bedrock-runtime';
   static Map<String, int> lastCacheStats = {};
@@ -43,32 +44,42 @@ class BedrockService implements ApiAdapter {
     required String model,
     String? systemPrompt,
     StructuredPrompt? structuredPrompt,
+    ApiUsageCallback? onUsage,
   }) async {
     resetCacheStats();
-    final body = await _buildBody(
-      messages,
-      systemPrompt,
-      structuredPrompt: structuredPrompt,
-    );
-    final bodyStr = jsonEncode(body);
+    final client = http.Client();
+    _activeClient?.close();
+    _activeClient = client;
+    try {
+      final body = await _buildBody(
+        messages,
+        systemPrompt,
+        structuredPrompt: structuredPrompt,
+      );
+      final bodyStr = jsonEncode(body);
 
-    final headers = _signRequest(
-      method: 'POST',
-      uri: '/model/$modelId/invoke',
-      body: bodyStr,
-    );
+      final headers = _signRequest(
+        method: 'POST',
+        uri: '/model/$modelId/invoke',
+        body: bodyStr,
+      );
 
-    final response = await http
-        .post(Uri.parse(_endpoint), headers: headers, body: bodyStr)
-        .timeout(const Duration(seconds: 180));
+      final response = await client
+          .post(Uri.parse(_endpoint), headers: headers, body: bodyStr)
+          .timeout(const Duration(seconds: 180));
 
-    if (response.statusCode != 200) {
-      throw Exception('Bedrock 錯誤 ${response.statusCode}: ${response.body}');
+      if (response.statusCode != 200) {
+        throw Exception('Bedrock 錯誤 ${response.statusCode}: ${response.body}');
+      }
+
+      final data = jsonDecode(response.body);
+      final requestStats = _extractUsage(data, const <String, int>{});
+      onUsage?.call(ApiUsage.fromStats(requestStats));
+      return data['content']?[0]?['text'] ?? '';
+    } finally {
+      if (identical(_activeClient, client)) _activeClient = null;
+      client.close();
     }
-
-    final data = jsonDecode(response.body);
-    _extractUsage(data);
-    return data['content']?[0]?['text'] ?? '';
   }
 
   @override
@@ -77,28 +88,30 @@ class BedrockService implements ApiAdapter {
     required String model,
     String? systemPrompt,
     StructuredPrompt? structuredPrompt,
+    ApiUsageCallback? onUsage,
   }) async* {
     resetCacheStats();
-    final body = await _buildBody(
-      messages,
-      systemPrompt,
-      structuredPrompt: structuredPrompt,
-    );
-    final bodyStr = jsonEncode(body);
-
-    final headers = _signRequest(
-      method: 'POST',
-      uri: '/model/$modelId/invoke-with-response-stream',
-      body: bodyStr,
-    );
-
-    final request = http.Request('POST', Uri.parse(_streamEndpoint));
-    request.headers.addAll(headers);
-    request.body = bodyStr;
-
-    // client 自己開的自己關（finally），連接超時 30s 防永久轉圈
     final client = http.Client();
+    _activeClient?.close();
+    _activeClient = client;
     try {
+      final body = await _buildBody(
+        messages,
+        systemPrompt,
+        structuredPrompt: structuredPrompt,
+      );
+      final bodyStr = jsonEncode(body);
+
+      final headers = _signRequest(
+        method: 'POST',
+        uri: '/model/$modelId/invoke-with-response-stream',
+        body: bodyStr,
+      );
+
+      final request = http.Request('POST', Uri.parse(_streamEndpoint));
+      request.headers.addAll(headers);
+      request.body = bodyStr;
+
       final response = await client
           .send(request)
           .timeout(const Duration(seconds: 30));
@@ -113,17 +126,18 @@ class BedrockService implements ApiAdapter {
       // HTTP body 是 binary application/vnd.amazon.eventstream。decoder 會增量
       // 組 frame、驗 prelude/message CRC、解 headers，再取出 chunk.bytes。
       // 任一壞 frame、服務端 exception 或 idle timeout 都會明確終止，不再吞錯。
+      var requestStats = <String, int>{};
       await for (final event in BedrockEventStream.decode(
         response.stream,
         idleTimeout: streamIdleTimeout,
       )) {
-        _extractUsage(event);
+        requestStats = _extractUsage(event, requestStats);
         final message = event['message'];
         if (message is Map) {
-          _extractUsage(<String, dynamic>{
+          requestStats = _extractUsage(<String, dynamic>{
             for (final entry in message.entries)
               entry.key.toString(): entry.value,
-          });
+          }, requestStats);
         }
 
         if (event['type'] == 'content_block_delta') {
@@ -132,9 +146,18 @@ class BedrockService implements ApiAdapter {
           if (text is String && text.isNotEmpty) yield text;
         }
       }
+      onUsage?.call(ApiUsage.fromStats(requestStats));
     } finally {
+      if (identical(_activeClient, client)) _activeClient = null;
       client.close();
     }
+  }
+
+  @override
+  void cancelActive() {
+    final client = _activeClient;
+    _activeClient = null;
+    client?.close();
   }
 
   Future<Map<String, dynamic>> _buildBody(
@@ -210,11 +233,14 @@ class BedrockService implements ApiAdapter {
     return body;
   }
 
-  void _extractUsage(Map<String, dynamic> data) {
+  Map<String, int> _extractUsage(
+    Map<String, dynamic> data,
+    Map<String, int> base,
+  ) {
     final usage = data['usage'];
-    if (usage is! Map) return;
+    if (usage is! Map) return Map<String, int>.from(base);
 
-    final next = Map<String, int>.from(lastCacheStats);
+    final next = Map<String, int>.from(base);
     void update(String target, List<String> candidates) {
       for (final key in candidates) {
         final value = usage[key];
@@ -233,7 +259,8 @@ class BedrockService implements ApiAdapter {
     update('completion_tokens', const ['output_tokens', 'completion_tokens']);
     update('cache_creation', const ['cache_creation_input_tokens']);
     update('cache_read', const ['cache_read_input_tokens']);
-    lastCacheStats = next;
+    lastCacheStats = Map<String, int>.from(next);
+    return next;
   }
 
   /// AWS Signature V4 簽名

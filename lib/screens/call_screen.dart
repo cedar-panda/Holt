@@ -78,6 +78,7 @@ class _CallScreenState extends State<CallScreen>
   bool _speechAvailable = false;
   bool _popped = false;
   bool _endingForPoorSignal = false;
+  ApiAdapter? _activeAdapter;
 
   final List<Map<String, String>> _callHistory = [];
   final List<_CallMessage> _chatLog = [];
@@ -643,10 +644,13 @@ class _CallScreenState extends State<CallScreen>
 
     SentenceTtsPipeline? turnPipeline;
     VoidCallback? amplitudeListener;
+    ApiAdapter? turnAdapter;
     try {
       final model = await ApiSettings.getModel();
       final providerName = await ApiSettings.getApiProviderName();
       final adapter = await ApiSettings.buildAdapter();
+      turnAdapter = adapter;
+      _activeAdapter = adapter;
       final emotionEnabled = await MemorySettings.isAbilityEnabled('emotion');
 
       // 靜態前綴：優先用聊天傳入的同款 bundle（同 namespace，直接命中
@@ -768,13 +772,16 @@ class _CallScreenState extends State<CallScreen>
       }
       _firstIncomingTurn = false;
 
+      if (!mounted || _popped || serial != _turnSerial) return;
       final rawBuf = StringBuffer();
+      var requestUsage = const ApiUsage();
       var emitted = 0;
       String filtered = '';
       await for (final chunk in adapter.sendMessageStream(
         messages: outgoing,
         model: model,
         structuredPrompt: structured,
+        onUsage: (usage) => requestUsage = usage,
       )) {
         if (serial != _turnSerial) {
           // 已被打斷/掛斷
@@ -835,8 +842,8 @@ class _CallScreenState extends State<CallScreen>
       _appendCallHistory('assistant', processedResponse);
 
       // 緩存提示（通話內 chip + 消息 ⚡）
-      final cacheRead = CacheStatsHelper.readTokens(providerName);
-      final label = CacheStatsHelper.shortLabel(providerName);
+      final cacheRead = CacheStatsHelper.readTokens(requestUsage);
+      final label = CacheStatsHelper.shortLabel(requestUsage);
       if (mounted && serial == _turnSerial) {
         setState(() {
           _cacheLabel = label;
@@ -863,10 +870,13 @@ class _CallScreenState extends State<CallScreen>
       if (!mounted || _popped || serial != _turnSerial) return;
 
       // 記錄用量
-      _tokenTracker.addEstimated(completion: response);
+      if (!requestUsage.hasTokenCounts) {
+        _tokenTracker.addEstimated(completion: response);
+      }
       await _tokenTracker.recordRealUsage(
         provider: providerName,
         model: model,
+        usage: requestUsage,
         characterId: _characterId,
       );
 
@@ -900,6 +910,7 @@ class _CallScreenState extends State<CallScreen>
       _scrollLogToBottom();
       _maybeRestartAutoListen();
     } finally {
+      if (identical(_activeAdapter, turnAdapter)) _activeAdapter = null;
       final pipeline = turnPipeline;
       final listener = amplitudeListener;
       if (pipeline != null && listener != null) {
@@ -993,6 +1004,9 @@ class _CallScreenState extends State<CallScreen>
   void _interrupt() {
     if (_micState != _MicState.speaking) return;
     _turnSerial++;
+    final adapter = _activeAdapter;
+    _activeAdapter = null;
+    adapter?.cancelActive();
     final pipeline = _pipeline;
     _pipeline = null;
     if (pipeline != null) unawaited(pipeline.cancel());
@@ -1016,6 +1030,9 @@ class _CallScreenState extends State<CallScreen>
     if (_endingForPoorSignal || _popped || !mounted) return;
     _endingForPoorSignal = true;
     _turnSerial++;
+    final adapter = _activeAdapter;
+    _activeAdapter = null;
+    adapter?.cancelActive();
     final pipeline = _pipeline;
     _pipeline = null;
     if (pipeline != null) unawaited(pipeline.cancel());
@@ -1038,6 +1055,9 @@ class _CallScreenState extends State<CallScreen>
     if (_popped || !mounted) return;
     _popped = true;
     _turnSerial++;
+    final adapter = _activeAdapter;
+    _activeAdapter = null;
+    adapter?.cancelActive();
     _autoListenRestartTimer?.cancel();
     _poorSignalFinishTimer?.cancel();
     _sttStopFallback?.cancel();
@@ -1053,6 +1073,9 @@ class _CallScreenState extends State<CallScreen>
   @override
   void dispose() {
     _turnSerial++;
+    final adapter = _activeAdapter;
+    _activeAdapter = null;
+    adapter?.cancelActive();
     _sttStopFallback?.cancel();
     _autoListenRestartTimer?.cancel();
     _poorSignalFinishTimer?.cancel();

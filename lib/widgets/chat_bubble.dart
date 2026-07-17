@@ -36,6 +36,8 @@ class ChatBubble extends StatefulWidget {
   final bool showAvatar;
   final bool showToolbar;
   final bool cacheHit;
+  final bool incomplete;
+  final VoidCallback? onRetryIncomplete;
   final bool selectable;
   final bool selected;
   final VoidCallback? onSelectionToggle;
@@ -78,6 +80,8 @@ class ChatBubble extends StatefulWidget {
     this.showAvatar = false,
     this.showToolbar = true,
     this.cacheHit = false,
+    this.incomplete = false,
+    this.onRetryIncomplete,
     this.selectable = false,
     this.selected = false,
     this.onSelectionToggle,
@@ -997,6 +1001,47 @@ class _ChatBubbleState extends State<ChatBubble>
                                               size: 16,
                                               color: _cacheHitColor(),
                                             ),
+                                          ],
+                                          if (widget.incomplete) ...[
+                                            const SizedBox(width: 7),
+                                            Icon(
+                                              Icons.error_outline_rounded,
+                                              size: 14,
+                                              color: Colors.orange.withValues(
+                                                alpha: 0.8,
+                                              ),
+                                            ),
+                                            const SizedBox(width: 3),
+                                            Text(
+                                              L.pick(
+                                                en: 'Interrupted',
+                                                zhTW: '回覆中斷',
+                                              ),
+                                              style: TextStyle(
+                                                fontSize: 10,
+                                                color: Colors.orange.withValues(
+                                                  alpha: 0.8,
+                                                ),
+                                              ),
+                                            ),
+                                            if (widget.onRetryIncomplete !=
+                                                null) ...[
+                                              const SizedBox(width: 5),
+                                              GestureDetector(
+                                                onTap: widget.onRetryIncomplete,
+                                                child: Text(
+                                                  L.pick(
+                                                    en: 'Retry',
+                                                    zhTW: '重試',
+                                                  ),
+                                                  style: TextStyle(
+                                                    fontSize: 10,
+                                                    fontWeight: FontWeight.w600,
+                                                    color: YanciTheme.accent,
+                                                  ),
+                                                ),
+                                              ),
+                                            ],
                                           ],
                                         ],
                                       ),

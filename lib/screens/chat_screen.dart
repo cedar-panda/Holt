@@ -24,10 +24,6 @@ import '../services/token_tracker.dart';
 import '../services/context_compressor.dart';
 import '../services/sticker_service.dart';
 import '../services/image_service.dart';
-import '../services/openrouter_service.dart';
-import '../services/deepseek_service.dart';
-import '../services/gemini_service.dart';
-import '../services/aws_bedrock_service.dart';
 import '../memory/database.dart';
 import '../memory/retriever.dart';
 import '../services/bio_clock_service.dart';
@@ -166,6 +162,8 @@ class _ChatScreenState extends State<ChatScreen> {
   String _chatSearchQuery = '';
   List<Map<String, dynamic>> _chatSearchResults = [];
   int _generationSerial = 0;
+  ApiAdapter? _activeGenerationAdapter;
+  bool _stopGenerationRequested = false;
 
   // ═══ 流式標籤實時剝離 ═══
   // 在流式輸出時隱藏內部標籤，避免 <emo>/<memo>/<draw> 等閃現
@@ -316,9 +314,17 @@ class _ChatScreenState extends State<ChatScreen> {
     return text.trim();
   }
 
-  int _beginGeneration() => ++_generationSerial;
+  int _beginGeneration() {
+    _stopGenerationRequested = false;
+    return ++_generationSerial;
+  }
 
   bool _isCurrentGeneration(int serial) => serial == _generationSerial;
+
+  void _stopActiveGeneration() {
+    _stopGenerationRequested = true;
+    _activeGenerationAdapter?.cancelActive();
+  }
 
   Future<ApiAdapter?> _prepareAdapterForGeneration({
     required int generationSerial,
@@ -340,7 +346,11 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   void _invalidateGenerationState() {
+    final adapter = _activeGenerationAdapter;
+    _activeGenerationAdapter = null;
+    adapter?.cancelActive();
     _clearStreamQueue();
+    _stopGenerationRequested = false;
     _generationSerial++;
     _streamingText = '';
     _setGenerating(false);
@@ -728,7 +738,7 @@ class _ChatScreenState extends State<ChatScreen> {
     final keepAlive = KeepAliveService.instance;
     if (keepAlive.activeConversationId != null &&
         keepAlive.activeConversationId != widget.conversationId) {
-      keepAlive.pauseActiveWindow();
+      keepAlive.pauseActiveWindowInMemory();
     }
     // 窗口一打開就接管 cache session / 保活歸屬，舊窗口不能繼續 tick。
     // 若新窗口尚無真消息產生的 StructuredPrompt，保活只更新入口，不發 ping。
@@ -783,6 +793,10 @@ class _ChatScreenState extends State<ChatScreen> {
       );
     } catch (error, stackTrace) {
       debugPrint('Chat initialization failed: $error\n$stackTrace');
+      if (KeepAliveService.instance.activeConversationId ==
+          widget.conversationId) {
+        await KeepAliveService.instance.stop();
+      }
       if (!mounted) return;
       setState(() {
         _isChatReady = false;
@@ -1562,6 +1576,7 @@ class _ChatScreenState extends State<ChatScreen> {
             imagePath: 'generating',
             splitMode: m.splitMode,
             cacheHit: m.cacheHit,
+            status: m.status,
             memoryLog: m.memoryLog,
             createdAt: m.createdAt,
           );
@@ -1603,6 +1618,7 @@ class _ChatScreenState extends State<ChatScreen> {
           imagePath: path ?? m.imagePath,
           splitMode: m.splitMode,
           cacheHit: m.cacheHit,
+          status: m.status,
           memoryLog: newLog,
           createdAt: m.createdAt,
         );
@@ -2083,6 +2099,91 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
+  String _cleanIncompleteReply(String raw) {
+    var text = MemoryActions.stripReply(raw, windowId: widget.conversationId)
+        .replaceAll(_completedToolCallsRe, '')
+        .replaceAll(_completedTagRe, '')
+        .replaceAll(_scratchTagRe, '')
+        .replaceAll(_shopViewTagRe, '')
+        .replaceAll(_transferTagRe, '')
+        .replaceAll(_transferResponseRe, '')
+        .replaceAll(_signMarriageRe, '')
+        .replaceAll(_proposeMarriageRe, '')
+        .replaceAll(_buyTagRe, '');
+    final toolCall = _openToolCallsRe.firstMatch(text);
+    if (toolCall != null) text = text.substring(0, toolCall.start);
+    final openTag = _openTagRe.firstMatch(text);
+    if (openTag != null) text = text.substring(0, openTag.start);
+    final partialTag = RegExp(r'<[a-zA-Z_]*$').firstMatch(text);
+    if (partialTag != null) text = text.substring(0, partialTag.start);
+    return text.trim();
+  }
+
+  Future<Message?> _persistIncompleteReply(String raw) async {
+    final text = _cleanIncompleteReply(raw);
+    if (text.isEmpty) return null;
+    final pending = Message(
+      conversationId: widget.conversationId,
+      characterId: _activeCharacterId,
+      text: text,
+      isUser: false,
+      splitMode: _splitReply,
+      status: Message.statusIncomplete,
+    );
+    final id = await DatabaseHelper.insertMessage(pending);
+    final saved = Message(
+      id: id,
+      conversationId: pending.conversationId,
+      characterId: pending.characterId,
+      text: pending.text,
+      isUser: false,
+      splitMode: pending.splitMode,
+      status: pending.status,
+      createdAt: pending.createdAt,
+    );
+    if (mounted) setState(() => _messages.add(saved));
+    return saved;
+  }
+
+  Future<void> _retryIncompleteMessage(int incompleteId) {
+    return _runMessageRetry(() async {
+      final index = _messages.indexWhere((m) => m.id == incompleteId);
+      // 只重試最末一條半段回覆；若後面已有新對話，保留它作正常歷史，
+      // 避免從中段抽走消息造成前綴突變。
+      if (index < 1 || index != _messages.length - 1) return;
+      final incomplete = _messages[index];
+      if (!incomplete.isIncomplete) return;
+      Message? userMessage;
+      for (var i = index - 1; i >= 0; i--) {
+        if (_messages[i].isUser) {
+          userMessage = _messages[i];
+          break;
+        }
+      }
+      if (userMessage == null) return;
+
+      await DatabaseHelper.deleteMessageById(incompleteId);
+      if (!mounted) return;
+      setState(() => _messages.removeAt(index));
+      if (userMessage.imagePath != null) {
+        await _sendImageLocked(
+          userMessage.imagePath!,
+          caption: userMessage.text,
+          composerDraft: '',
+          clearComposerOnAccept: false,
+          retryUserMessage: userMessage,
+        );
+      } else {
+        await _sendMessageLocked(
+          userMessage.text,
+          composerDraft: '',
+          clearComposerOnAccept: false,
+          retryUserMessage: userMessage,
+        );
+      }
+    });
+  }
+
   String _apiErrorSummary(Object error) {
     var message = error.toString().replaceFirst(RegExp(r'^Exception:\s*'), '');
     message = message.replaceAll(RegExp(r'\s+'), ' ').trim();
@@ -2192,7 +2293,8 @@ class _ChatScreenState extends State<ChatScreen> {
     final conversationId = widget.conversationId;
     // 新窗口第一句話 → 停止舊窗口保活 + 切換緩存會話
     if (_messages.where((m) => m.isUser).isEmpty) {
-      KeepAliveService.instance.stop();
+      await KeepAliveService.instance.stop();
+      if (!mounted) return;
       CacheSession.conversationId = conversationId;
     }
     // 情緒衰減 tick（冪等：未到刷新間隔的點不會被動）
@@ -2380,6 +2482,7 @@ class _ChatScreenState extends State<ChatScreen> {
       if (mounted) _scrollToBottom();
       return;
     }
+    _activeGenerationAdapter = adapter;
 
     // ═══ 並行化：一次發射所有獨立的異步調用，大幅減少等待 ═══
     final charId = _activeCharacterId;
@@ -2628,6 +2731,8 @@ class _ChatScreenState extends State<ChatScreen> {
       _clearStreamQueue();
     }
 
+    final rawReply = StringBuffer();
+    var streamCompleted = false;
     try {
       final enableVibration = await enableVibrationF;
 
@@ -2667,16 +2772,22 @@ class _ChatScreenState extends State<ChatScreen> {
         }
       }
 
-      final rawReply = StringBuffer();
+      var requestUsage = const ApiUsage();
+      if (!_isCurrentGeneration(generationSerial) || _stopGenerationRequested) {
+        _finishFailedGeneration();
+        return;
+      }
       await for (final chunk in adapter.sendMessageStream(
         messages: history,
         model: model,
         structuredPrompt: structured,
+        onUsage: (usage) => requestUsage = usage,
       )) {
         if (!_isCurrentGeneration(generationSerial)) return;
         rawReply.write(chunk);
         if (mounted) _onStreamChunk(chunk);
       }
+      streamCompleted = true;
       final replyText = rawReply.toString();
       if (!_isCurrentGeneration(generationSerial)) return;
 
@@ -2684,11 +2795,12 @@ class _ChatScreenState extends State<ChatScreen> {
       await _tokenTracker.recordRealUsage(
         provider: providerName,
         model: model,
+        usage: requestUsage,
         characterId: _activeCharacterId,
       );
 
       // 檢查本次是否命中緩存
-      final cacheRead = _cacheReadForProvider(providerName);
+      final cacheRead = requestUsage.cacheReadTokens;
 
       // ═══ 模型自主記憶：開啟時才執行 <memo>/<persona_note> 落庫 ═══
       var processedText = (memoryWriteEnabled || isSpiderWebEnabled)
@@ -2948,18 +3060,30 @@ class _ChatScreenState extends State<ChatScreen> {
           ];
           // Phase 3: 二次流式生成
           final buf = StringBuffer();
+          var followUsage = const ApiUsage();
           if (mounted) {
             _onStreamChunk('\n\n');
+          }
+          if (_stopGenerationRequested) {
+            _finishFailedGeneration();
+            return;
           }
           await for (final chunk in adapter.sendMessageStream(
             messages: followHistory,
             model: model,
             structuredPrompt: structured,
+            onUsage: (usage) => followUsage = usage,
           )) {
             if (!_isCurrentGeneration(generationSerial)) return;
             buf.write(chunk);
             if (mounted) _onStreamChunk(chunk);
           }
+          await _tokenTracker.recordRealUsage(
+            provider: providerName,
+            model: model,
+            usage: followUsage,
+            characterId: _activeCharacterId,
+          );
           var followUp = memoryWriteEnabled
               ? await MemoryActions.processReply(
                   buf.toString(),
@@ -3025,16 +3149,28 @@ class _ChatScreenState extends State<ChatScreen> {
             {'role': 'user', 'content': injection},
           ];
           final buf = StringBuffer();
+          var followUsage = const ApiUsage();
           if (mounted) _onStreamChunk('\n\n');
+          if (_stopGenerationRequested) {
+            _finishFailedGeneration();
+            return;
+          }
           await for (final chunk in adapter.sendMessageStream(
             messages: followHistory,
             model: model,
             structuredPrompt: structured,
+            onUsage: (usage) => followUsage = usage,
           )) {
             if (!_isCurrentGeneration(generationSerial)) return;
             buf.write(chunk);
             if (mounted) _onStreamChunk(chunk);
           }
+          await _tokenTracker.recordRealUsage(
+            provider: providerName,
+            model: model,
+            usage: followUsage,
+            characterId: _activeCharacterId,
+          );
           var followUp = MemoryActions.stripReply(
             buf.toString(),
             windowId: widget.conversationId,
@@ -3072,7 +3208,10 @@ class _ChatScreenState extends State<ChatScreen> {
       final memLog = memLogLines.isEmpty
           ? ''
           : '${memLogLines.join('\n')}\nDone';
-      if (!_isCurrentGeneration(generationSerial)) return;
+      if (!_isCurrentGeneration(generationSerial) || _stopGenerationRequested) {
+        _finishFailedGeneration();
+        return;
+      }
       final aiMsg = Message(
         conversationId: conversationId,
         characterId: _activeCharacterId,
@@ -3098,6 +3237,7 @@ class _ChatScreenState extends State<ChatScreen> {
         isUser: false,
         splitMode: aiMsg.splitMode,
         cacheHit: aiMsg.cacheHit,
+        status: aiMsg.status,
         createdAt: aiMsg.createdAt,
         imagePath: aiMsg.imagePath,
         memoryLog: aiMsg.memoryLog,
@@ -3166,7 +3306,7 @@ class _ChatScreenState extends State<ChatScreen> {
       }
 
       // ═══ 回覆完成震動 + Cache 命中震動 ═══
-      final cacheDisplay = _getCacheDisplay(providerName);
+      final cacheDisplay = _getCacheDisplay(providerName, requestUsage);
       if (mounted) {
         if (cacheDisplay != null && cacheDisplay.$1.contains('hit')) {
           HapticFeedback.heavyImpact(); // cache 命中用重震動
@@ -3201,18 +3341,28 @@ class _ChatScreenState extends State<ChatScreen> {
       _showApiConfigFailure(e);
     } catch (e) {
       if (!_isCurrentGeneration(generationSerial)) return;
+      final incomplete = streamCompleted
+          ? null
+          : await _persistIncompleteReply(rawReply.toString());
       _finishFailedGeneration();
+      if (_stopGenerationRequested) return;
       _showRetryableFailure(
         e,
-        () => _runMessageRetry(
-          () => _sendMessageLocked(
-            userMsgWithId.text,
-            composerDraft: '',
-            clearComposerOnAccept: false,
-            retryUserMessage: userMsgWithId,
-          ),
-        ),
+        incomplete?.id != null
+            ? () => _retryIncompleteMessage(incomplete!.id!)
+            : () => _runMessageRetry(
+                () => _sendMessageLocked(
+                  userMsgWithId.text,
+                  composerDraft: '',
+                  clearComposerOnAccept: false,
+                  retryUserMessage: userMsgWithId,
+                ),
+              ),
       );
+    } finally {
+      if (identical(_activeGenerationAdapter, adapter)) {
+        _activeGenerationAdapter = null;
+      }
     }
     if (mounted) _scrollToBottom();
   }
@@ -3228,7 +3378,8 @@ class _ChatScreenState extends State<ChatScreen> {
     if (!_isChatReady) return;
     final conversationId = widget.conversationId;
     if (_messages.where((m) => m.isUser).isEmpty) {
-      KeepAliveService.instance.stop();
+      await KeepAliveService.instance.stop();
+      if (!mounted) return;
       CacheSession.conversationId = conversationId;
     }
     if (_isGenerating) return;
@@ -3356,6 +3507,7 @@ class _ChatScreenState extends State<ChatScreen> {
       if (mounted) _scrollToBottom();
       return;
     }
+    _activeGenerationAdapter = adapter;
 
     // ── 構建 API 消息 ──
     final systemPrompt = await ApiSettings.getSystemPrompt();
@@ -3531,6 +3683,8 @@ class _ChatScreenState extends State<ChatScreen> {
       _streamingText = '';
     }
 
+    final rawReply = StringBuffer();
+    var streamCompleted = false;
     try {
       // 構建歷史消息（文字部分）
       // ═══ 歷史圖片降級：只有最新一張真實上傳 ═══
@@ -3603,27 +3757,37 @@ class _ChatScreenState extends State<ChatScreen> {
         apiMessages.add({'role': role, 'content': content});
       }
 
-      final rawReply = StringBuffer();
+      var requestUsage = const ApiUsage();
+      if (!_isCurrentGeneration(generationSerial) || _stopGenerationRequested) {
+        _finishFailedGeneration();
+        return;
+      }
       await for (final chunk in adapter.sendMessageStream(
         messages: apiMessages,
         model: model,
         structuredPrompt: structured,
+        onUsage: (usage) => requestUsage = usage,
       )) {
         if (!_isCurrentGeneration(generationSerial)) return;
         rawReply.write(chunk);
         if (mounted) _onStreamChunk(chunk);
       }
+      streamCompleted = true;
       final replyText = rawReply.toString();
-      if (!_isCurrentGeneration(generationSerial)) return;
+      if (!_isCurrentGeneration(generationSerial) || _stopGenerationRequested) {
+        _finishFailedGeneration();
+        return;
+      }
 
       // ═══ 記錄真實 API 用量 ═══
       await _tokenTracker.recordRealUsage(
         provider: imgProviderName,
         model: model,
+        usage: requestUsage,
         characterId: _activeCharacterId,
       );
 
-      final imgCacheRead = _cacheReadForProvider(imgProviderName);
+      final imgCacheRead = requestUsage.cacheReadTokens;
 
       // ═══ 模型自主記憶：開啟時才執行 <memo>/<persona_note> 落庫 ═══
       var processedText = imgMemoryWriteEnabled
@@ -3845,6 +4009,7 @@ class _ChatScreenState extends State<ChatScreen> {
         isUser: false,
         splitMode: aiMsg.splitMode,
         cacheHit: aiMsg.cacheHit,
+        status: aiMsg.status,
         createdAt: aiMsg.createdAt,
         imagePath: aiMsg.imagePath,
         memoryLog: aiMsg.memoryLog,
@@ -3925,20 +4090,29 @@ class _ChatScreenState extends State<ChatScreen> {
       _showApiConfigFailure(e);
     } catch (e) {
       if (!_isCurrentGeneration(generationSerial)) return;
+      final incomplete = streamCompleted
+          ? null
+          : await _persistIncompleteReply(rawReply.toString());
       _finishFailedGeneration();
+      if (_stopGenerationRequested) return;
       _showRetryableFailure(
         e,
-        () => _runMessageRetry(
-          () => _sendImageLocked(
-            userMsgWithId.imagePath ?? path,
-            caption: userMsgWithId.text,
-            composerDraft: '',
-            clearComposerOnAccept: false,
-            retryUserMessage: userMsgWithId,
-          ),
-        ),
+        incomplete?.id != null
+            ? () => _retryIncompleteMessage(incomplete!.id!)
+            : () => _runMessageRetry(
+                () => _sendImageLocked(
+                  userMsgWithId.imagePath ?? path,
+                  caption: userMsgWithId.text,
+                  composerDraft: '',
+                  clearComposerOnAccept: false,
+                  retryUserMessage: userMsgWithId,
+                ),
+              ),
       );
     } finally {
+      if (identical(_activeGenerationAdapter, adapter)) {
+        _activeGenerationAdapter = null;
+      }
       MemoryActions.clearSearchQuery(widget.conversationId);
     }
     if (mounted) _scrollToBottom();
@@ -4499,8 +4673,13 @@ class _ChatScreenState extends State<ChatScreen> {
                                 _pendingScratchGiftWho != null ||
                                 _pendingGift != null,
                             isGeneratingImage: _isGeneratingImage,
+                            isGeneratingResponse: _isGenerating,
                             onStopGeneration: () {
-                              setState(() => _isGeneratingImage = false);
+                              if (_isGenerating) {
+                                _stopActiveGeneration();
+                              } else {
+                                setState(() => _isGeneratingImage = false);
+                              }
                             },
                             onImagePicked: (path) {
                               setState(() => _pendingImagePath = path);
@@ -4733,6 +4912,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   isLast &&
                   !msg.isUser &&
                   (msg.cacheHit || _cacheHitIndices.contains(i)),
+              incomplete: isLast && msg.isIncomplete,
               // 她遞的證書卡跟在拆分回覆的最後一段
               hasMarriageCert: isLast && splitHasCert,
               certFromChar: isLast && splitHasCert,
@@ -4754,6 +4934,7 @@ class _ChatScreenState extends State<ChatScreen> {
             cacheHit:
                 !msg.isUser && (msg.cacheHit || _cacheHitIndices.contains(i)),
             memoryLog: msg.memoryLog,
+            incomplete: msg.isIncomplete,
             giftName: giftMatch?.group(1)?.trim(),
             giftAccepted: giftMatch != null && charReplyAfter[srcIdx],
             hasMarriageCert:
@@ -4973,6 +5154,14 @@ class _ChatScreenState extends State<ChatScreen> {
                 avatarPath: item.isUser ? _userAvatarPath : _charAvatarPath,
                 showToolbar: item.showToolbar,
                 cacheHit: item.cacheHit,
+                incomplete: item.incomplete,
+                onRetryIncomplete:
+                    item.incomplete &&
+                        item.dbMessageId != null &&
+                        item.originalIndex == _messages.length - 1
+                    ? () =>
+                          unawaited(_retryIncompleteMessage(item.dbMessageId!))
+                    : null,
                 scratchData: _scratchDataMap[item.messageId],
                 transferData: _transferDataMap[item.messageId],
                 giftName: item.giftName,
@@ -5458,6 +5647,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   imagePath: msg.imagePath,
                   splitMode: msg.splitMode,
                   cacheHit: msg.cacheHit,
+                  status: msg.status,
                   memoryLog: msg.memoryLog,
                   createdAt: msg.createdAt,
                 );
@@ -6291,13 +6481,12 @@ class _ChatScreenState extends State<ChatScreen> {
     return parts.isEmpty ? [display] : parts;
   }
 
-  (String, Color)? _getCacheDisplay(String provider) {
+  (String, Color)? _getCacheDisplay(String provider, ApiUsage usage) {
+    final stats = usage.raw;
     switch (provider) {
       case 'openrouter':
-        final stats = OpenRouterService.lastCacheStats;
-        if (stats.isEmpty) return null;
-        final read = stats['cache_read'] ?? 0;
-        final created = stats['cache_creation'] ?? 0;
+        final read = usage.cacheReadTokens;
+        final created = usage.cacheCreationTokens;
         if (read > 0) {
           return ('⚡ cache hit ${read}t', Colors.green.withValues(alpha: 0.6));
         }
@@ -6309,8 +6498,6 @@ class _ChatScreenState extends State<ChatScreen> {
         }
         return null;
       case 'deepseek':
-        final stats = DeepSeekService.lastCacheStats;
-        if (stats.isEmpty) return null;
         final hit = stats['cache_hit'] ?? 0;
         final miss = stats['cache_miss'] ?? 0;
         if (hit > 0) {
@@ -6327,9 +6514,7 @@ class _ChatScreenState extends State<ChatScreen> {
         }
         return null;
       case 'gemini':
-        final stats = GeminiService.lastCacheStats;
-        if (stats.isEmpty) return null;
-        final cached = stats['cached_tokens'] ?? 0;
+        final cached = usage.cacheReadTokens;
         final status = stats['cache_status'] ?? -2;
         if (cached > 0) {
           return (
@@ -6354,10 +6539,8 @@ class _ChatScreenState extends State<ChatScreen> {
         }
         return null;
       case 'bedrock':
-        final stats = BedrockService.lastCacheStats;
-        if (stats.isEmpty) return null;
-        final read = stats['cache_read'] ?? 0;
-        final created = stats['cache_creation'] ?? 0;
+        final read = usage.cacheReadTokens;
+        final created = usage.cacheCreationTokens;
         if (read > 0) {
           return (
             '⚡ bedrock cache hit ${read}t',
@@ -6375,21 +6558,6 @@ class _ChatScreenState extends State<ChatScreen> {
         return null;
     }
   }
-
-  int _cacheReadForProvider(String provider) {
-    switch (provider) {
-      case 'openrouter':
-        return OpenRouterService.lastCacheStats['cache_read'] ?? 0;
-      case 'deepseek':
-        return DeepSeekService.lastCacheStats['cache_hit'] ?? 0;
-      case 'gemini':
-        return GeminiService.lastCacheStats['cached_tokens'] ?? 0;
-      case 'bedrock':
-        return BedrockService.lastCacheStats['cache_read'] ?? 0;
-      default:
-        return 0;
-    }
-  }
 }
 
 /// 顯示用消息項（支持拆分回覆）
@@ -6403,6 +6571,7 @@ class _DisplayItem {
   final int originalIndex;
   final bool showToolbar;
   final bool cacheHit;
+  final bool incomplete;
   final String memoryLog;
 
   /// 非空 → 這項渲染成居中分割線（通話已結束等），不渲染氣泡
@@ -6434,6 +6603,7 @@ class _DisplayItem {
     this.memoryLog = '',
     this.showToolbar = true,
     this.cacheHit = false,
+    this.incomplete = false,
     this.callDivider,
     this.callDividerIcon,
     this.giftName,

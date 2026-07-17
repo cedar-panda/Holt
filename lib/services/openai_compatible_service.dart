@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 import 'api_adapter.dart';
 import 'openrouter_service.dart' show ModelInfo;
 import 'settings/memory_settings.dart';
+import 'sse_stream.dart';
 import 'token_estimator.dart';
 
 /// OpenAI 兼容 API（支持任何中轉站 / 自建端點）
@@ -13,6 +14,8 @@ class OpenAICompatibleService implements ApiAdapter {
   final String apiKey;
   final String baseUrl; // 例：https://api.openai.com/v1
   final String modelPrefixToStrip;
+  http.Client? _activeClient;
+  static Map<String, int> lastUsageStats = <String, int>{};
 
   OpenAICompatibleService({
     required this.apiKey,
@@ -135,36 +138,42 @@ class OpenAICompatibleService implements ApiAdapter {
     required String model,
     String? systemPrompt,
     StructuredPrompt? structuredPrompt,
+    ApiUsageCallback? onUsage,
   }) async {
-    final body = await _buildBody(
-      messages,
-      model,
-      systemPrompt,
-      structuredPrompt: structuredPrompt,
-      stream: false,
-    );
-
-    final http.Response response;
+    final client = http.Client();
+    _activeClient?.close();
+    _activeClient = client;
     try {
-      response = await http
+      final body = await _buildBody(
+        messages,
+        model,
+        systemPrompt,
+        structuredPrompt: structuredPrompt,
+        stream: false,
+      );
+      final response = await client
           .post(
             Uri.parse(_completionsUrl),
             headers: _headers(),
             body: jsonEncode(body),
           )
           .timeout(const Duration(seconds: 180));
+      if (response.statusCode != 200) {
+        throw Exception('API 錯誤 ${response.statusCode}: ${response.body}');
+      }
+
+      final data = jsonDecode(response.body);
+      final stats = _extractUsage(data);
+      if (stats != null) onUsage?.call(ApiUsage.fromStats(stats));
+      return data['choices'][0]['message']['content'] ?? '';
     } on SocketException catch (e) {
       throw Exception(_friendlyNetworkError(e));
     } on HttpException catch (e) {
       throw Exception(_friendlyNetworkError(e));
+    } finally {
+      if (identical(_activeClient, client)) _activeClient = null;
+      client.close();
     }
-
-    if (response.statusCode != 200) {
-      throw Exception('API 錯誤 ${response.statusCode}: ${response.body}');
-    }
-
-    final data = jsonDecode(response.body);
-    return data['choices'][0]['message']['content'] ?? '';
   }
 
   @override
@@ -173,21 +182,24 @@ class OpenAICompatibleService implements ApiAdapter {
     required String model,
     String? systemPrompt,
     StructuredPrompt? structuredPrompt,
+    ApiUsageCallback? onUsage,
   }) async* {
-    final body = await _buildBody(
-      messages,
-      model,
-      systemPrompt,
-      structuredPrompt: structuredPrompt,
-      stream: true,
-    );
-
-    final request = http.Request('POST', Uri.parse(_completionsUrl));
-    request.headers.addAll(_headers());
-    request.body = jsonEncode(body);
-
     final client = http.Client();
+    _activeClient?.close();
+    _activeClient = client;
     try {
+      final body = await _buildBody(
+        messages,
+        model,
+        systemPrompt,
+        structuredPrompt: structuredPrompt,
+        stream: true,
+      );
+
+      final request = http.Request('POST', Uri.parse(_completionsUrl));
+      request.headers.addAll(_headers());
+      request.body = jsonEncode(body);
+
       final http.StreamedResponse response;
       try {
         response = await client
@@ -200,34 +212,68 @@ class OpenAICompatibleService implements ApiAdapter {
       }
 
       if (response.statusCode != 200) {
-        final errorBody = await response.stream.bytesToString();
+        final errorBody = await response.stream.bytesToString().timeout(
+          SseStream.defaultIdleTimeout,
+        );
         throw Exception('API 錯誤 ${response.statusCode}: $errorBody');
       }
 
-      String buffer = '';
-      await for (final chunk in response.stream.transform(utf8.decoder)) {
-        buffer += chunk;
-        final lines = buffer.split('\n');
-        buffer = lines.removeLast();
+      Map<String, int>? requestStats;
+      final diagnostics = SseStreamDiagnostics();
+      await for (final data in SseStream.data(
+        response.stream,
+        diagnostics: diagnostics,
+      )) {
+        if (data == '[DONE]') break;
 
-        for (final line in lines) {
-          if (line.startsWith('data: ')) {
-            final data = line.substring(6).trim();
-            if (data == '[DONE]') return;
-
-            try {
-              final json = jsonDecode(data);
-              final delta = json['choices']?[0]?['delta']?['content'];
-              if (delta != null && delta.isNotEmpty) {
-                yield delta;
-              }
-            } catch (_) {}
+        try {
+          final json = jsonDecode(data);
+          if (json['usage'] != null) requestStats = _extractUsage(json);
+          final delta = json['choices']?[0]?['delta']?['content'];
+          if (delta != null && delta.isNotEmpty) {
+            yield delta;
           }
-        }
+        } catch (_) {}
+      }
+      final streamDiagnostics = <String, Object?>{
+        'malformed_utf8_replacements': diagnostics.malformedUtf8Replacements,
+      };
+      if (requestStats != null) {
+        onUsage?.call(
+          ApiUsage.fromStats(requestStats, diagnostics: streamDiagnostics),
+        );
+      } else {
+        onUsage?.call(ApiUsage(diagnostics: streamDiagnostics));
       }
     } finally {
+      if (identical(_activeClient, client)) _activeClient = null;
       client.close();
     }
+  }
+
+  @override
+  void cancelActive() {
+    final client = _activeClient;
+    _activeClient = null;
+    client?.close();
+  }
+
+  static Map<String, int>? _extractUsage(dynamic data) {
+    if (data is! Map) return null;
+    final usage = data['usage'];
+    if (usage is! Map) return null;
+    final details = usage['prompt_tokens_details'];
+    final stats = <String, int>{
+      'prompt_tokens': (usage['prompt_tokens'] as num?)?.toInt() ?? 0,
+      'completion_tokens': (usage['completion_tokens'] as num?)?.toInt() ?? 0,
+      'cache_read': details is Map
+          ? (details['cached_tokens'] as num?)?.toInt() ?? 0
+          : (usage['cache_read_input_tokens'] as num?)?.toInt() ?? 0,
+      'cache_creation':
+          (usage['cache_creation_input_tokens'] as num?)?.toInt() ?? 0,
+    };
+    lastUsageStats = Map<String, int>.from(stats);
+    return stats;
   }
 
   Map<String, String> _headers() {

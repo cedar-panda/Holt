@@ -74,4 +74,33 @@ void main() {
 
     expect(MemoryActions.lastSearchQueryFor(windowId), isNull);
   });
+
+  test('revoked KeepAlive lease cannot authorize a stale worker', () async {
+    SharedPreferences.setMockInitialValues(<String, Object>{
+      'keepalive_conv_id': 'conv-live',
+      'keepalive_char_id': 'char-live',
+      'keepalive_lease_token': 'conv-live:7',
+    });
+
+    expect(
+      await KeepAliveService.instance.ownsPersistedLeaseForTesting(
+        conversationId: 'conv-live',
+        characterId: 'char-live',
+        leaseToken: 'conv-live:7',
+      ),
+      isTrue,
+    );
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('keepalive_lease_token', 'conv-live:8');
+
+    expect(
+      await KeepAliveService.instance.ownsPersistedLeaseForTesting(
+        conversationId: 'conv-live',
+        characterId: 'char-live',
+        leaseToken: 'conv-live:7',
+      ),
+      isFalse,
+    );
+  });
 }

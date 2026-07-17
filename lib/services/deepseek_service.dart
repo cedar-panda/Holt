@@ -2,12 +2,14 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'api_adapter.dart';
+import 'sse_stream.dart';
 
 /// DeepSeek API（OpenAI 兼容格式，自動 prompt caching）
 /// 不需要手動標記 cache_control，DeepSeek 自動緩存重複前綴
 /// 最小緩存長度 128 tokens，命中時費用降為 0.1 元/百萬 token
 class DeepSeekService implements ApiAdapter {
   final String apiKey;
+  http.Client? _activeClient;
   static const String _baseUrl = 'https://api.deepseek.com/chat/completions';
 
   /// 最近一次緩存統計
@@ -25,6 +27,7 @@ class DeepSeekService implements ApiAdapter {
     required String model,
     String? systemPrompt,
     StructuredPrompt? structuredPrompt,
+    ApiUsageCallback? onUsage,
   }) async {
     resetCacheStats();
     final body = _buildBody(
@@ -35,17 +38,32 @@ class DeepSeekService implements ApiAdapter {
       stream: false,
     );
 
-    final response = await http
-        .post(Uri.parse(_baseUrl), headers: _headers(), body: jsonEncode(body))
-        .timeout(const Duration(seconds: 180));
+    final client = http.Client();
+    _activeClient?.close();
+    _activeClient = client;
+    try {
+      final response = await client
+          .post(
+            Uri.parse(_baseUrl),
+            headers: _headers(),
+            body: jsonEncode(body),
+          )
+          .timeout(const Duration(seconds: 180));
 
-    if (response.statusCode != 200) {
-      throw Exception('DeepSeek 錯誤 ${response.statusCode}: ${response.body}');
+      if (response.statusCode != 200) {
+        throw Exception('DeepSeek 錯誤 ${response.statusCode}: ${response.body}');
+      }
+
+      final data = jsonDecode(response.body);
+      final stats = _extractCacheStats(data);
+      if (stats != null) {
+        onUsage?.call(ApiUsage.fromStats(stats, cacheReadKey: 'cache_hit'));
+      }
+      return data['choices']?[0]?['message']?['content'] ?? '';
+    } finally {
+      if (identical(_activeClient, client)) _activeClient = null;
+      client.close();
     }
-
-    final data = jsonDecode(response.body);
-    _extractCacheStats(data);
-    return data['choices']?[0]?['message']?['content'] ?? '';
   }
 
   @override
@@ -54,6 +72,7 @@ class DeepSeekService implements ApiAdapter {
     required String model,
     String? systemPrompt,
     StructuredPrompt? structuredPrompt,
+    ApiUsageCallback? onUsage,
   }) async* {
     resetCacheStats();
     final body = _buildBody(
@@ -70,39 +89,60 @@ class DeepSeekService implements ApiAdapter {
 
     // client 自己開的自己關（finally），連接超時 30s 防永久轉圈
     final client = http.Client();
+    _activeClient?.close();
+    _activeClient = client;
     try {
       final response = await client
           .send(request)
           .timeout(const Duration(seconds: 30));
 
       if (response.statusCode != 200) {
-        final err = await response.stream.bytesToString();
+        final err = await response.stream.bytesToString().timeout(
+          SseStream.defaultIdleTimeout,
+        );
         throw Exception('DeepSeek 錯誤 ${response.statusCode}: $err');
       }
 
-      String buffer = '';
-      await for (final chunk in response.stream.transform(utf8.decoder)) {
-        buffer += chunk;
-        final lines = buffer.split('\n');
-        buffer = lines.removeLast();
+      Map<String, int>? requestStats;
+      final diagnostics = SseStreamDiagnostics();
+      await for (final data in SseStream.data(
+        response.stream,
+        diagnostics: diagnostics,
+      )) {
+        if (data == '[DONE]') break;
 
-        for (final line in lines) {
-          if (line.startsWith('data: ')) {
-            final data = line.substring(6).trim();
-            if (data == '[DONE]') return;
-
-            try {
-              final json = jsonDecode(data);
-              if (json['usage'] != null) _extractCacheStats(json);
-              final delta = json['choices']?[0]?['delta']?['content'];
-              if (delta != null && delta.isNotEmpty) yield delta;
-            } catch (_) {}
-          }
-        }
+        try {
+          final json = jsonDecode(data);
+          if (json['usage'] != null) requestStats = _extractCacheStats(json);
+          final delta = json['choices']?[0]?['delta']?['content'];
+          if (delta != null && delta.isNotEmpty) yield delta;
+        } catch (_) {}
+      }
+      final streamDiagnostics = <String, Object?>{
+        'malformed_utf8_replacements': diagnostics.malformedUtf8Replacements,
+      };
+      if (requestStats != null) {
+        onUsage?.call(
+          ApiUsage.fromStats(
+            requestStats,
+            cacheReadKey: 'cache_hit',
+            diagnostics: streamDiagnostics,
+          ),
+        );
+      } else {
+        onUsage?.call(ApiUsage(diagnostics: streamDiagnostics));
       }
     } finally {
+      if (identical(_activeClient, client)) _activeClient = null;
       client.close();
     }
+  }
+
+  @override
+  void cancelActive() {
+    final client = _activeClient;
+    _activeClient = null;
+    client?.close();
   }
 
   Map<String, String> _headers() => {
@@ -163,14 +203,16 @@ class DeepSeekService implements ApiAdapter {
     };
   }
 
-  void _extractCacheStats(Map<String, dynamic> data) {
+  Map<String, int>? _extractCacheStats(Map<String, dynamic> data) {
     final usage = data['usage'];
-    if (usage == null) return;
-    lastCacheStats = {
+    if (usage == null) return null;
+    final stats = <String, int>{
       'prompt_tokens': usage['prompt_tokens'] ?? 0,
       'completion_tokens': usage['completion_tokens'] ?? 0,
       'cache_hit': usage['prompt_cache_hit_tokens'] ?? 0,
       'cache_miss': usage['prompt_cache_miss_tokens'] ?? 0,
     };
+    lastCacheStats = Map<String, int>.from(stats);
+    return stats;
   }
 }

@@ -1,10 +1,6 @@
 import '../memory/database.dart';
+import 'api_adapter.dart';
 import 'token_estimator.dart';
-import 'openrouter_service.dart';
-import 'deepseek_service.dart';
-import 'gemini_service.dart';
-import 'aws_bedrock_service.dart';
-import 'thinking_machines_service.dart';
 
 /// Token 用量追蹤器（真實 API 用量 + 持久化）
 class TokenTracker {
@@ -21,38 +17,13 @@ class TokenTracker {
   Future<void> recordRealUsage({
     required String provider,
     required String model,
+    required ApiUsage usage,
     String characterId = 'default',
   }) async {
-    int prompt = 0, completion = 0, cacheHit = 0, cacheCreation = 0;
-
-    // 讀取各 provider 的真實統計
-    if (provider == 'openrouter') {
-      final stats = OpenRouterService.lastCacheStats;
-      prompt = stats['prompt_tokens'] ?? 0;
-      completion = stats['completion_tokens'] ?? 0;
-      cacheHit = stats['cache_read'] ?? 0;
-      cacheCreation = stats['cache_creation'] ?? 0;
-    } else if (provider == 'bedrock') {
-      final stats = BedrockService.lastCacheStats;
-      prompt = stats['prompt_tokens'] ?? 0;
-      completion = stats['completion_tokens'] ?? 0;
-      cacheHit = stats['cache_read'] ?? 0;
-      cacheCreation = stats['cache_creation'] ?? 0;
-    } else if (provider == 'deepseek') {
-      final stats = DeepSeekService.lastCacheStats;
-      prompt = stats['prompt_tokens'] ?? 0;
-      completion = stats['completion_tokens'] ?? 0;
-      cacheHit = stats['cache_hit'] ?? 0;
-    } else if (provider == 'gemini') {
-      final stats = GeminiService.lastCacheStats;
-      prompt = stats['prompt_tokens'] ?? 0;
-      completion = stats['completion_tokens'] ?? 0;
-      cacheHit = stats['cached_tokens'] ?? 0;
-    } else if (provider == 'thinking_machines') {
-      final stats = ThinkingMachinesService.lastUsage;
-      prompt = stats['prompt_tokens'] ?? 0;
-      completion = stats['completion_tokens'] ?? 0;
-    }
+    final prompt = usage.promptTokens;
+    final completion = usage.completionTokens;
+    final cacheHit = usage.cacheReadTokens;
+    final cacheCreation = usage.cacheCreationTokens;
 
     // 如果 API 沒返回真實值，不記錄（避免寫入 0）
     if (prompt == 0 && completion == 0) return;

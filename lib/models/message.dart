@@ -8,6 +8,12 @@ class Message {
   final String? imagePath;
   final bool splitMode;
   final bool cacheHit;
+  final String status;
+
+  static const String statusComplete = '';
+  static const String statusIncomplete = 'incomplete';
+
+  bool get isIncomplete => status == statusIncomplete;
 
   /// 記憶過程日誌（本輪注入/寫入/刪除/合併的可視記錄）
   final String memoryLog;
@@ -22,6 +28,7 @@ class Message {
     this.imagePath,
     this.splitMode = false,
     this.cacheHit = false,
+    this.status = statusComplete,
     this.memoryLog = '',
     DateTime? createdAt,
   }) : createdAt = createdAt ?? DateTime.now();
@@ -36,6 +43,7 @@ class Message {
       'image_path': imagePath,
       'split_mode': splitMode ? 1 : 0,
       'cache_hit': cacheHit ? 1 : 0,
+      'status': status,
       'memory_log': memoryLog,
       'created_at': createdAt.toIso8601String(),
     };
@@ -51,6 +59,7 @@ class Message {
       imagePath: map['image_path'] as String?,
       splitMode: (map['split_mode'] as int? ?? 0) == 1,
       cacheHit: (map['cache_hit'] as int? ?? 0) == 1,
+      status: map['status'] as String? ?? statusComplete,
       memoryLog: map['memory_log'] as String? ?? '',
       createdAt: DateTime.parse(map['created_at'] as String),
     );

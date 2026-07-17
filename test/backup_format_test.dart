@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:project_yanci/services/backup_service.dart';
+import 'package:project_yanci/models/message.dart';
 
 Map<String, dynamic> _emptyV5() => <String, dynamic>{
   'version': BackupService.exportVersion,
@@ -51,6 +52,7 @@ void main() {
           'split_mode': 1,
           'memory_log': 'memory trace',
           'cache_hit': 1,
+          'status': Message.statusIncomplete,
           'created_at': '2026-01-01T00:00:01.000Z',
         },
       ];
@@ -77,6 +79,10 @@ void main() {
         containsPair('memory_log', 'memory trace'),
       );
       expect(tables['messages']!.single, containsPair('cache_hit', 1));
+      expect(
+        tables['messages']!.single,
+        containsPair('status', Message.statusIncomplete),
+      );
     },
   );
 
@@ -131,6 +137,7 @@ void main() {
     expect(message['split_mode'], 0);
     expect(message['memory_log'], '');
     expect(message['cache_hit'], 0);
+    expect(message['status'], Message.statusComplete);
     expect(tables['saved_messages']!.single['message_id'], '1');
     expect(tables['archive']!.single['character_id'], 'char-1');
   });

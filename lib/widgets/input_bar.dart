@@ -43,6 +43,7 @@ class InputBar extends StatefulWidget {
   final bool hasPendingContent;
   final SendButtonStyle sendStyle;
   final bool isGeneratingImage;
+  final bool isGeneratingResponse;
   final bool isSendBlocked;
   final VoidCallback? onStopGeneration;
   final TextEditingController? externalController;
@@ -65,6 +66,7 @@ class InputBar extends StatefulWidget {
     this.hasPendingContent = false,
     this.sendStyle = SendButtonStyle.leaf,
     this.isGeneratingImage = false,
+    this.isGeneratingResponse = false,
     this.isSendBlocked = false,
     this.onStopGeneration,
     this.externalController,
@@ -524,8 +526,10 @@ class _InputBarState extends State<InputBar> with TickerProviderStateMixin {
                           ),
                           const SizedBox(width: 6),
                           // 發送鍵 / 停止鍵
-                          if (widget.isGeneratingImage)
+                          if (widget.isGeneratingImage ||
+                              widget.isGeneratingResponse)
                             GestureDetector(
+                              key: const ValueKey('input_bar_stop_button'),
                               onTap: widget.onStopGeneration,
                               child: Container(
                                 width: 45,

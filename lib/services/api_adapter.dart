@@ -25,6 +25,46 @@ class StructuredPrompt {
   }
 }
 
+typedef ApiUsageCallback = void Function(ApiUsage usage);
+
+/// 單次 API 請求自己的用量與診斷。不得再由消費端讀 provider 的全域
+/// 「最後一筆」，否則聊天、摘要、命名與保活併發時會互相覆蓋。
+class ApiUsage {
+  final int promptTokens;
+  final int completionTokens;
+  final int cacheReadTokens;
+  final int cacheCreationTokens;
+  final Map<String, int> raw;
+  final Map<String, Object?> diagnostics;
+
+  const ApiUsage({
+    this.promptTokens = 0,
+    this.completionTokens = 0,
+    this.cacheReadTokens = 0,
+    this.cacheCreationTokens = 0,
+    this.raw = const <String, int>{},
+    this.diagnostics = const <String, Object?>{},
+  });
+
+  bool get hasTokenCounts => promptTokens > 0 || completionTokens > 0;
+
+  factory ApiUsage.fromStats(
+    Map<String, int> stats, {
+    String cacheReadKey = 'cache_read',
+    String cacheCreationKey = 'cache_creation',
+    Map<String, Object?> diagnostics = const <String, Object?>{},
+  }) {
+    return ApiUsage(
+      promptTokens: stats['prompt_tokens'] ?? 0,
+      completionTokens: stats['completion_tokens'] ?? 0,
+      cacheReadTokens: stats[cacheReadKey] ?? 0,
+      cacheCreationTokens: stats[cacheCreationKey] ?? 0,
+      raw: Map<String, int>.unmodifiable(stats),
+      diagnostics: Map<String, Object?>.unmodifiable(diagnostics),
+    );
+  }
+}
+
 /// API 統一接口
 abstract class ApiAdapter {
   Future<String> sendMessage({
@@ -32,6 +72,7 @@ abstract class ApiAdapter {
     required String model,
     String? systemPrompt,
     StructuredPrompt? structuredPrompt,
+    ApiUsageCallback? onUsage,
   });
 
   Stream<String> sendMessageStream({
@@ -39,7 +80,12 @@ abstract class ApiAdapter {
     required String model,
     String? systemPrompt,
     StructuredPrompt? structuredPrompt,
+    ApiUsageCallback? onUsage,
   });
+
+  /// 中止目前由此 adapter 建立的 HTTP 串流。沒有遠端串流的 adapter 可沿用
+  /// 預設 no-op；網路 adapter 必須覆寫並 close active client。
+  void cancelActive() {}
 }
 
 /// 共用：Anthropic 風格滾動緩存斷點（1 小時 TTL）

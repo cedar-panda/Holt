@@ -1549,6 +1549,7 @@ class LocalModelService implements ApiAdapter {
     required List<Map<String, String>> messages,
     required String model,
     String? systemPrompt,
+    ApiUsageCallback? onUsage,
   }) async {
     if (_loadedModelPath == null) {
       throw Exception(L.locale == 'en' ? 'Local model not loaded' : '本地模型未加載');
@@ -1561,6 +1562,7 @@ class LocalModelService implements ApiAdapter {
       messages: messages,
       model: model,
       systemPrompt: systemPrompt,
+      onUsage: onUsage,
     )) {
       buffer.write(token);
     }
@@ -1573,6 +1575,7 @@ class LocalModelService implements ApiAdapter {
     required List<Map<String, String>> messages,
     required String model,
     String? systemPrompt,
+    ApiUsageCallback? onUsage,
   }) async* {
     if (_loadedModelPath == null) {
       throw Exception(L.locale == 'en' ? 'Local model not loaded' : '本地模型未加載');
@@ -1663,6 +1666,11 @@ class LocalModelService implements ApiAdapter {
     } finally {
       if (!release.isCompleted) release.complete();
     }
+  }
+
+  @override
+  void cancelActive() {
+    // 本地推理引擎目前沒有同步安全的中止 API；UI 仍可立即停止接收輸出。
   }
 
   /// Gemma stream（從 sendMessageStream 抽出來方便統一包裹）

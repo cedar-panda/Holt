@@ -59,6 +59,9 @@ class KeepAliveService {
   String? _characterId;
   DateTime? _startTime;
   bool _active = false;
+  String? _leaseToken;
+  int _leaseGeneration = 0;
+  ApiAdapter? _activePingAdapter;
 
   List<Map<String, String>>? _cachedMessages;
   StructuredPrompt? _cachedStructuredPrompt;
@@ -109,6 +112,8 @@ class KeepAliveService {
   static const String _keyCachedModel = 'keepalive_cached_model';
   static const String _keyCachedProvider = 'keepalive_cached_provider';
   static const String _keyLastRequestAt = 'keepalive_last_request_at';
+  static const String _keyLeaseToken = 'keepalive_lease_token';
+  static const String _keyLeaseGeneration = 'keepalive_lease_generation';
 
   KeepAliveService._();
 
@@ -195,10 +200,12 @@ class KeepAliveService {
     final lastRequestAt = DateTime.tryParse(
       prefs.getString(_keyLastRequestAt) ?? '',
     );
+    final leaseToken = prefs.getString(_keyLeaseToken);
     if (convId == null ||
         charId == null ||
         startTime == null ||
-        lastRequestAt == null) {
+        lastRequestAt == null ||
+        leaseToken == null) {
       return;
     }
 
@@ -218,12 +225,26 @@ class KeepAliveService {
     final elapsed = now.difference(lastRequestAt);
     if (elapsed < _bgRefreshAfter || elapsed > _resumeRefreshMax) return;
 
+    // WorkManager 與主 isolate 可能同時醒來。真正重建請求前再讀一次，
+    // 只有仍持有同一窗口租約的一方可繼續。
+    await prefs.reload();
+    if (!_leaseMatches(
+      prefs,
+      conversationId: convId,
+      characterId: charId,
+      leaseToken: leaseToken,
+    )) {
+      return;
+    }
+
     // 後台 isolate 的 instance 是全新的：從 prefs 重建再 ping
     final svc = instance;
     svc._conversationId = convId;
     svc._characterId = charId;
     svc._startTime = startTime;
     svc._lastRequestAt = lastRequestAt;
+    svc._leaseToken = leaseToken;
+    svc._leaseGeneration = prefs.getInt(_keyLeaseGeneration) ?? 0;
     svc._cachedMessages = _decodeMessages(prefs.getString(_keyCachedMessages));
     final staticPrompt = prefs.getString(_keyCachedStaticPrompt);
     final profilePrompt = prefs.getString(_keyCachedProfilePrompt);
@@ -276,6 +297,7 @@ class KeepAliveService {
     _cachedModel = model;
     _cachedProvider = provider;
 
+    await _renewLease();
     await _persistActiveWindow();
     await _ensureRenewalTicker();
   }
@@ -289,7 +311,25 @@ class KeepAliveService {
     required String characterId,
     List<Map<String, String>>? messages,
   }) async {
-    if (_conversationId == conversationId) return;
+    if (_conversationId == conversationId) {
+      if (_characterId != null &&
+          _cachedStructuredPrompt != null &&
+          _lastRequestAt != null) {
+        _pausedWindow = _PausedWindow(
+          conversationId: _conversationId!,
+          characterId: _characterId!,
+          startTime: _startTime,
+          lastRequestAt: _lastRequestAt,
+          messages: _cachedMessages,
+          structuredPrompt: _cachedStructuredPrompt,
+          adapter: _cachedAdapter,
+          model: _cachedModel,
+          provider: _cachedProvider,
+        );
+      }
+      await pauseActiveWindow();
+      return;
+    }
 
     // 覆蓋前把還有完整保活上下文的原窗口暫存起來——
     // 沒有這一步，「點開別的對話看一眼」就會無聲殺死保活（prefs 裡的
@@ -322,6 +362,7 @@ class KeepAliveService {
     _cachedModel = null;
     _cachedProvider = null;
 
+    await _renewLease();
     await _persistActiveWindow();
   }
 
@@ -330,8 +371,11 @@ class KeepAliveService {
     _timer?.cancel();
     _timer = null;
     _active = false;
+    _leaseToken = null;
+    final activePingAdapter = _activePingAdapter;
+    _activePingAdapter = null;
+    activePingAdapter?.cancelActive();
     _pausedWindow = null;
-    await _cancelBackgroundTask();
     _conversationId = null;
     _characterId = null;
     _startTime = null;
@@ -343,6 +387,9 @@ class KeepAliveService {
     _cachedProvider = null;
 
     final prefs = await SharedPreferences.getInstance();
+    // 先撤銷租約，再等平台後台任務停止；這樣已經醒來的 isolate 也會
+    // 在付費請求前的最後驗證被擋下。
+    await prefs.remove(_keyLeaseToken);
     await prefs.remove(_keyActiveConvId);
     await prefs.remove(_keyActiveCharId);
     await prefs.remove(_keyStartTime);
@@ -354,13 +401,24 @@ class KeepAliveService {
     await prefs.remove(_keyCachedModel);
     await prefs.remove(_keyCachedProvider);
     await prefs.remove(_keyLastRequestAt);
+    await _cancelBackgroundTask();
   }
 
   /// 打開正在聊窗口時只暫停 timer，保留首頁入口與心跳。
-  Future<void> pauseActiveWindow() async {
+  void pauseActiveWindowInMemory() {
     _timer?.cancel();
     _timer = null;
     _active = false;
+    final activePingAdapter = _activePingAdapter;
+    _activePingAdapter = null;
+    activePingAdapter?.cancelActive();
+  }
+
+  Future<void> pauseActiveWindow() async {
+    pauseActiveWindowInMemory();
+    _leaseToken = null;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_keyLeaseToken);
     await _cancelBackgroundTask();
   }
 
@@ -384,6 +442,7 @@ class KeepAliveService {
     _cachedModel = paused.model;
     _cachedProvider = paused.provider;
 
+    await _renewLease();
     // claim 時 prefs 被覆蓋過，重新持久化；_ensureRenewalTicker 會做
     // 全部資格檢查 + 重啟 timer + 重新註冊後台任務（pause 時被取消掉的）。
     await _persistActiveWindow();
@@ -418,8 +477,15 @@ class KeepAliveService {
     }
     _cachedModel = prefs.getString(_keyCachedModel);
     _cachedProvider = prefs.getString(_keyCachedProvider);
+    _leaseToken = prefs.getString(_keyLeaseToken);
+    _leaseGeneration = prefs.getInt(_keyLeaseGeneration) ?? 0;
     final lastReqStr = prefs.getString(_keyLastRequestAt);
     _lastRequestAt = lastReqStr == null ? null : DateTime.tryParse(lastReqStr);
+
+    if (_leaseToken == null) {
+      await _renewLease();
+      await _persistActiveWindow();
+    }
 
     if (!await MemorySettings.getKeepAliveEnabled()) return;
     await _loadSettings();
@@ -516,7 +582,10 @@ class KeepAliveService {
   Future<void> _ping() async {
     final convId = _conversationId;
     final charId = _characterId;
-    if (!_active || convId == null || charId == null) return;
+    final leaseToken = _leaseToken;
+    if (!_active || convId == null || charId == null || leaseToken == null) {
+      return;
+    }
 
     final now = DateTime.now();
     if (_startTime != null && now.difference(_startTime!) >= _maxDuration) {
@@ -562,12 +631,34 @@ class KeepAliveService {
             overrideModel: model,
           );
 
+      if (!await _ownsPersistedLease(
+        conversationId: convId,
+        characterId: charId,
+        leaseToken: leaseToken,
+      )) {
+        return;
+      }
+
       CacheSession.conversationId = convId;
-      final response = await adapter.sendMessage(
-        messages: messages,
-        model: model,
-        structuredPrompt: structuredPrompt,
-      );
+      _activePingAdapter = adapter;
+      late String response;
+      try {
+        response = await adapter.sendMessage(
+          messages: messages,
+          model: model,
+          structuredPrompt: structuredPrompt,
+        );
+      } finally {
+        if (identical(_activePingAdapter, adapter)) _activePingAdapter = null;
+      }
+
+      if (!await _ownsPersistedLease(
+        conversationId: convId,
+        characterId: charId,
+        leaseToken: leaseToken,
+      )) {
+        return;
+      }
 
       // ping 成功 = 緩存 TTL 續期，刷新錨點
       _lastRequestAt = DateTime.now();
@@ -701,6 +792,11 @@ class KeepAliveService {
     await prefs.setString(_keyActiveConvId, convId);
     await prefs.setString(_keyActiveCharId, charId);
     await prefs.setString(_keyStartTime, startTime.toIso8601String());
+    final leaseToken = _leaseToken;
+    if (leaseToken != null) {
+      await prefs.setString(_keyLeaseToken, leaseToken);
+      await prefs.setInt(_keyLeaseGeneration, _leaseGeneration);
+    }
     if (_lastRequestAt != null) {
       await prefs.setString(
         _keyLastRequestAt,
@@ -759,6 +855,64 @@ class KeepAliveService {
     } else {
       await prefs.setString(_keyCachedProvider, _cachedProvider!);
     }
+  }
+
+  Future<void> _renewLease() async {
+    final convId = _conversationId;
+    final charId = _characterId;
+    if (convId == null || charId == null) return;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.reload();
+    final persistedGeneration = prefs.getInt(_keyLeaseGeneration) ?? 0;
+    _leaseGeneration =
+        (_leaseGeneration > persistedGeneration
+            ? _leaseGeneration
+            : persistedGeneration) +
+        1;
+    _leaseToken = '$convId:$_leaseGeneration';
+    // token 先落地，讓任何持有上一代快照的 isolate 立即失效。
+    await prefs.setInt(_keyLeaseGeneration, _leaseGeneration);
+    await prefs.setString(_keyLeaseToken, _leaseToken!);
+  }
+
+  Future<bool> _ownsPersistedLease({
+    required String conversationId,
+    required String characterId,
+    required String leaseToken,
+  }) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.reload();
+    return _leaseMatches(
+      prefs,
+      conversationId: conversationId,
+      characterId: characterId,
+      leaseToken: leaseToken,
+    );
+  }
+
+  static bool _leaseMatches(
+    SharedPreferences prefs, {
+    required String conversationId,
+    required String characterId,
+    required String leaseToken,
+  }) {
+    return leaseToken.startsWith('$conversationId:') &&
+        prefs.getString(_keyActiveConvId) == conversationId &&
+        prefs.getString(_keyActiveCharId) == characterId &&
+        prefs.getString(_keyLeaseToken) == leaseToken;
+  }
+
+  @visibleForTesting
+  Future<bool> ownsPersistedLeaseForTesting({
+    required String conversationId,
+    required String characterId,
+    required String leaseToken,
+  }) {
+    return _ownsPersistedLease(
+      conversationId: conversationId,
+      characterId: characterId,
+      leaseToken: leaseToken,
+    );
   }
 
   static Future<bool> _canUseCloseWindowKeepAlive({

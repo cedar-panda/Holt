@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 
 import 'api_adapter.dart';
 import 'locale_strings.dart';
+import 'sse_stream.dart';
 
 /// Thinking Machines 第一方 Inkling API。
 ///
@@ -25,6 +26,7 @@ class ThinkingMachinesService implements ApiAdapter {
   final bool thinkingEnabled;
   final String thinkingEffort;
   final http.Client? _injectedClient;
+  http.Client? _activeClient;
 
   ThinkingMachinesService({
     required this.apiKey,
@@ -113,18 +115,21 @@ class ThinkingMachinesService implements ApiAdapter {
     required String model,
     String? systemPrompt,
     StructuredPrompt? structuredPrompt,
+    ApiUsageCallback? onUsage,
   }) async {
     lastUsage = <String, int>{};
-    final body = await _buildBody(
-      messages,
-      model,
-      systemPrompt,
-      structuredPrompt: structuredPrompt,
-      stream: false,
-    );
     final ownedClient = _injectedClient == null;
     final client = _injectedClient ?? http.Client();
+    _activeClient?.close();
+    _activeClient = client;
     try {
+      final body = await _buildBody(
+        messages,
+        model,
+        systemPrompt,
+        structuredPrompt: structuredPrompt,
+        stream: false,
+      );
       final response = await client
           .post(_messagesUri, headers: _headers(apiKey), body: jsonEncode(body))
           .timeout(const Duration(seconds: 180));
@@ -136,7 +141,11 @@ class ThinkingMachinesService implements ApiAdapter {
           L.pick(en: 'Invalid Inkling response', zhTW: 'Inkling 回覆格式無效'),
         );
       }
-      _captureUsage(decoded['usage']);
+      final requestUsage = _captureUsage(
+        decoded['usage'],
+        base: const <String, int>{},
+      );
+      onUsage?.call(ApiUsage.fromStats(requestUsage));
       return _contentToText(decoded['content']);
     } on SocketException catch (error) {
       throw ThinkingMachinesException(
@@ -153,6 +162,7 @@ class ThinkingMachinesService implements ApiAdapter {
         ),
       );
     } finally {
+      if (identical(_activeClient, client)) _activeClient = null;
       if (ownedClient) client.close();
     }
   }
@@ -163,58 +173,62 @@ class ThinkingMachinesService implements ApiAdapter {
     required String model,
     String? systemPrompt,
     StructuredPrompt? structuredPrompt,
+    ApiUsageCallback? onUsage,
   }) async* {
     lastUsage = <String, int>{};
-    final body = await _buildBody(
-      messages,
-      model,
-      systemPrompt,
-      structuredPrompt: structuredPrompt,
-      stream: true,
-    );
-    final request = http.Request('POST', _messagesUri)
-      ..headers.addAll(_headers(apiKey))
-      ..body = jsonEncode(body);
-
     final ownedClient = _injectedClient == null;
     final client = _injectedClient ?? http.Client();
+    _activeClient?.close();
+    _activeClient = client;
     try {
+      final body = await _buildBody(
+        messages,
+        model,
+        systemPrompt,
+        structuredPrompt: structuredPrompt,
+        stream: true,
+      );
+      final request = http.Request('POST', _messagesUri)
+        ..headers.addAll(_headers(apiKey))
+        ..body = jsonEncode(body);
+
       final response = await client
           .send(request)
           .timeout(const Duration(seconds: 30));
       if (response.statusCode < 200 || response.statusCode >= 300) {
-        final errorBody = await response.stream.bytesToString();
+        final errorBody = await response.stream.bytesToString().timeout(
+          SseStream.defaultIdleTimeout,
+        );
         _throwForError(response.statusCode, errorBody);
       }
 
-      var buffer = '';
       var activeBlockType = '';
       var thinkingTagOpen = false;
+      var requestUsage = <String, int>{};
+      final diagnostics = SseStreamDiagnostics();
 
-      await for (final chunk in response.stream.transform(utf8.decoder)) {
-        buffer += chunk;
-        final lines = buffer.split('\n');
-        buffer = lines.removeLast();
-
-        for (final rawLine in lines) {
-          final line = rawLine.endsWith('\r')
-              ? rawLine.substring(0, rawLine.length - 1)
-              : rawLine;
-          if (!line.startsWith('data:')) continue;
-          final payload = line.substring(5).trim();
-          if (payload.isEmpty || payload == '[DONE]') continue;
-
+      await for (final payload in SseStream.data(
+        response.stream,
+        diagnostics: diagnostics,
+      )) {
+        if (payload.isEmpty || payload == '[DONE]') continue;
+        try {
           final decoded = jsonDecode(payload);
           if (decoded is! Map<String, dynamic>) continue;
           final type = decoded['type']?.toString() ?? '';
 
           if (type == 'message_start') {
             final message = decoded['message'];
-            if (message is Map) _captureUsage(message['usage']);
+            if (message is Map) {
+              requestUsage = _captureUsage(
+                message['usage'],
+                base: requestUsage,
+              );
+            }
             continue;
           }
           if (type == 'message_delta') {
-            _captureUsage(decoded['usage']);
+            requestUsage = _captureUsage(decoded['usage'], base: requestUsage);
             continue;
           }
           if (type == 'content_block_start') {
@@ -273,10 +287,21 @@ class ThinkingMachinesService implements ApiAdapter {
                   : detail,
             );
           }
+        } on FormatException {
+          // 單一損壞事件不應丟掉整段已完成回覆；UTF-8 損壞另記診斷。
         }
       }
 
       if (thinkingTagOpen) yield '</think>';
+      onUsage?.call(
+        ApiUsage.fromStats(
+          requestUsage,
+          diagnostics: <String, Object?>{
+            'malformed_utf8_replacements':
+                diagnostics.malformedUtf8Replacements,
+          },
+        ),
+      );
     } on SocketException catch (error) {
       throw ThinkingMachinesException(
         L.pick(
@@ -292,8 +317,16 @@ class ThinkingMachinesService implements ApiAdapter {
         ),
       );
     } finally {
+      if (identical(_activeClient, client)) _activeClient = null;
       if (ownedClient) client.close();
     }
+  }
+
+  @override
+  void cancelActive() {
+    final client = _activeClient;
+    _activeClient = null;
+    client?.close();
   }
 
   Future<Map<String, dynamic>> _buildBody(
@@ -431,14 +464,18 @@ class ThinkingMachinesService implements ApiAdapter {
     return '<think>${thinking.toString()}</think>${text.toString()}';
   }
 
-  static void _captureUsage(dynamic rawUsage) {
-    if (rawUsage is! Map) return;
-    final next = Map<String, int>.from(lastUsage);
+  static Map<String, int> _captureUsage(
+    dynamic rawUsage, {
+    Map<String, int> base = const <String, int>{},
+  }) {
+    final next = Map<String, int>.from(base);
+    if (rawUsage is! Map) return next;
     final input = rawUsage['input_tokens'];
     final output = rawUsage['output_tokens'];
     if (input is num) next['prompt_tokens'] = input.toInt();
     if (output is num) next['completion_tokens'] = output.toInt();
-    lastUsage = next;
+    lastUsage = Map<String, int>.from(next);
+    return next;
   }
 
   static void _throwForError(int statusCode, String body) {

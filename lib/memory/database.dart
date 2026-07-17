@@ -14,7 +14,7 @@ class DatabaseHelper {
   static Future<Database>? _dbInitFuture;
   static Future<Database> Function() _databaseInitializer = _initDatabase;
   static const String _dbName = 'yanci.db';
-  static const int _dbVersion = 34;
+  static const int _dbVersion = 35;
   static final Random _windowIdRandom = Random.secure();
 
   static Future<Database> get database async {
@@ -75,6 +75,7 @@ class DatabaseHelper {
         split_mode INTEGER DEFAULT 0,
         memory_log TEXT DEFAULT '',
         cache_hit INTEGER DEFAULT 0,
+        status TEXT NOT NULL DEFAULT '',
         created_at TEXT NOT NULL,
         FOREIGN KEY (conversation_id) REFERENCES conversations(id)
       )
@@ -703,6 +704,14 @@ class DatabaseHelper {
       await db.update('conversations', {
         'pinned_static_self_notes': '',
       }, where: 'pinned_static_self_notes IS NULL');
+    }
+    if (oldVersion < 35) {
+      await _safeAddColumn(
+        db,
+        'messages',
+        'status',
+        "TEXT NOT NULL DEFAULT ''",
+      );
     }
   }
 
@@ -1804,6 +1813,16 @@ class DatabaseHelper {
     await db.update(
       'messages',
       {'text': newText},
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
+  static Future<void> updateMessageStatus(int id, String status) async {
+    final db = await database;
+    await db.update(
+      'messages',
+      {'status': status},
       where: 'id = ?',
       whereArgs: [id],
     );

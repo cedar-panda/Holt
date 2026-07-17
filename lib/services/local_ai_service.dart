@@ -14,6 +14,7 @@ class LocalAiService implements ApiAdapter {
     required List<Map<String, String>> messages,
     required String model,
     String? systemPrompt,
+    ApiUsageCallback? onUsage,
   }) async {
     throw Exception('本地模型尚未接入');
   }
@@ -24,7 +25,11 @@ class LocalAiService implements ApiAdapter {
     required List<Map<String, String>> messages,
     required String model,
     String? systemPrompt,
+    ApiUsageCallback? onUsage,
   }) async* {
     throw Exception('本地模型尚未接入');
   }
+
+  @override
+  void cancelActive() {}
 }

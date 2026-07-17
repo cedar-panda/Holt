@@ -27,7 +27,8 @@ void main() {
     () async {
       await DatabaseHelper.createSchemaForTesting(db);
 
-      expect(DatabaseHelper.schemaVersionForTesting, 34);
+      expect(DatabaseHelper.schemaVersionForTesting, 35);
+      expect(await _columnNames(db, 'messages'), contains('status'));
       expect(await _columnNames(db, 'characters'), contains('bio_clock'));
       expect(await _columnNames(db, 'sticky_notes'), contains('character_id'));
       expect(
@@ -85,6 +86,60 @@ void main() {
         }),
         throwsA(isA<DatabaseException>()),
       );
+    },
+  );
+
+  test(
+    'v34 migration adds message delivery status without changing text',
+    () async {
+      await db.execute('''
+      CREATE TABLE messages (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        conversation_id TEXT NOT NULL,
+        character_id TEXT DEFAULT 'default',
+        text TEXT NOT NULL,
+        is_user INTEGER NOT NULL,
+        created_at TEXT NOT NULL
+      )
+    ''');
+      await db.insert('messages', <String, Object?>{
+        'conversation_id': 'conv-old',
+        'character_id': 'char-old',
+        'text': 'kept exactly',
+        'is_user': 0,
+        'created_at': '2026-07-17T00:00:00.000',
+      });
+
+      await DatabaseHelper.upgradeSchemaForTesting(db, 34);
+
+      final row = (await db.query('messages')).single;
+      expect(row['text'], 'kept exactly');
+      expect(row['status'], Message.statusComplete);
+    },
+  );
+
+  test(
+    'incomplete assistant message remains in normal conversation history',
+    () async {
+      await DatabaseHelper.createSchemaForTesting(db);
+      await DatabaseHelper.createConversation(
+        Conversation(id: 'conv-incomplete', characterId: 'char-a'),
+      );
+      await DatabaseHelper.insertMessage(
+        Message(
+          conversationId: 'conv-incomplete',
+          characterId: 'char-a',
+          text: 'half of the answer',
+          isUser: false,
+          status: Message.statusIncomplete,
+        ),
+      );
+
+      final history = await DatabaseHelper.getMessages('conv-incomplete');
+
+      expect(history, hasLength(1));
+      expect(history.single.text, 'half of the answer');
+      expect(history.single.isIncomplete, isTrue);
     },
   );
 

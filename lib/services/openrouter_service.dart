@@ -7,6 +7,7 @@ import 'api_adapter.dart';
 import 'cache_debug_log.dart';
 import 'locale_strings.dart';
 import 'settings_manager.dart';
+import 'sse_stream.dart';
 import 'token_estimator.dart';
 
 /// OpenRouter API 實現（含 Anthropic prompt caching）
@@ -15,6 +16,7 @@ class OpenRouterService implements ApiAdapter {
       kDebugMode || bool.fromEnvironment('CACHE_DEBUG_ECHO');
 
   final String apiKey;
+  http.Client? _activeClient;
   static const String _baseUrl =
       'https://openrouter.ai/api/v1/chat/completions';
   static const String _modelsUrl = 'https://openrouter.ai/api/v1/models';
@@ -44,6 +46,7 @@ class OpenRouterService implements ApiAdapter {
     required String model,
     String? systemPrompt,
     StructuredPrompt? structuredPrompt,
+    ApiUsageCallback? onUsage,
     bool stream = true,
   }) {
     return _buildBody(
@@ -140,31 +143,51 @@ class OpenRouterService implements ApiAdapter {
     required String model,
     String? systemPrompt,
     StructuredPrompt? structuredPrompt,
+    ApiUsageCallback? onUsage,
   }) async {
     resetCacheStats();
     final requestDiagnostics = <String, Object?>{};
-    final body = _sanitizeRequestBody(
-      await _buildBody(
-        messages,
-        model,
-        systemPrompt,
-        structuredPrompt: structuredPrompt,
-        stream: false,
-        diagnosticsOut: requestDiagnostics,
-      ),
-    );
+    final client = http.Client();
+    _activeClient?.close();
+    _activeClient = client;
+    try {
+      final body = _sanitizeRequestBody(
+        await _buildBody(
+          messages,
+          model,
+          systemPrompt,
+          structuredPrompt: structuredPrompt,
+          stream: false,
+          diagnosticsOut: requestDiagnostics,
+        ),
+      );
+      final response = await client
+          .post(
+            Uri.parse(_baseUrl),
+            headers: _headers(),
+            body: jsonEncode(body),
+          )
+          .timeout(const Duration(seconds: 180));
 
-    final response = await http
-        .post(Uri.parse(_baseUrl), headers: _headers(), body: jsonEncode(body))
-        .timeout(const Duration(seconds: 180));
+      if (response.statusCode != 200) {
+        throw Exception('API 錯誤 ${response.statusCode}: ${response.body}');
+      }
 
-    if (response.statusCode != 200) {
-      throw Exception('API 錯誤 ${response.statusCode}: ${response.body}');
+      final data = jsonDecode(response.body);
+      final stats = _extractCacheStats(
+        data,
+        requestDiagnostics: requestDiagnostics,
+      );
+      if (stats != null) {
+        onUsage?.call(
+          ApiUsage.fromStats(stats, diagnostics: requestDiagnostics),
+        );
+      }
+      return data['choices'][0]['message']['content'] ?? '';
+    } finally {
+      if (identical(_activeClient, client)) _activeClient = null;
+      client.close();
     }
-
-    final data = jsonDecode(response.body);
-    _extractCacheStats(data, requestDiagnostics: requestDiagnostics);
-    return data['choices'][0]['message']['content'] ?? '';
   }
 
   @override
@@ -173,81 +196,89 @@ class OpenRouterService implements ApiAdapter {
     required String model,
     String? systemPrompt,
     StructuredPrompt? structuredPrompt,
+    ApiUsageCallback? onUsage,
   }) async* {
     resetCacheStats();
     final requestDiagnostics = <String, Object?>{};
-    final body = _sanitizeRequestBody(
-      await _buildBody(
-        messages,
-        model,
-        systemPrompt,
-        structuredPrompt: structuredPrompt,
-        stream: true,
-        diagnosticsOut: requestDiagnostics,
-      ),
-    );
-
-    final request = http.Request('POST', Uri.parse(_baseUrl));
-    request.headers.addAll(_headers());
-    request.body = jsonEncode(body);
-
-    // client 自己開的自己關（finally），連接超時 30s 防永久轉圈
     final client = http.Client();
+    _activeClient?.close();
+    _activeClient = client;
     try {
+      final body = _sanitizeRequestBody(
+        await _buildBody(
+          messages,
+          model,
+          systemPrompt,
+          structuredPrompt: structuredPrompt,
+          stream: true,
+          diagnosticsOut: requestDiagnostics,
+        ),
+      );
+
+      final request = http.Request('POST', Uri.parse(_baseUrl));
+      request.headers.addAll(_headers());
+      request.body = jsonEncode(body);
+
       final response = await client
           .send(request)
           .timeout(const Duration(seconds: 30));
 
       if (response.statusCode != 200) {
-        final errorBody = await response.stream.bytesToString();
+        final errorBody = await response.stream.bytesToString().timeout(
+          SseStream.defaultIdleTimeout,
+        );
         throw Exception('API 錯誤 ${response.statusCode}: $errorBody');
       }
 
-      String buffer = '';
       Map<String, dynamic>? finalUsageData;
-      await for (final chunk in response.stream.transform(utf8.decoder)) {
-        buffer += chunk;
-        final lines = buffer.split('\n');
-        buffer = lines.removeLast();
+      final streamDiagnostics = SseStreamDiagnostics();
+      await for (final data in SseStream.data(
+        response.stream,
+        diagnostics: streamDiagnostics,
+      )) {
+        if (data == '[DONE]') break;
 
-        for (final line in lines) {
-          if (line.startsWith('data: ')) {
-            final data = line.substring(6).trim();
-            if (data == '[DONE]') {
-              if (finalUsageData != null) {
-                _extractCacheStats(
-                  finalUsageData,
-                  requestDiagnostics: requestDiagnostics,
-                );
-              }
-              return;
-            }
-
-            try {
-              final json = jsonDecode(data);
-              _captureUpstreamDiagnostics(json, requestDiagnostics);
-              // usage 通常在最後幾個 chunk 之一。先保留，等 debug
-              // echo / router metadata 都收齊後再寫診斷，避免上游 TTL 缺席。
-              if (json['usage'] != null) {
-                finalUsageData = json;
-              }
-              final delta = json['choices']?[0]?['delta']?['content'];
-              if (delta != null && delta.isNotEmpty) {
-                yield delta;
-              }
-            } catch (_) {}
+        try {
+          final json = jsonDecode(data);
+          _captureUpstreamDiagnostics(json, requestDiagnostics);
+          // usage 通常在最後幾個 chunk 之一。先保留，等 debug
+          // echo / router metadata 都收齊後再寫診斷，避免上游 TTL 缺席。
+          if (json['usage'] != null) {
+            finalUsageData = json;
           }
-        }
+          final delta = json['choices']?[0]?['delta']?['content'];
+          if (delta != null && delta.isNotEmpty) {
+            yield delta;
+          }
+        } catch (_) {}
       }
+      requestDiagnostics['malformed_utf8_replacements'] =
+          streamDiagnostics.malformedUtf8Replacements;
+      lastCacheDiagnostics = Map<String, Object?>.from(requestDiagnostics);
       if (finalUsageData != null) {
-        _extractCacheStats(
+        final stats = _extractCacheStats(
           finalUsageData,
           requestDiagnostics: requestDiagnostics,
         );
+        if (stats != null) {
+          onUsage?.call(
+            ApiUsage.fromStats(stats, diagnostics: requestDiagnostics),
+          );
+        }
+      } else {
+        onUsage?.call(ApiUsage(diagnostics: requestDiagnostics));
       }
     } finally {
+      if (identical(_activeClient, client)) _activeClient = null;
       client.close();
     }
+  }
+
+  @override
+  void cancelActive() {
+    final client = _activeClient;
+    _activeClient = null;
+    client?.close();
   }
 
   Map<String, String> _headers() => {
@@ -567,12 +598,12 @@ class OpenRouterService implements ApiAdapter {
       sha256.convert(utf8.encode(text)).toString().substring(0, 12);
 
   /// 提取 cache 統計
-  void _extractCacheStats(
+  Map<String, int>? _extractCacheStats(
     Map<String, dynamic> data, {
     required Map<String, Object?> requestDiagnostics,
   }) {
     final usage = data['usage'];
-    if (usage == null) return;
+    if (usage == null) return null;
 
     // Anthropic 格式
     int read = usage['cache_read_input_tokens'] ?? 0;
@@ -595,7 +626,7 @@ class OpenRouterService implements ApiAdapter {
         ? (creation['ephemeral_1h_input_tokens'] as num?)?.toInt() ?? 0
         : 0;
 
-    lastCacheStats = {
+    final stats = <String, int>{
       'prompt_tokens': usage['prompt_tokens'] ?? 0,
       'completion_tokens': usage['completion_tokens'] ?? 0,
       'cache_creation': created,
@@ -603,6 +634,7 @@ class OpenRouterService implements ApiAdapter {
       'cache_write_5m': write5m,
       'cache_write_1h': write1h,
     };
+    lastCacheStats = Map<String, int>.from(stats);
 
     // 緩存診斷指紋（開發者診斷頁 Cache Debug 讀取）
     CacheDebugLog.add({
@@ -610,7 +642,7 @@ class OpenRouterService implements ApiAdapter {
       'hash': requestDiagnostics['static_hash'],
       'static_t': requestDiagnostics['static_tokens'],
       'dynamic_t': requestDiagnostics['dynamic_tokens'],
-      'prompt_t': lastCacheStats['prompt_tokens'],
+      'prompt_t': stats['prompt_tokens'],
       'read': read,
       'write': created,
       'write_5m': write5m,
@@ -634,6 +666,7 @@ class OpenRouterService implements ApiAdapter {
       'latest_user_hash': requestDiagnostics['latest_user_hash'],
       'latest_user_preview': requestDiagnostics['latest_user_preview'],
     });
+    return stats;
   }
 
   void _captureUpstreamDiagnostics(

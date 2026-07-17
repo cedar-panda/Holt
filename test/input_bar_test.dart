@@ -58,4 +58,27 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
     controller.dispose();
   });
+
+  testWidgets('InputBar exposes a stop button during response streaming', (
+    tester,
+  ) async {
+    var stopped = 0;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: InputBar(
+            isGeneratingResponse: true,
+            isSendBlocked: true,
+            onStopGeneration: () => stopped++,
+            onSend: (_) {},
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.byKey(const ValueKey('input_bar_stop_button')));
+
+    expect(stopped, 1);
+  });
 }

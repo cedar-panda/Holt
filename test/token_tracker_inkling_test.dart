@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:project_yanci/memory/database.dart';
+import 'package:project_yanci/services/api_adapter.dart';
 import 'package:project_yanci/services/thinking_machines_service.dart';
 import 'package:project_yanci/services/token_tracker.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
@@ -27,14 +28,15 @@ void main() {
     'Inkling real usage updates chat total and usage dashboard data',
     () async {
       ThinkingMachinesService.lastUsage = <String, int>{
-        'prompt_tokens': 1200,
-        'completion_tokens': 300,
+        'prompt_tokens': 9999,
+        'completion_tokens': 9999,
       };
       final tracker = TokenTracker();
 
       await tracker.recordRealUsage(
         provider: 'thinking_machines',
         model: ThinkingMachinesService.defaultModel,
+        usage: const ApiUsage(promptTokens: 1200, completionTokens: 300),
         characterId: 'char-test',
       );
 
@@ -73,6 +75,7 @@ void main() {
       await tracker.recordRealUsage(
         provider: 'thinking_machines',
         model: ThinkingMachinesService.defaultModel,
+        usage: const ApiUsage(),
       );
 
       expect(tracker.totalTokens, 0);

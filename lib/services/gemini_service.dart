@@ -5,6 +5,7 @@ import 'package:crypto/crypto.dart';
 import 'api_adapter.dart';
 import 'locale_strings.dart';
 import 'settings/memory_settings.dart';
+import 'sse_stream.dart';
 import 'token_estimator.dart';
 
 /// Google Gemini API 直連
@@ -13,6 +14,7 @@ import 'token_estimator.dart';
 class GeminiService implements ApiAdapter {
   final String apiKey;
   final String modelId;
+  http.Client? _activeClient;
   static const String _baseUrl =
       'https://generativelanguage.googleapis.com/v1beta';
 
@@ -42,35 +44,50 @@ class GeminiService implements ApiAdapter {
     required String model,
     String? systemPrompt,
     StructuredPrompt? structuredPrompt,
+    ApiUsageCallback? onUsage,
   }) async {
     resetCacheStats();
     final m = model.isNotEmpty ? _extractModel(model) : modelId;
+    final client = http.Client();
+    _activeClient?.close();
+    _activeClient = client;
+    try {
+      // 嘗試 context caching；建立 cachedContents 也共用同一個可取消 client。
+      var requestStats = await _ensureCache(
+        structuredPrompt,
+        m,
+        client: client,
+      );
 
-    // 嘗試 context caching
-    await _ensureCache(structuredPrompt, m);
+      final body = _buildBody(
+        messages,
+        systemPrompt,
+        structuredPrompt: structuredPrompt,
+      );
 
-    final body = _buildBody(
-      messages,
-      systemPrompt,
-      structuredPrompt: structuredPrompt,
-    );
+      final url = '$_baseUrl/models/$m:generateContent?key=$apiKey';
+      final response = await client
+          .post(
+            Uri.parse(url),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode(body),
+          )
+          .timeout(const Duration(seconds: 180));
 
-    final url = '$_baseUrl/models/$m:generateContent?key=$apiKey';
-    final response = await http
-        .post(
-          Uri.parse(url),
-          headers: {'Content-Type': 'application/json'},
-          body: jsonEncode(body),
-        )
-        .timeout(const Duration(seconds: 180));
+      if (response.statusCode != 200) {
+        throw Exception('Gemini 錯誤 ${response.statusCode}: ${response.body}');
+      }
 
-    if (response.statusCode != 200) {
-      throw Exception('Gemini 錯誤 ${response.statusCode}: ${response.body}');
+      final data = jsonDecode(response.body);
+      requestStats = _extractUsage(data, base: requestStats);
+      onUsage?.call(
+        ApiUsage.fromStats(requestStats, cacheReadKey: 'cached_tokens'),
+      );
+      return data['candidates']?[0]?['content']?['parts']?[0]?['text'] ?? '';
+    } finally {
+      if (identical(_activeClient, client)) _activeClient = null;
+      client.close();
     }
-
-    final data = jsonDecode(response.body);
-    _extractUsage(data);
-    return data['candidates']?[0]?['content']?['parts']?[0]?['text'] ?? '';
   }
 
   @override
@@ -79,60 +96,82 @@ class GeminiService implements ApiAdapter {
     required String model,
     String? systemPrompt,
     StructuredPrompt? structuredPrompt,
+    ApiUsageCallback? onUsage,
   }) async* {
     resetCacheStats();
     final m = model.isNotEmpty ? _extractModel(model) : modelId;
-
-    await _ensureCache(structuredPrompt, m);
-
-    final body = _buildBody(
-      messages,
-      systemPrompt,
-      structuredPrompt: structuredPrompt,
-    );
-
-    final url = '$_baseUrl/models/$m:streamGenerateContent?alt=sse&key=$apiKey';
-
-    final request = http.Request('POST', Uri.parse(url));
-    request.headers.addAll({'Content-Type': 'application/json'});
-    request.body = jsonEncode(body);
-
-    // client 自己開的自己關（finally），連接超時 30s 防永久轉圈
     final client = http.Client();
+    _activeClient?.close();
+    _activeClient = client;
     try {
+      var requestStats = await _ensureCache(
+        structuredPrompt,
+        m,
+        client: client,
+      );
+
+      final body = _buildBody(
+        messages,
+        systemPrompt,
+        structuredPrompt: structuredPrompt,
+      );
+
+      final url =
+          '$_baseUrl/models/$m:streamGenerateContent?alt=sse&key=$apiKey';
+
+      final request = http.Request('POST', Uri.parse(url));
+      request.headers.addAll({'Content-Type': 'application/json'});
+      request.body = jsonEncode(body);
+
       final response = await client
           .send(request)
           .timeout(const Duration(seconds: 30));
 
       if (response.statusCode != 200) {
-        final err = await response.stream.bytesToString();
+        final err = await response.stream.bytesToString().timeout(
+          SseStream.defaultIdleTimeout,
+        );
         throw Exception('Gemini 錯誤 ${response.statusCode}: $err');
       }
 
-      String buffer = '';
-      await for (final chunk in response.stream.transform(utf8.decoder)) {
-        buffer += chunk;
-        final lines = buffer.split('\n');
-        buffer = lines.removeLast();
+      final diagnostics = SseStreamDiagnostics();
+      await for (final data in SseStream.data(
+        response.stream,
+        diagnostics: diagnostics,
+      )) {
+        if (data.isEmpty || data == '[DONE]') continue;
 
-        for (final line in lines) {
-          if (line.startsWith('data: ')) {
-            final data = line.substring(6).trim();
-            if (data.isEmpty) continue;
-
-            try {
-              final json = jsonDecode(data);
-              if (json['usageMetadata'] != null) _extractUsage(json);
-              final text =
-                  json['candidates']?[0]?['content']?['parts']?[0]?['text'];
-              if (text != null && text.isNotEmpty) yield text;
-            } catch (_) {}
+        try {
+          final json = jsonDecode(data);
+          if (json['usageMetadata'] != null) {
+            requestStats = _extractUsage(json, base: requestStats);
           }
-        }
+          final text =
+              json['candidates']?[0]?['content']?['parts']?[0]?['text'];
+          if (text != null && text.isNotEmpty) yield text;
+        } catch (_) {}
       }
+      onUsage?.call(
+        ApiUsage.fromStats(
+          requestStats,
+          cacheReadKey: 'cached_tokens',
+          diagnostics: <String, Object?>{
+            'malformed_utf8_replacements':
+                diagnostics.malformedUtf8Replacements,
+          },
+        ),
+      );
     } finally {
+      if (identical(_activeClient, client)) _activeClient = null;
       client.close();
     }
+  }
+
+  @override
+  void cancelActive() {
+    final client = _activeClient;
+    _activeClient = null;
+    client?.close();
   }
 
   String _extractModel(String model) {
@@ -145,13 +184,22 @@ class GeminiService implements ApiAdapter {
   // Context Caching
   // ═══════════════════════════════════
 
-  Future<void> _ensureCache(StructuredPrompt? prompt, String model) async {
-    if (prompt == null) return;
+  Future<Map<String, int>> _ensureCache(
+    StructuredPrompt? prompt,
+    String model, {
+    required http.Client client,
+  }) async {
+    Map<String, int> publish(Map<String, int> stats) {
+      lastCacheStats = Map<String, int>.from(stats);
+      return stats;
+    }
+
+    if (prompt == null) return publish(<String, int>{});
     if (!await MemorySettings.getEnablePromptCaching()) {
       _activeCacheName = null;
       _cachedStaticHash = null;
       _cacheExpiry = null;
-      return;
+      return publish(<String, int>{});
     }
 
     final hashStr = '${prompt.staticPart}\n\n${prompt.profilePart ?? ''}';
@@ -167,9 +215,10 @@ class GeminiService implements ApiAdapter {
       _activeCacheName = null;
       _cachedStaticHash = null;
       _cacheExpiry = null;
-      lastCacheStats['cache_status'] = 0; // 0 = 門檻不到
-      lastCacheStats['cache_threshold'] = minCacheTokens;
-      return;
+      return publish(<String, int>{
+        'cache_status': 0,
+        'cache_threshold': minCacheTokens,
+      });
     }
 
     final now = DateTime.now();
@@ -177,9 +226,10 @@ class GeminiService implements ApiAdapter {
         _cachedStaticHash == staticHash &&
         _cacheExpiry != null &&
         now.isBefore(_cacheExpiry!)) {
-      lastCacheStats['cache_status'] = 2; // 2 = 命中
-      lastCacheStats['cache_threshold'] = minCacheTokens;
-      return;
+      return publish(<String, int>{
+        'cache_status': 2,
+        'cache_threshold': minCacheTokens,
+      });
     }
 
     final cacheKey = '${apiKey.hashCode}:$model:$staticHash';
@@ -190,9 +240,10 @@ class GeminiService implements ApiAdapter {
       _activeCacheName = cached.name;
       _cachedStaticHash = staticHash;
       _cacheExpiry = cached.expiry;
-      lastCacheStats['cache_status'] = 2; // 2 = 命中
-      lastCacheStats['cache_threshold'] = minCacheTokens;
-      return;
+      return publish(<String, int>{
+        'cache_status': 2,
+        'cache_threshold': minCacheTokens,
+      });
     }
 
     // 建立新緩存
@@ -209,7 +260,7 @@ class GeminiService implements ApiAdapter {
         'ttl': '${_cacheTtl.inSeconds}s',
       };
 
-      final response = await http.post(
+      final response = await client.post(
         Uri.parse('$_baseUrl/cachedContents?key=$apiKey'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode(cacheBody),
@@ -226,20 +277,26 @@ class GeminiService implements ApiAdapter {
             expiry: _cacheExpiry!,
           );
         }
-        lastCacheStats['cache_status'] = 1; // 1 = 新建
-        lastCacheStats['cache_threshold'] = minCacheTokens;
+        return publish(<String, int>{
+          'cache_status': 1,
+          'cache_threshold': minCacheTokens,
+        });
       } else {
         // 緩存建立失敗，降級為普通請求
         _activeCacheName = null;
-        lastCacheStats['cache_status'] = -1; // -1 = 失敗
-        lastCacheStats['cache_threshold'] = minCacheTokens;
+        return publish(<String, int>{
+          'cache_status': -1,
+          'cache_threshold': minCacheTokens,
+        });
       }
     } catch (_) {
       _activeCacheName = null;
       _cachedStaticHash = null;
       _cacheExpiry = null;
-      lastCacheStats['cache_status'] = -1;
-      lastCacheStats['cache_threshold'] = minCacheTokens;
+      return publish(<String, int>{
+        'cache_status': -1,
+        'cache_threshold': minCacheTokens,
+      });
     }
   }
 
@@ -343,15 +400,20 @@ class GeminiService implements ApiAdapter {
     return body;
   }
 
-  void _extractUsage(Map<String, dynamic> data) {
+  Map<String, int> _extractUsage(
+    Map<String, dynamic> data, {
+    Map<String, int> base = const <String, int>{},
+  }) {
     final usage = data['usageMetadata'];
-    if (usage == null) return;
-    lastCacheStats = {
-      ...lastCacheStats,
+    if (usage == null) return Map<String, int>.from(base);
+    final stats = <String, int>{
+      ...base,
       'prompt_tokens': usage['promptTokenCount'] ?? 0,
       'completion_tokens': usage['candidatesTokenCount'] ?? 0,
       'cached_tokens': usage['cachedContentTokenCount'] ?? 0,
     };
+    lastCacheStats = Map<String, int>.from(stats);
+    return stats;
   }
 
   int _estimateTokens(String text) {

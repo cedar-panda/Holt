@@ -10,7 +10,9 @@ import 'package:sqflite/sqflite.dart';
 
 import '../memory/database.dart';
 import '../memory/emotion_coordinates.dart';
+import '../models/message.dart';
 import 'character_timeline_service.dart';
+import 'keep_alive_service.dart';
 
 /// JSON 備份和本地資料庫備份。
 ///
@@ -221,6 +223,10 @@ class BackupService {
     await _verifyTableManifest(db);
     final prepared = await _prepareForCurrentSchema(db, normalized);
 
+    // 覆蓋還原會替換對話與角色。先撤銷舊窗口租約，避免還原完成後舊
+    // WorkManager isolate 仍拿著已不存在的對話發付費心跳。
+    await KeepAliveService.instance.stop();
+
     // SharedPreferences 沒有 transaction。先完整寫入並取得 rollback closure：
     // 偏好寫入失敗時 DB 尚未動；SQLite transaction 失敗時則回復舊偏好。
     final rollbackPreferences = await _applyPreferencesWithRollback(
@@ -423,6 +429,7 @@ class BackupService {
           'split_mode': _sqliteBool(legacyMessage['split_mode']),
           'memory_log': legacyMessage['memory_log']?.toString() ?? '',
           'cache_hit': _sqliteBool(legacyMessage['cache_hit']),
+          'status': Message.statusComplete,
           'created_at':
               _validIsoString(legacyMessage['created_at']) ?? fallbackTime,
         });
@@ -517,6 +524,9 @@ class BackupService {
       message['split_mode'] = _sqliteBool(message['split_mode']);
       message['memory_log'] = message['memory_log']?.toString() ?? '';
       message['cache_hit'] = _sqliteBool(message['cache_hit']);
+      message['status'] = message['status'] == Message.statusIncomplete
+          ? Message.statusIncomplete
+          : Message.statusComplete;
       message['created_at'] =
           _validIsoString(message['created_at']) ?? fallbackTime;
     }

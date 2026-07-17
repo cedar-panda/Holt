@@ -1937,6 +1937,13 @@ class _HomeScreenState extends State<HomeScreen>
                                               ),
                                             );
                                             if (confirm == true) {
+                                              if (KeepAliveService
+                                                      .instance
+                                                      .activeConversationId ==
+                                                  conv.id) {
+                                                await KeepAliveService.instance
+                                                    .stop();
+                                              }
                                               await DatabaseHelper.deleteConversation(
                                                 conv.id,
                                               );
