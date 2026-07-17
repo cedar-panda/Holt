@@ -13,6 +13,7 @@ import '../services/settings_manager.dart';
 import 'saved_messages_screen.dart';
 import '../widgets/character_timeline_panel.dart';
 import '../widgets/x_post_panel.dart';
+import '../utils/latest_request_gate.dart';
 
 /// 角色管理 — 橫向卡片輪盤 + 關聯資源入口
 class CharacterListScreen extends StatefulWidget {
@@ -29,6 +30,7 @@ class _CharacterListScreenState extends State<CharacterListScreen> {
   late PageController _pageCtrl;
   int _currentPage = 0;
   bool _isImporting = false;
+  final LatestRequestGate _loadGate = LatestRequestGate();
 
   @override
   void initState() {
@@ -39,15 +41,17 @@ class _CharacterListScreenState extends State<CharacterListScreen> {
 
   @override
   void dispose() {
+    _loadGate.invalidate();
     _pageCtrl.dispose();
     super.dispose();
   }
 
   Future<void> _load() async {
+    final generation = _loadGate.begin();
     final chars = await DatabaseHelper.getCharacters();
     final activeId = await UserSettings.getActiveCharacterId();
     final activeIndex = chars.indexWhere((c) => c['id'] == activeId);
-    if (!mounted) return;
+    if (!mounted || !_loadGate.isCurrent(generation)) return;
     setState(() {
       _characters = chars;
       _activeId = activeId;
@@ -56,7 +60,10 @@ class _CharacterListScreenState extends State<CharacterListScreen> {
     });
     // 等一幀再跳，確保 PageController 已掛載
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted && _pageCtrl.hasClients && activeIndex >= 0) {
+      if (mounted &&
+          _loadGate.isCurrent(generation) &&
+          _pageCtrl.hasClients &&
+          activeIndex >= 0) {
         _pageCtrl.jumpToPage(activeIndex);
       }
     });
@@ -203,7 +210,10 @@ class _CharacterListScreenState extends State<CharacterListScreen> {
 
               // ═══ 時間線 ═══
               if (_characters.isNotEmpty)
-                CharacterTimelinePanel(characterId: _currentCharId),
+                CharacterTimelinePanel(
+                  key: ValueKey('timeline-$_currentCharId'),
+                  characterId: _currentCharId,
+                ),
 
               const Spacer(),
 

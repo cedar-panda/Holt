@@ -6,6 +6,7 @@ import '../services/locale_strings.dart';
 import '../widgets/gradient_background.dart';
 import '../services/sticker_service.dart';
 import '../memory/database.dart';
+import '../utils/latest_request_gate.dart';
 
 /// 表情包庫管理頁 — 上傳 + 三種描述方式 + Vision API
 class StickerLibraryScreen extends StatefulWidget {
@@ -21,6 +22,7 @@ class _StickerLibraryScreenState extends State<StickerLibraryScreen> {
   List<StickerInfo> _stickers = [];
   bool _isLoading = true;
   final _picker = ImagePicker();
+  final LatestRequestGate _loadGate = LatestRequestGate();
 
   @override
   void initState() {
@@ -29,13 +31,35 @@ class _StickerLibraryScreenState extends State<StickerLibraryScreen> {
   }
 
   Future<void> _loadStickers() async {
-    final stickers = widget.characterId == StickerService.userBucket
+    final generation = _loadGate.begin();
+    final characterId = widget.characterId;
+    final stickers = characterId == StickerService.userBucket
         ? await StickerService.getUserStickers()
-        : await StickerService.getStickers(characterId: widget.characterId);
+        : await StickerService.getStickers(characterId: characterId);
+    if (!mounted ||
+        characterId != widget.characterId ||
+        !_loadGate.isCurrent(generation)) {
+      return;
+    }
     setState(() {
       _stickers = stickers;
       _isLoading = false;
     });
+  }
+
+  @override
+  void didUpdateWidget(covariant StickerLibraryScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.characterId != widget.characterId) {
+      setState(() => _isLoading = true);
+      _loadStickers();
+    }
+  }
+
+  @override
+  void dispose() {
+    _loadGate.invalidate();
+    super.dispose();
   }
 
   // ═══════════════════════════════════

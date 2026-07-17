@@ -17,6 +17,7 @@ import '../services/settings_manager.dart';
 import '../services/token_estimator.dart';
 import '../services/sticker_service.dart';
 import '../widgets/emotion_panel.dart';
+import '../utils/latest_request_gate.dart';
 
 /// 人設卡 — 創建/編輯（存 DB，無行數限制）
 class CharacterCardScreen extends StatefulWidget {
@@ -52,6 +53,8 @@ class _CharacterCardScreenState extends State<CharacterCardScreen> {
   bool _showExtras = false;
   bool _isEditing = false;
   bool _isSaving = false;
+  final LatestRequestGate _loadGate = LatestRequestGate();
+  final LatestRequestGate _tokenGate = LatestRequestGate();
 
   @override
   void initState() {
@@ -62,50 +65,94 @@ class _CharacterCardScreenState extends State<CharacterCardScreen> {
   }
 
   Future<void> _loadExisting() async {
-    if (widget.characterId != null) {
-      _isEditing = true;
-      final char = await DatabaseHelper.getCharacter(widget.characterId!);
-      if (char != null) {
-        _nameController.text = char['name'] ?? '';
-        _descController.text = char['description'] ?? '';
-        _genderController.text = char['gender'] ?? '';
-        _relationController.text = char['relationship'] ?? '';
-        _raceController.text = char['race'] ?? '';
-        _skillController.text = char['skill'] ?? '';
-        _ageController.text = char['age'] ?? '';
-        _heightController.text = char['height'] ?? '';
-        _avatarPath = char['avatar_path'];
-        _ttsVoiceId = char['tts_voice_id'] ?? '';
-        _drawAnchorUserCtrl.text = char['draw_anchor_user'] ?? '';
-        _drawAnchorCharCtrl.text = char['draw_anchor_char'] ?? '';
-        _drawStyleCtrl.text = char['draw_style'] ?? '';
-        _showExtras =
-            _raceController.text.isNotEmpty ||
-            _skillController.text.isNotEmpty ||
-            _ageController.text.isNotEmpty ||
-            _heightController.text.isNotEmpty ||
-            _ttsVoiceId.isNotEmpty;
-      }
+    final generation = _loadGate.begin();
+    final characterId = widget.characterId;
+    Map<String, dynamic>? char;
+    if (characterId != null) {
+      char = await DatabaseHelper.getCharacter(characterId);
     }
-    if (!mounted) return;
+    if (!mounted ||
+        characterId != widget.characterId ||
+        !_loadGate.isCurrent(generation)) {
+      return;
+    }
+
+    _isEditing = characterId != null;
+    _resetEditableFields();
+    if (char != null) {
+      _nameController.text = char['name'] ?? '';
+      _descController.text = char['description'] ?? '';
+      _genderController.text = char['gender'] ?? '';
+      _relationController.text = char['relationship'] ?? '';
+      _raceController.text = char['race'] ?? '';
+      _skillController.text = char['skill'] ?? '';
+      _ageController.text = char['age'] ?? '';
+      _heightController.text = char['height'] ?? '';
+      _avatarPath = char['avatar_path'];
+      _ttsVoiceId = char['tts_voice_id'] ?? '';
+      _drawAnchorUserCtrl.text = char['draw_anchor_user'] ?? '';
+      _drawAnchorCharCtrl.text = char['draw_anchor_char'] ?? '';
+      _drawStyleCtrl.text = char['draw_style'] ?? '';
+      _showExtras =
+          _raceController.text.isNotEmpty ||
+          _skillController.text.isNotEmpty ||
+          _ageController.text.isNotEmpty ||
+          _heightController.text.isNotEmpty ||
+          _ttsVoiceId.isNotEmpty;
+    }
     setState(() => _isLoading = false);
   }
 
+  void _resetEditableFields() {
+    _nameController.clear();
+    _descController.clear();
+    _raceController.clear();
+    _skillController.clear();
+    _ageController.clear();
+    _heightController.clear();
+    _genderController.clear();
+    _relationController.clear();
+    _drawAnchorUserCtrl.clear();
+    _drawAnchorCharCtrl.clear();
+    _drawStyleCtrl.clear();
+    _avatarPath = null;
+    _ttsVoiceId = '';
+    _showExtras = false;
+  }
+
   Future<void> _initTokenCounter() async {
+    final generation = _tokenGate.begin();
+    final characterId = widget.characterId;
     // 固定部分：用戶檔案 + 表情包（與 chat_screen 靜態組裝同構）
     final profile = await TokenEstimator.buildProfilePrompt();
     String sticker = '';
     try {
       sticker = await StickerService.buildStickerPrompt(
-        characterId: widget.characterId ?? 'default',
+        characterId: characterId ?? 'default',
       );
     } catch (_) {}
     final parts = <String>[];
     if (profile.isNotEmpty) parts.add(profile);
     if (sticker.isNotEmpty) parts.add(sticker);
+    final threshold = await TokenEstimator.cacheThreshold();
+    if (!mounted ||
+        characterId != widget.characterId ||
+        !_tokenGate.isCurrent(generation)) {
+      return;
+    }
     _fixedStaticText = parts.join('\n\n');
-    _cacheThresholdVal = await TokenEstimator.cacheThreshold();
+    _cacheThresholdVal = threshold;
     _recalcTokens();
+  }
+
+  @override
+  void didUpdateWidget(covariant CharacterCardScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.characterId != widget.characterId) {
+      setState(() => _isLoading = true);
+      _loadExisting();
+      _initTokenCounter();
+    }
   }
 
   void _recalcTokens() {
@@ -156,6 +203,8 @@ class _CharacterCardScreenState extends State<CharacterCardScreen> {
 
   @override
   void dispose() {
+    _loadGate.invalidate();
+    _tokenGate.invalidate();
     _descController.removeListener(_recalcTokens);
     _nameController.dispose();
     _descController.dispose();
@@ -484,6 +533,9 @@ class _CharacterCardScreenState extends State<CharacterCardScreen> {
                             // ═══ 情緒座標測試面板（kVisible 控制顯隱）═══
                             if (EmotionPanel.kVisible) ...[
                               EmotionPanel(
+                                key: ValueKey(
+                                  'emotion-${widget.characterId ?? 'default'}',
+                                ),
                                 characterId: widget.characterId ?? 'default',
                               ),
                               const SizedBox(height: YanciTheme.spacingMd),

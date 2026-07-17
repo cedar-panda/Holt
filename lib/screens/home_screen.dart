@@ -23,6 +23,7 @@ import '../services/keep_alive_service.dart';
 import '../services/manual_summary_service.dart';
 import '../services/scratch_service.dart';
 import '../widgets/orbit_loading_indicator.dart';
+import '../utils/latest_request_gate.dart';
 import 'ability_modules_screen.dart';
 import 'manual_summary_clean_screen.dart';
 
@@ -67,6 +68,11 @@ class _HomeScreenState extends State<HomeScreen>
   bool _namePromptOpen = false;
   bool _isStartingChat = false;
   bool _reduceMotion = false;
+  final LatestRequestGate _charactersGate = LatestRequestGate();
+  final LatestRequestGate _noteGate = LatestRequestGate();
+  final LatestRequestGate _coinsGate = LatestRequestGate();
+  final LatestRequestGate _keepAliveGate = LatestRequestGate();
+  int _characterSelectionGeneration = 0;
 
   @override
   void initState() {
@@ -188,6 +194,10 @@ class _HomeScreenState extends State<HomeScreen>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _charactersGate.invalidate();
+    _noteGate.invalidate();
+    _coinsGate.invalidate();
+    _keepAliveGate.invalidate();
     _autoBackupTimer?.cancel();
     _heartbeatSub?.cancel();
     _userCoinsSub?.cancel();
@@ -258,12 +268,15 @@ class _HomeScreenState extends State<HomeScreen>
 
   Future<void> _loadKeepAliveInfo({String? characterId}) async {
     final charId = characterId ?? _activeCharacterId;
+    final generation = _keepAliveGate.begin();
     final convId = await KeepAliveService.getActiveConvId(characterId: charId);
     final title = await KeepAliveService.getActiveConvTitle(
       characterId: charId,
     );
     final hb = await KeepAliveService.getLastHeartbeat(characterId: charId);
-    if (mounted) {
+    if (mounted &&
+        charId == _activeCharacterId &&
+        _keepAliveGate.isCurrent(generation)) {
       setState(() {
         _keepAliveConvId = convId;
         _keepAliveConvTitle = title;
@@ -273,8 +286,11 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   Future<void> _loadUserCoins() async {
+    final generation = _coinsGate.begin();
     final coins = await ScratchService.getUserCoins();
-    if (mounted) setState(() => _userCoins = coins);
+    if (mounted && _coinsGate.isCurrent(generation)) {
+      setState(() => _userCoins = coins);
+    }
   }
 
   Future<void> _refreshAfterChatReturn() async {
@@ -285,17 +301,18 @@ class _HomeScreenState extends State<HomeScreen>
   String _userName = '';
   String? _userAvatar;
 
-  Future<void> _loadLatestNote() async {
-    final note = await DatabaseHelper.getLatestNote(
-      characterId: _activeCharacterId,
-    );
-    final randoms = await DatabaseHelper.getRandomNotes(
-      _activeCharacterId,
-      count: 10,
-    );
+  Future<void> _loadLatestNote({String? characterId}) async {
+    final charId = characterId ?? _activeCharacterId;
+    final generation = _noteGate.begin();
+    final note = await DatabaseHelper.getLatestNote(characterId: charId);
+    final randoms = await DatabaseHelper.getRandomNotes(charId, count: 10);
     final name = await UserSettings.getUserName();
     final avatar = await UserSettings.getUserAvatarPath();
-    if (!mounted) return;
+    if (!mounted ||
+        charId != _activeCharacterId ||
+        !_noteGate.isCurrent(generation)) {
+      return;
+    }
     setState(() {
       _latestNote = note?['content'] as String?;
       _randomNotes = randoms.map((r) => r['content'] as String).toList();
@@ -306,6 +323,7 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   Future<void> _loadCharacters({String? selectId}) async {
+    final generation = _charactersGate.begin();
     final chars = await DatabaseHelper.getCharacters();
     final activeId = selectId ?? await UserSettings.getActiveCharacterId();
 
@@ -317,7 +335,7 @@ class _HomeScreenState extends State<HomeScreen>
       }
     }
 
-    if (!mounted) return;
+    if (!mounted || !_charactersGate.isCurrent(generation)) return;
     _carouselController?.dispose();
     _carouselController = PageController(
       viewportFraction: 0.28,
@@ -329,12 +347,14 @@ class _HomeScreenState extends State<HomeScreen>
       _characters = chars;
       _activeCharacterId = activeId;
     });
-    _loadKeepAliveInfo(characterId: activeId);
+    unawaited(_loadKeepAliveInfo(characterId: activeId));
 
     // TODO: 每日自動發放貝殼 — 遊戲上線後刪除
     final charIds = chars.map((c) => c['id'] as String).toList();
     ScratchService.checkDailyGrant(characterIds: charIds).then((_) {
-      if (mounted) _loadUserCoins();
+      if (mounted && _charactersGate.isCurrent(generation)) {
+        _loadUserCoins();
+      }
     });
   }
 
@@ -360,15 +380,45 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   Future<void> _selectCharacter(String id) async {
+    if (id == _activeCharacterId && _characters.isNotEmpty) return;
+    final generation = ++_characterSelectionGeneration;
+    _charactersGate.invalidate();
+
+    // UI selection must change before any persistence or database await.
+    if (mounted) {
+      setState(() {
+        _activeCharacterId = id;
+        _latestNote = null;
+        _randomNotes = const [];
+        _heartbeat = null;
+        _keepAliveConvId = null;
+        _keepAliveConvTitle = null;
+      });
+    }
+    _noteGate.invalidate();
+    _keepAliveGate.invalidate();
+
+    unawaited(_loadLatestNote(characterId: id));
+    unawaited(_loadKeepAliveInfo(characterId: id));
+
     await UserSettings.saveActiveCharacterId(id);
+    if (generation != _characterSelectionGeneration) {
+      // A slower, older write may have landed last. Reassert the current choice.
+      await UserSettings.saveActiveCharacterId(_activeCharacterId);
+      return;
+    }
 
     final char = await DatabaseHelper.getCharacter(id);
-    if (char != null) {
+    if (generation != _characterSelectionGeneration) return;
+    if (char != null && id == _activeCharacterId) {
       await UserSettings.saveCharacterName(char['name'] ?? '');
     }
 
-    if (!mounted) return;
-    setState(() => _activeCharacterId = id);
+    if (!mounted ||
+        generation != _characterSelectionGeneration ||
+        id != _activeCharacterId) {
+      return;
+    }
 
     // 讓輪盤滾到選中的角色
     final targetIndex = _characters.indexWhere((c) => c['id'] == id);
@@ -382,9 +432,6 @@ class _HomeScreenState extends State<HomeScreen>
         curve: Curves.easeOut,
       );
     }
-
-    _loadLatestNote(); // 切換角色 → 便箋跟著切
-    _loadKeepAliveInfo(characterId: id);
   }
 
   Future<void> _startNewChat() async {
@@ -510,7 +557,10 @@ class _HomeScreenState extends State<HomeScreen>
                 top: greetingTop,
                 left: 0,
                 right: 0,
-                child: _buildGreeting(),
+                child: KeyedSubtree(
+                  key: ValueKey('home-greeting-$_activeCharacterId'),
+                  child: _buildGreeting(),
+                ),
               ),
             // ═══ 角色輪盤 ═══
             Positioned(
@@ -526,26 +576,32 @@ class _HomeScreenState extends State<HomeScreen>
               left: 0,
               right: 0,
               bottom: 28,
-              child: Column(
-                children: [
-                  if (_heartbeat != null) _buildHeartbeatValue(),
-                  const SizedBox(height: 4),
-                  Expanded(
-                    child: Semantics(
-                      button: true,
-                      label: L.pick(en: 'Start a new chat', zhTW: '開始新對話'),
-                      child: GestureDetector(
-                        behavior: HitTestBehavior.opaque,
-                        onTap: _startNewChat,
-                        child: Stack(
-                          alignment: Alignment.center,
-                          children: [_buildHeartbeatLine(), _buildPulsingDot()],
+              child: KeyedSubtree(
+                key: ValueKey('home-live-state-$_activeCharacterId'),
+                child: Column(
+                  children: [
+                    if (_heartbeat != null) _buildHeartbeatValue(),
+                    const SizedBox(height: 4),
+                    Expanded(
+                      child: Semantics(
+                        button: true,
+                        label: L.pick(en: 'Start a new chat', zhTW: '開始新對話'),
+                        child: GestureDetector(
+                          behavior: HitTestBehavior.opaque,
+                          onTap: _startNewChat,
+                          child: Stack(
+                            alignment: Alignment.center,
+                            children: [
+                              _buildHeartbeatLine(),
+                              _buildPulsingDot(),
+                            ],
+                          ),
                         ),
                       ),
                     ),
-                  ),
-                  if (_keepAliveConvId != null) _buildActiveConvEntry(),
-                ],
+                    if (_keepAliveConvId != null) _buildActiveConvEntry(),
+                  ],
+                ),
               ),
             ),
             // ═══ 用戶貝殼餘額（左上角）═══
@@ -1370,6 +1426,7 @@ class _HomeScreenState extends State<HomeScreen>
 
   /// 便利貼面板
   void _showNotesSheet() {
+    final characterId = _activeCharacterId;
     final ctrl = TextEditingController();
 
     showModalBottomSheet(
@@ -1456,9 +1513,14 @@ class _HomeScreenState extends State<HomeScreen>
                       GestureDetector(
                         onTap: () async {
                           if (ctrl.text.trim().isEmpty) return;
-                          await DatabaseHelper.addNote(ctrl.text.trim());
+                          await DatabaseHelper.addNote(
+                            ctrl.text.trim(),
+                            characterId: characterId,
+                          );
                           ctrl.clear();
-                          _loadLatestNote();
+                          if (characterId == _activeCharacterId) {
+                            _loadLatestNote(characterId: characterId);
+                          }
                           setSheetState(() {});
                         },
                         child: Container(
@@ -1480,7 +1542,10 @@ class _HomeScreenState extends State<HomeScreen>
                   ),
                   const SizedBox(height: YanciTheme.spacingMd),
                   FutureBuilder<List<Map<String, dynamic>>>(
-                    future: DatabaseHelper.getNotes(limit: 10),
+                    future: DatabaseHelper.getNotes(
+                      limit: 10,
+                      characterId: characterId,
+                    ),
                     builder: (ctx, snap) {
                       if (!snap.hasData || snap.data!.isEmpty) {
                         return Padding(
@@ -1512,7 +1577,9 @@ class _HomeScreenState extends State<HomeScreen>
                             onDismissed: (_) {
                               final id = n['id'] as int;
                               DatabaseHelper.deleteNote(id).then((_) {
-                                _loadLatestNote();
+                                if (characterId == _activeCharacterId) {
+                                  _loadLatestNote(characterId: characterId);
+                                }
                                 setSheetState(() {});
                               });
                             },

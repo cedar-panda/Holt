@@ -6,6 +6,7 @@ import '../theme/app_theme.dart';
 import '../services/locale_strings.dart';
 import '../services/character_timeline_service.dart';
 import '../services/scratch_service.dart';
+import '../utils/latest_request_gate.dart';
 import 'shop_backpack_sheets.dart';
 import 'coin_amount_text.dart';
 
@@ -28,6 +29,8 @@ class _CharacterTimelinePanelState extends State<CharacterTimelinePanel> {
   final ScrollController _scrollCtrl = ScrollController();
   int _charCoins = 0;
   StreamSubscription<CharacterCoinsChanged>? _coinsSub;
+  final LatestRequestGate _loadGate = LatestRequestGate();
+  final LatestRequestGate _coinsGate = LatestRequestGate();
 
   // 佈局常量
   static const double _nodeWidth = 76.0;
@@ -50,8 +53,14 @@ class _CharacterTimelinePanelState extends State<CharacterTimelinePanel> {
   }
 
   Future<void> _loadCoins() async {
-    final coins = await ScratchService.getCoins(widget.characterId);
-    if (mounted) setState(() => _charCoins = coins);
+    final generation = _coinsGate.begin();
+    final characterId = widget.characterId;
+    final coins = await ScratchService.getCoins(characterId);
+    if (mounted &&
+        characterId == widget.characterId &&
+        _coinsGate.isCurrent(generation)) {
+      setState(() => _charCoins = coins);
+    }
   }
 
   @override
@@ -65,17 +74,21 @@ class _CharacterTimelinePanelState extends State<CharacterTimelinePanel> {
 
   @override
   void dispose() {
+    _loadGate.invalidate();
+    _coinsGate.invalidate();
     _coinsSub?.cancel();
     _scrollCtrl.dispose();
     super.dispose();
   }
 
   Future<void> _load() async {
+    final generation = _loadGate.begin();
+    final characterId = widget.characterId;
     setState(() => _loading = true);
 
-    final states = await CharacterTimelineService.getStates(widget.characterId);
+    final states = await CharacterTimelineService.getStates(characterId);
     final events = await CharacterTimelineService.getEvents(
-      widget.characterId,
+      characterId,
       limit: 50,
     );
 
@@ -117,7 +130,11 @@ class _CharacterTimelinePanelState extends State<CharacterTimelinePanel> {
     // 左舊右新（升序）
     nodes.sort((a, b) => a.date.compareTo(b.date));
 
-    if (!mounted) return;
+    if (!mounted ||
+        characterId != widget.characterId ||
+        !_loadGate.isCurrent(generation)) {
+      return;
+    }
     setState(() {
       _nodes = nodes;
       _loading = false;
@@ -125,7 +142,10 @@ class _CharacterTimelinePanelState extends State<CharacterTimelinePanel> {
 
     // 滾到最右（最新）
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_scrollCtrl.hasClients) {
+      if (mounted &&
+          characterId == widget.characterId &&
+          _loadGate.isCurrent(generation) &&
+          _scrollCtrl.hasClients) {
         _scrollCtrl.jumpTo(_scrollCtrl.position.maxScrollExtent);
       }
     });

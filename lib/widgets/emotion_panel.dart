@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../memory/emotion_coordinates.dart';
 import '../services/locale_strings.dart';
 import '../theme/app_theme.dart';
+import '../utils/latest_request_gate.dart';
 
 /// ═══════════════════════════════════════════════
 /// 情緒座標測試面板 V2
@@ -27,6 +28,7 @@ class _EmotionPanelState extends State<EmotionPanel> {
   double _chaos = 0;
   int _windowCount = 0;
   bool _loading = true;
+  final LatestRequestGate _loadGate = LatestRequestGate();
 
   static const double kResonanceBelow = 0.35;
 
@@ -46,13 +48,19 @@ class _EmotionPanelState extends State<EmotionPanel> {
   }
 
   Future<void> _load() async {
-    final points = await EmotionCoordinates.activePoints(widget.characterId);
-    final bars = await EmotionCoordinates.bars(widget.characterId);
-    final chaos = await EmotionCoordinates.currentChaos(widget.characterId);
+    final generation = _loadGate.begin();
+    final characterId = widget.characterId;
+    final points = await EmotionCoordinates.activePoints(characterId);
+    final bars = await EmotionCoordinates.bars(characterId);
+    final chaos = await EmotionCoordinates.currentChaos(characterId);
     final cutoff = DateTime.now().subtract(
       const Duration(hours: EmotionCoordinates.kChaosWindowHours),
     );
-    if (!mounted) return;
+    if (!mounted ||
+        characterId != widget.characterId ||
+        !_loadGate.isCurrent(generation)) {
+      return;
+    }
     setState(() {
       _points = points;
       _bars = bars;
@@ -60,6 +68,21 @@ class _EmotionPanelState extends State<EmotionPanel> {
       _windowCount = points.where((p) => p.createdAt.isAfter(cutoff)).length;
       _loading = false;
     });
+  }
+
+  @override
+  void didUpdateWidget(covariant EmotionPanel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.characterId != widget.characterId) {
+      setState(() => _loading = true);
+      _load();
+    }
+  }
+
+  @override
+  void dispose() {
+    _loadGate.invalidate();
+    super.dispose();
   }
 
   @override

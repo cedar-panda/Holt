@@ -3,6 +3,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
 import '../services/locale_strings.dart';
+import '../utils/latest_request_gate.dart';
 
 /// 簡易圓形頭像裁剪器
 ///
@@ -40,6 +41,7 @@ class _AvatarCropperScreenState extends State<AvatarCropperScreen> {
   final TransformationController _transformCtrl = TransformationController();
   ui.Image? _image;
   bool _isProcessing = false;
+  final LatestRequestGate _loadGate = LatestRequestGate();
 
   @override
   void initState() {
@@ -48,14 +50,35 @@ class _AvatarCropperScreenState extends State<AvatarCropperScreen> {
   }
 
   Future<void> _loadImage() async {
+    final generation = _loadGate.begin();
+    final sourcePath = widget.imageFile.path;
     final bytes = await widget.imageFile.readAsBytes();
     final codec = await ui.instantiateImageCodec(bytes);
     final frame = await codec.getNextFrame();
+    codec.dispose();
+    if (!mounted ||
+        sourcePath != widget.imageFile.path ||
+        !_loadGate.isCurrent(generation)) {
+      frame.image.dispose();
+      return;
+    }
+    final oldImage = _image;
     setState(() => _image = frame.image);
+    oldImage?.dispose();
+  }
+
+  @override
+  void didUpdateWidget(covariant AvatarCropperScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.imageFile.path != widget.imageFile.path) {
+      _loadImage();
+    }
   }
 
   @override
   void dispose() {
+    _loadGate.invalidate();
+    _image?.dispose();
     _transformCtrl.dispose();
     super.dispose();
   }

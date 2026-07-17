@@ -5,6 +5,7 @@ import '../theme/app_theme.dart';
 import '../services/locale_strings.dart';
 import '../widgets/gradient_background.dart';
 import '../memory/database.dart';
+import '../utils/latest_request_gate.dart';
 
 /// 收藏消息頁面 — 按角色顯示收藏的消息
 class SavedMessagesScreen extends StatefulWidget {
@@ -25,6 +26,7 @@ class _SavedMessagesScreenState extends State<SavedMessagesScreen> {
   List<Map<String, dynamic>> _messages = [];
   bool _isLoading = true;
   final TextEditingController _searchCtrl = TextEditingController();
+  final LatestRequestGate _loadGate = LatestRequestGate();
 
   /// 展開全文的收藏 id（默認折疊，長對話不再撐爆列表）
   final Set<int> _expanded = {};
@@ -37,27 +39,46 @@ class _SavedMessagesScreenState extends State<SavedMessagesScreen> {
 
   @override
   void dispose() {
+    _loadGate.invalidate();
     _searchCtrl.dispose();
     super.dispose();
   }
 
   Future<void> _load() async {
+    final generation = _loadGate.begin();
+    final characterId = widget.characterId;
+    final query = _searchCtrl.text.trim();
     try {
-      final query = _searchCtrl.text.trim();
       final msgs = query.isEmpty
-          ? await DatabaseHelper.getSavedMessages(
-              characterId: widget.characterId,
-            )
+          ? await DatabaseHelper.getSavedMessages(characterId: characterId)
           : await DatabaseHelper.searchSavedMessages(
               query,
-              characterId: widget.characterId,
+              characterId: characterId,
             );
+      if (!mounted ||
+          characterId != widget.characterId ||
+          query != _searchCtrl.text.trim() ||
+          !_loadGate.isCurrent(generation)) {
+        return;
+      }
       setState(() {
         _messages = msgs;
         _isLoading = false;
       });
     } catch (_) {
-      setState(() => _isLoading = false);
+      if (mounted && _loadGate.isCurrent(generation)) {
+        setState(() => _isLoading = false);
+      }
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant SavedMessagesScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.characterId != widget.characterId) {
+      _expanded.clear();
+      setState(() => _isLoading = true);
+      _load();
     }
   }
 

@@ -4,6 +4,7 @@ import '../theme/app_theme.dart';
 import '../services/locale_strings.dart';
 import '../widgets/gradient_background.dart';
 import '../memory/database.dart';
+import '../utils/latest_request_gate.dart';
 
 /// 用量監控面板
 class UsageDashboardScreen extends StatefulWidget {
@@ -19,6 +20,7 @@ class _UsageDashboardScreenState extends State<UsageDashboardScreen> {
   List<Map<String, dynamic>> _dailyData = [];
   List<Map<String, dynamic>> _modelBreakdown = [];
   bool _isLoading = true;
+  final LatestRequestGate _loadGate = LatestRequestGate();
 
   static List<String> get _periods => [
     L.get('usage_period_today'),
@@ -50,11 +52,16 @@ class _UsageDashboardScreenState extends State<UsageDashboardScreen> {
   }
 
   Future<void> _loadData() async {
+    final generation = _loadGate.begin();
+    final period = _period;
     final (from, to) = _getRange();
     final summary = await DatabaseHelper.getUsageSummary(from, to);
     final daily = await DatabaseHelper.getDailyUsage(from, to);
     final models = await DatabaseHelper.getUsageByModel(from, to);
 
+    if (!mounted || period != _period || !_loadGate.isCurrent(generation)) {
+      return;
+    }
     setState(() {
       _summary = summary;
       _dailyData = daily;
