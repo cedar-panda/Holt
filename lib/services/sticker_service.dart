@@ -152,13 +152,39 @@ class StickerService {
   // Vision API 描述
   // ═══════════════════════════════════
 
+  /// 建立表情包 Vision 提示詞。字數滑條只控制這條指令，不會被誤用成
+  /// API max_tokens，也不會在回傳後硬截斷模型內容。
+  static String buildVisionPrompt({
+    required String characterName,
+    int maxCharacters = 20,
+  }) {
+    final characterLimit = maxCharacters.clamp(20, 100).toInt();
+
+    // 精簡 prompt — 不注入完整人設，省 input token
+    final visionTemplate = L.pick(
+      en:
+          '''
+You are “\u{E000}”. Read this sticker's conversational mood and infer what feeling it represents and when it would be used.
+Do not describe the image. Keep the output content within $characterLimit characters.
+Output JSON only, with no other text or Markdown:
+{"line":"a line \u{E000} would say","scene":"usage context","mood":"3-5 emotion words, comma-separated"}''',
+      zhTW:
+          '''
+你是「\u{E000}」。看這張表情包，讀空氣：它在對話裡代表什麼心情、什麼場景下會用。
+不要描述畫面內容。輸出內容務必控制在 $characterLimit 字數內。
+直接輸出 JSON，不加任何其他文字或 markdown：
+{"line":"一句\u{E000} 會說的台詞","scene":"使用場景","mood":"3-5個情緒詞,逗號分隔"}''',
+    );
+    return visionTemplate.replaceAll('\u{E000}', characterName);
+  }
+
   /// 用 Vision API 描述表情包（結合角色人設）
   /// 返回 {line, scene, mood}
   static Future<Map<String, String>> describeWithVision({
     required String imagePath,
     required String characterName,
     required String characterPrompt,
-    int maxTokens = 300,
+    int maxCharacters = 20,
   }) async {
     final file = File(imagePath);
     if (!file.existsSync()) {
@@ -179,18 +205,10 @@ class StickerService {
       mediaType = 'image/webp';
     }
 
-    // 精簡 prompt — 不注入完整人設，省 input token
-    final visionTemplate = L.pick(
-      en: '''
-You are “\u{E000}”. Read this sticker's conversational mood and infer what feeling it represents and when it would be used.
-Do not describe the image. Output JSON only, with no other text or Markdown:
-{"line":"a line \u{E000} would say","scene":"usage context","mood":"3-5 emotion words, comma-separated"}''',
-      zhTW: '''
-你是「\u{E000}」。看這張表情包，讀空氣：它在對話裡代表什麼心情、什麼場景下會用。
-不要描述畫面內容，直接輸出 JSON，不加任何其他文字或 markdown：
-{"line":"一句\u{E000} 會說的台詞","scene":"使用場景","mood":"3-5個情緒詞,逗號分隔"}''',
+    final visionPrompt = buildVisionPrompt(
+      characterName: characterName,
+      maxCharacters: maxCharacters,
     );
-    final visionPrompt = visionTemplate.replaceAll('\u{E000}', characterName);
 
     // 優先用表情包專用模型（便宜的），沒設就用主模型
     var model = await UserSettings.getStickerVisionModel();

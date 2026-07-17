@@ -433,10 +433,10 @@ class L {
       'zh_CN': '让 AI 看图描述',
       'en': 'AI describe image',
     },
-    'sticker_output_token': {
-      'zh_TW': '輸出 token：',
-      'zh_CN': '输出 token：',
-      'en': 'Output tokens:',
+    'sticker_output_characters': {
+      'zh_TW': '輸出字數：',
+      'zh_CN': '输出字数：',
+      'en': 'Output characters:',
     },
     'sticker_delete_confirm': {
       'zh_TW': '刪除這張表情包？',

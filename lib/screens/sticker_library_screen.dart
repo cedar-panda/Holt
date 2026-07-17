@@ -100,7 +100,7 @@ class _StickerLibraryScreenState extends State<StickerLibraryScreen> {
     final sceneCtrl = TextEditingController();
     final moodCtrl = TextEditingController();
     bool isVisionLoading = false;
-    int visionTokens = 300;
+    int visionCharacterLimit = 20;
     String? visionError;
 
     // 加載人設卡列表（Vision 用）
@@ -315,7 +315,7 @@ class _StickerLibraryScreenState extends State<StickerLibraryScreen> {
                   Row(
                     children: [
                       Text(
-                        L.get('sticker_output_token'),
+                        L.get('sticker_output_characters'),
                         style: YanciTheme.bodySmall,
                       ),
                       Expanded(
@@ -331,17 +331,18 @@ class _StickerLibraryScreenState extends State<StickerLibraryScreen> {
                             ),
                           ),
                           child: Slider(
-                            value: visionTokens.toDouble(),
-                            min: 150,
-                            max: 500,
-                            divisions: 7,
-                            onChanged: (v) =>
-                                setSheetState(() => visionTokens = v.round()),
+                            value: visionCharacterLimit.toDouble(),
+                            min: 20,
+                            max: 100,
+                            divisions: 80,
+                            onChanged: (v) => setSheetState(
+                              () => visionCharacterLimit = v.round(),
+                            ),
                           ),
                         ),
                       ),
                       Text(
-                        '$visionTokens',
+                        '$visionCharacterLimit',
                         style: YanciTheme.bodySmall.copyWith(
                           color: YanciTheme.accent,
                         ),
@@ -377,7 +378,7 @@ class _StickerLibraryScreenState extends State<StickerLibraryScreen> {
                                       imagePath: filePath,
                                       characterName: charName,
                                       characterPrompt: charPrompt,
-                                      maxTokens: visionTokens,
+                                      maxCharacters: visionCharacterLimit,
                                     );
                                 setSheetState(() {
                                   lineCtrl.text = result['line'] ?? '';
