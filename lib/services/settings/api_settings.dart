@@ -13,6 +13,17 @@ import '../thinking_machines_service.dart';
 import '../local_model_service.dart';
 import '../locale_strings.dart';
 
+/// 使用者尚未完成 API 來源設定。這類錯誤應由 UI 引導設定，不能當成
+/// 角色回覆寫入聊天紀錄。
+class ApiConfigException implements Exception {
+  const ApiConfigException(this.message);
+
+  final String message;
+
+  @override
+  String toString() => message;
+}
+
 /// API 供應商配置（OpenRouter / Bedrock / Gemini / DeepSeek / Qwen / OpenAI Compatible / Local API）
 class ApiSettings {
   // ═══ 通用 ═══
@@ -607,7 +618,14 @@ class ApiSettings {
       await _disposeCachedLocalModel();
       final baseUrl = await getLocalApiBaseUrl();
       final key = await getLocalApiKey();
-      if (baseUrl.isEmpty) throw Exception('本地 API Base URL 未設定');
+      if (baseUrl.isEmpty) {
+        throw ApiConfigException(
+          L.pick(
+            en: 'Local API Base URL is not configured',
+            zhTW: '本地 API Base URL 未設定',
+          ),
+        );
+      }
       return OpenAICompatibleService(
         apiKey: key,
         baseUrl: baseUrl,
@@ -620,7 +638,14 @@ class ApiSettings {
     if (provider == 'local_api') {
       final baseUrl = await getLocalApiBaseUrl();
       final key = await getLocalApiKey();
-      if (baseUrl.isEmpty) throw Exception('本地 API Base URL 未設定');
+      if (baseUrl.isEmpty) {
+        throw ApiConfigException(
+          L.pick(
+            en: 'Local API Base URL is not configured',
+            zhTW: '本地 API Base URL 未設定',
+          ),
+        );
+      }
       return OpenAICompatibleService(
         apiKey: key,
         baseUrl: baseUrl,
@@ -634,7 +659,9 @@ class ApiSettings {
       final region = await getAwsRegion();
       final bedrockModelId = overrideModel ?? await getAwsModelId();
       if (accessKeyId.isEmpty || secretAccessKey.isEmpty) {
-        throw Exception('AWS 憑證未設定');
+        throw ApiConfigException(
+          L.pick(en: 'AWS credentials are not configured', zhTW: 'AWS 憑證未設定'),
+        );
       }
       return BedrockService(
         accessKeyId: accessKeyId,
@@ -646,7 +673,14 @@ class ApiSettings {
 
     if (provider == 'gemini') {
       final key = await getGeminiApiKey();
-      if (key.isEmpty) throw Exception('Gemini API Key 未設定');
+      if (key.isEmpty) {
+        throw ApiConfigException(
+          L.pick(
+            en: 'Gemini API Key is not configured',
+            zhTW: 'Gemini API Key 未設定',
+          ),
+        );
+      }
       final model = overrideModel ?? await getGeminiModel();
       final cached = _cachedGeminiService;
       if (_cachedGeminiKey == key &&
@@ -662,20 +696,34 @@ class ApiSettings {
 
     if (provider == 'deepseek') {
       final key = await getDeepseekApiKey();
-      if (key.isEmpty) throw Exception('DeepSeek API Key 未設定');
+      if (key.isEmpty) {
+        throw ApiConfigException(
+          L.pick(
+            en: 'DeepSeek API Key is not configured',
+            zhTW: 'DeepSeek API Key 未設定',
+          ),
+        );
+      }
       return DeepSeekService(apiKey: key);
     }
 
     if (provider == 'qwen') {
       final key = await getQwenApiKey();
-      if (key.isEmpty) throw Exception('Qwen API Key 未設定');
+      if (key.isEmpty) {
+        throw ApiConfigException(
+          L.pick(
+            en: 'Qwen API Key is not configured',
+            zhTW: 'Qwen API Key 未設定',
+          ),
+        );
+      }
       return QwenService(apiKey: key);
     }
 
     if (provider == 'thinking_machines') {
       final key = await getThinkingMachinesApiKey();
       if (key.isEmpty) {
-        throw Exception(
+        throw ApiConfigException(
           L.pick(
             en: 'Thinking Machines API Key is not configured',
             zhTW: 'Thinking Machines API Key 未設定',
@@ -692,20 +740,40 @@ class ApiSettings {
     if (provider == 'openai_compatible') {
       final baseUrl = await getOaiCompatBaseUrl();
       final key = await getOaiCompatApiKey();
-      if (baseUrl.isEmpty) throw Exception('API Base URL 未設定');
-      if (key.isEmpty) throw Exception('API Key 未設定');
+      if (baseUrl.isEmpty) {
+        throw ApiConfigException(
+          L.pick(
+            en: 'API Base URL is not configured',
+            zhTW: 'API Base URL 未設定',
+          ),
+        );
+      }
+      if (key.isEmpty) {
+        throw ApiConfigException(
+          L.pick(en: 'API Key is not configured', zhTW: 'API Key 未設定'),
+        );
+      }
       return OpenAICompatibleService(apiKey: key, baseUrl: baseUrl);
     }
 
     if (provider == 'openrouter') {
       final apiKey = await getOpenRouterApiKey();
       if (apiKey.isEmpty) {
-        throw Exception('OpenRouter API Key 未設定');
+        throw ApiConfigException(
+          L.pick(
+            en: 'OpenRouter API Key is not configured',
+            zhTW: 'OpenRouter API Key 未設定',
+          ),
+        );
       }
       return OpenRouterService(apiKey: apiKey);
     }
 
-    if (provider == 'local') throw Exception('本地模型未設定');
+    if (provider == 'local') {
+      throw ApiConfigException(
+        L.pick(en: 'No local model is configured', zhTW: '本地模型未設定'),
+      );
+    }
     throw UnsupportedError('不支援的 API 來源：$provider');
   }
 

@@ -4,8 +4,55 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:project_yanci/services/settings/api_settings.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
   setUp(() {
     SharedPreferences.setMockInitialValues({});
+  });
+
+  for (final provider in <String>[
+    'openrouter',
+    'bedrock',
+    'gemini',
+    'deepseek',
+    'qwen',
+    'thinking_machines',
+    'openai_compatible',
+    'local_api',
+    'local',
+  ]) {
+    test(
+      '$provider reports missing configuration as ApiConfigException',
+      () async {
+        await expectLater(
+          ApiSettings.buildAdapter(
+            overrideProvider: provider,
+            overrideModel: 'model-x',
+          ),
+          throwsA(isA<ApiConfigException>()),
+        );
+      },
+    );
+  }
+
+  test('OpenAI-compatible source distinguishes a missing API key', () async {
+    SharedPreferences.setMockInitialValues(<String, Object>{
+      'oai_compat_base_url': 'https://api.example.com/v1',
+    });
+
+    await expectLater(
+      ApiSettings.buildAdapter(
+        overrideProvider: 'openai_compatible',
+        overrideModel: 'model-x',
+      ),
+      throwsA(
+        isA<ApiConfigException>().having(
+          (error) => error.message,
+          'message',
+          contains('API Key'),
+        ),
+      ),
+    );
   });
 
   test('starred model remembers its API provider', () async {

@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:project_yanci/services/backup_service.dart';
 
@@ -145,21 +146,34 @@ void main() {
     );
   });
 
-  test('v5 rejects a message whose conversation does not exist', () {
+  test('v5 drops orphan messages, reports count, and never logs text', () {
     final backup = _emptyV5();
+    const secretText = 'private-orphan-message-body';
     backup['messages'] = <dynamic>[
       <String, dynamic>{
         'id': 1,
         'conversation_id': 'missing',
-        'text': 'orphan',
+        'text': secretText,
         'is_user': 1,
         'created_at': '2026-01-01T00:00:00.000Z',
       },
     ];
 
-    expect(
-      () => BackupService.normalizeForTesting(backup),
-      throwsA(isA<FormatException>()),
-    );
+    final logs = <String>[];
+    final originalDebugPrint = debugPrint;
+    debugPrint = (message, {wrapWidth}) {
+      if (message != null) logs.add(message);
+    };
+    try {
+      final report = BackupService.normalizeWithReportForTesting(backup);
+
+      expect(report.tables['messages'], isEmpty);
+      expect(report.droppedOrphanMessageCount, 1);
+      expect(BackupService.orphanImportSummaryForTesting(1), '捨棄1條孤兒訊息');
+      expect(logs.join('\n'), contains('id=1'));
+      expect(logs.join('\n'), isNot(contains(secretText)));
+    } finally {
+      debugPrint = originalDebugPrint;
+    }
   });
 }

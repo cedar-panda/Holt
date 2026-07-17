@@ -320,6 +320,25 @@ class _ChatScreenState extends State<ChatScreen> {
 
   bool _isCurrentGeneration(int serial) => serial == _generationSerial;
 
+  Future<ApiAdapter?> _prepareAdapterForGeneration({
+    required int generationSerial,
+    required Future<void> Function() retry,
+  }) async {
+    try {
+      return await ApiSettings.buildAdapter();
+    } on ApiConfigException catch (error) {
+      if (!_isCurrentGeneration(generationSerial)) return null;
+      _finishFailedGeneration();
+      _showApiConfigFailure(error);
+      return null;
+    } catch (error) {
+      if (!_isCurrentGeneration(generationSerial)) return null;
+      _finishFailedGeneration();
+      _showRetryableFailure(error, () => _runMessageRetry(retry));
+      return null;
+    }
+  }
+
   void _invalidateGenerationState() {
     _clearStreamQueue();
     _generationSerial++;
@@ -2052,6 +2071,86 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
+  void _finishFailedGeneration() {
+    if (mounted) {
+      setState(() {
+        _clearStreamQueue();
+        _setGenerating(false);
+      });
+    } else {
+      _clearStreamQueue();
+      _setGenerating(false);
+    }
+  }
+
+  String _apiErrorSummary(Object error) {
+    var message = error.toString().replaceFirst(RegExp(r'^Exception:\s*'), '');
+    message = message.replaceAll(RegExp(r'\s+'), ' ').trim();
+    if (message.length > 180) message = '${message.substring(0, 180)}…';
+    return message.isEmpty
+        ? L.pick(en: 'The request failed', zhTW: '請求失敗')
+        : message;
+  }
+
+  void _showApiConfigFailure(ApiConfigException error) {
+    if (!mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.hideCurrentSnackBar();
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(error.message),
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 8),
+        action: SnackBarAction(
+          label: L.pick(en: 'Settings', zhTW: '去設定'),
+          onPressed: () {
+            if (mounted) Navigator.of(context).pushNamed('/api_settings');
+          },
+        ),
+      ),
+    );
+  }
+
+  void _showRetryableFailure(Object error, Future<void> Function() retry) {
+    if (!mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.hideCurrentSnackBar();
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(_apiErrorSummary(error)),
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 8),
+        action: SnackBarAction(
+          label: L.pick(en: 'Retry', zhTW: '重試'),
+          onPressed: () => unawaited(retry()),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _runMessageRetry(Future<void> Function() retry) async {
+    if (!_isChatReady ||
+        _sendSubmissionInProgress ||
+        _isGenerating ||
+        _isGeneratingImage) {
+      return;
+    }
+    if (mounted) {
+      setState(() => _sendSubmissionInProgress = true);
+    } else {
+      _sendSubmissionInProgress = true;
+    }
+    try {
+      await retry();
+    } finally {
+      if (mounted) {
+        setState(() => _sendSubmissionInProgress = false);
+      } else {
+        _sendSubmissionInProgress = false;
+      }
+    }
+  }
+
   Future<void> _onSendMessage(
     String text, {
     bool clearComposerOnAccept = false,
@@ -2087,6 +2186,7 @@ class _ChatScreenState extends State<ChatScreen> {
     String text, {
     required String composerDraft,
     required bool clearComposerOnAccept,
+    Message? retryUserMessage,
   }) async {
     if (!_isChatReady) return;
     final conversationId = widget.conversationId;
@@ -2119,7 +2219,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _userScrolledUp = false; // 新消息 → 重新跟隨
 
     // 有待發圖片 → 圖文一起送
-    if (_pendingImagePath != null) {
+    if (retryUserMessage == null && _pendingImagePath != null) {
       final imgPath = _pendingImagePath!;
       setState(() => _pendingImagePath = null);
       return _sendImageLocked(
@@ -2131,7 +2231,7 @@ class _ChatScreenState extends State<ChatScreen> {
     }
 
     // 有待發表情包 → 文字 + 表情包一起送
-    if (_pendingSticker != null) {
+    if (retryUserMessage == null && _pendingSticker != null) {
       final sticker = _pendingSticker!;
       setState(() => _pendingSticker = null);
       final stickerTag = '[sticker:${sticker.id}]';
@@ -2145,7 +2245,7 @@ class _ChatScreenState extends State<ChatScreen> {
     }
 
     // 有掛起禮物 → 入對方背包 + 消息尾附 [gift:名稱]（氣泡隱藏、模型可見）
-    final giftTag = await _consumePendingGift();
+    final giftTag = retryUserMessage == null ? await _consumePendingGift() : '';
     if (giftTag.isNotEmpty) {
       return _sendMessageLocked(
         text.isNotEmpty ? '$text$giftTag' : giftTag.trim(),
@@ -2155,7 +2255,7 @@ class _ChatScreenState extends State<ChatScreen> {
     }
 
     // 有掛起結婚證 → 消息尾附邀請標記＋動態語義說明（偶發事件不進靜態；簡繁英三語）
-    if (_pendingMarriageCert) {
+    if (retryUserMessage == null && _pendingMarriageCert) {
       setState(() => _pendingMarriageCert = false);
       final certTag = MarriageService.certTagNote();
       return _sendMessageLocked(
@@ -2165,15 +2265,22 @@ class _ChatScreenState extends State<ChatScreen> {
       );
     }
 
-    final pendingTransfer = _pendingUserTransfer;
-    final pendingScratchGiftWho = _pendingScratchGiftWho;
+    final pendingTransfer = retryUserMessage == null
+        ? _pendingUserTransfer
+        : null;
+    final pendingScratchGiftWho = retryUserMessage == null
+        ? _pendingScratchGiftWho
+        : null;
     final pendingScratchGift = pendingScratchGiftWho == null
         ? null
         : await _createScratchGiftData(pendingScratchGiftWho);
     if (pendingScratchGiftWho != null && pendingScratchGift == null) return;
 
-    var outboundText = _appendTransferTag(text, pendingTransfer);
-    outboundText = _appendScratchGiftTag(outboundText, pendingScratchGift);
+    var outboundText =
+        retryUserMessage?.text ?? _appendTransferTag(text, pendingTransfer);
+    if (retryUserMessage == null) {
+      outboundText = _appendScratchGiftTag(outboundText, pendingScratchGift);
+    }
     if (outboundText.isEmpty) return;
     if (pendingTransfer != null) {
       if (mounted) {
@@ -2190,44 +2297,52 @@ class _ChatScreenState extends State<ChatScreen> {
       }
     }
 
-    final userMsg = Message(
-      conversationId: conversationId,
-      characterId: _activeCharacterId,
-      text: outboundText,
-      isUser: true,
-    );
-    final userId = await DatabaseHelper.insertMessage(userMsg);
-    unawaited(MarriageService.scanMessage(userMsg.text, _activeCharacterId));
-    _sentMessageInThisSession = true;
-    if (clearComposerOnAccept) {
-      _clearComposerIfUnchanged(composerDraft);
-    }
+    late final Message userMsgWithId;
+    if (retryUserMessage != null) {
+      if (retryUserMessage.id == null) return;
+      userMsgWithId = retryUserMessage;
+    } else {
+      final userMsg = Message(
+        conversationId: conversationId,
+        characterId: _activeCharacterId,
+        text: outboundText,
+        isUser: true,
+      );
+      final userId = await DatabaseHelper.insertMessage(userMsg);
+      unawaited(MarriageService.scanMessage(userMsg.text, _activeCharacterId));
+      _sentMessageInThisSession = true;
+      if (clearComposerOnAccept) {
+        _clearComposerIfUnchanged(composerDraft);
+      }
 
-    // 如果有 pending 轉帳，掛到這條消息上
-    if (pendingTransfer != null) {
-      final msgKey = 'msg_$userId';
-      await TransferService.saveData(msgKey, pendingTransfer);
-      _transferDataMap[msgKey] = pendingTransfer;
-    }
-    if (pendingScratchGift != null) {
-      final msgKey = 'msg_$userId';
-      await ScratchService.saveData(msgKey, pendingScratchGift);
-      _scratchDataMap[msgKey] = pendingScratchGift;
-    }
+      // 如果有 pending 轉帳，掛到這條消息上
+      if (pendingTransfer != null) {
+        final msgKey = 'msg_$userId';
+        await TransferService.saveData(msgKey, pendingTransfer);
+        _transferDataMap[msgKey] = pendingTransfer;
+      }
+      if (pendingScratchGift != null) {
+        final msgKey = 'msg_$userId';
+        await ScratchService.saveData(msgKey, pendingScratchGift);
+        _scratchDataMap[msgKey] = pendingScratchGift;
+      }
 
-    final userMsgWithId = Message(
-      id: userId,
-      conversationId: userMsg.conversationId,
-      characterId: userMsg.characterId,
-      text: userMsg.text,
-      isUser: true,
-      createdAt: userMsg.createdAt,
-    );
-    final workingMessages = <Message>[..._messages, userMsgWithId];
+      userMsgWithId = Message(
+        id: userId,
+        conversationId: userMsg.conversationId,
+        characterId: userMsg.characterId,
+        text: userMsg.text,
+        isUser: true,
+        createdAt: userMsg.createdAt,
+      );
+    }
+    final workingMessages = retryUserMessage == null
+        ? <Message>[..._messages, userMsgWithId]
+        : <Message>[..._messages];
     final generationSerial = _beginGeneration();
     if (mounted) {
       setState(() {
-        _messages.add(userMsgWithId);
+        if (retryUserMessage == null) _messages.add(userMsgWithId);
         _setGenerating(true);
         _streamingText = '';
       });
@@ -2237,7 +2352,8 @@ class _ChatScreenState extends State<ChatScreen> {
       _streamingText = '';
     }
 
-    if (workingMessages.where((m) => m.isUser).length == 1) {
+    if (retryUserMessage == null &&
+        workingMessages.where((m) => m.isUser).length == 1) {
       // 先用前 20 字佔位
       final titleText = _titleTextForFirstMessage(
         text,
@@ -2249,6 +2365,20 @@ class _ChatScreenState extends State<ChatScreen> {
           : titleText;
       await DatabaseHelper.updateConversation(conversationId, title: tempTitle);
       _shouldAutoName = true; // 等 AI 回覆後自動命名
+    }
+
+    final adapter = await _prepareAdapterForGeneration(
+      generationSerial: generationSerial,
+      retry: () => _sendMessageLocked(
+        userMsgWithId.text,
+        composerDraft: '',
+        clearComposerOnAccept: false,
+        retryUserMessage: userMsgWithId,
+      ),
+    );
+    if (adapter == null) {
+      if (mounted) _scrollToBottom();
+      return;
     }
 
     // ═══ 並行化：一次發射所有獨立的異步調用，大幅減少等待 ═══
@@ -2268,7 +2398,6 @@ class _ChatScreenState extends State<ChatScreen> {
     final freeformOnF = ApiSettings.getFreeformMode();
     final thinkingEnabledF = ApiSettings.getThinkingChain();
     final enableVibrationF = UserSettings.getEnableVibration();
-    final adapterF = ApiSettings.buildAdapter();
     final charDataF = DatabaseHelper.getCharacter(charId);
     final isSpiderWebEnabledF = charDataF.then(
       (c) => (c?['is_spider_web_enabled'] as int? ?? 0) == 1,
@@ -2501,7 +2630,6 @@ class _ChatScreenState extends State<ChatScreen> {
 
     try {
       final enableVibration = await enableVibrationF;
-      final adapter = await adapterF;
 
       final nonEmpty = workingMessages.where((m) => m.text.isNotEmpty).toList();
       var history = nonEmpty
@@ -3067,37 +3195,24 @@ class _ChatScreenState extends State<ChatScreen> {
           conversationId: conversationId,
         );
       }
+    } on ApiConfigException catch (e) {
+      if (!_isCurrentGeneration(generationSerial)) return;
+      _finishFailedGeneration();
+      _showApiConfigFailure(e);
     } catch (e) {
       if (!_isCurrentGeneration(generationSerial)) return;
-      final errorText = '出錯了：${e.toString()}';
-      final errorMsg = Message(
-        conversationId: conversationId,
-        characterId: _activeCharacterId,
-        text: errorText,
-        isUser: false,
-        splitMode: _splitReply,
+      _finishFailedGeneration();
+      _showRetryableFailure(
+        e,
+        () => _runMessageRetry(
+          () => _sendMessageLocked(
+            userMsgWithId.text,
+            composerDraft: '',
+            clearComposerOnAccept: false,
+            retryUserMessage: userMsgWithId,
+          ),
+        ),
       );
-      final errorId = await DatabaseHelper.insertMessage(errorMsg);
-      final savedErrorMsg = Message(
-        id: errorId,
-        conversationId: errorMsg.conversationId,
-        characterId: errorMsg.characterId,
-        text: errorMsg.text,
-        isUser: errorMsg.isUser,
-        splitMode: errorMsg.splitMode,
-        createdAt: errorMsg.createdAt,
-      );
-
-      if (mounted) {
-        setState(() {
-          _messages.add(savedErrorMsg);
-          _clearStreamQueue();
-          _setGenerating(false);
-        });
-      } else {
-        _clearStreamQueue();
-        _setGenerating(false);
-      }
     }
     if (mounted) _scrollToBottom();
   }
@@ -3108,6 +3223,7 @@ class _ChatScreenState extends State<ChatScreen> {
     String caption = '',
     required String composerDraft,
     required bool clearComposerOnAccept,
+    Message? retryUserMessage,
   }) async {
     if (!_isChatReady) return;
     final conversationId = widget.conversationId;
@@ -3134,20 +3250,29 @@ class _ChatScreenState extends State<ChatScreen> {
       return;
     }
 
-    // 複製到 app 目錄
-    final saved = await ImageService.copyToAppDir(path);
-    final pendingTransfer = _pendingUserTransfer;
-    final pendingScratchGiftWho = _pendingScratchGiftWho;
+    // 首次發送才複製圖片；重試沿用已入庫的原消息與 app 內路徑。
+    final saved =
+        retryUserMessage?.imagePath ?? await ImageService.copyToAppDir(path);
+    if (saved.isEmpty) return;
+    final pendingTransfer = retryUserMessage == null
+        ? _pendingUserTransfer
+        : null;
+    final pendingScratchGiftWho = retryUserMessage == null
+        ? _pendingScratchGiftWho
+        : null;
     final pendingScratchGift = pendingScratchGiftWho == null
         ? null
         : await _createScratchGiftData(pendingScratchGiftWho);
     if (pendingScratchGiftWho != null && pendingScratchGift == null) return;
 
-    var outboundCaption = _appendTransferTag(caption, pendingTransfer);
-    outboundCaption = _appendScratchGiftTag(
-      outboundCaption,
-      pendingScratchGift,
-    );
+    var outboundCaption =
+        retryUserMessage?.text ?? _appendTransferTag(caption, pendingTransfer);
+    if (retryUserMessage == null) {
+      outboundCaption = _appendScratchGiftTag(
+        outboundCaption,
+        pendingScratchGift,
+      );
+    }
     if (pendingTransfer != null) {
       if (mounted) {
         setState(() => _pendingUserTransfer = null);
@@ -3163,43 +3288,50 @@ class _ChatScreenState extends State<ChatScreen> {
       }
     }
 
-    final userMsg = Message(
-      conversationId: conversationId,
-      characterId: _activeCharacterId,
-      text: outboundCaption,
-      isUser: true,
-      imagePath: saved,
-    );
-    final imgUserId = await DatabaseHelper.insertMessage(userMsg);
-    unawaited(MarriageService.scanMessage(userMsg.text, _activeCharacterId));
-    _sentMessageInThisSession = true;
-    if (clearComposerOnAccept) {
-      _clearComposerIfUnchanged(composerDraft);
+    late final Message userMsgWithId;
+    if (retryUserMessage != null) {
+      userMsgWithId = retryUserMessage;
+    } else {
+      final userMsg = Message(
+        conversationId: conversationId,
+        characterId: _activeCharacterId,
+        text: outboundCaption,
+        isUser: true,
+        imagePath: saved,
+      );
+      final imgUserId = await DatabaseHelper.insertMessage(userMsg);
+      unawaited(MarriageService.scanMessage(userMsg.text, _activeCharacterId));
+      _sentMessageInThisSession = true;
+      if (clearComposerOnAccept) {
+        _clearComposerIfUnchanged(composerDraft);
+      }
+      if (pendingTransfer != null) {
+        final msgKey = 'msg_$imgUserId';
+        await TransferService.saveData(msgKey, pendingTransfer);
+        _transferDataMap[msgKey] = pendingTransfer;
+      }
+      if (pendingScratchGift != null) {
+        final msgKey = 'msg_$imgUserId';
+        await ScratchService.saveData(msgKey, pendingScratchGift);
+        _scratchDataMap[msgKey] = pendingScratchGift;
+      }
+      userMsgWithId = Message(
+        id: imgUserId,
+        conversationId: userMsg.conversationId,
+        characterId: userMsg.characterId,
+        text: userMsg.text,
+        isUser: true,
+        imagePath: userMsg.imagePath,
+        createdAt: userMsg.createdAt,
+      );
     }
-    if (pendingTransfer != null) {
-      final msgKey = 'msg_$imgUserId';
-      await TransferService.saveData(msgKey, pendingTransfer);
-      _transferDataMap[msgKey] = pendingTransfer;
-    }
-    if (pendingScratchGift != null) {
-      final msgKey = 'msg_$imgUserId';
-      await ScratchService.saveData(msgKey, pendingScratchGift);
-      _scratchDataMap[msgKey] = pendingScratchGift;
-    }
-    final userMsgWithId = Message(
-      id: imgUserId,
-      conversationId: userMsg.conversationId,
-      characterId: userMsg.characterId,
-      text: userMsg.text,
-      isUser: true,
-      imagePath: userMsg.imagePath,
-      createdAt: userMsg.createdAt,
-    );
-    final workingMessages = <Message>[..._messages, userMsgWithId];
+    final workingMessages = retryUserMessage == null
+        ? <Message>[..._messages, userMsgWithId]
+        : <Message>[..._messages];
     final generationSerial = _beginGeneration();
     if (mounted) {
       setState(() {
-        _messages.add(userMsgWithId);
+        if (retryUserMessage == null) _messages.add(userMsgWithId);
         _setGenerating(true);
         _streamingText = '';
       });
@@ -3207,6 +3339,22 @@ class _ChatScreenState extends State<ChatScreen> {
     } else {
       _setGenerating(true);
       _streamingText = '';
+    }
+
+    final adapter = await _prepareAdapterForGeneration(
+      generationSerial: generationSerial,
+      retry: () => _sendImageLocked(
+        userMsgWithId.imagePath ?? path,
+        caption: userMsgWithId.text,
+        composerDraft: '',
+        clearComposerOnAccept: false,
+        retryUserMessage: userMsgWithId,
+      ),
+    );
+    if (adapter == null) {
+      MemoryActions.clearSearchQuery(widget.conversationId);
+      if (mounted) _scrollToBottom();
+      return;
     }
 
     // ── 構建 API 消息 ──
@@ -3384,8 +3532,6 @@ class _ChatScreenState extends State<ChatScreen> {
     }
 
     try {
-      final adapter = await ApiSettings.buildAdapter();
-
       // 構建歷史消息（文字部分）
       // ═══ 歷史圖片降級：只有最新一張真實上傳 ═══
       // 舊版每輪把全部歷史圖片重新 base64 上傳，
@@ -3773,35 +3919,27 @@ class _ChatScreenState extends State<ChatScreen> {
         model: model,
         provider: imgProviderName,
       );
+    } on ApiConfigException catch (e) {
+      if (!_isCurrentGeneration(generationSerial)) return;
+      _finishFailedGeneration();
+      _showApiConfigFailure(e);
     } catch (e) {
       if (!_isCurrentGeneration(generationSerial)) return;
-      final errorMsg = Message(
-        conversationId: conversationId,
-        characterId: _activeCharacterId,
-        text: '出錯了：${e.toString()}',
-        isUser: false,
-        splitMode: _splitReply,
+      _finishFailedGeneration();
+      _showRetryableFailure(
+        e,
+        () => _runMessageRetry(
+          () => _sendImageLocked(
+            userMsgWithId.imagePath ?? path,
+            caption: userMsgWithId.text,
+            composerDraft: '',
+            clearComposerOnAccept: false,
+            retryUserMessage: userMsgWithId,
+          ),
+        ),
       );
-      final errorId = await DatabaseHelper.insertMessage(errorMsg);
-      final savedErrorMsg = Message(
-        id: errorId,
-        conversationId: errorMsg.conversationId,
-        characterId: errorMsg.characterId,
-        text: errorMsg.text,
-        isUser: errorMsg.isUser,
-        splitMode: errorMsg.splitMode,
-        createdAt: errorMsg.createdAt,
-      );
-      if (mounted) {
-        setState(() {
-          _messages.add(savedErrorMsg);
-          _clearStreamQueue();
-          _setGenerating(false);
-        });
-      } else {
-        _clearStreamQueue();
-        _setGenerating(false);
-      }
+    } finally {
+      MemoryActions.clearSearchQuery(widget.conversationId);
     }
     if (mounted) _scrollToBottom();
   }

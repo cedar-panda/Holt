@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'dart:developer' as developer;
 import 'dart:io' show Platform;
 
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show kIsWeb, visibleForTesting;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:workmanager/workmanager.dart';
 
@@ -455,6 +455,7 @@ class KeepAliveService {
   ///   超過 58 分鐘 → 緩存已死，不燒這一發，等下一條真消息自然重建。
   Future<void> onAppResumed() async {
     if (_conversationId == null || _characterId == null) return;
+    await _reloadPersistedAnchors();
     final startTime = _startTime;
     if (startTime == null ||
         DateTime.now().difference(startTime) >= _maxDuration) {
@@ -470,6 +471,46 @@ class KeepAliveService {
     if (elapsed >= _refreshAfter && elapsed <= _resumeRefreshMax) {
       await _ping();
     }
+  }
+
+  /// backgroundTick 在另一個 isolate 更新 prefs；主 isolate 回前台時必須
+  /// reload，並保留內存/prefs 兩者較新的錨點，避免重複補針。
+  Future<void> _reloadPersistedAnchors() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.reload();
+    if (prefs.getString(_keyActiveConvId) != _conversationId ||
+        prefs.getString(_keyActiveCharId) != _characterId) {
+      return;
+    }
+    _startTime = _newerTimestamp(
+      _startTime,
+      DateTime.tryParse(prefs.getString(_keyStartTime) ?? ''),
+    );
+    _lastRequestAt = _newerTimestamp(
+      _lastRequestAt,
+      DateTime.tryParse(prefs.getString(_keyLastRequestAt) ?? ''),
+    );
+  }
+
+  static DateTime? _newerTimestamp(DateTime? memory, DateTime? persisted) {
+    if (memory == null) return persisted;
+    if (persisted == null) return memory;
+    return persisted.isAfter(memory) ? persisted : memory;
+  }
+
+  @visibleForTesting
+  Future<(DateTime?, DateTime?)> reloadPersistedAnchorsForTesting({
+    String conversationId = 'test-conversation',
+    String characterId = 'test-character',
+    DateTime? startTime,
+    DateTime? lastRequestAt,
+  }) async {
+    _conversationId = conversationId;
+    _characterId = characterId;
+    _startTime = startTime;
+    _lastRequestAt = lastRequestAt;
+    await _reloadPersistedAnchors();
+    return (_startTime, _lastRequestAt);
   }
 
   Future<void> _ping() async {

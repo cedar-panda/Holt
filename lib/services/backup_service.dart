@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart' show debugPrint, visibleForTesting;
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -266,6 +267,9 @@ class BackupService {
     if (prepared.skippedVoiceCount > 0) {
       parts.add('略過${prepared.skippedVoiceCount}筆缺少音檔的語音');
     }
+    if (prepared.droppedOrphanMessageCount > 0) {
+      parts.add(_orphanImportSummary(prepared.droppedOrphanMessageCount));
+    }
     if (prepared.isLegacy) {
       parts.add('舊版訊息ID已重建；收藏已盡力配對，刮卡/轉帳舊訊息關聯無法保證');
     }
@@ -276,13 +280,32 @@ class BackupService {
   static Map<String, List<Map<String, Object?>>> normalizeForTesting(
     Map<String, dynamic> data,
   ) {
+    return normalizeWithReportForTesting(data).tables;
+  }
+
+  static ({
+    Map<String, List<Map<String, Object?>>> tables,
+    int droppedOrphanMessageCount,
+  })
+  normalizeWithReportForTesting(Map<String, dynamic> data) {
     final normalized = _normalizeBackup(data);
-    return {
+    final tables = {
       for (final entry in normalized.tables.entries)
         entry.key: entry.value
             .map((row) => Map<String, Object?>.from(row))
             .toList(growable: false),
     };
+    return (
+      tables: tables,
+      droppedOrphanMessageCount: normalized.droppedOrphanMessageCount,
+    );
+  }
+
+  static String _orphanImportSummary(int count) => '捨棄$count條孤兒訊息';
+
+  @visibleForTesting
+  static String orphanImportSummaryForTesting(int count) {
+    return _orphanImportSummary(count);
   }
 
   static _NormalizedBackup _normalizeBackup(Map<String, dynamic> data) {
@@ -330,7 +353,7 @@ class BackupService {
     // Old and new rows both pass through path sanitisation and safe defaults.
     _normalizeCommonRows(result, fallbackTime, isLegacy: isLegacy);
     _validatePrimaryKeys(result, strict: !isLegacy);
-    _validateMessageConversationLinks(result);
+    final droppedOrphanMessageCount = _validateMessageConversationLinks(result);
 
     final preferences = _normalizePreferences(data['preferences']);
     return _NormalizedBackup(
@@ -338,6 +361,7 @@ class BackupService {
       tables: result,
       preferences: preferences,
       isLegacy: isLegacy,
+      droppedOrphanMessageCount: droppedOrphanMessageCount,
     );
   }
 
@@ -591,7 +615,7 @@ class BackupService {
     }
   }
 
-  static void _validateMessageConversationLinks(
+  static int _validateMessageConversationLinks(
     Map<String, List<Map<String, Object?>>> tables,
   ) {
     final conversationIds = tables['conversations']!
@@ -607,19 +631,19 @@ class BackupService {
       final conversationId = message['conversation_id']?.toString();
       final isOrphan = !conversationIds.contains(conversationId);
       if (isOrphan) {
-        print('⚠️ 發現並捨棄孤兒訊息 [ID: ${message['id']}] - 內容: ${message['text']}');
+        debugPrint('Backup import: dropped orphan message id=${message['id']}');
       } else {
         validMessages.add(message);
       }
     }
 
     final newCount = validMessages.length;
-    if (newCount < originalCount) {
-      print(
-        'Backup import: dropped ${originalCount - newCount} orphaned messages.',
-      );
+    final droppedCount = originalCount - newCount;
+    if (droppedCount > 0) {
+      debugPrint('Backup import: dropped $droppedCount orphaned messages.');
       tables['messages'] = validMessages;
     }
+    return droppedCount;
   }
 
   static Future<_PreparedBackup> _prepareForCurrentSchema(
@@ -664,6 +688,7 @@ class BackupService {
       preferences: normalized.preferences,
       isLegacy: normalized.isLegacy,
       skippedVoiceCount: skippedVoiceCount,
+      droppedOrphanMessageCount: normalized.droppedOrphanMessageCount,
     );
   }
 
@@ -963,12 +988,14 @@ class _NormalizedBackup {
     required this.tables,
     required this.preferences,
     required this.isLegacy,
+    required this.droppedOrphanMessageCount,
   });
 
   final int version;
   final Map<String, List<Map<String, Object?>>> tables;
   final Map<String, Object?> preferences;
   final bool isLegacy;
+  final int droppedOrphanMessageCount;
 }
 
 class _PreparedBackup {
@@ -977,12 +1004,14 @@ class _PreparedBackup {
     required this.preferences,
     required this.isLegacy,
     required this.skippedVoiceCount,
+    required this.droppedOrphanMessageCount,
   });
 
   final Map<String, List<Map<String, Object?>>> tables;
   final Map<String, Object?> preferences;
   final bool isLegacy;
   final int skippedVoiceCount;
+  final int droppedOrphanMessageCount;
 }
 
 /// 不依賴額外套件的程序內 async mutex。
