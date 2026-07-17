@@ -3,7 +3,6 @@ import 'dart:ui';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
-import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:uuid/uuid.dart';
@@ -2537,70 +2536,42 @@ class _HomeScreenState extends State<HomeScreen>
             ),
             const SizedBox(height: 14),
 
-            // 商店、背包與像素小屋 (Bottom Row 2)
-            Row(
-              children: [
-                Expanded(
-                  flex: 2,
-                  child: _buildSplitGridTile(
-                    leftIcon: Icons.storefront_outlined,
-                    leftOnTap: () => _showShopBottomSheet(context),
-                    rightIcon: Icons.backpack_outlined,
-                    rightOnTap: () => _showBackpackBottomSheet(context, 'user'),
-                    height: 76,
-                  ),
-                ),
-                const SizedBox(width: 14),
-                Expanded(
-                  flex: 2,
-                  child: _buildGridTile(
-                    title: L.pick(en: 'Pixel Home', zhTW: '像素小屋'),
-                    icon: Icons.home_rounded,
-                    height: 76,
-                    isSecondary: true,
-                    onTap: () {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text(L.pick(en: 'Coming soon', zhTW: '開發中')),
-                        ),
-                      );
-                    },
-                  ),
-                ),
-              ],
+            // 商店與背包
+            _buildSplitGridTile(
+              leftIcon: Icons.storefront_outlined,
+              leftOnTap: () => _showShopBottomSheet(context),
+              rightIcon: Icons.backpack_outlined,
+              rightOnTap: () => _showBackpackBottomSheet(context, 'user'),
+              height: 76,
             ),
             const SizedBox(height: 28),
-            // DeBug Bottom Button（僅 debug build 顯示，release 隱藏）
-            if (kDebugMode)
-              GestureDetector(
-                onTap: () =>
-                    Navigator.of(context).pushNamed('/developer_diagnostics'),
-                behavior: HitTestBehavior.opaque,
-                child: SizedBox(
-                  height: 60,
-                  child: Center(
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(
-                          Icons.bug_report_outlined,
-                          color: YanciTheme.accent,
+            // DeBug Bottom Button
+            GestureDetector(
+              onTap: () =>
+                  Navigator.of(context).pushNamed('/developer_diagnostics'),
+              behavior: HitTestBehavior.opaque,
+              child: SizedBox(
+                height: 60,
+                child: Center(
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.bug_report_outlined, color: YanciTheme.accent),
+                      const SizedBox(width: 8),
+                      Text(
+                        'DeBug',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                          color: YanciTheme.textPrimary,
+                          fontFamily: YanciTheme.fontFamily,
                         ),
-                        const SizedBox(width: 8),
-                        Text(
-                          'DeBug',
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w600,
-                            color: YanciTheme.textPrimary,
-                            fontFamily: YanciTheme.fontFamily,
-                          ),
-                        ),
-                      ],
-                    ),
+                      ),
+                    ],
                   ),
                 ),
               ),
+            ),
             const SizedBox(height: 48), // Bottom padding
           ],
         ),
@@ -3715,12 +3686,12 @@ class _SegmentedUsageIconPainter extends CustomPainter {
 
     // 重新計算完美的弧度，留出均勻且足夠的圓角呼吸空間
     // Accent (短弧)：位於右上方，大約從 -70度 到 -25度 (45度的圓弧)
-    final double accentStart = -1.22; 
-    final double accentSweep = 0.78;  
-    
+    final double accentStart = -1.22;
+    final double accentSweep = 0.78;
+
     // Base (長弧)：大約從 5度 到 260度 (255度的圓弧)
-    final double baseStart = 0.09;    
-    final double baseSweep = 4.45;    
+    final double baseStart = 0.09;
+    final double baseSweep = 4.45;
 
     canvas.drawArc(rect, baseStart, baseSweep, false, basePaint);
     canvas.drawArc(rect, accentStart, accentSweep, false, accentPaint);

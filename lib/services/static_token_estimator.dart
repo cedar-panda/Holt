@@ -97,25 +97,6 @@ class StaticTokenEstimator {
       if (habits.isNotEmpty) parts.add(habits);
     }
 
-    final conciseOn = await ApiSettings.getConciseMode();
-    final freeformOn = await ApiSettings.getFreeformMode();
-    if (conciseOn || freeformOn) {
-      final style = <String>[];
-      if (conciseOn) {
-        style.add(
-          ToolPrompts.concise(
-            emotionEnabled: await MemorySettings.isAbilityEnabled('emotion'),
-          ),
-        );
-      }
-      if (freeformOn) {
-        style.add(
-          ToolPrompts.freeform(await ApiSettings.getFreeformMaxLines()),
-        );
-      }
-      parts.add('${ToolPrompts.replyStyleHeader()}\n${style.join('\n')}');
-    }
-
     return TokenEstimator.estimate(parts.join('\n\n'));
   }
 

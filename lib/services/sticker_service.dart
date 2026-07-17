@@ -1,5 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
+import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 import '../memory/database.dart';
 import 'settings_manager.dart';
 import 'locale_strings.dart';
@@ -125,6 +127,27 @@ class StickerService {
     await DatabaseHelper.deleteSticker(id);
   }
 
+  /// 替單一缺圖表情補回本地圖片。只改 file_path，ID/描述/標籤不變，
+  /// 因此 buildStickerPrompt 逐字不變，不會影響 prompt cache。
+  static Future<bool> repairStickerImage({
+    required int stickerId,
+    required String sourcePath,
+    required String sourceName,
+  }) async {
+    final sourceFile = File(sourcePath);
+    if (!await sourceFile.exists()) return false;
+
+    final documents = await getApplicationDocumentsDirectory();
+    final stickerDir = Directory(p.join(documents.path, 'stickers'));
+    await stickerDir.create(recursive: true);
+    final rawExt = p.extension(sourceName).toLowerCase();
+    final ext = RegExp(r'^\.[a-z0-9]{1,5}$').hasMatch(rawExt) ? rawExt : '.png';
+    final targetPath = p.join(stickerDir.path, 'sticker_$stickerId$ext');
+    await sourceFile.copy(targetPath);
+    await DatabaseHelper.updateStickerFilePath(stickerId, targetPath);
+    return true;
+  }
+
   // ═══════════════════════════════════
   // Vision API 描述
   // ═══════════════════════════════════
@@ -175,8 +198,8 @@ Do not describe the image. Output JSON only, with no other text or Markdown:
 
     final dataUrl = 'data:$mediaType;base64,$base64Image';
 
-    // 走 adapter — 自動適配當前 provider
-    final adapter = await ApiSettings.buildAdapter();
+    // 工具模型按星標保存的來源建 adapter，不能借目前主 provider 承載。
+    final adapter = await ApiSettings.buildAdapterForModel(model);
     final response = await adapter.sendMessage(
       messages: [
         {'role': 'user', 'content': visionPrompt, 'image_data_url': dataUrl},

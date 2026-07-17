@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:http/http.dart' as http;
 import 'api_adapter.dart';
+import 'openrouter_service.dart' show ModelInfo;
 import 'settings/memory_settings.dart';
 import 'token_estimator.dart';
 
@@ -18,6 +19,105 @@ class OpenAICompatibleService implements ApiAdapter {
     required this.baseUrl,
     this.modelPrefixToStrip = '',
   });
+
+  /// 優先讀取 New API / One API 公開的模型定價清單；不支援時再退回
+  /// OpenAI 標準的 /models。公開定價清單不需要 API Key。
+  static Future<List<ModelInfo>> fetchModels({
+    required String baseUrl,
+    String apiKey = '',
+  }) async {
+    final base = Uri.tryParse(baseUrl.trim());
+    if (base == null || !base.hasScheme || base.host.isEmpty) {
+      throw const FormatException('Base URL 無效');
+    }
+
+    final pricingUri = base.replace(path: '/api/pricing', query: null);
+    try {
+      final response = await http
+          .get(pricingUri)
+          .timeout(const Duration(seconds: 20));
+      if (response.statusCode == 200) {
+        final models = _parsePricingModels(response.body);
+        if (models.isNotEmpty) return models;
+      }
+    } catch (_) {
+      // 並非所有 OpenAI 相容站都提供公開定價接口，繼續嘗試 /models。
+    }
+
+    final modelsUri = _modelsUri(base);
+    final response = await http
+        .get(
+          modelsUri,
+          headers: {
+            if (apiKey.trim().isNotEmpty)
+              'Authorization': 'Bearer ${apiKey.trim()}',
+          },
+        )
+        .timeout(const Duration(seconds: 20));
+    if (response.statusCode != 200) {
+      throw Exception('無法獲取模型列表：${response.statusCode}');
+    }
+
+    final decoded = jsonDecode(response.body);
+    final rawModels = decoded is Map<String, dynamic> ? decoded['data'] : null;
+    if (rawModels is! List) throw const FormatException('模型列表格式無效');
+    return _sortedUniqueModels(
+      rawModels.whereType<Map>().map((raw) {
+        final id = '${raw['id'] ?? ''}'.trim();
+        final name = '${raw['name'] ?? id}'.trim();
+        return ModelInfo(id: id, name: name.isEmpty ? id : name);
+      }),
+    );
+  }
+
+  static Uri _modelsUri(Uri base) {
+    var path = base.path.replaceFirst(RegExp(r'/+$'), '');
+    if (path.endsWith('/chat/completions')) {
+      path = path.substring(0, path.length - '/chat/completions'.length);
+    }
+    if (!path.endsWith('/v1')) path = '$path/v1';
+    return base.replace(path: '$path/models', query: null);
+  }
+
+  static Uri modelsUriForBase(String baseUrl) {
+    final base = Uri.tryParse(baseUrl.trim());
+    if (base == null || !base.hasScheme || base.host.isEmpty) {
+      throw const FormatException('Base URL 無效');
+    }
+    return _modelsUri(base);
+  }
+
+  static List<ModelInfo> _parsePricingModels(String body) {
+    final decoded = jsonDecode(body);
+    final rawModels = decoded is Map<String, dynamic> ? decoded['data'] : null;
+    if (rawModels is! List) return const [];
+
+    return _sortedUniqueModels(
+      rawModels
+          .whereType<Map>()
+          .where((raw) {
+            final endpointTypes = raw['supported_endpoint_types'];
+            if (endpointTypes is! List || endpointTypes.isEmpty) return true;
+            return endpointTypes.any(
+              (type) => type.toString().toLowerCase() == 'openai',
+            );
+          })
+          .map((raw) {
+            final name = '${raw['model_name'] ?? ''}'.trim();
+            return ModelInfo(id: name, name: name);
+          }),
+    );
+  }
+
+  static List<ModelInfo> _sortedUniqueModels(Iterable<ModelInfo> models) {
+    final unique = <String, ModelInfo>{};
+    for (final model in models) {
+      if (model.id.isNotEmpty) unique[model.id] = model;
+    }
+    final result = unique.values.toList();
+    result.sort((a, b) => a.name.compareTo(b.name));
+    return result;
+  }
 
   String get _completionsUrl {
     final url = baseUrl.endsWith('/')

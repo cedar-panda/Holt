@@ -33,6 +33,7 @@ void main() {
           'character_id': 'char-1',
           'window_summary_id': 'abc',
           'pinned_static_summary': 'stable prompt',
+          'pinned_static_self_notes': 'stable self notes',
           'title': 'first',
           'is_starred': 1,
           'created_at': '2026-01-01T00:00:00.000Z',
@@ -63,6 +64,10 @@ void main() {
       expect(
         tables['conversations']!.single,
         containsPair('pinned_static_summary', 'stable prompt'),
+      );
+      expect(
+        tables['conversations']!.single,
+        containsPair('pinned_static_self_notes', 'stable self notes'),
       );
       expect(tables['messages']!.single, containsPair('id', 42));
       expect(tables['messages']!.single, containsPair('split_mode', 1));

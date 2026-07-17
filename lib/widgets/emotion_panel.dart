@@ -81,7 +81,7 @@ class _EmotionPanelState extends State<EmotionPanel> {
           Row(
             children: [
               Text(
-                L.pick(en: 'Emotion V2 · test', zhTW: '情緒座標 V2 · 測試'),
+                L.pick(en: 'Mood Map', zhTW: '心境圖譜'),
                 style: YanciTheme.bodySmall.copyWith(
                   fontWeight: FontWeight.w500,
                   color: YanciTheme.textSecondary,
@@ -124,10 +124,7 @@ class _EmotionPanelState extends State<EmotionPanel> {
                         borderRadius: BorderRadius.circular(12),
                       ),
                       title: Text(
-                        L.pick(
-                          en: 'Reset emotion coordinates?',
-                          zhTW: '重置情緒座標？',
-                        ),
+                        L.pick(en: 'Reset Mood Map?', zhTW: '重置心境圖譜？'),
                         style: TextStyle(
                           fontSize: 14,
                           color: YanciTheme.textPrimary,

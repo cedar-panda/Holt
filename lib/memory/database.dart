@@ -14,7 +14,7 @@ class DatabaseHelper {
   static Future<Database>? _dbInitFuture;
   static Future<Database> Function() _databaseInitializer = _initDatabase;
   static const String _dbName = 'yanci.db';
-  static const int _dbVersion = 33;
+  static const int _dbVersion = 34;
   static final Random _windowIdRandom = Random.secure();
 
   static Future<Database> get database async {
@@ -56,6 +56,7 @@ class DatabaseHelper {
         character_id TEXT DEFAULT 'default',
         window_summary_id TEXT DEFAULT '',
         pinned_static_summary TEXT,
+        pinned_static_self_notes TEXT,
         title TEXT,
         is_starred INTEGER DEFAULT 0,
         created_at TEXT NOT NULL,
@@ -688,6 +689,20 @@ class DatabaseHelper {
     }
     if (oldVersion < 33) {
       await _migrateToV33(db);
+    }
+    if (oldVersion < 34) {
+      // 舊 conversation 不能在升級後把「目前全量」自我註記新塞入
+      // static prefix。先釘為空，讓它們全部走 dynamic；新建
+      // conversation 保持 NULL，首次構建 prompt 時才釘出生快照。
+      await _safeAddColumn(
+        db,
+        'conversations',
+        'pinned_static_self_notes',
+        'TEXT',
+      );
+      await db.update('conversations', {
+        'pinned_static_self_notes': '',
+      }, where: 'pinned_static_self_notes IS NULL');
     }
   }
 
@@ -1478,18 +1493,76 @@ class DatabaseHelper {
     return rows.first['pinned_static_summary'] as String?;
   }
 
-  /// 釘死對話的靜態摘要文本。出生一次、之後永不改（空字串也算已釘）。
-  static Future<void> setConversationPinnedSummary(
+  /// 原子釘死對話的靜態摘要文本。
+  ///
+  /// 多個 prompt builder 同時首建時，只允許第一個寫入；其餘呼叫端
+  /// 讀回資料庫中已釘定的正規值，避免同一 conversation 出現兩份
+  /// 不同的 static prefix。空字串也是有效的已釘值。
+  static Future<String> setConversationPinnedSummaryIfAbsent(
     String id,
     String text,
   ) async {
     final db = await database;
-    await db.update(
+    return db.transaction((txn) async {
+      final changed = await txn.update(
+        'conversations',
+        {'pinned_static_summary': text},
+        where: 'id = ? AND pinned_static_summary IS NULL',
+        whereArgs: [id],
+      );
+      if (changed == 1) return text;
+
+      final rows = await txn.query(
+        'conversations',
+        columns: ['pinned_static_summary'],
+        where: 'id = ?',
+        whereArgs: [id],
+        limit: 1,
+      );
+      if (rows.isEmpty) {
+        throw StateError('Conversation $id does not exist');
+      }
+      return rows.first['pinned_static_summary'] as String? ?? text;
+    });
+  }
+
+  static Future<String?> getConversationPinnedSelfNotes(String id) async {
+    final db = await database;
+    final rows = await db.query(
       'conversations',
-      {'pinned_static_summary': text},
+      columns: ['pinned_static_self_notes'],
       where: 'id = ?',
       whereArgs: [id],
+      limit: 1,
     );
+    if (rows.isEmpty) return null;
+    return rows.first['pinned_static_self_notes'] as String?;
+  }
+
+  /// conversation 出生時只釘一次自我註記全量；之後新註記只走 dynamic。
+  static Future<String> setConversationPinnedSelfNotesIfAbsent(
+    String id,
+    String text,
+  ) async {
+    final db = await database;
+    return db.transaction((txn) async {
+      final changed = await txn.update(
+        'conversations',
+        {'pinned_static_self_notes': text},
+        where: 'id = ? AND pinned_static_self_notes IS NULL',
+        whereArgs: [id],
+      );
+      if (changed == 1) return text;
+      final rows = await txn.query(
+        'conversations',
+        columns: ['pinned_static_self_notes'],
+        where: 'id = ?',
+        whereArgs: [id],
+        limit: 1,
+      );
+      if (rows.isEmpty) throw StateError('Conversation $id does not exist');
+      return rows.first['pinned_static_self_notes'] as String? ?? text;
+    });
   }
 
   static Future<String> _generateWindowSummaryId(DatabaseExecutor db) async {
@@ -1942,6 +2015,16 @@ class DatabaseHelper {
   static Future<void> deleteSticker(int id) async {
     final db = await database;
     await db.delete('stickers', where: 'id = ?', whereArgs: [id]);
+  }
+
+  static Future<void> updateStickerFilePath(int id, String filePath) async {
+    final db = await database;
+    await db.update(
+      'stickers',
+      {'file_path': filePath},
+      where: 'id = ?',
+      whereArgs: [id],
+    );
   }
 
   // ═══════════════════════════════════

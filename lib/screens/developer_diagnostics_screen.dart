@@ -190,12 +190,55 @@ class _DeveloperDiagnosticsScreenState
                     }
 
                     final read = e['read'] as int? ?? 0;
+                    final sentTtl = (e['sent_ttl'] ?? '').toString();
+                    final upstreamTtl = (e['upstream_ttl'] ?? '').toString();
+                    final upstreamProvider = (e['upstream_provider'] ?? '')
+                        .toString();
+                    final upstreamModel = (e['upstream_model'] ?? '')
+                        .toString();
+                    final routerAttempt = e['router_attempt'] as num?;
+                    final routerStrategy = (e['router_strategy'] ?? '')
+                        .toString();
+                    final routerRegion = (e['router_region'] ?? '').toString();
+                    final routerFallback = e['router_fallback'] == true;
+                    final write5m = e['write_5m'] as int? ?? 0;
+                    final write1h = e['write_1h'] as int? ?? 0;
+                    var ttlNote = '';
+                    if (sentTtl.isNotEmpty ||
+                        upstreamTtl.isNotEmpty ||
+                        upstreamProvider.isNotEmpty) {
+                      final ttlParts = <String>[
+                        if (sentTtl.isNotEmpty) '送 $sentTtl',
+                        if (upstreamTtl.isNotEmpty) '上游 $upstreamTtl',
+                        if (upstreamProvider.isNotEmpty) upstreamProvider,
+                      ];
+                      ttlNote = '\n    TTL ${ttlParts.join(' · ')}';
+                    }
+                    if (write5m > 0 || write1h > 0) {
+                      ttlNote +=
+                          '\n    bucket 5m ${_fmtT(write5m)} · 1h ${_fmtT(write1h)}';
+                    }
+                    if (upstreamModel.isNotEmpty ||
+                        routerAttempt != null ||
+                        routerStrategy.isNotEmpty ||
+                        routerRegion.isNotEmpty) {
+                      final routeParts = <String>[
+                        if (upstreamModel.isNotEmpty) upstreamModel,
+                        if (routerStrategy.isNotEmpty) routerStrategy,
+                        if (routerRegion.isNotEmpty) routerRegion,
+                        if (routerAttempt != null)
+                          'attempt ${routerAttempt.toInt()}',
+                        if (routerFallback) 'fallback',
+                      ];
+                      ttlNote += '\n    route ${routeParts.join(' · ')}';
+                    }
                     return Padding(
                       padding: const EdgeInsets.symmetric(vertical: 4),
                       child: Text(
                         '${e['at']}  指紋 $hashShort${drifted ? '  ⚠️變了' : ''}\n'
                         '    入 ${_fmtT(e['prompt_t'])}t · ⚡讀 ${_fmtT(e['read'])} · 📦寫 ${_fmtT(e['write'])}\n'
                         '    靜態 ${_fmtT(e['static_t'])} · 動態 ${_fmtT(e['dynamic_t'])}'
+                        '$ttlNote'
                         '$diffNote',
                         style: YanciTheme.bodyText.copyWith(
                           fontSize: 12.5,

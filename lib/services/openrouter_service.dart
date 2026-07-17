@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:crypto/crypto.dart';
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:http/http.dart' as http;
 import 'api_adapter.dart';
 import 'cache_debug_log.dart';
@@ -9,6 +10,9 @@ import 'token_estimator.dart';
 
 /// OpenRouter API 實現（含 Anthropic prompt caching）
 class OpenRouterService implements ApiAdapter {
+  static const bool _cacheDebugEcho =
+      kDebugMode || bool.fromEnvironment('CACHE_DEBUG_ECHO');
+
   final String apiKey;
   static const String _baseUrl =
       'https://openrouter.ai/api/v1/chat/completions';
@@ -106,6 +110,7 @@ class OpenRouterService implements ApiAdapter {
     StructuredPrompt? structuredPrompt,
   }) async {
     resetCacheStats();
+    final requestDiagnostics = <String, Object?>{};
     final body = _sanitizeRequestBody(
       await _buildBody(
         messages,
@@ -113,6 +118,7 @@ class OpenRouterService implements ApiAdapter {
         systemPrompt,
         structuredPrompt: structuredPrompt,
         stream: false,
+        diagnosticsOut: requestDiagnostics,
       ),
     );
 
@@ -125,7 +131,7 @@ class OpenRouterService implements ApiAdapter {
     }
 
     final data = jsonDecode(response.body);
-    _extractCacheStats(data);
+    _extractCacheStats(data, requestDiagnostics: requestDiagnostics);
     return data['choices'][0]['message']['content'] ?? '';
   }
 
@@ -137,6 +143,7 @@ class OpenRouterService implements ApiAdapter {
     StructuredPrompt? structuredPrompt,
   }) async* {
     resetCacheStats();
+    final requestDiagnostics = <String, Object?>{};
     final body = _sanitizeRequestBody(
       await _buildBody(
         messages,
@@ -144,6 +151,7 @@ class OpenRouterService implements ApiAdapter {
         systemPrompt,
         structuredPrompt: structuredPrompt,
         stream: true,
+        diagnosticsOut: requestDiagnostics,
       ),
     );
 
@@ -164,6 +172,7 @@ class OpenRouterService implements ApiAdapter {
       }
 
       String buffer = '';
+      Map<String, dynamic>? finalUsageData;
       await for (final chunk in response.stream.transform(utf8.decoder)) {
         buffer += chunk;
         final lines = buffer.split('\n');
@@ -172,13 +181,23 @@ class OpenRouterService implements ApiAdapter {
         for (final line in lines) {
           if (line.startsWith('data: ')) {
             final data = line.substring(6).trim();
-            if (data == '[DONE]') return;
+            if (data == '[DONE]') {
+              if (finalUsageData != null) {
+                _extractCacheStats(
+                  finalUsageData,
+                  requestDiagnostics: requestDiagnostics,
+                );
+              }
+              return;
+            }
 
             try {
               final json = jsonDecode(data);
-              // 提取 cache stats（streaming 時在 usage 裡）
+              _captureUpstreamDiagnostics(json, requestDiagnostics);
+              // usage 通常在最後幾個 chunk 之一。先保留，等 debug
+              // echo / router metadata 都收齊後再寫診斷，避免上游 TTL 缺席。
               if (json['usage'] != null) {
-                _extractCacheStats(json);
+                finalUsageData = json;
               }
               final delta = json['choices']?[0]?['delta']?['content'];
               if (delta != null && delta.isNotEmpty) {
@@ -187,6 +206,12 @@ class OpenRouterService implements ApiAdapter {
             } catch (_) {}
           }
         }
+      }
+      if (finalUsageData != null) {
+        _extractCacheStats(
+          finalUsageData,
+          requestDiagnostics: requestDiagnostics,
+        );
       }
     } finally {
       client.close();
@@ -198,6 +223,8 @@ class OpenRouterService implements ApiAdapter {
     'Authorization': 'Bearer $apiKey',
     'HTTP-Referer': 'https://project-yanci.app',
     'X-Title': 'Project Yanci',
+    // 只回傳路由診斷資料，不改變路由與緩存語義。
+    'X-OpenRouter-Metadata': 'enabled',
   };
 
   Map<String, dynamic> _sanitizeRequestBody(Map<String, dynamic> body) {
@@ -244,6 +271,7 @@ class OpenRouterService implements ApiAdapter {
     String? systemPrompt, {
     StructuredPrompt? structuredPrompt,
     required bool stream,
+    Map<String, Object?>? diagnosticsOut,
   }) async {
     final allMessages = <Map<String, dynamic>>[];
 
@@ -371,7 +399,7 @@ class OpenRouterService implements ApiAdapter {
     final rollingBreakpointIndex = _latestNonSystemCacheControlIndex(
       allMessages,
     );
-    lastCacheDiagnostics = {
+    final diagnostics = <String, Object?>{
       'provider': 'openrouter',
       'model': model,
       'cache_setting_enabled': cacheEnabled,
@@ -410,22 +438,23 @@ class OpenRouterService implements ApiAdapter {
               structuredPrompt.staticPart,
               if ((structuredPrompt.profilePart ?? '').isNotEmpty)
                 structuredPrompt.profilePart!,
-            ]
-                .join('\n\n')
-                .split('\n\n')
-                .where((s) => s.trim().isNotEmpty)
-                .map((s) {
-                  final head = s.trim().replaceAll('\n', ' ');
-                  final label = head.length > 14 ? head.substring(0, 14) : head;
-                  return '${_shortHash(s)}|$label';
-                })
-                .toList(),
+            ].join('\n\n').split('\n\n').where((s) => s.trim().isNotEmpty).map((
+              s,
+            ) {
+              final head = s.trim().replaceAll('\n', ' ');
+              final label = head.length > 14 ? head.substring(0, 14) : head;
+              return '${_shortHash(s)}|$label';
+            }).toList(),
       'latest_user_index': latestUserIndex,
       'rolling_breakpoint_index': rollingBreakpointIndex,
       'latest_user_has_cache_control': latestUserIndex >= 0
           ? _contentHasCacheControl(allMessages[latestUserIndex]['content'])
           : false,
     };
+    diagnosticsOut
+      ?..clear()
+      ..addAll(diagnostics);
+    lastCacheDiagnostics = Map<String, Object?>.from(diagnostics);
 
     return {
       'model': model,
@@ -435,6 +464,9 @@ class OpenRouterService implements ApiAdapter {
       // streaming 的 cache stats 需要 final usage chunk；沒有它會看起來
       // 像完全沒命中，實際只是客戶端沒有收到 usage。
       if (stream) 'stream_options': {'include_usage': true},
+      // OpenRouter 會在最後一個 debug chunk 回傳轉換後真正送往
+      // Anthropic 的 body。僅 debug build 啟用，用來確認 ttl 是否被保留。
+      if (stream && _cacheDebugEcho) 'debug': {'echo_upstream_body': true},
       // ═══ 緩存優化 ═══
       // session_id 啟用 sticky routing：首次成功請求後固定 provider + 節點，
       // 後續同 session 請求走同一條路，cache namespace 不漂移。
@@ -442,6 +474,9 @@ class OpenRouterService implements ApiAdapter {
       //    「Sticky routing is not used when you specify a manual provider order」，
       //    provider.order 會把 sticky routing 整個蓋掉，導致 cache 永遠命不中。
       if (enableCache) 'session_id': _sessionId,
+      // OpenRouter automatic caching：和 block-level explicit breakpoints
+      // 使用同一個 1h TTL，並作為最後可緩存區塊的自動斷點。
+      if (enableCache) 'cache_control': Map<String, String>.from(cacheControl),
     };
   }
 
@@ -473,7 +508,10 @@ class OpenRouterService implements ApiAdapter {
       sha256.convert(utf8.encode(text)).toString().substring(0, 12);
 
   /// 提取 cache 統計
-  void _extractCacheStats(Map<String, dynamic> data) {
+  void _extractCacheStats(
+    Map<String, dynamic> data, {
+    required Map<String, Object?> requestDiagnostics,
+  }) {
     final usage = data['usage'];
     if (usage == null) return;
 
@@ -490,25 +528,103 @@ class OpenRouterService implements ApiAdapter {
       if (created == 0) created = details['cache_write_tokens'] ?? 0;
     }
 
+    final creation = usage['cache_creation'];
+    final write5m = creation is Map
+        ? (creation['ephemeral_5m_input_tokens'] as num?)?.toInt() ?? 0
+        : 0;
+    final write1h = creation is Map
+        ? (creation['ephemeral_1h_input_tokens'] as num?)?.toInt() ?? 0
+        : 0;
+
     lastCacheStats = {
       'prompt_tokens': usage['prompt_tokens'] ?? 0,
       'completion_tokens': usage['completion_tokens'] ?? 0,
       'cache_creation': created,
       'cache_read': read,
+      'cache_write_5m': write5m,
+      'cache_write_1h': write1h,
     };
 
     // 緩存診斷指紋（開發者診斷頁 Cache Debug 讀取）
     CacheDebugLog.add({
       'at': DateTime.now().toIso8601String().substring(11, 19),
-      'hash': lastCacheDiagnostics['static_hash'],
-      'static_t': lastCacheDiagnostics['static_tokens'],
-      'dynamic_t': lastCacheDiagnostics['dynamic_tokens'],
+      'hash': requestDiagnostics['static_hash'],
+      'static_t': requestDiagnostics['static_tokens'],
+      'dynamic_t': requestDiagnostics['dynamic_tokens'],
       'prompt_t': lastCacheStats['prompt_tokens'],
       'read': read,
       'write': created,
-      'internal': lastCacheDiagnostics['is_structured'] != true,
-      'segs': lastCacheDiagnostics['static_segs'] ?? const <String>[],
+      'write_5m': write5m,
+      'write_1h': write1h,
+      'internal': requestDiagnostics['is_structured'] != true,
+      'segs': requestDiagnostics['static_segs'] ?? const <String>[],
+      'session_id': requestDiagnostics['session_id'],
+      'model': requestDiagnostics['model'],
+      'sent_ttl': (requestDiagnostics['cache_control'] as Map?)?['ttl'],
+      'upstream_ttl': requestDiagnostics['upstream_ttl'],
+      'upstream_provider': requestDiagnostics['upstream_provider'],
+      'upstream_model': requestDiagnostics['upstream_model'],
+      'router_attempt': requestDiagnostics['router_attempt'],
+      'router_strategy': requestDiagnostics['router_strategy'],
+      'router_region': requestDiagnostics['router_region'],
+      'router_fallback': requestDiagnostics['router_fallback'],
+      'generation_id': data['id'],
     });
+  }
+
+  void _captureUpstreamDiagnostics(
+    Map<String, dynamic> data,
+    Map<String, Object?> requestDiagnostics,
+  ) {
+    final provider = data['provider'];
+    if (provider != null) requestDiagnostics['upstream_provider'] = '$provider';
+
+    final metadata = data['openrouter_metadata'];
+    if (metadata is Map) {
+      requestDiagnostics['router_attempt'] = metadata['attempt'];
+      requestDiagnostics['router_strategy'] = metadata['strategy'];
+      requestDiagnostics['router_region'] = metadata['region'];
+      final attempt = (metadata['attempt'] as num?)?.toInt() ?? 1;
+      final attempts = metadata['attempts'];
+      requestDiagnostics['router_fallback'] =
+          attempt > 1 || (attempts is List && attempts.length > 1);
+      final endpoints = metadata['endpoints'];
+      if (endpoints is Map && endpoints['available'] is List) {
+        for (final endpoint in endpoints['available'] as List) {
+          if (endpoint is Map && endpoint['selected'] == true) {
+            requestDiagnostics['upstream_provider'] = '${endpoint['provider']}';
+            requestDiagnostics['upstream_model'] = '${endpoint['model']}';
+            break;
+          }
+        }
+      }
+    }
+
+    final debug = data['debug'];
+    if (debug is Map) {
+      final upstreamBody = debug['echo_upstream_body'];
+      final ttl = _findCacheTtl(upstreamBody);
+      requestDiagnostics['upstream_ttl'] = ttl ?? 'missing';
+    }
+  }
+
+  String? _findCacheTtl(dynamic value) {
+    if (value is Map) {
+      final cacheControl = value['cache_control'];
+      if (cacheControl is Map && cacheControl['ttl'] != null) {
+        return '${cacheControl['ttl']}';
+      }
+      for (final child in value.values) {
+        final ttl = _findCacheTtl(child);
+        if (ttl != null) return ttl;
+      }
+    } else if (value is List) {
+      for (final child in value) {
+        final ttl = _findCacheTtl(child);
+        if (ttl != null) return ttl;
+      }
+    }
+    return null;
   }
 }
 

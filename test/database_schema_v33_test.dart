@@ -2,6 +2,8 @@ import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:project_yanci/memory/database.dart';
+import 'package:project_yanci/models/message.dart';
+import 'package:project_yanci/services/sticker_service.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 void main() {
@@ -25,9 +27,13 @@ void main() {
     () async {
       await DatabaseHelper.createSchemaForTesting(db);
 
-      expect(DatabaseHelper.schemaVersionForTesting, 33);
+      expect(DatabaseHelper.schemaVersionForTesting, 34);
       expect(await _columnNames(db, 'characters'), contains('bio_clock'));
       expect(await _columnNames(db, 'sticky_notes'), contains('character_id'));
+      expect(
+        await _columnNames(db, 'conversations'),
+        contains('pinned_static_self_notes'),
+      );
       expect(await _columnNames(db, 'archive'), contains('character_id'));
 
       final tables = await _objectNames(db, 'table');
@@ -102,9 +108,87 @@ void main() {
   );
 
   test(
+    'conversation summary pin is write-once under concurrent builders',
+    () async {
+      await DatabaseHelper.createSchemaForTesting(db);
+      await DatabaseHelper.createConversation(
+        Conversation(id: 'conv-pin', characterId: 'char-a'),
+      );
+
+      final results = await Future.wait([
+        DatabaseHelper.setConversationPinnedSummaryIfAbsent(
+          'conv-pin',
+          'summary-a',
+        ),
+        DatabaseHelper.setConversationPinnedSummaryIfAbsent(
+          'conv-pin',
+          'summary-b',
+        ),
+      ]);
+
+      final stored = await DatabaseHelper.getConversationPinnedSummary(
+        'conv-pin',
+      );
+      expect(stored, anyOf('summary-a', 'summary-b'));
+      expect(results, everyElement(stored));
+    },
+  );
+
+  test('repairing a sticker file path does not change its prompt', () async {
+    await DatabaseHelper.createSchemaForTesting(db);
+    final id = await StickerService.addSticker(
+      filePath: '/missing/old.webp',
+      characterId: StickerService.userBucket,
+      line: '嗚嗚',
+      mood: '委屈',
+      tags: '委屈',
+    );
+    final before = await StickerService.buildStickerPrompt(
+      characterId: 'char-a',
+    );
+
+    await DatabaseHelper.updateStickerFilePath(id, '/local/new.webp');
+    final after = await StickerService.buildStickerPrompt(
+      characterId: 'char-a',
+    );
+
+    expect(after, before);
+  });
+
+  test('conversation self-note snapshot is pinned only once', () async {
+    await DatabaseHelper.createSchemaForTesting(db);
+    await DatabaseHelper.createConversation(
+      Conversation(id: 'conv-notes', characterId: 'char-a'),
+    );
+
+    final first = await DatabaseHelper.setConversationPinnedSelfNotesIfAbsent(
+      'conv-notes',
+      'old note',
+    );
+    final second = await DatabaseHelper.setConversationPinnedSelfNotesIfAbsent(
+      'conv-notes',
+      'new note',
+    );
+
+    expect(first, 'old note');
+    expect(second, 'old note');
+    expect(
+      await DatabaseHelper.getConversationPinnedSelfNotes('conv-notes'),
+      'old note',
+    );
+  });
+
+  test(
     'v32 migration backfills archive ownership and removes duplicates',
     () async {
       await _createRepresentativeV32Schema(db);
+      await db.insert('conversations', {
+        'id': 'existing-conv',
+        'character_id': 'char-a',
+        'title': 'existing',
+        'created_at': '2026-01-01T00:00:00.000',
+        'updated_at': '2026-01-01T00:00:00.000',
+      });
       await db.insert('memories', {
         'id': 41,
         'character_id': 'char-a',
@@ -142,6 +226,12 @@ void main() {
       expect(await _columnNames(db, 'characters'), contains('bio_clock'));
       expect(await _columnNames(db, 'sticky_notes'), contains('character_id'));
       expect(await _columnNames(db, 'archive'), contains('character_id'));
+      final migratedConversation = await db.query(
+        'conversations',
+        where: 'id = ?',
+        whereArgs: ['existing-conv'],
+      );
+      expect(migratedConversation.single['pinned_static_self_notes'], '');
       expect(
         await _objectNames(db, 'table'),
         containsAll(['emotion_points', 'grudge_seals', 'character_timeline']),

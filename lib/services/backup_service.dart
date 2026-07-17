@@ -451,6 +451,10 @@ class BackupService {
       );
       conversation['window_summary_id'] =
           conversation['window_summary_id']?.toString() ?? '';
+      conversation['pinned_static_self_notes'] =
+          conversation.containsKey('pinned_static_self_notes')
+          ? conversation['pinned_static_self_notes']?.toString() ?? ''
+          : '';
       conversation['title'] = conversation['title']?.toString() ?? '';
       conversation['is_starred'] = _sqliteBool(conversation['is_starred']);
       conversation['created_at'] =
@@ -594,11 +598,11 @@ class BackupService {
         .map((row) => row['id']?.toString())
         .whereType<String>()
         .toSet();
-    
+
     final originalMessages = tables['messages']!;
     final originalCount = originalMessages.length;
     final validMessages = <Map<String, Object?>>[];
-    
+
     for (final message in originalMessages) {
       final conversationId = message['conversation_id']?.toString();
       final isOrphan = !conversationIds.contains(conversationId);
@@ -611,7 +615,9 @@ class BackupService {
 
     final newCount = validMessages.length;
     if (newCount < originalCount) {
-      print('Backup import: dropped ${originalCount - newCount} orphaned messages.');
+      print(
+        'Backup import: dropped ${originalCount - newCount} orphaned messages.',
+      );
       tables['messages'] = validMessages;
     }
   }

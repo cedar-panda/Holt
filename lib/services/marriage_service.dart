@@ -42,6 +42,12 @@ class MarriageService {
     r'[^。！!？?\n，,]{0,4}(結婚|结婚|求婚)',
   );
 
+  /// 結婚證標記與系統說明只給模型，永不出現在氣泡、複製或重發文字。
+  static String stripHiddenCertMetadata(String text) => text
+      .replaceAll(RegExp(r'\[marriage_cert[^\]]*\]\s*[（(][\s\S]*?[）)]'), '')
+      .replaceAll(RegExp(r'\[marriage_cert[^\]]*\]'), '')
+      .trim();
+
   /// 消息落庫時掃描計數（user 和 char 兩側都調）。
   /// 已簽署的角色不再計數。
   static Future<void> scanMessage(String text, String characterId) async {

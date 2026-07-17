@@ -77,6 +77,18 @@ class _StickerLibraryScreenState extends State<StickerLibraryScreen> {
     _loadStickers();
   }
 
+  Future<void> _repairMissingImage(StickerInfo sticker) async {
+    final file = await _picker.pickImage(source: ImageSource.gallery);
+    if (file == null) return;
+    final repaired = await StickerService.repairStickerImage(
+      stickerId: sticker.id,
+      sourcePath: file.path,
+      sourceName: file.name,
+    );
+    if (!mounted) return;
+    if (repaired) await _loadStickers();
+  }
+
   // ═══════════════════════════════════
   // 三種描述方式對話框
   // ═══════════════════════════════════
@@ -657,8 +669,10 @@ class _StickerLibraryScreenState extends State<StickerLibraryScreen> {
                         itemBuilder: (ctx, i) {
                           final s = _stickers[i];
                           return GestureDetector(
-                            // 點擊編輯描述
-                            onTap: () => _showDescribeDialog(s.id, s.filePath),
+                            // 正常圖點擊編輯描述；裂圖點擊選圖補回。
+                            onTap: () => File(s.filePath).existsSync()
+                                ? _showDescribeDialog(s.id, s.filePath)
+                                : _repairMissingImage(s),
                             // 長按刪除
                             onLongPress: () async {
                               final del = await showDialog<bool>(

@@ -2,7 +2,9 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
 import '../services/locale_strings.dart';
+import '../services/model_cost_policy.dart';
 import '../services/settings_manager.dart';
+import '../services/token_estimator.dart';
 
 class KeepAliveGuard {
   final bool cacheOn;
@@ -45,8 +47,10 @@ class _ApiAdvancedSettingsState extends State<ApiAdvancedSettings> {
     final enabled = await MemorySettings.getKeepAliveEnabled();
     final provider = await ApiSettings.getApiProvider();
     final model = await ApiSettings.getModelForProvider(provider);
-    final isAnthropic = model.contains('anthropic');
-    final supports = isAnthropic || provider == 'bedrock';
+    final supports = TokenEstimator.supportsCloseWindowKeepAlive(
+      provider: provider,
+      model: model,
+    );
     return KeepAliveGuard(
       cacheOn: cacheOn,
       supports: supports,
@@ -55,24 +59,43 @@ class _ApiAdvancedSettingsState extends State<ApiAdvancedSettings> {
   }
 
   Future<void> _handlePromptCachingChanged(bool v) async {
-    await MemorySettings.saveEnablePromptCaching(v);
     if (v) {
-      await MemorySettings.saveContextLimitEnabled(false);
-    } else {
-      await MemorySettings.saveKeepAliveEnabled(false);
-      await MemorySettings.saveCacheWindowSummaryEnabled(false);
+      final provider = await ApiSettings.getApiProvider();
+      final inklingKey = provider == 'thinking_machines'
+          ? await ApiSettings.getThinkingMachinesApiKey()
+          : '';
+      if (inklingKey.trim().isNotEmpty) {
+        await ModelCostPolicy.applySelection(
+          provider: provider,
+          model: await ApiSettings.getModelForProvider(provider),
+          apiKey: inklingKey,
+        );
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              L.pick(
+                en: 'Inkling does not use prompt cache. Cache and its summary remain off; use context send limit to control costs.',
+                zhTW: 'Inkling 不使用提示詞緩存；緩存及其專用摘要已保持關閉，請用上下文發送限制控制費用。',
+                zhCN: 'Inkling 不使用提示词缓存；缓存及其专用摘要已保持关闭，请用上下文发送限制控制费用。',
+              ),
+            ),
+            backgroundColor: YanciTheme.accent,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+        setState(() {});
+        return;
+      }
     }
+    await ModelCostPolicy.setPromptCachingEnabled(v);
+    if (!mounted) return;
     setState(() {});
   }
 
   Future<void> _handleContextLimitChanged(bool v, int currentLimit) async {
-    await MemorySettings.saveContextLimitEnabled(v);
-    if (v) {
-      await MemorySettings.saveEnablePromptCaching(false);
-      await MemorySettings.saveKeepAliveEnabled(false);
-    } else {
-      await MemorySettings.saveContextWindowSummaryEnabled(false);
-    }
+    await ModelCostPolicy.setContextLimitEnabled(v);
+    if (!mounted) return;
     setState(() {});
   }
 

@@ -681,7 +681,6 @@ class _CallScreenState extends State<CallScreen>
         final emoState = await EmotionCoordinates.statePrompt(_characterId);
         if (emoState.isNotEmpty) dynamicParts.add(emoState);
       }
-
       // v3 才允許語音標籤，其他 TTS 模型明確禁用（不然標籤會被讀出來/漏顯示）
       final ttsProvider = await TtsSettings.getTtsProvider();
       final elModel = await TtsSettings.getTtsElevenlabsModel();

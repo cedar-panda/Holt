@@ -57,4 +57,20 @@ class ToolPrompts {
     'Keep replies concise. Aim for no more than $maxLines lines. Expand slightly when the conversation requires it, but don\'t overdo it.',
     '簡潔回覆。回覆建議不超過 $maxLines 行，對話情境需要可以適當展開但不過多。',
   );
+
+  /// 兩個回覆風格開關的單一選擇器。
+  /// 行數模式已包含簡潔要求；同時開啟時只送這一段，避免重複。
+  static String selectedReplyStyle({
+    required bool conciseOn,
+    required bool freeformOn,
+    required bool emotionEnabled,
+    required int maxLines,
+  }) {
+    final style = freeformOn
+        ? freeform(maxLines)
+        : conciseOn
+        ? concise(emotionEnabled: emotionEnabled)
+        : '';
+    return style.isEmpty ? '' : '${replyStyleHeader()}\n$style';
+  }
 }

@@ -169,7 +169,7 @@ class ManualSummaryService {
         );
       }
 
-      final adapter = await ApiSettings.buildAdapter();
+      final adapter = await ApiSettings.buildAdapterForModel(model);
       return await adapter.sendMessage(
         messages: [
           {

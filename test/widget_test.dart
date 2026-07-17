@@ -5,8 +5,10 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:project_yanci/services/api_adapter.dart';
 import 'package:project_yanci/services/context_compressor.dart';
 import 'package:project_yanci/services/openrouter_service.dart';
+import 'package:project_yanci/services/marriage_service.dart';
 import 'package:project_yanci/services/scratch_service.dart';
 import 'package:project_yanci/services/token_estimator.dart';
+import 'package:project_yanci/services/tool_prompts.dart';
 import 'package:project_yanci/main.dart';
 import 'package:project_yanci/memory/database.dart';
 import 'package:project_yanci/widgets/chat_bubble.dart';
@@ -14,6 +16,29 @@ import 'package:project_yanci/widgets/chat_bubble.dart';
 void main() {
   test('YanciApp can be constructed', () {
     expect(const YanciApp(), isA<YanciApp>());
+  });
+
+  test('reply style switches do not duplicate concise instructions', () {
+    final both = ToolPrompts.selectedReplyStyle(
+      conciseOn: true,
+      freeformOn: true,
+      emotionEnabled: true,
+      maxLines: 12,
+    );
+    final freeformOnly = ToolPrompts.selectedReplyStyle(
+      conciseOn: false,
+      freeformOn: true,
+      emotionEnabled: true,
+      maxLines: 12,
+    );
+
+    expect(both, freeformOnly);
+    expect(both, contains('12'));
+  });
+
+  test('marriage certificate system note is never visible', () {
+    const raw = '我想和你說件事\n[marriage_cert]（系統說明：這段對方看不到）';
+    expect(MarriageService.stripHiddenCertMetadata(raw), '我想和你說件事');
   });
 
   test('character edits preserve creation and runtime-managed fields', () {
@@ -28,10 +53,7 @@ void main() {
       updatedAt: 'new-updated-at',
     );
 
-    expect(update, {
-      'name': 'Holt',
-      'updated_at': 'new-updated-at',
-    });
+    expect(update, {'name': 'Holt', 'updated_at': 'new-updated-at'});
     expect(update.containsKey('self_notes'), isFalse);
     expect(update.containsKey('bio_clock'), isFalse);
     expect(update.containsKey('is_spider_web_enabled'), isFalse);
@@ -101,6 +123,16 @@ void main() {
     );
   });
 
+  test('custom Claude model keeps one-hour cache renewal support', () {
+    expect(
+      TokenEstimator.supportsCloseWindowKeepAlive(
+        provider: 'openai_compatible',
+        model: '[A2-量]claude-sonnet-4-6-thinking',
+      ),
+      isTrue,
+    );
+  });
+
   test('window summary retention keeps several prompt blocks', () {
     expect(ContextCompressor.summaryCapTokens, greaterThanOrEqualTo(3600));
     expect(ContextCompressor.keywordCapTokens, greaterThanOrEqualTo(1800));
@@ -130,6 +162,7 @@ void main() {
       );
 
       expect(body['session_id'], 'yanci_conv-test');
+      expect(body['cache_control'], const {'type': 'ephemeral', 'ttl': '1h'});
 
       final messages = body['messages'] as List;
       final system = messages.first as Map<String, dynamic>;

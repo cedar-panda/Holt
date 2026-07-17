@@ -16,6 +16,7 @@ import '../widgets/atom_thinking.dart';
 import '../services/api_adapter.dart';
 import '../services/settings_manager.dart';
 import '../services/token_estimator.dart';
+import '../services/model_cost_policy.dart';
 import '../services/memory_actions.dart';
 import '../services/image_gen_service.dart';
 import '../memory/emotion_coordinates.dart';
@@ -439,7 +440,7 @@ class _ChatScreenState extends State<ChatScreen> {
     TransferData? transfer,
     ScratchData? scratch,
   ) {
-    final trimmed = text.trim();
+    final trimmed = MarriageService.stripHiddenCertMetadata(text);
     if (trimmed.isNotEmpty) return trimmed;
     if (scratch != null) {
       return L.pick(en: 'Scratch card gift', zhTW: '刮刮卡禮物');
@@ -584,8 +585,6 @@ class _ChatScreenState extends State<ChatScreen> {
     required bool bioclockEnabled,
     required bool imagegenEnabled,
     required String providerName,
-    required bool conciseOn,
-    required bool freeformOn,
     required String staticWindowSummary,
   }) async {
     if (bioclockEnabled &&
@@ -595,10 +594,18 @@ class _ChatScreenState extends State<ChatScreen> {
     }
     final habitList = bioclockEnabled ? (_habitListSnapshot ?? '') : '';
 
-    _selfNotesSnapshot ??= selfNotes;
-    _selfNotesSnapshotLines ??= selfNotes.isEmpty
-        ? <String>{}
-        : selfNotes.split('\n').toSet();
+    if (_selfNotesSnapshot == null || _selfNotesSnapshotLines == null) {
+      final convId = widget.conversationId;
+      var pinned = await DatabaseHelper.getConversationPinnedSelfNotes(convId);
+      pinned ??= await DatabaseHelper.setConversationPinnedSelfNotesIfAbsent(
+        convId,
+        selfNotes,
+      );
+      _selfNotesSnapshot = pinned;
+      _selfNotesSnapshotLines = pinned.isEmpty
+          ? <String>{}
+          : pinned.split('\n').toSet();
+    }
 
     _stickerPromptSnapshot ??= await StickerService.buildStickerPrompt(
       characterId: characterId,
@@ -686,18 +693,6 @@ class _ChatScreenState extends State<ChatScreen> {
     );
 
     if (habitList.isNotEmpty) staticParts.add(habitList);
-
-    if (conciseOn || freeformOn) {
-      final parts = <String>[];
-      if (conciseOn) {
-        parts.add(ToolPrompts.concise(emotionEnabled: emotionEnabled));
-      }
-      if (freeformOn) {
-        final maxLines = await ApiSettings.getFreeformMaxLines();
-        parts.add(ToolPrompts.freeform(maxLines));
-      }
-      staticParts.add('${ToolPrompts.replyStyleHeader()}\n${parts.join('\n')}');
-    }
 
     return _StaticPromptBundle(
       staticPart: staticParts.join('\n\n'),
@@ -1710,8 +1705,10 @@ class _ChatScreenState extends State<ChatScreen> {
       final text = rows.isNotEmpty
           ? (rows.first['content'] as String? ?? '')
           : '';
-      await DatabaseHelper.setConversationPinnedSummary(convId, text);
-      pinned = text;
+      pinned = await DatabaseHelper.setConversationPinnedSummaryIfAbsent(
+        convId,
+        text,
+      );
     }
 
     final prompt = pinned.trim().isEmpty
@@ -2338,8 +2335,6 @@ class _ChatScreenState extends State<ChatScreen> {
       bioclockEnabled: bioclockEnabled,
       imagegenEnabled: imagegenEnabled,
       providerName: providerName,
-      conciseOn: conciseOn,
-      freeformOn: freeformOn,
       staticWindowSummary: await staticWindowSummaryF,
     );
 
@@ -2457,11 +2452,11 @@ class _ChatScreenState extends State<ChatScreen> {
     final fatiguePrompt = await fatiguePromptF;
     if (fatiguePrompt.isNotEmpty) dynamicParts.add(fatiguePrompt);
 
-    // 時間（變動最頻繁，放在動態區塊最後面以保護前面的 Cache）
+    // 時間變動最頻繁，放在動態區塊後段。
     dynamicParts.add(_timePrompt(now));
 
     // 思考鏈
-    if (thinkingEnabled) {
+    if (thinkingEnabled && providerName != 'thinking_machines') {
       dynamicParts.add(
         L.pick(
           en: '【Thinking Mode】Before replying, show your inner thought process in <think>...</think> tags (first person), then reply normally.',
@@ -2479,6 +2474,14 @@ class _ChatScreenState extends State<ChatScreen> {
         ),
       );
     }
+
+    final replyStyle = ToolPrompts.selectedReplyStyle(
+      conciseOn: conciseOn,
+      freeformOn: freeformOn,
+      emotionEnabled: emotionEnabled,
+      maxLines: freeformOn ? await ApiSettings.getFreeformMaxLines() : 0,
+    );
+    if (replyStyle.isNotEmpty) dynamicParts.add(replyStyle);
 
     final structured = StructuredPrompt(
       staticPart: staticBundle.staticPart,
@@ -2550,15 +2553,14 @@ class _ChatScreenState extends State<ChatScreen> {
       if (!_isCurrentGeneration(generationSerial)) return;
 
       // ═══ 記錄真實 API 用量（不再用估算，避免雙重計算）═══
-      final provider = await ApiSettings.getApiProvider();
       await _tokenTracker.recordRealUsage(
-        provider: provider,
+        provider: providerName,
         model: model,
         characterId: _activeCharacterId,
       );
 
       // 檢查本次是否命中緩存
-      final cacheRead = _cacheReadForProvider(provider);
+      final cacheRead = _cacheReadForProvider(providerName);
 
       // ═══ 模型自主記憶：開啟時才執行 <memo>/<persona_note> 落庫 ═══
       var processedText = (memoryWriteEnabled || isSpiderWebEnabled)
@@ -3036,7 +3038,7 @@ class _ChatScreenState extends State<ChatScreen> {
       }
 
       // ═══ 回覆完成震動 + Cache 命中震動 ═══
-      final cacheDisplay = _getCacheDisplay(provider);
+      final cacheDisplay = _getCacheDisplay(providerName);
       if (mounted) {
         if (cacheDisplay != null && cacheDisplay.$1.contains('hit')) {
           HapticFeedback.heavyImpact(); // cache 命中用重震動
@@ -3053,7 +3055,7 @@ class _ChatScreenState extends State<ChatScreen> {
         structuredPrompt: structured,
         adapter: adapter,
         model: model,
-        provider: provider,
+        provider: providerName,
       );
 
       // ═══ AI 自動命名 ═══
@@ -3237,9 +3239,6 @@ class _ChatScreenState extends State<ChatScreen> {
       'imagegen',
     );
     final imgProviderName = await ApiSettings.getApiProviderName();
-    final imgConciseOn = await ApiSettings.getConciseMode();
-    final imgFreeformOn = await ApiSettings.getFreeformMode();
-
     final staticBundle = await _buildCommonStaticParts(
       characterId: _activeCharacterId,
       systemPrompt: systemPrompt,
@@ -3254,8 +3253,6 @@ class _ChatScreenState extends State<ChatScreen> {
       bioclockEnabled: imgBioclockEnabled,
       imagegenEnabled: imgImagegenEnabled,
       providerName: imgProviderName,
-      conciseOn: imgConciseOn,
-      freeformOn: imgFreeformOn,
       staticWindowSummary: await _buildStaticWindowSummaryPrompt(
         _activeCharacterId,
       ),
@@ -3351,7 +3348,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
     // 思考鏈
     final thinkingOn = await ApiSettings.getThinkingChain();
-    if (thinkingOn) {
+    if (thinkingOn && imgProviderName != 'thinking_machines') {
       dynamicParts.add(
         L.pick(
           en: '【Thinking Mode】Before replying, show your inner thought process in <think>...</think> tags (first person), then reply normally.',
@@ -3474,14 +3471,13 @@ class _ChatScreenState extends State<ChatScreen> {
       if (!_isCurrentGeneration(generationSerial)) return;
 
       // ═══ 記錄真實 API 用量 ═══
-      final imgProvider = await ApiSettings.getApiProvider();
       await _tokenTracker.recordRealUsage(
-        provider: imgProvider,
+        provider: imgProviderName,
         model: model,
         characterId: _activeCharacterId,
       );
 
-      final imgCacheRead = _cacheReadForProvider(imgProvider);
+      final imgCacheRead = _cacheReadForProvider(imgProviderName);
 
       // ═══ 模型自主記憶：開啟時才執行 <memo>/<persona_note> 落庫 ═══
       var processedText = imgMemoryWriteEnabled
@@ -3775,7 +3771,7 @@ class _ChatScreenState extends State<ChatScreen> {
         structuredPrompt: structured,
         adapter: adapter,
         model: model,
-        provider: imgProvider,
+        provider: imgProviderName,
       );
     } catch (e) {
       if (!_isCurrentGeneration(generationSerial)) return;
@@ -5185,7 +5181,9 @@ class _ChatScreenState extends State<ChatScreen> {
     }
     if (msg == null) return;
     final branchFromId = msg.id!;
-    final ctrl = TextEditingController(text: msg.text);
+    final ctrl = TextEditingController(
+      text: MarriageService.stripHiddenCertMetadata(msg.text),
+    );
 
     showDialog(
       context: context,
@@ -5272,7 +5270,9 @@ class _ChatScreenState extends State<ChatScreen> {
 
   void _editMessage(int index) {
     final msg = _messages[index];
-    final ctrl = TextEditingController(text: msg.text);
+    final ctrl = TextEditingController(
+      text: MarriageService.stripHiddenCertMetadata(msg.text),
+    );
 
     showDialog(
       context: context,
@@ -5376,8 +5376,6 @@ class _ChatScreenState extends State<ChatScreen> {
       final bioclockEnabled = await MemorySettings.isAbilityEnabled('bioclock');
       final memoryWriteEnabled = await MemorySettings.getMemoryWriteEnabled();
       final providerName = await ApiSettings.getApiProviderName();
-      final conciseOn = await ApiSettings.getConciseMode();
-      final freeformOn = await ApiSettings.getFreeformMode();
       final charData = await DatabaseHelper.getCharacter(charId);
       final isSpiderWebEnabled =
           (charData?['is_spider_web_enabled'] as int? ?? 0) == 1;
@@ -5396,8 +5394,6 @@ class _ChatScreenState extends State<ChatScreen> {
         bioclockEnabled: bioclockEnabled,
         imagegenEnabled: imagegenEnabled,
         providerName: providerName,
-        conciseOn: conciseOn,
-        freeformOn: freeformOn,
         staticWindowSummary: staticWindowSummary,
       );
       callStaticPart = bundle.staticPart;
@@ -5724,12 +5720,6 @@ class _ChatScreenState extends State<ChatScreen> {
     return name;
   }
 
-  String _providerForStarredModel(String modelId) {
-    if (ApiSettings.isLocalApiModelId(modelId)) return 'local_api';
-    if (LocalModelService.isLocalModelId(modelId)) return 'local';
-    return 'openrouter';
-  }
-
   void _showNonBlockingModelHint(String message) {
     _modelHintOverlay?.remove();
     _modelHintOverlay = null;
@@ -5793,6 +5783,22 @@ class _ChatScreenState extends State<ChatScreen> {
         _modelHintOverlay = null;
       }
     });
+  }
+
+  String _modelCostPolicyMessage(ModelCostPolicyNotice notice) {
+    return switch (notice) {
+      ModelCostPolicyNotice.inklingContextLimitEnabled => L.pick(
+        en: 'Prompt cache and its summary were turned off. Context send limit is now on to reduce Inkling costs.',
+        zhTW: '已關閉緩存命中及其專用摘要，並開啟上下文發送限制以節省 Inkling 費用。',
+        zhCN: '已关闭缓存命中及其专用摘要，并开启上下文发送限制以节省 Inkling 费用。',
+      ),
+      ModelCostPolicyNotice.claudeCacheRecommended => L.pick(
+        en: 'Enable cache hits to reduce Claude costs.',
+        zhTW: '請開啟緩存命中以節省 Claude 費用。',
+        zhCN: '请开启缓存命中以节省 Claude 费用。',
+      ),
+      ModelCostPolicyNotice.none => '',
+    };
   }
 
   /// 星標模型快速切換
@@ -5943,17 +5949,23 @@ class _ChatScreenState extends State<ChatScreen> {
                                       return GestureDetector(
                                         onTap: () async {
                                           final provider =
-                                              _providerForStarredModel(modelId);
-                                          await ApiSettings.saveModel(modelId);
-                                          if (provider == 'local_api') {
-                                            await ApiSettings.saveApiProvider(
-                                              'local_api',
-                                            );
-                                          } else if (provider == 'openrouter') {
-                                            await ApiSettings.saveApiProvider(
-                                              'openrouter',
-                                            );
-                                          }
+                                              await ApiSettings.resolveStarredModelProvider(
+                                                modelId,
+                                              );
+                                          await ApiSettings.saveProviderModelSelection(
+                                            provider,
+                                            modelId,
+                                          );
+                                          final policyResult =
+                                              await ModelCostPolicy.applySelection(
+                                                provider: provider,
+                                                model: modelId,
+                                                apiKey:
+                                                    provider ==
+                                                        'thinking_machines'
+                                                    ? await ApiSettings.getThinkingMachinesApiKey()
+                                                    : '',
+                                              );
                                           final supportsRenewal =
                                               TokenEstimator.supportsCloseWindowKeepAlive(
                                                 provider: provider,
@@ -5969,7 +5981,14 @@ class _ChatScreenState extends State<ChatScreen> {
                                             () => _currentModel = modelId,
                                           );
                                           if (ctx.mounted) Navigator.pop(ctx);
-                                          if (!supportsRenewal) {
+                                          if (policyResult.notice !=
+                                              ModelCostPolicyNotice.none) {
+                                            _showNonBlockingModelHint(
+                                              _modelCostPolicyMessage(
+                                                policyResult.notice,
+                                              ),
+                                            );
+                                          } else if (!supportsRenewal) {
                                             _showNonBlockingModelHint(
                                               L.pick(
                                                 en: 'This model has no confirmed 1h cache TTL, so auto cache renewal stays off.',

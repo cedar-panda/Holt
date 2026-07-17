@@ -4,6 +4,7 @@ import 'openrouter_service.dart';
 import 'deepseek_service.dart';
 import 'gemini_service.dart';
 import 'aws_bedrock_service.dart';
+import 'thinking_machines_service.dart';
 
 /// Token 用量追蹤器（真實 API 用量 + 持久化）
 class TokenTracker {
@@ -47,6 +48,10 @@ class TokenTracker {
       prompt = stats['prompt_tokens'] ?? 0;
       completion = stats['completion_tokens'] ?? 0;
       cacheHit = stats['cached_tokens'] ?? 0;
+    } else if (provider == 'thinking_machines') {
+      final stats = ThinkingMachinesService.lastUsage;
+      prompt = stats['prompt_tokens'] ?? 0;
+      completion = stats['completion_tokens'] ?? 0;
     }
 
     // 如果 API 沒返回真實值，不記錄（避免寫入 0）
@@ -148,6 +153,12 @@ class TokenTracker {
     if (m.contains('deepseek')) return {'input': 0.27, 'output': 1.1};
     if (m.contains('qwen')) return {'input': 0.3, 'output': 0.6};
     if (m.contains('mistral-large')) return {'input': 2.0, 'output': 6.0};
+    if (m.contains('thinkingmachines/inkling')) {
+      if (m.contains(':peft:262144')) {
+        return {'input': 3.74, 'output': 9.36};
+      }
+      return {'input': 1.87, 'output': 4.68};
+    }
 
     return {'input': 1.0, 'output': 3.0};
   }

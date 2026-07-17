@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:shared_preferences/shared_preferences.dart';
 import '../secure_store.dart';
 import '../api_adapter.dart';
@@ -7,7 +9,9 @@ import '../gemini_service.dart';
 import '../deepseek_service.dart';
 import '../qwen_service.dart';
 import '../openai_compatible_service.dart';
+import '../thinking_machines_service.dart';
 import '../local_model_service.dart';
+import '../locale_strings.dart';
 
 /// API 供應商配置（OpenRouter / Bedrock / Gemini / DeepSeek / Qwen / OpenAI Compatible / Local API）
 class ApiSettings {
@@ -81,6 +85,9 @@ class ApiSettings {
       case 'qwen':
         await saveQwenApiKey(key);
         break;
+      case 'thinking_machines':
+        await saveThinkingMachinesApiKey(key);
+        break;
       case 'openai_compatible':
         await saveOaiCompatApiKey(key);
         break;
@@ -100,6 +107,8 @@ class ApiSettings {
         return getDeepseekApiKey();
       case 'qwen':
         return getQwenApiKey();
+      case 'thinking_machines':
+        return getThinkingMachinesApiKey();
       case 'openai_compatible':
         return getOaiCompatApiKey();
       case 'local_api':
@@ -112,12 +121,6 @@ class ApiSettings {
   static Future<void> saveModel(String model) async {
     final p = await SharedPreferences.getInstance();
     await p.setString(_keyModel, model);
-    if (isLocalApiModelId(model)) {
-      await p.setString(_keyLocalApiModel, extractLocalApiModel(model));
-      await p.setString(_keyApiProvider, 'local_api');
-    } else if ((p.getString(_keyApiProvider) ?? 'openrouter') == 'local_api') {
-      await p.setString(_keyApiProvider, 'openrouter');
-    }
   }
 
   static Future<String> getModel() async {
@@ -128,6 +131,9 @@ class ApiSettings {
       if (model.isNotEmpty) return toLocalApiModelId(model);
       final savedModel = p.getString(_keyModel) ?? '';
       return isLocalApiModelId(savedModel) ? savedModel : '';
+    }
+    if (provider == 'local') {
+      return p.getString(_keyModel) ?? '';
     }
     if (provider == 'openai_compatible') {
       return p.getString(_keyOaiCompatModel) ?? '';
@@ -144,6 +150,10 @@ class ApiSettings {
     }
     if (provider == 'qwen') {
       return p.getString(_keyQwenModel) ?? 'qwen-plus';
+    }
+    if (provider == 'thinking_machines') {
+      return p.getString(_keyThinkingMachinesModel) ??
+          ThinkingMachinesService.defaultModel;
     }
     return p.getString(_keyModel) ?? 'anthropic/claude-sonnet-4-20250514';
   }
@@ -172,16 +182,31 @@ class ApiSettings {
       case 'qwen':
         await saveQwenModel(value);
         break;
+      case 'thinking_machines':
+        await saveThinkingMachinesModel(value);
+        break;
       case 'openai_compatible':
         await saveOaiCompatModel(value);
         break;
       case 'local_api':
         await saveLocalApiModel(value);
         break;
-      default:
+      case 'local':
+      case 'openrouter':
         await saveModel(value);
         break;
+      default:
+        throw UnsupportedError('不支援的 API 來源：$provider');
     }
+  }
+
+  /// 將「來源＋模型」視為同一次選擇保存，避免快速切換時只改到其中一項。
+  static Future<void> saveProviderModelSelection(
+    String provider,
+    String model,
+  ) async {
+    await saveModelForProvider(provider, model);
+    await saveApiProvider(provider);
   }
 
   static Future<void> saveSystemPrompt(String prompt) async {
@@ -313,6 +338,51 @@ class ApiSettings {
     return p.getString(_keyQwenModel) ?? 'qwen-plus';
   }
 
+  // ═══ Thinking Machines / Inkling ═══
+  static const String _keyThinkingMachinesApiKey = 'thinking_machines_api_key';
+  static const String _keyThinkingMachinesModel = 'thinking_machines_model';
+  static const String _keyThinkingMachinesEffort =
+      'thinking_machines_thinking_effort';
+
+  static Future<void> saveThinkingMachinesApiKey(String value) async {
+    await SecureStore.write(_keyThinkingMachinesApiKey, value);
+  }
+
+  static Future<String> getThinkingMachinesApiKey() async {
+    return SecureStore.read(_keyThinkingMachinesApiKey);
+  }
+
+  static Future<void> saveThinkingMachinesModel(String value) async {
+    final normalized = value.trim().isEmpty
+        ? ThinkingMachinesService.defaultModel
+        : value.trim();
+    final p = await SharedPreferences.getInstance();
+    await p.setString(_keyThinkingMachinesModel, normalized);
+  }
+
+  static Future<String> getThinkingMachinesModel() async {
+    final p = await SharedPreferences.getInstance();
+    final saved = p.getString(_keyThinkingMachinesModel)?.trim() ?? '';
+    return saved.isEmpty ? ThinkingMachinesService.defaultModel : saved;
+  }
+
+  static Future<void> saveThinkingMachinesEffort(String value) async {
+    const supported = <String>{'low', 'medium', 'high', 'xhigh'};
+    final normalized = value.trim().toLowerCase();
+    final p = await SharedPreferences.getInstance();
+    await p.setString(
+      _keyThinkingMachinesEffort,
+      supported.contains(normalized) ? normalized : 'high',
+    );
+  }
+
+  static Future<String> getThinkingMachinesEffort() async {
+    final p = await SharedPreferences.getInstance();
+    final saved = p.getString(_keyThinkingMachinesEffort) ?? 'high';
+    const supported = <String>{'low', 'medium', 'high', 'xhigh'};
+    return supported.contains(saved) ? saved : 'high';
+  }
+
   // ═══ OpenAI Compatible（中轉站）═══
   static const String _keyOaiCompatBaseUrl = 'oai_compat_base_url';
   static const String _keyOaiCompatApiKey = 'oai_compat_api_key';
@@ -395,10 +465,88 @@ class ApiSettings {
 
   // ═══ 星標模型 ═══
   static const String _keyStarredModels = 'starred_models';
+  static const String _keyStarredModelProviders = 'starred_model_providers_v1';
+
+  static Future<Map<String, String>> getStarredModelProviders() async {
+    final p = await SharedPreferences.getInstance();
+    final raw = p.getString(_keyStarredModelProviders);
+    if (raw == null || raw.isEmpty) return {};
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return {};
+      return decoded.map((key, value) => MapEntry('$key', '$value'));
+    } catch (_) {
+      return {};
+    }
+  }
+
+  static Future<String?> getStarredModelProvider(String modelId) async {
+    final providers = await getStarredModelProviders();
+    return providers[modelId];
+  }
+
+  /// 兼容舊版只保存模型 ID、沒有保存來源的星標。
+  static Future<String> resolveStarredModelProvider(String modelId) async {
+    if (isLocalApiModelId(modelId)) return 'local_api';
+    if (LocalModelService.isLocalModelId(modelId)) return 'local';
+    if (isThinkingMachinesModelId(modelId)) {
+      await rememberStarredModelProviders([modelId], 'thinking_machines');
+      return 'thinking_machines';
+    }
+
+    final saved = await getStarredModelProvider(modelId);
+    if (saved != null && saved.isNotEmpty) return saved;
+
+    final currentProvider = await getApiProvider();
+    final currentModel = await getModelForProvider(currentProvider);
+    if (currentModel == modelId) {
+      await rememberStarredModelProviders([modelId], currentProvider);
+      return currentProvider;
+    }
+
+    // OpenRouter 的模型 ID 通常帶供應商前綴（例如 anthropic/...）；
+    // New API / One API 中轉常直接使用模型名或帶 [渠道] 前綴。
+    final inferred = modelId.contains('/')
+        ? 'openrouter'
+        : (await getOaiCompatBaseUrl()).isNotEmpty
+        ? 'openai_compatible'
+        : currentProvider;
+    await rememberStarredModelProviders([modelId], inferred);
+    return inferred;
+  }
+
+  /// Thinking Machines 模型永遠走自己的 provider，不能因模型 ID 含 `/`
+  /// 被舊版星標推斷綁到 OpenRouter。
+  static bool isThinkingMachinesModelId(String modelId) {
+    final normalized = modelId.trim().toLowerCase();
+    return normalized.startsWith('thinkingmachines/') ||
+        normalized.startsWith('tinker://');
+  }
+
+  static Future<void> rememberStarredModelProviders(
+    Iterable<String> modelIds,
+    String provider,
+  ) async {
+    final starred = (await getStarredModels()).toSet();
+    final providers = await getStarredModelProviders();
+    var changed = false;
+    for (final modelId in modelIds) {
+      if (starred.contains(modelId) && providers[modelId] != provider) {
+        providers[modelId] = provider;
+        changed = true;
+      }
+    }
+    if (!changed) return;
+    final p = await SharedPreferences.getInstance();
+    await p.setString(_keyStarredModelProviders, jsonEncode(providers));
+  }
 
   static Future<void> saveStarredModels(List<String> models) async {
     final p = await SharedPreferences.getInstance();
     await p.setStringList(_keyStarredModels, models);
+    final providers = await getStarredModelProviders();
+    providers.removeWhere((modelId, _) => !models.contains(modelId));
+    await p.setString(_keyStarredModelProviders, jsonEncode(providers));
   }
 
   static Future<List<String>> getStarredModels() async {
@@ -406,14 +554,24 @@ class ApiSettings {
     return p.getStringList(_keyStarredModels) ?? [];
   }
 
-  static Future<void> toggleStarModel(String modelId) async {
+  static Future<void> toggleStarModel(
+    String modelId, {
+    String? provider,
+  }) async {
     final list = await getStarredModels();
+    final providers = await getStarredModelProviders();
     if (list.contains(modelId)) {
       list.remove(modelId);
+      providers.remove(modelId);
     } else {
       list.add(modelId);
+      if (provider != null && provider.isNotEmpty) {
+        providers[modelId] = provider;
+      }
     }
-    await saveStarredModels(list);
+    final p = await SharedPreferences.getInstance();
+    await p.setStringList(_keyStarredModels, list);
+    await p.setString(_keyStarredModelProviders, jsonEncode(providers));
   }
 
   // ═══ 工廠方法 ═══
@@ -514,6 +672,23 @@ class ApiSettings {
       return QwenService(apiKey: key);
     }
 
+    if (provider == 'thinking_machines') {
+      final key = await getThinkingMachinesApiKey();
+      if (key.isEmpty) {
+        throw Exception(
+          L.pick(
+            en: 'Thinking Machines API Key is not configured',
+            zhTW: 'Thinking Machines API Key 未設定',
+          ),
+        );
+      }
+      return ThinkingMachinesService(
+        apiKey: key,
+        thinkingEnabled: await getThinkingChain(),
+        thinkingEffort: await getThinkingMachinesEffort(),
+      );
+    }
+
     if (provider == 'openai_compatible') {
       final baseUrl = await getOaiCompatBaseUrl();
       final key = await getOaiCompatApiKey();
@@ -522,12 +697,25 @@ class ApiSettings {
       return OpenAICompatibleService(apiKey: key, baseUrl: baseUrl);
     }
 
-    // 默認 OpenRouter
-    final apiKey = await getOpenRouterApiKey();
-    if (apiKey.isEmpty) {
-      throw Exception('OpenRouter API Key 未設定');
+    if (provider == 'openrouter') {
+      final apiKey = await getOpenRouterApiKey();
+      if (apiKey.isEmpty) {
+        throw Exception('OpenRouter API Key 未設定');
+      }
+      return OpenRouterService(apiKey: apiKey);
     }
-    return OpenRouterService(apiKey: apiKey);
+
+    if (provider == 'local') throw Exception('本地模型未設定');
+    throw UnsupportedError('不支援的 API 來源：$provider');
+  }
+
+  /// 工具模型（摘要、表情包視覺等）按星標保存的來源建立 adapter。
+  /// 這能避免帶供應商前綴的 Inkling 被目前主 provider 或 OpenRouter 承載。
+  static Future<ApiAdapter> buildAdapterForModel(String modelId) async {
+    final normalized = modelId.trim();
+    if (normalized.isEmpty) return buildAdapter();
+    final provider = await resolveStarredModelProvider(normalized);
+    return buildAdapter(overrideModel: normalized, overrideProvider: provider);
   }
 
   // ═══ 思考鏈 ═══
@@ -605,14 +793,19 @@ class ApiSettings {
         return getDeepseekModel();
       case 'qwen':
         return getQwenModel();
+      case 'thinking_machines':
+        return getThinkingMachinesModel();
       case 'openai_compatible':
         return getOaiCompatModel();
       case 'local_api':
         final model = await getLocalApiModel();
         return model.isEmpty ? '' : toLocalApiModelId(model);
-      default:
+      case 'local':
+      case 'openrouter':
         final p = await SharedPreferences.getInstance();
         return p.getString(_keyModel) ?? 'anthropic/claude-sonnet-4-20250514';
+      default:
+        throw UnsupportedError('不支援的 API 來源：$provider');
     }
   }
 }

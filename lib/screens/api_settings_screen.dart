@@ -4,8 +4,12 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import '../theme/app_theme.dart';
 import '../services/locale_strings.dart';
+import '../services/openai_compatible_service.dart';
 import '../services/openrouter_service.dart';
+import '../services/thinking_machines_service.dart';
+import '../services/model_cost_policy.dart';
 import '../services/settings_manager.dart';
+import '../services/token_estimator.dart';
 import '../widgets/gradient_background.dart';
 import '../widgets/api_advanced_settings.dart';
 
@@ -25,6 +29,7 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
   bool _isPopping = false;
   Future<void>? _saveLoop;
   int _modelFetchGeneration = 0;
+  bool _lastPolicySelectionWasClaude = false;
 
   void _debouncedSave() {
     if (!_settingsLoaded) return;
@@ -108,6 +113,10 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
   final _oaiCompatKeyCtrl = TextEditingController();
   final _oaiCompatModelCtrl = TextEditingController();
 
+  final _thinkingMachinesKeyCtrl = TextEditingController();
+  final _thinkingMachinesModelCtrl = TextEditingController();
+  String _thinkingMachinesEffort = 'high';
+
   String _selectedModel = '';
   List<ModelInfo> _models = [];
   List<ModelInfo> _filteredModels = [];
@@ -143,6 +152,11 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
     final oaiKey = await ApiSettings.getOaiCompatApiKey();
     final oaiMod = await ApiSettings.getOaiCompatModel();
 
+    final thinkingMachinesKey = await ApiSettings.getThinkingMachinesApiKey();
+    final thinkingMachinesModel = await ApiSettings.getThinkingMachinesModel();
+    final thinkingMachinesEffort =
+        await ApiSettings.getThinkingMachinesEffort();
+
     final starred = await ApiSettings.getStarredModels();
     final savedModel = await ApiSettings.getModelForProvider(provider);
 
@@ -164,24 +178,48 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
         _oaiCompatKeyCtrl.text = oaiKey;
         _oaiCompatModelCtrl.text = oaiMod;
 
+        _thinkingMachinesKeyCtrl.text = thinkingMachinesKey;
+        _thinkingMachinesModelCtrl.text = thinkingMachinesModel;
+        _thinkingMachinesEffort = thinkingMachinesEffort;
+
         _starredModels = starred.toSet();
         _selectedModel = savedModel;
+        _lastPolicySelectionWasClaude = TokenEstimator.isClaudePromptCacheModel(
+          provider: provider,
+          model: savedModel,
+        );
         _settingsLoaded = true;
       });
       if (_provider == 'openrouter' && apiKey.isNotEmpty) {
         _fetchModels();
+      } else if (_provider == 'openai_compatible' && oaiBase.isNotEmpty) {
+        _fetchModels();
+      }
+      if (provider == 'thinking_machines' && thinkingMachinesKey.isNotEmpty) {
+        await _applyCostPolicy(
+          provider: provider,
+          model: savedModel,
+          apiKey: thinkingMachinesKey,
+        );
       }
     }
   }
 
   Future<void> _fetchModels() async {
     final requestGeneration = ++_modelFetchGeneration;
-    final apiKey = _apiKeyController.text.trim();
-    if (apiKey.isEmpty) {
+    final isCompatible = _provider == 'openai_compatible';
+    final apiKey = isCompatible
+        ? _oaiCompatKeyCtrl.text.trim()
+        : _apiKeyController.text.trim();
+    final baseUrl = _oaiCompatBaseUrlCtrl.text.trim();
+    if ((!isCompatible && apiKey.isEmpty) ||
+        (isCompatible && baseUrl.isEmpty)) {
       if (mounted) {
         setState(() {
           _isFetchingModels = false;
-          _modelError = L.get('settings_model_error_no_key');
+          _modelError = isCompatible
+              ? L.pick(en: 'Enter a Base URL first', zhTW: '請先輸入 Base URL')
+              : L.get('settings_model_error_no_key');
         });
       }
       return;
@@ -192,12 +230,23 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
     });
 
     try {
-      final models = await OpenRouterService.fetchModels(apiKey);
+      final models = isCompatible
+          ? await OpenAICompatibleService.fetchModels(
+              baseUrl: baseUrl,
+              apiKey: apiKey,
+            )
+          : await OpenRouterService.fetchModels(apiKey);
       if (mounted && requestGeneration == _modelFetchGeneration) {
+        await ApiSettings.rememberStarredModelProviders(
+          models.map((model) => model.id),
+          isCompatible ? 'openai_compatible' : 'openrouter',
+        );
+        if (!mounted || requestGeneration != _modelFetchGeneration) return;
         setState(() {
           _models = models;
           _filteredModels = models;
           _isFetchingModels = false;
+          if (isCompatible) _showModelSection = true;
         });
       }
     } catch (e) {
@@ -222,6 +271,16 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
       }
       return;
     }
+    _modelFetchTimer = Timer(
+      const Duration(milliseconds: 700),
+      () => unawaited(_fetchModels()),
+    );
+  }
+
+  void _scheduleCompatibleModelFetch(String baseUrl) {
+    _modelFetchTimer?.cancel();
+    final uri = Uri.tryParse(baseUrl.trim());
+    if (uri == null || !uri.hasScheme || uri.host.isEmpty) return;
     _modelFetchTimer = Timer(
       const Duration(milliseconds: 700),
       () => unawaited(_fetchModels()),
@@ -272,12 +331,7 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
             .timeout(const Duration(seconds: 20));
       } else if (provider == 'openai_compatible') {
         final rawBase = _oaiCompatBaseUrlCtrl.text.trim();
-        final base = Uri.tryParse(rawBase);
-        if (base == null || !base.hasScheme || base.host.isEmpty) {
-          throw const FormatException('Base URL 無效');
-        }
-        final basePath = base.path.replaceFirst(RegExp(r'/+$'), '');
-        final modelsUri = base.replace(path: '$basePath/models');
+        final modelsUri = OpenAICompatibleService.modelsUriForBase(rawBase);
         response = await http
             .get(
               modelsUri,
@@ -286,6 +340,12 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
               },
             )
             .timeout(const Duration(seconds: 20));
+      } else if (provider == 'thinking_machines') {
+        await ThinkingMachinesService.testConnection(
+          apiKey: keyStr,
+          model: _thinkingMachinesModelCtrl.text.trim(),
+        );
+        response = http.Response('{}', 200);
       } else if (provider == 'openai') {
         response = await http
             .get(
@@ -354,7 +414,74 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
     if (_provider == 'openai_compatible') {
       return _oaiCompatModelCtrl.text.trim();
     }
+    if (_provider == 'thinking_machines') {
+      final model = _thinkingMachinesModelCtrl.text.trim();
+      return model.isEmpty ? ThinkingMachinesService.defaultModel : model;
+    }
     return _selectedModel;
+  }
+
+  void _showCostPolicyNotice(ModelCostPolicyNotice notice) {
+    if (!mounted || notice == ModelCostPolicyNotice.none) return;
+    final message = switch (notice) {
+      ModelCostPolicyNotice.inklingContextLimitEnabled => L.pick(
+        en: 'Prompt cache and its summary were turned off. Context send limit is now on to reduce Inkling costs.',
+        zhTW: '已關閉緩存命中及其專用摘要，並開啟上下文發送限制以節省 Inkling 費用。',
+        zhCN: '已关闭缓存命中及其专用摘要，并开启上下文发送限制以节省 Inkling 费用。',
+      ),
+      ModelCostPolicyNotice.claudeCacheRecommended => L.pick(
+        en: 'Enable cache hits to reduce Claude costs.',
+        zhTW: '請開啟緩存命中以節省 Claude 費用。',
+        zhCN: '请开启缓存命中以节省 Claude 费用。',
+      ),
+      ModelCostPolicyNotice.none => '',
+    };
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: YanciTheme.accent,
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  Future<ModelCostPolicyResult> _applyCostPolicy({
+    required String provider,
+    required String model,
+    String? apiKey,
+  }) async {
+    final result = await ModelCostPolicy.applySelection(
+      provider: provider,
+      model: model,
+      apiKey: apiKey ?? '',
+    );
+    _lastPolicySelectionWasClaude = TokenEstimator.isClaudePromptCacheModel(
+      provider: provider,
+      model: model,
+    );
+    if (!mounted) return result;
+    if (result.changed) setState(() {});
+    _showCostPolicyNotice(result.notice);
+    return result;
+  }
+
+  Future<void> _selectModel(String modelId) async {
+    setState(() {
+      _selectedModel = modelId;
+      if (_provider == 'openai_compatible') {
+        _oaiCompatModelCtrl.text = modelId;
+      }
+      _modelSearchController.clear();
+      _filteredModels = _models;
+    });
+    _debouncedSave();
+    await _applyCostPolicy(
+      provider: _provider,
+      model: modelId,
+      apiKey: _provider == 'thinking_machines'
+          ? _thinkingMachinesKeyCtrl.text
+          : null,
+    );
   }
 
   Future<void> _saveSettings() async {
@@ -373,11 +500,13 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
     final oaiBaseUrl = _oaiCompatBaseUrlCtrl.text.trim();
     final oaiKey = _oaiCompatKeyCtrl.text.trim();
     final oaiModel = _oaiCompatModelCtrl.text.trim();
+    final thinkingMachinesKey = _thinkingMachinesKeyCtrl.text.trim();
+    final thinkingMachinesModel = _thinkingMachinesModelCtrl.text.trim();
+    final thinkingMachinesEffort = _thinkingMachinesEffort;
 
     await ApiSettings.saveOpenRouterApiKey(openRouterKey);
     await ApiSettings.saveSystemPrompt(systemPrompt);
-    await ApiSettings.saveApiProvider(provider);
-    await ApiSettings.saveModelForProvider(provider, model);
+    await ApiSettings.saveProviderModelSelection(provider, model);
     await ApiSettings.saveGeminiApiKey(geminiKey);
     await ApiSettings.saveDeepseekApiKey(deepseekKey);
     await ApiSettings.saveQwenApiKey(qwenKey);
@@ -387,6 +516,26 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
     await ApiSettings.saveOaiCompatBaseUrl(oaiBaseUrl);
     await ApiSettings.saveOaiCompatApiKey(oaiKey);
     await ApiSettings.saveOaiCompatModel(oaiModel);
+    await ApiSettings.saveThinkingMachinesApiKey(thinkingMachinesKey);
+    await ApiSettings.saveThinkingMachinesModel(thinkingMachinesModel);
+    await ApiSettings.saveThinkingMachinesEffort(thinkingMachinesEffort);
+    if (provider == 'thinking_machines' && thinkingMachinesKey.isNotEmpty) {
+      await _applyCostPolicy(
+        provider: provider,
+        model: model,
+        apiKey: thinkingMachinesKey,
+      );
+    } else {
+      final isClaude = TokenEstimator.isClaudePromptCacheModel(
+        provider: provider,
+        model: model,
+      );
+      if (isClaude && !_lastPolicySelectionWasClaude) {
+        await _applyCostPolicy(provider: provider, model: model);
+      } else {
+        _lastPolicySelectionWasClaude = isClaude;
+      }
+    }
   }
 
   @override
@@ -405,6 +554,8 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
     _oaiCompatBaseUrlCtrl.dispose();
     _oaiCompatKeyCtrl.dispose();
     _oaiCompatModelCtrl.dispose();
+    _thinkingMachinesKeyCtrl.dispose();
+    _thinkingMachinesModelCtrl.dispose();
     _modelSearchController.dispose();
     super.dispose();
   }
@@ -471,6 +622,165 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildThinkingMachinesCard() {
+    final model = _thinkingMachinesModelCtrl.text.trim().isEmpty
+        ? ThinkingMachinesService.defaultModel
+        : _thinkingMachinesModelCtrl.text.trim();
+    final starred = _starredModels.contains(model);
+    return _buildGlassCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(top: 10, bottom: 4),
+            child: Text(
+              L.pick(
+                en: 'First-party Inkling API via Tinker (beta)',
+                zhTW: '透過 Tinker 使用第一方 Inkling API（beta）',
+              ),
+              style: YanciTheme.bodySmall.copyWith(
+                fontSize: 11,
+                color: YanciTheme.textSecondary.withValues(alpha: 0.65),
+              ),
+            ),
+          ),
+          TextField(
+            controller: _thinkingMachinesKeyCtrl,
+            obscureText: _obscureProviderKeys,
+            style: YanciTheme.bodyText.copyWith(fontSize: 13),
+            onChanged: (_) => _debouncedSave(),
+            decoration: InputDecoration(
+              hintText: 'Tinker API Key',
+              hintStyle: YanciTheme.bodySmall.copyWith(
+                color: YanciTheme.textSecondary.withValues(alpha: 0.4),
+              ),
+              suffixIcon: _isTestingApi
+                  ? const Padding(
+                      padding: EdgeInsets.all(12),
+                      child: SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                    )
+                  : IconButton(
+                      icon: const Icon(Icons.wifi_protected_setup, size: 18),
+                      tooltip: L.pick(
+                        en: 'Test Inkling connection',
+                        zhTW: '測試 Inkling 連線',
+                      ),
+                      onPressed: () => _testApiConnection(
+                        'thinking_machines',
+                        _thinkingMachinesKeyCtrl.text.trim(),
+                      ),
+                    ),
+              border: InputBorder.none,
+              contentPadding: const EdgeInsets.symmetric(vertical: 12),
+              isDense: true,
+            ),
+          ),
+          Divider(
+            color: YanciTheme.textSecondary.withValues(alpha: 0.1),
+            height: 1,
+          ),
+          TextField(
+            controller: _thinkingMachinesModelCtrl,
+            style: YanciTheme.bodyText.copyWith(fontSize: 13),
+            onChanged: (value) {
+              _selectedModel = value.trim().isEmpty
+                  ? ThinkingMachinesService.defaultModel
+                  : value.trim();
+              setState(() {});
+              _debouncedSave();
+            },
+            decoration: InputDecoration(
+              labelText: L.pick(en: 'Model', zhTW: '模型'),
+              hintText: ThinkingMachinesService.defaultModel,
+              labelStyle: YanciTheme.bodySmall.copyWith(
+                color: YanciTheme.textSecondary.withValues(alpha: 0.6),
+              ),
+              suffixIcon: IconButton(
+                icon: Icon(
+                  starred ? Icons.star_rounded : Icons.star_border_rounded,
+                  size: 20,
+                  color: starred
+                      ? Colors.amber
+                      : YanciTheme.textSecondary.withValues(alpha: 0.5),
+                ),
+                tooltip: L.pick(
+                  en: 'Add Inkling to tool models',
+                  zhTW: '加入工具模型星標',
+                ),
+                onPressed: () async {
+                  await ApiSettings.toggleStarModel(
+                    model,
+                    provider: 'thinking_machines',
+                  );
+                  if (!mounted) return;
+                  setState(() {
+                    if (starred) {
+                      _starredModels.remove(model);
+                    } else {
+                      _starredModels.add(model);
+                    }
+                  });
+                },
+              ),
+              border: InputBorder.none,
+              contentPadding: const EdgeInsets.symmetric(vertical: 12),
+              isDense: true,
+            ),
+          ),
+          Divider(
+            color: YanciTheme.textSecondary.withValues(alpha: 0.1),
+            height: 1,
+          ),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  L.pick(en: 'Thinking effort', zhTW: '思考強度'),
+                  style: YanciTheme.bodyText.copyWith(fontSize: 13),
+                ),
+              ),
+              DropdownButton<String>(
+                value: _thinkingMachinesEffort,
+                underline: const SizedBox(),
+                dropdownColor: YanciTheme.isDark
+                    ? const Color(0xF0302830)
+                    : Colors.white,
+                items: const [
+                  DropdownMenuItem(value: 'low', child: Text('Low')),
+                  DropdownMenuItem(value: 'medium', child: Text('Medium')),
+                  DropdownMenuItem(value: 'high', child: Text('High')),
+                  DropdownMenuItem(value: 'xhigh', child: Text('XHigh')),
+                ],
+                onChanged: (value) {
+                  if (value == null) return;
+                  setState(() => _thinkingMachinesEffort = value);
+                  _debouncedSave();
+                },
+              ),
+            ],
+          ),
+          Padding(
+            padding: const EdgeInsets.only(bottom: 10),
+            child: Text(
+              L.pick(
+                en: 'Uses Inkling native thinking blocks. Prompt caching and audio input are not supported by this compatible endpoint.',
+                zhTW: '使用 Inkling 原生思考區塊；此相容端點目前不支援提示詞快取與音訊輸入。',
+              ),
+              style: YanciTheme.bodySmall.copyWith(
+                fontSize: 10.5,
+                color: YanciTheme.textSecondary.withValues(alpha: 0.55),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -576,8 +886,16 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
                                     child: Text('AWS Bedrock'),
                                   ),
                                   DropdownMenuItem(
+                                    value: 'thinking_machines',
+                                    child: Text('Thinking Machines (Inkling)'),
+                                  ),
+                                  DropdownMenuItem(
                                     value: 'openai_compatible',
                                     child: Text('OpenAI Compatible (Custom)'),
+                                  ),
+                                  DropdownMenuItem(
+                                    value: 'local',
+                                    child: Text('Local Model (On-device)'),
                                   ),
                                   DropdownMenuItem(
                                     value: 'local_api',
@@ -586,21 +904,35 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
                                 ],
                                 onChanged: (v) async {
                                   if (v == null) return;
+                                  _modelFetchTimer?.cancel();
+                                  _modelFetchGeneration++;
                                   setState(() => _provider = v);
                                   final savedModel =
                                       await ApiSettings.getModelForProvider(v);
+                                  if (!mounted) return;
                                   setState(() => _selectedModel = savedModel);
-                                  if (v == 'openrouter') {
+                                  if (v == 'openrouter' ||
+                                      v == 'openai_compatible') {
                                     _fetchModels();
                                   } else {
                                     setState(() => _models = []);
                                     _filteredModels = [];
                                   }
+                                  await _applyCostPolicy(
+                                    provider: v,
+                                    model: savedModel,
+                                    apiKey: v == 'thinking_machines'
+                                        ? _thinkingMachinesKeyCtrl.text
+                                        : null,
+                                  );
                                   _debouncedSave();
                                 },
                               ),
                             ),
                             const SizedBox(height: YanciTheme.spacingMd),
+                            if (_provider == 'thinking_machines') ...[
+                              _buildThinkingMachinesCard(),
+                            ],
                             if (_provider == 'openrouter') ...[
                               _buildGlassCard(
                                 child: Row(
@@ -884,7 +1216,10 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
                                       style: YanciTheme.bodyText.copyWith(
                                         fontSize: 13,
                                       ),
-                                      onChanged: (v) => _debouncedSave(),
+                                      onChanged: (v) {
+                                        _scheduleCompatibleModelFetch(v);
+                                        _debouncedSave();
+                                      },
                                       decoration: InputDecoration(
                                         hintText:
                                             'Base URL (e.g. https://api.example.com/v1)',
@@ -913,7 +1248,12 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
                                       style: YanciTheme.bodyText.copyWith(
                                         fontSize: 13,
                                       ),
-                                      onChanged: (v) => _debouncedSave(),
+                                      onChanged: (v) {
+                                        _scheduleCompatibleModelFetch(
+                                          _oaiCompatBaseUrlCtrl.text,
+                                        );
+                                        _debouncedSave();
+                                      },
                                       decoration: InputDecoration(
                                         hintText: 'API Key',
                                         hintStyle: YanciTheme.bodySmall
@@ -962,7 +1302,10 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
                                       style: YanciTheme.bodyText.copyWith(
                                         fontSize: 13,
                                       ),
-                                      onChanged: (v) => _debouncedSave(),
+                                      onChanged: (v) {
+                                        _selectedModel = v.trim();
+                                        _debouncedSave();
+                                      },
                                       decoration: InputDecoration(
                                         hintText: 'Model name (e.g. gpt-4o)',
                                         hintStyle: YanciTheme.bodySmall
@@ -971,6 +1314,28 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
                                                   .withValues(alpha: 0.4),
                                               fontSize: 11,
                                             ),
+                                        suffixIcon: _isFetchingModels
+                                            ? const Padding(
+                                                padding: EdgeInsets.all(12),
+                                                child: SizedBox(
+                                                  width: 16,
+                                                  height: 16,
+                                                  child:
+                                                      CircularProgressIndicator(
+                                                        strokeWidth: 2,
+                                                      ),
+                                                ),
+                                              )
+                                            : IconButton(
+                                                icon: const Icon(
+                                                  Icons.refresh,
+                                                  size: 18,
+                                                ),
+                                                tooltip: L.get(
+                                                  'settings_model_refresh',
+                                                ),
+                                                onPressed: _fetchModels,
+                                              ),
                                         border: InputBorder.none,
                                         contentPadding:
                                             const EdgeInsets.symmetric(
@@ -983,12 +1348,17 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
                                 ),
                               ),
                             ],
-                            if (_provider == 'local_api') ...[
+                            if (_provider == 'local_api' ||
+                                _provider == 'local') ...[
                               _buildGlassCard(
                                 child: Text(
                                   L.pick(
-                                    en: 'Local API is configured on the Local Models page.',
-                                    zhTW: '本地 API 在「本地模型」頁面設定。',
+                                    en: _provider == 'local'
+                                        ? 'On-device models are selected on the Local Models page.'
+                                        : 'Local API is configured on the Local Models page.',
+                                    zhTW: _provider == 'local'
+                                        ? '裝置本地模型在「本地模型」頁面選擇。'
+                                        : '本地 API 在「本地模型」頁面設定。',
                                   ),
                                   style: YanciTheme.bodySmall.copyWith(
                                     color: YanciTheme.textSecondary.withValues(
@@ -1001,7 +1371,7 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
 
                             const SizedBox(height: YanciTheme.spacingMd),
                             _buildCollapsibleTitle(
-                              '${L.get('settings_model_label')}${_selectedModel.isNotEmpty ? "：$_selectedModel" : ""}',
+                              '${L.get('settings_model_label')}${_modelValueForProvider().isNotEmpty ? "：${_modelValueForProvider()}" : ""}',
                               _showModelSection,
                               () => setState(
                                 () => _showModelSection = !_showModelSection,
@@ -1048,12 +1418,7 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
                                   onChanged: _filterModels,
                                   onSubmitted: (v) {
                                     if (v.trim().isNotEmpty) {
-                                      setState(() {
-                                        _selectedModel = v.trim();
-                                        _modelSearchController.clear();
-                                        _filteredModels = _models;
-                                      });
-                                      _debouncedSave();
+                                      _selectModel(v.trim());
                                     }
                                   },
                                 ),
@@ -1085,16 +1450,10 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
                                         itemBuilder: (context, index) {
                                           final model = _filteredModels[index];
                                           final isSelected =
-                                              model.id == _selectedModel;
+                                              model.id ==
+                                              _modelValueForProvider();
                                           return InkWell(
-                                            onTap: () {
-                                              setState(() {
-                                                _selectedModel = model.id;
-                                                _modelSearchController.clear();
-                                                _filteredModels = _models;
-                                              });
-                                              _debouncedSave();
-                                            },
+                                            onTap: () => _selectModel(model.id),
                                             child: Container(
                                               padding:
                                                   const EdgeInsets.symmetric(
@@ -1126,6 +1485,7 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
                                                     onTap: () async {
                                                       await ApiSettings.toggleStarModel(
                                                         model.id,
+                                                        provider: _provider,
                                                       );
                                                       final starred =
                                                           await ApiSettings.getStarredModels();

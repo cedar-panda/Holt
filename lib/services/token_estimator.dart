@@ -154,6 +154,19 @@ class TokenEstimator {
     return {'type': 'ephemeral', 'ttl': '1h'};
   }
 
+  /// 是否為可使用 Anthropic Prompt Cache 的 Claude 家族模型。
+  ///
+  /// 這個判斷同時看 provider 與模型名，避免把 Thinking Machines 等
+  /// 非 Claude 來源誤綁到 OpenRouter／Anthropic 的快取提示。
+  static bool isClaudePromptCacheModel({
+    required String provider,
+    required String model,
+  }) {
+    final p = provider.toLowerCase();
+    final m = model.toLowerCase();
+    return _isClaudeCacheProvider(p) && _isClaudeFamilyModel(m);
+  }
+
   static bool _isClaudeFamilyModel(String model) =>
       _claudeFamilyKeywords.any((kw) => model.contains(kw));
 

@@ -530,7 +530,11 @@ class _ChatBubbleState extends State<ChatBubble>
       items: items,
     ).then((v) {
       if (v == 'copy') {
-        Clipboard.setData(ClipboardData(text: widget.text));
+        Clipboard.setData(
+          ClipboardData(
+            text: MarriageService.stripHiddenCertMetadata(widget.text),
+          ),
+        );
         if (!ctx.mounted) return;
         ScaffoldMessenger.of(ctx).showSnackBar(
           SnackBar(
@@ -560,16 +564,13 @@ class _ChatBubbleState extends State<ChatBubble>
         ? (null, widget.text)
         : _parseThinking(widget.text);
     // 剝離情緒標記（[sigh] [laughing] 等），TTS 用但不顯示
-    var displayText = rawDisplay
+    var displayText = MarriageService.stripHiddenCertMetadata(rawDisplay)
         // 語音標籤（v3 audio tags 含中文變體）永不顯示——它們只給 TTS
         .replaceAll(TtsService.audioTagRe, '')
         .replaceAll(RegExp(r'\[call_event:[^\]]*\]'), '') // 通話事件隱藏
         .replaceAll(RegExp(r'\[transfer:\d+\]'), '') // 轉帳標記隱藏（卡片顯示）
         .replaceAll(RegExp(r'\[gift:[^\]\n]{1,40}\]'), '') // 送禮標記隱藏
         .replaceAll(RegExp(r'\[scratch_gift:\w+\]'), '') // 刮刮卡禮物標記隱藏
-        // 結婚證標記家族（cert/cert_char/cert_signed，含說明尾巴）隱藏
-        .replaceAll(RegExp(r'\[marriage_cert[^\]]*\]（[^）]*）'), '')
-        .replaceAll(RegExp(r'\[marriage_cert[^\]]*\]'), '')
         .trim();
     // ═══ 商店同逛邀請：目錄只給模型看，氣泡顯示成邀請文案 ═══
     if (widget.isUser && displayText.startsWith('[shop_invite]')) {
@@ -711,307 +712,322 @@ class _ChatBubbleState extends State<ChatBubble>
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.stretch,
                               children: [
-                            if (!widget.isUser && pureMemoryLog.isNotEmpty)
-                              _buildMemoryLog(pureMemoryLog),
-                            if (!widget.isUser && pureEmotionLog.isNotEmpty)
-                              _buildEmotionLog(pureEmotionLog),
-                            // (V2: 生成狀態已移至輸入欄上方 banner，氣泡不再顯示)
-                            if (!widget.isUser && emoLine.isNotEmpty)
-                              _buildEmoStatus(emoLine),
-                            if (thinking != null) _buildThinking(thinking),
-                            if (hasBubbleContent)
-                              Builder(
-                                builder: (context) {
-                                  final bubble = Container(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: YanciTheme.spacingMd,
-                                      vertical: 12,
-                                    ),
-                                    decoration: BoxDecoration(
-                                      color:
-                                          widget.isUser ||
-                                              YanciTheme.aiBubbleGradient ==
-                                                  null
-                                          ? (widget.isUser
-                                                ? YanciTheme.userBubble
-                                                : YanciTheme.aiBubble)
-                                          : null,
-                                      gradient: !widget.isUser
-                                          ? YanciTheme.aiBubbleGradient
-                                          : null,
-                                      borderRadius: BorderRadius.only(
-                                        topLeft: Radius.circular(r),
-                                        topRight: Radius.circular(r),
-                                        bottomLeft: Radius.circular(
-                                          widget.isUser ? r : 4,
+                                if (!widget.isUser && pureMemoryLog.isNotEmpty)
+                                  _buildMemoryLog(pureMemoryLog),
+                                if (!widget.isUser && pureEmotionLog.isNotEmpty)
+                                  _buildEmotionLog(pureEmotionLog),
+                                // (V2: 生成狀態已移至輸入欄上方 banner，氣泡不再顯示)
+                                if (!widget.isUser && emoLine.isNotEmpty)
+                                  _buildEmoStatus(emoLine),
+                                if (thinking != null) _buildThinking(thinking),
+                                if (hasBubbleContent)
+                                  Builder(
+                                    builder: (context) {
+                                      final bubble = Container(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: YanciTheme.spacingMd,
+                                          vertical: 12,
                                         ),
-                                        bottomRight: Radius.circular(
-                                          widget.isUser ? 4 : r,
-                                        ),
-                                      ),
-                                      border: Border.all(
-                                        color: widget.isUser
-                                            ? YanciTheme.userBubbleBorder
-                                            : YanciTheme.aiBubbleBorder,
-                                        width: 0.5,
-                                      ),
-                                      // 陰影跟主題走：淺色模式輕托一下就好；
-                                      // 深色模式黑影在深底上只會發灰，要深一點才成型
-                                      boxShadow: [
-                                        BoxShadow(
-                                          color: Colors.black.withValues(
-                                            alpha: YanciTheme.isDark
-                                                ? 0.20
-                                                : 0.05,
+                                        decoration: BoxDecoration(
+                                          color:
+                                              widget.isUser ||
+                                                  YanciTheme.aiBubbleGradient ==
+                                                      null
+                                              ? (widget.isUser
+                                                    ? YanciTheme.userBubble
+                                                    : YanciTheme.aiBubble)
+                                              : null,
+                                          gradient: !widget.isUser
+                                              ? YanciTheme.aiBubbleGradient
+                                              : null,
+                                          borderRadius: BorderRadius.only(
+                                            topLeft: Radius.circular(r),
+                                            topRight: Radius.circular(r),
+                                            bottomLeft: Radius.circular(
+                                              widget.isUser ? r : 4,
+                                            ),
+                                            bottomRight: Radius.circular(
+                                              widget.isUser ? 4 : r,
+                                            ),
                                           ),
-                                          blurRadius: 10,
-                                          offset: const Offset(0, 3),
+                                          border: Border.all(
+                                            color: widget.isUser
+                                                ? YanciTheme.userBubbleBorder
+                                                : YanciTheme.aiBubbleBorder,
+                                            width: 0.5,
+                                          ),
+                                          // 陰影跟主題走：淺色模式輕托一下就好；
+                                          // 深色模式黑影在深底上只會發灰，要深一點才成型
+                                          boxShadow: [
+                                            BoxShadow(
+                                              color: Colors.black.withValues(
+                                                alpha: YanciTheme.isDark
+                                                    ? 0.20
+                                                    : 0.05,
+                                              ),
+                                              blurRadius: 10,
+                                              offset: const Offset(0, 3),
+                                            ),
+                                          ],
                                         ),
-                                      ],
-                                    ),
-                                    child: Opacity(
-                                      opacity: _contentOpacity.value,
-                                      child: Column(
-                                        mainAxisSize: MainAxisSize.min,
-                                        crossAxisAlignment: widget.isUser
-                                            ? CrossAxisAlignment.end
-                                            : CrossAxisAlignment.start,
+                                        child: Opacity(
+                                          opacity: _contentOpacity.value,
+                                          child: Column(
+                                            mainAxisSize: MainAxisSize.min,
+                                            crossAxisAlignment: widget.isUser
+                                                ? CrossAxisAlignment.end
+                                                : CrossAxisAlignment.start,
+                                            children: [
+                                              // ═══ 圖片（用戶發送 / AI 生成）═══
+                                              if (widget.imagePath != null)
+                                                GestureDetector(
+                                                  onTap: () =>
+                                                      widget.imagePath ==
+                                                          'generating'
+                                                      ? null
+                                                      : _openFullScreenImage(
+                                                          context,
+                                                          widget.imagePath!,
+                                                        ),
+                                                  onLongPress: () =>
+                                                      widget.imagePath ==
+                                                          'generating'
+                                                      ? null
+                                                      : _showImageMenu(
+                                                          context,
+                                                          widget.imagePath!,
+                                                        ),
+                                                  child: Padding(
+                                                    padding: EdgeInsets.only(
+                                                      bottom:
+                                                          displayText.isNotEmpty
+                                                          ? 8
+                                                          : 0,
+                                                    ),
+                                                    child: ClipRRect(
+                                                      borderRadius:
+                                                          BorderRadius.circular(
+                                                            12,
+                                                          ),
+                                                      child: ConstrainedBox(
+                                                        constraints:
+                                                            const BoxConstraints(
+                                                              maxWidth: 200,
+                                                              maxHeight: 200,
+                                                            ),
+                                                        child:
+                                                            widget.imagePath ==
+                                                                'generating'
+                                                            ? const NeuralGenerationBox()
+                                                            : Image.file(
+                                                                File(
+                                                                  widget
+                                                                      .imagePath!,
+                                                                ),
+                                                                fit: BoxFit
+                                                                    .contain,
+                                                                filterQuality:
+                                                                    FilterQuality
+                                                                        .high,
+                                                                errorBuilder: (_, _, _) => Container(
+                                                                  width: 80,
+                                                                  height: 80,
+                                                                  color: YanciTheme
+                                                                      .glassInputBg,
+                                                                  child: Icon(
+                                                                    Icons
+                                                                        .broken_image,
+                                                                    color: YanciTheme
+                                                                        .textSecondary
+                                                                        .withValues(
+                                                                          alpha:
+                                                                              0.3,
+                                                                        ),
+                                                                  ),
+                                                                ),
+                                                              ),
+                                                      ),
+                                                    ),
+                                                  ),
+                                                ),
+                                              // ═══ 文字內容 ═══
+                                              if (displayText.isNotEmpty)
+                                                Row(
+                                                  mainAxisSize:
+                                                      MainAxisSize.min,
+                                                  crossAxisAlignment:
+                                                      CrossAxisAlignment.end,
+                                                  children: [
+                                                    Flexible(
+                                                      // 雙端混合渲染：markdown + [sticker:ID] 本地圖
+                                                      child: _MixedContent(
+                                                        text: displayText,
+                                                        characterId:
+                                                            widget.characterId,
+                                                        selectable:
+                                                            !widget.isUser,
+                                                      ),
+                                                    ),
+                                                    if (widget.isStreaming) ...[
+                                                      const SizedBox(width: 4),
+                                                      _TypingIndicator(),
+                                                    ],
+                                                  ],
+                                                ),
+                                              if (displayText.isEmpty &&
+                                                  widget.isStreaming)
+                                                _TypingIndicator(),
+                                            ],
+                                          ),
+                                        ),
+                                      );
+                                      if (!widget.isUser) return bubble;
+                                      return GestureDetector(
+                                        onLongPressStart: (d) =>
+                                            _showContextMenu(
+                                              context,
+                                              d.globalPosition,
+                                            ),
+                                        child: bubble,
+                                      );
+                                    },
+                                  ),
+                                if (hasBubbleContent &&
+                                    widget.timestamp != null &&
+                                    !widget.isStreaming)
+                                  Opacity(
+                                    opacity: _contentOpacity.value,
+                                    child: Padding(
+                                      padding: const EdgeInsets.only(
+                                        top: 3,
+                                        left: 4,
+                                        right: 4,
+                                      ),
+                                      child: Row(
+                                        mainAxisSize: MainAxisSize.max,
+                                        mainAxisAlignment: widget.isUser
+                                            ? MainAxisAlignment.end
+                                            : MainAxisAlignment.start,
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.center,
                                         children: [
-                                          // ═══ 圖片（用戶發送 / AI 生成）═══
-                                          if (widget.imagePath != null)
+                                          Text(
+                                            _formatTime(widget.timestamp!),
+                                            style: TextStyle(
+                                              fontSize: 10,
+                                              color: YanciTheme.textSecondary
+                                                  .withValues(alpha: 0.4),
+                                            ),
+                                          ),
+                                          // ═══ AI 消息操作按鈕（只在非拆分模式顯示）═══
+                                          if (!widget.isUser &&
+                                              widget.showToolbar) ...[
+                                            const SizedBox(width: 10),
+                                            GestureDetector(
+                                              onTap: () {
+                                                HapticFeedback.lightImpact();
+                                                Clipboard.setData(
+                                                  ClipboardData(
+                                                    text: displayText,
+                                                  ),
+                                                );
+                                                ScaffoldMessenger.of(
+                                                  context,
+                                                ).showSnackBar(
+                                                  SnackBar(
+                                                    content: Text(
+                                                      L.get('chat_copied'),
+                                                    ),
+                                                    backgroundColor:
+                                                        YanciTheme.accent,
+                                                    behavior: SnackBarBehavior
+                                                        .floating,
+                                                    duration: const Duration(
+                                                      milliseconds: 800,
+                                                    ),
+                                                    margin:
+                                                        const EdgeInsets.only(
+                                                          bottom: 80,
+                                                          left: 16,
+                                                          right: 16,
+                                                        ),
+                                                    shape: RoundedRectangleBorder(
+                                                      borderRadius:
+                                                          BorderRadius.circular(
+                                                            8,
+                                                          ),
+                                                    ),
+                                                  ),
+                                                );
+                                              },
+                                              child: _buildCopyIcon(),
+                                            ),
+                                            const SizedBox(width: 6),
+                                            GestureDetector(
+                                              onTap: _toggleSave,
+                                              child: _buildBookmarkIcon(
+                                                color: _isSaved
+                                                    ? YanciTheme.accent
+                                                    : null,
+                                              ),
+                                            ),
+                                            const SizedBox(width: 6),
                                             GestureDetector(
                                               onTap: () =>
-                                                  widget.imagePath ==
-                                                      'generating'
-                                                  ? null
-                                                  : _openFullScreenImage(
-                                                      context,
-                                                      widget.imagePath!,
-                                                    ),
-                                              onLongPress: () =>
-                                                  widget.imagePath ==
-                                                      'generating'
-                                                  ? null
-                                                  : _showImageMenu(
-                                                      context,
-                                                      widget.imagePath!,
-                                                    ),
-                                              child: Padding(
-                                                padding: EdgeInsets.only(
-                                                  bottom: displayText.isNotEmpty
-                                                      ? 8
-                                                      : 0,
-                                                ),
-                                                child: ClipRRect(
-                                                  borderRadius:
-                                                      BorderRadius.circular(12),
-                                                  child: ConstrainedBox(
-                                                    constraints:
-                                                        const BoxConstraints(
-                                                          maxWidth: 200,
-                                                          maxHeight: 200,
-                                                        ),
-                                                    child:
-                                                        widget.imagePath ==
-                                                            'generating'
-                                                        ? const NeuralGenerationBox()
-                                                        : Image.file(
-                                                            File(
-                                                              widget.imagePath!,
-                                                            ),
-                                                            fit: BoxFit.contain,
-                                                            filterQuality:
-                                                                FilterQuality
-                                                                    .high,
-                                                            errorBuilder: (_, _, _) => Container(
-                                                              width: 80,
-                                                              height: 80,
-                                                              color: YanciTheme
-                                                                  .glassInputBg,
-                                                              child: Icon(
-                                                                Icons
-                                                                    .broken_image,
-                                                                color: YanciTheme
-                                                                    .textSecondary
-                                                                    .withValues(
-                                                                      alpha:
-                                                                          0.3,
-                                                                    ),
-                                                              ),
-                                                            ),
-                                                          ),
+                                                  _speakText(widget.text),
+                                              child: SizedBox(
+                                                width: 22,
+                                                height: 22,
+                                                child: Center(
+                                                  child: TtsPlayButton(
+                                                    messageId: widget.messageId,
+                                                    onTap: () =>
+                                                        _speakText(widget.text),
+                                                    size: 18,
                                                   ),
                                                 ),
                                               ),
                                             ),
-                                          // ═══ 文字內容 ═══
-                                          if (displayText.isNotEmpty)
-                                            Row(
-                                              mainAxisSize: MainAxisSize.min,
-                                              crossAxisAlignment:
-                                                  CrossAxisAlignment.end,
-                                              children: [
-                                                Flexible(
-                                                  // 雙端混合渲染：markdown + [sticker:ID] 本地圖
-                                                  child: _MixedContent(
-                                                    text: displayText,
-                                                    characterId:
-                                                        widget.characterId,
-                                                    selectable: !widget.isUser,
-                                                  ),
-                                                ),
-                                                if (widget.isStreaming) ...[
-                                                  const SizedBox(width: 4),
-                                                  _TypingIndicator(),
-                                                ],
-                                              ],
+                                          ],
+                                          // ═══ 緩存命中閃電 ═══
+                                          if (widget.cacheHit) ...[
+                                            const SizedBox(width: 6),
+                                            Icon(
+                                              Icons.bolt_rounded,
+                                              size: 16,
+                                              color: _cacheHitColor(),
                                             ),
-                                          if (displayText.isEmpty &&
-                                              widget.isStreaming)
-                                            _TypingIndicator(),
+                                          ],
                                         ],
                                       ),
                                     ),
-                                  );
-                                  if (!widget.isUser) return bubble;
-                                  return GestureDetector(
-                                    onLongPressStart: (d) => _showContextMenu(
-                                      context,
-                                      d.globalPosition,
-                                    ),
-                                    child: bubble,
-                                  );
-                                },
-                              ),
-                            if (hasBubbleContent &&
-                                widget.timestamp != null &&
-                                !widget.isStreaming)
-                              Opacity(
-                                opacity: _contentOpacity.value,
-                                child: Padding(
-                                  padding: const EdgeInsets.only(
-                                    top: 3,
-                                    left: 4,
-                                    right: 4,
                                   ),
-                                  child: Row(
-                                    mainAxisSize: MainAxisSize.max,
-                                    mainAxisAlignment: widget.isUser
-                                        ? MainAxisAlignment.end
-                                        : MainAxisAlignment.start,
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.center,
-                                    children: [
-                                      Text(
-                                        _formatTime(widget.timestamp!),
-                                        style: TextStyle(
-                                          fontSize: 10,
-                                          color: YanciTheme.textSecondary
-                                              .withValues(alpha: 0.4),
-                                        ),
-                                      ),
-                                      // ═══ AI 消息操作按鈕（只在非拆分模式顯示）═══
-                                      if (!widget.isUser &&
-                                          widget.showToolbar) ...[
-                                        const SizedBox(width: 10),
-                                        GestureDetector(
-                                          onTap: () {
-                                            HapticFeedback.lightImpact();
-                                            Clipboard.setData(
-                                              ClipboardData(text: displayText),
-                                            );
-                                            ScaffoldMessenger.of(
-                                              context,
-                                            ).showSnackBar(
-                                              SnackBar(
-                                                content: Text(
-                                                  L.get('chat_copied'),
-                                                ),
-                                                backgroundColor:
-                                                    YanciTheme.accent,
-                                                behavior:
-                                                    SnackBarBehavior.floating,
-                                                duration: const Duration(
-                                                  milliseconds: 800,
-                                                ),
-                                                margin: const EdgeInsets.only(
-                                                  bottom: 80,
-                                                  left: 16,
-                                                  right: 16,
-                                                ),
-                                                shape: RoundedRectangleBorder(
-                                                  borderRadius:
-                                                      BorderRadius.circular(8),
-                                                ),
-                                              ),
-                                            );
-                                          },
-                                          child: _buildCopyIcon(),
-                                        ),
-                                        const SizedBox(width: 6),
-                                        GestureDetector(
-                                          onTap: _toggleSave,
-                                          child: _buildBookmarkIcon(
-                                            color: _isSaved
-                                                ? YanciTheme.accent
-                                                : null,
-                                          ),
-                                        ),
-                                        const SizedBox(width: 6),
-                                        GestureDetector(
-                                          onTap: () => _speakText(widget.text),
-                                          child: SizedBox(
-                                            width: 22,
-                                            height: 22,
-                                            child: Center(
-                                              child: TtsPlayButton(
-                                                messageId: widget.messageId,
-                                                onTap: () =>
-                                                    _speakText(widget.text),
-                                                size: 18,
-                                              ),
-                                            ),
-                                          ),
-                                        ),
-                                      ],
-                                      // ═══ 緩存命中閃電 ═══
-                                      if (widget.cacheHit) ...[
-                                        const SizedBox(width: 6),
-                                        Icon(
-                                          Icons.bolt_rounded,
-                                          size: 16,
-                                          color: _cacheHitColor(),
-                                        ),
-                                      ],
-                                    ],
+                                // ═══ 刮刮樂迷你卡片 ═══
+                                if (shouldShowScratch &&
+                                    widget.messageId != null &&
+                                    widget.characterId != null)
+                                  ScratchMiniCard(
+                                    messageId: widget.messageId!,
+                                    data: widget.scratchData!,
+                                    characterId: widget.characterId!,
                                   ),
-                                ),
-                              ),
-                            // ═══ 刮刮樂迷你卡片 ═══
-                            if (shouldShowScratch &&
-                                widget.messageId != null &&
-                                widget.characterId != null)
-                              ScratchMiniCard(
-                                messageId: widget.messageId!,
-                                data: widget.scratchData!,
-                                characterId: widget.characterId!,
-                              ),
-                            // ═══ 轉帳卡片 ═══
-                            if (shouldShowTransfer &&
-                                widget.messageId != null &&
-                                widget.characterId != null)
-                              TransferMiniCard(
-                                messageId: widget.messageId!,
-                                data: widget.transferData!,
-                                characterId: widget.characterId!,
-                                // user 收到角色轉帳 → user 能操作
-                                // 角色收到 user 轉帳 → AI 自動決定，不給按鈕
-                                canAct:
-                                    widget.transferData!.direction ==
-                                        'toUser' &&
-                                    widget.transferData!.status == 'pending',
-                                onUpdated: widget.onTransferUpdated,
-                              ),
+                                // ═══ 轉帳卡片 ═══
+                                if (shouldShowTransfer &&
+                                    widget.messageId != null &&
+                                    widget.characterId != null)
+                                  TransferMiniCard(
+                                    messageId: widget.messageId!,
+                                    data: widget.transferData!,
+                                    characterId: widget.characterId!,
+                                    // user 收到角色轉帳 → user 能操作
+                                    // 角色收到 user 轉帳 → AI 自動決定，不給按鈕
+                                    canAct:
+                                        widget.transferData!.direction ==
+                                            'toUser' &&
+                                        widget.transferData!.status ==
+                                            'pending',
+                                    onUpdated: widget.onTransferUpdated,
+                                  ),
                               ],
                             ),
                           ),
