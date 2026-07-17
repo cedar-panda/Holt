@@ -203,6 +203,14 @@ class _DeveloperDiagnosticsScreenState
                     final routerFallback = e['router_fallback'] == true;
                     final write5m = e['write_5m'] as int? ?? 0;
                     final write1h = e['write_1h'] as int? ?? 0;
+                    final rolesTail = (e['roles_tail'] ?? '').toString();
+                    final latestUserChars = e['latest_user_chars'] as int? ?? 0;
+                    final latestUserHash = (e['latest_user_hash'] ?? '')
+                        .toString();
+                    final latestUserPreview = (e['latest_user_preview'] ?? '')
+                        .toString();
+                    final generationId = (e['generation_id'] ?? '').toString();
+                    final latestUserFocused = e['latest_user_focus'] == true;
                     var ttlNote = '';
                     if (sentTtl.isNotEmpty ||
                         upstreamTtl.isNotEmpty ||
@@ -232,6 +240,23 @@ class _DeveloperDiagnosticsScreenState
                       ];
                       ttlNote += '\n    route ${routeParts.join(' · ')}';
                     }
+                    var requestTailNote = '';
+                    if (rolesTail.isNotEmpty) {
+                      requestTailNote += '\n    roles $rolesTail';
+                    }
+                    if (latestUserPreview.isNotEmpty) {
+                      final shortUserHash = latestUserHash.length >= 6
+                          ? latestUserHash.substring(0, 6)
+                          : latestUserHash;
+                      requestTailNote +=
+                          '\n    最新 user（$latestUserChars 字 · $shortUserHash）「$latestUserPreview」';
+                    }
+                    if (latestUserFocused) {
+                      requestTailNote += '\n    ↳ Claude 本輪聚焦標記：已送出';
+                    }
+                    if (generationId.isNotEmpty) {
+                      requestTailNote += '\n    response $generationId';
+                    }
                     return Padding(
                       padding: const EdgeInsets.symmetric(vertical: 4),
                       child: Text(
@@ -239,6 +264,7 @@ class _DeveloperDiagnosticsScreenState
                         '    入 ${_fmtT(e['prompt_t'])}t · ⚡讀 ${_fmtT(e['read'])} · 📦寫 ${_fmtT(e['write'])}\n'
                         '    靜態 ${_fmtT(e['static_t'])} · 動態 ${_fmtT(e['dynamic_t'])}'
                         '$ttlNote'
+                        '$requestTailNote'
                         '$diffNote',
                         style: YanciTheme.bodyText.copyWith(
                           fontSize: 12.5,

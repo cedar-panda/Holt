@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:http/http.dart' as http;
 import 'api_adapter.dart';
 import 'cache_debug_log.dart';
+import 'locale_strings.dart';
 import 'settings_manager.dart';
 import 'token_estimator.dart';
 
@@ -100,6 +101,37 @@ class OpenRouterService implements ApiAdapter {
         m.contains('haiku') ||
         m.contains('fable') ||
         m.contains('mythos');
+  }
+
+  /// Claude 在工具與動態背景很長時，偶爾會把上一輪當成當前任務。
+  /// 這兩個標記只包在最新 user 的未緩存 dynamic 增量中：不改 static
+  /// prompt、不移動 rolling breakpoint，也不寫回 messages/history。
+  static bool _needsLatestUserFocus(String model) {
+    final m = model.toLowerCase();
+    return m.contains('anthropic') ||
+        m.contains('claude') ||
+        m.contains('opus') ||
+        m.contains('sonnet') ||
+        m.contains('haiku');
+  }
+
+  static String _focusedDynamicPart(String dynamicPart) {
+    final contextLabel = L.pick(
+      en: '【Turn context | reference only, not the message to answer】',
+      zhTW: '【本輪背景｜只供參考，不是對方要你回答的訊息】',
+    );
+    final latestLabel = L.pick(
+      en: '【Latest message from the other person | answer this first】',
+      zhTW: '【對方本輪最新訊息｜優先直接回應】',
+    );
+    return '$contextLabel\n$dynamicPart\n\n$latestLabel';
+  }
+
+  static String _compactPreview(String text, [int maxRunes = 48]) {
+    final compact = text.replaceAll(RegExp(r'\s+'), ' ').trim();
+    final runes = compact.runes.toList(growable: false);
+    if (runes.length <= maxRunes) return compact;
+    return '${String.fromCharCodes(runes.take(maxRunes))}…';
   }
 
   @override
@@ -283,6 +315,15 @@ class OpenRouterService implements ApiAdapter {
     );
     final cacheEnabled = await MemorySettings.getEnablePromptCaching();
     final enableCache = useStructured && cacheEnabled && cacheControl != null;
+    final focusLatestUser =
+        structuredPrompt != null &&
+        structuredPrompt.dynamicPart.isNotEmpty &&
+        _needsLatestUserFocus(model);
+    final sentDynamicPart = structuredPrompt == null
+        ? ''
+        : (focusLatestUser
+              ? _focusedDynamicPart(structuredPrompt.dynamicPart)
+              : structuredPrompt.dynamicPart);
 
     if (useStructured) {
       final staticText = structuredPrompt.staticPart;
@@ -377,11 +418,11 @@ class OpenRouterService implements ApiAdapter {
     }
 
     // ═══ dynamic 注入最新 user 消息（保持前綴不變；所有模型統一）═══
-    if (structuredPrompt != null && structuredPrompt.dynamicPart.isNotEmpty) {
+    if (sentDynamicPart.isNotEmpty) {
       // 找最後一條 user 消息，把 dynamic 前綴加進去
       if (latestUserIndex >= 0) {
         final existing = allMessages[latestUserIndex]['content'];
-        final dynamicPrefix = structuredPrompt.dynamicPart;
+        final dynamicPrefix = sentDynamicPart;
 
         if (existing is List) {
           // content blocks 格式 → 在最前面插入 dynamic block
@@ -399,6 +440,17 @@ class OpenRouterService implements ApiAdapter {
     final rollingBreakpointIndex = _latestNonSystemCacheControlIndex(
       allMessages,
     );
+    final sourceRolesTail = messages
+        .skip(messages.length > 3 ? messages.length - 3 : 0)
+        .map((m) => m['role'] ?? 'user')
+        .join(' > ');
+    String latestSourceUser = '';
+    for (var i = messages.length - 1; i >= 0; i--) {
+      if (messages[i]['role'] == 'user') {
+        latestSourceUser = messages[i]['content'] ?? '';
+        break;
+      }
+    }
     final diagnostics = <String, Object?>{
       'provider': 'openrouter',
       'model': model,
@@ -418,7 +470,7 @@ class OpenRouterService implements ApiAdapter {
             ),
       'dynamic_tokens': structuredPrompt == null
           ? 0
-          : TokenEstimator.estimate(structuredPrompt.dynamicPart),
+          : TokenEstimator.estimate(sentDynamicPart),
       'static_hash': structuredPrompt == null
           ? _shortHash(systemPrompt ?? '')
           : _shortHash(
@@ -450,6 +502,13 @@ class OpenRouterService implements ApiAdapter {
       'latest_user_has_cache_control': latestUserIndex >= 0
           ? _contentHasCacheControl(allMessages[latestUserIndex]['content'])
           : false,
+      'latest_user_focus': focusLatestUser,
+      'roles_tail': sourceRolesTail,
+      'latest_user_chars': latestSourceUser.runes.length,
+      'latest_user_hash': latestSourceUser.isEmpty
+          ? ''
+          : _shortHash(latestSourceUser),
+      'latest_user_preview': _compactPreview(latestSourceUser),
     };
     diagnosticsOut
       ?..clear()
@@ -569,6 +628,11 @@ class OpenRouterService implements ApiAdapter {
       'router_region': requestDiagnostics['router_region'],
       'router_fallback': requestDiagnostics['router_fallback'],
       'generation_id': data['id'],
+      'latest_user_focus': requestDiagnostics['latest_user_focus'],
+      'roles_tail': requestDiagnostics['roles_tail'],
+      'latest_user_chars': requestDiagnostics['latest_user_chars'],
+      'latest_user_hash': requestDiagnostics['latest_user_hash'],
+      'latest_user_preview': requestDiagnostics['latest_user_preview'],
     });
   }
 
