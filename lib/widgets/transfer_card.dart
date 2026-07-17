@@ -73,7 +73,11 @@ class _TransferMiniCardState extends State<TransferMiniCard>
 
   Future<void> _accept() async {
     setState(() => _processing = true);
-    await _animCtrl.forward(from: 0.0);
+    if (MediaQuery.disableAnimationsOf(context)) {
+      _animCtrl.value = 1;
+    } else {
+      await _animCtrl.forward(from: 0.0);
+    }
     final ok = await TransferService.acceptTransfer(
       widget.messageId,
       widget.characterId,

@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:math';
+import 'package:flutter/foundation.dart';
 import '../services/locale_strings.dart';
 
 import 'database.dart';
@@ -308,6 +309,10 @@ class EmotionCoordinates {
       'CREATE INDEX IF NOT EXISTS idx_emo_char '
       'ON emotion_points(character_id, status)',
     );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_emo_char_type_time '
+      'ON emotion_points(character_id, type, created_at DESC)',
+    );
 
     // V2 新增：grudge_sealed 表（不動主 memories schema）
     await db.execute('''
@@ -328,6 +333,28 @@ class EmotionCoordinates {
     );
 
     _tableEnsured = true;
+  }
+
+  /// Removes settled points after the retention window so per-message decay
+  /// and sliding averages do not keep scanning an ever-growing graveyard.
+  static Future<int> startupMaintenance(
+    String characterId, {
+    int retentionDays = 90,
+  }) async {
+    await _ensureTable();
+    final cutoff = DateTime.now()
+        .subtract(Duration(days: retentionDays))
+        .toIso8601String();
+    final db = await DatabaseHelper.database;
+    final removed = await db.delete(
+      'emotion_points',
+      where: "character_id = ? AND status != 'active' AND created_at < ?",
+      whereArgs: [characterId, cutoff],
+    );
+    if (removed > 0) {
+      debugPrint('Emotion maintenance removed $removed expired points');
+    }
+    return removed;
   }
 
   // ── 交叉影響常數 ──

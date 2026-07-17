@@ -1,7 +1,10 @@
+import 'dart:io';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:project_yanci/services/backup_service.dart';
 import 'package:project_yanci/models/message.dart';
+import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 Map<String, dynamic> _emptyV5() => <String, dynamic>{
   'version': BackupService.exportVersion,
@@ -17,6 +20,7 @@ Map<String, dynamic> _emptyV5() => <String, dynamic>{
 };
 
 void main() {
+  setUpAll(sqfliteFfiInit);
   test(
     'v5 preserves conversation cache identity and complete message rows',
     () {
@@ -181,6 +185,77 @@ void main() {
       expect(logs.join('\n'), isNot(contains(secretText)));
     } finally {
       debugPrint = originalDebugPrint;
+    }
+  });
+
+  test('backup normalizes reverse spider links and duplicate favorites', () {
+    final backup = _emptyV5();
+    backup['spider_web_links'] = <dynamic>[
+      <String, dynamic>{
+        'id': 1,
+        'character_id': 'char-1',
+        'memory_id_1': 9,
+        'memory_id_2': 5,
+        'created_at': '2026-01-01T00:00:00.000Z',
+      },
+      <String, dynamic>{
+        'id': 2,
+        'character_id': 'char-1',
+        'memory_id_1': 5,
+        'memory_id_2': 9,
+        'created_at': '2026-01-01T00:00:01.000Z',
+      },
+    ];
+    backup['saved_messages'] = <dynamic>[
+      <String, dynamic>{
+        'id': 1,
+        'message_id': '42',
+        'content': 'first',
+        'created_at': '2026-01-01T00:00:00.000Z',
+      },
+      <String, dynamic>{
+        'id': 2,
+        'message_id': '42',
+        'content': 'duplicate',
+        'created_at': '2026-01-01T00:00:01.000Z',
+      },
+    ];
+
+    final tables = BackupService.normalizeForTesting(backup);
+
+    expect(tables['spider_web_links'], hasLength(1));
+    expect(tables['spider_web_links']!.single['memory_id_1'], 5);
+    expect(tables['spider_web_links']!.single['memory_id_2'], 9);
+    expect(tables['saved_messages'], hasLength(1));
+    expect(tables['saved_messages']!.single['content'], 'first');
+  });
+
+  test('VACUUM INTO escapes a quote in its target path', () {
+    expect(
+      BackupService.vacuumIntoSqlForTesting("/tmp/user's/yanci.db"),
+      "VACUUM INTO '/tmp/user''s/yanci.db'",
+    );
+  });
+
+  test('VACUUM INTO creates a readable single-file snapshot', () async {
+    final source = await databaseFactoryFfi.openDatabase(inMemoryDatabasePath);
+    final temp = await Directory.systemTemp.createTemp('holt-vacuum-test-');
+    final snapshotPath = '${temp.path}/snapshot.db';
+    try {
+      await source.execute('CREATE TABLE sample (value TEXT NOT NULL)');
+      await source.insert('sample', {'value': 'consistent'});
+      await source.execute(BackupService.vacuumIntoSqlForTesting(snapshotPath));
+      final snapshot = await databaseFactoryFfi.openDatabase(snapshotPath);
+      try {
+        expect((await snapshot.query('sample')).single['value'], 'consistent');
+      } finally {
+        await snapshot.close();
+      }
+      expect(await File('$snapshotPath-wal').exists(), isFalse);
+      expect(await File('$snapshotPath-shm').exists(), isFalse);
+    } finally {
+      await source.close();
+      await temp.delete(recursive: true);
     }
   });
 }

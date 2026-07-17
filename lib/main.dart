@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:io' show Platform;
 
 import 'package:app_links/app_links.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show kIsWeb, visibleForTesting;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
@@ -16,6 +16,8 @@ import 'services/local_model_service.dart';
 import 'services/holt_license_registry.dart';
 import 'services/keep_alive_service.dart';
 import 'services/character_timeline_service.dart';
+import 'services/model_cost_policy.dart';
+import 'memory/emotion_coordinates.dart';
 import 'screens/splash_screen.dart';
 import 'screens/home_screen.dart';
 import 'screens/chat_screen.dart';
@@ -121,15 +123,26 @@ void main() async {
   // 恢復保活（如果有）
   await _startupStep('keep alive', KeepAliveService.instance.restore);
 
+  await _startupStep(
+    'model cost policy',
+    ModelCostPolicy.validateCurrentSelection,
+  );
+
   // 全局像素小人開關
   await _startupStep('sprite overlay', SpriteOverlaySettings.load);
 
   // 時間線啟動維護：過期事件清理 + 健康自動回正（fire-and-forget）
   unawaited(
     UserSettings.getActiveCharacterId()
-        .then((id) => CharacterTimelineService.startupMaintenance(id))
+        .then(
+          (id) => Future.wait([
+            CharacterTimelineService.startupMaintenance(id),
+            EmotionCoordinates.startupMaintenance(id),
+          ]),
+        )
         .catchError((Object error, StackTrace stackTrace) {
           debugPrint('Startup step "timeline maintenance" failed: $error');
+          return <void>[];
         }),
   );
 
@@ -139,13 +152,28 @@ void main() async {
   runApp(const YanciApp());
 }
 
-Future<void> _startupStep(String name, FutureOr<void> Function() action) async {
+Future<void> _startupStep(
+  String name,
+  FutureOr<void> Function() action, {
+  Duration timeout = const Duration(seconds: 5),
+}) async {
   try {
-    await action();
+    await Future<void>.sync(action).timeout(timeout);
+  } on TimeoutException {
+    debugPrint('Startup step "$name" timed out after ${timeout.inSeconds}s');
   } catch (error, stackTrace) {
     debugPrint('Startup step "$name" failed: $error');
     debugPrintStack(stackTrace: stackTrace);
   }
+}
+
+@visibleForTesting
+Future<void> startupStepForTesting(
+  String name,
+  FutureOr<void> Function() action, {
+  required Duration timeout,
+}) {
+  return _startupStep(name, action, timeout: timeout);
 }
 
 void _applySystemOverlay(bool isDark) {
@@ -259,11 +287,10 @@ class _YanciAppState extends State<YanciApp> with WidgetsBindingObserver {
         ],
         // 像素小人住在最頂層：換什麼路由都在，狀態不丟
         builder: (context, child) {
-          final reduceMotion = MediaQuery.disableAnimationsOf(context);
-          return TickerMode(
-            enabled: !reduceMotion,
-            child: YanciSpriteLayer(child: child ?? const SizedBox.shrink()),
-          );
+          // Do not disable the entire widget tree: several business actions
+          // complete only after their controller finishes. Decorative widgets
+          // read MediaQuery.disableAnimations individually.
+          return YanciSpriteLayer(child: child ?? const SizedBox.shrink());
         },
         theme: YanciTheme.themeData,
         initialRoute: '/',

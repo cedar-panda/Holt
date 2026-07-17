@@ -156,4 +156,16 @@ void main() {
       expect(result.notice, ModelCostPolicyNotice.claudeCacheRecommended);
     },
   );
+
+  test('current selection validation reuses the same Claude policy', () async {
+    SharedPreferences.setMockInitialValues({
+      'api_provider': 'openrouter',
+      'model': 'anthropic/claude-sonnet-4.5',
+    });
+
+    final result = await ModelCostPolicy.validateCurrentSelection();
+
+    expect(result.notice, ModelCostPolicyNotice.claudeCacheRecommended);
+    expect(result.changed, isFalse);
+  });
 }

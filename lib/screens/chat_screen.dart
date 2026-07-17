@@ -28,6 +28,7 @@ import '../memory/database.dart';
 import '../memory/retriever.dart';
 import '../services/bio_clock_service.dart';
 import '../services/shop_service.dart';
+import '../utils/text_safety.dart';
 import '../services/marriage_service.dart';
 import '../services/tool_prompts.dart';
 import '../services/x_post_service.dart';
@@ -2862,7 +2863,7 @@ class _ChatScreenState extends State<ChatScreen> {
       ).firstMatch(processedText);
       if (homeMatch != null) {
         var homeText = homeMatch.group(1)!.trim();
-        if (homeText.length > 12) homeText = homeText.substring(0, 12);
+        homeText = truncateGraphemes(homeText, 12);
         await DatabaseHelper.addNote(homeText, characterId: _activeCharacterId);
         processedText = processedText
             .replaceAll(RegExp(r'<home>[\s\S]*?</home>'), '')
@@ -3845,7 +3846,7 @@ class _ChatScreenState extends State<ChatScreen> {
       ).firstMatch(processedText);
       if (homeMatch != null) {
         var homeText = homeMatch.group(1)!.trim();
-        if (homeText.length > 12) homeText = homeText.substring(0, 12);
+        homeText = truncateGraphemes(homeText, 12);
         await DatabaseHelper.addNote(homeText, characterId: _activeCharacterId);
         processedText = processedText
             .replaceAll(RegExp(r'<home>[\s\S]*?</home>'), '')

@@ -59,6 +59,7 @@ class _ScratchCardDialogState extends State<_ScratchCardDialog>
   List<Offset>? _current;
   double _scratchPercent = 0;
   bool _revealed = false;
+  bool _settling = false;
   bool _autoMode = false;
 
   late AnimationController _revealCtrl;
@@ -98,6 +99,11 @@ class _ScratchCardDialogState extends State<_ScratchCardDialog>
 
   // ═══ 自動刮（模型自己刮）═══
   void _autoScratch() {
+    if (!mounted) return;
+    if (MediaQuery.disableAnimationsOf(context)) {
+      unawaited(_reveal());
+      return;
+    }
     final rng = Random();
     // 生成 4~6 條隨機弧線
     final paths = <List<Offset>>[];
@@ -198,24 +204,57 @@ class _ScratchCardDialogState extends State<_ScratchCardDialog>
 
   // ═══ 揭曉 ═══
   Future<void> _reveal() async {
-    if (_revealed) return;
-    _revealed = true;
-    _revealCtrl.forward();
-
-    // messageId 是冪等鍵；即使同一張卡被開兩個 dialog 或上次在
-    // 「入帳後、標記前」中斷，也只會結算一次。
-    await ScratchService.claimScratch(
-      widget.messageId,
-      characterId: widget.characterId,
-    );
+    if (_revealed || _settling) return;
+    _settling = true;
+    final reduceMotion = MediaQuery.disableAnimationsOf(context);
+    try {
+      // Settle first, then expose the revealed UI. The wallet journal makes
+      // this retry-safe if the process stops between credit and persistence.
+      final claim = await ScratchService.claimScratch(
+        widget.messageId,
+        characterId: widget.characterId,
+      );
+      if (claim.data == null) throw StateError('Scratch data no longer exists');
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _settling = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            L.pick(
+              en: 'Could not settle this card. Please try again.',
+              zhTW: '這張刮刮卡還沒入帳，請再試一次。',
+            ),
+          ),
+        ),
+      );
+      return;
+    }
+    if (!mounted) return;
+    setState(() {
+      _settling = false;
+      _revealed = true;
+    });
+    if (reduceMotion) {
+      _revealCtrl.value = 1;
+    } else {
+      _revealCtrl.forward();
+    }
 
     // 延遲後縮小退場
-    Future.delayed(const Duration(milliseconds: 1600), () {
-      if (!mounted) return;
-      _exitCtrl.forward().then((_) {
-        if (mounted) Navigator.of(context).pop(true);
-      });
-    });
+    Future.delayed(
+      reduceMotion ? Duration.zero : const Duration(milliseconds: 1600),
+      () {
+        if (!mounted) return;
+        if (reduceMotion) {
+          Navigator.of(context).pop(true);
+          return;
+        }
+        _exitCtrl.forward().then((_) {
+          if (mounted) Navigator.of(context).pop(true);
+        });
+      },
+    );
   }
 
   final _cardKey = GlobalKey();

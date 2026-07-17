@@ -34,6 +34,7 @@ class _SplashScreenState extends State<SplashScreen>
 
   // 星光粒子
   final List<_StarParticle> _particles = [];
+  bool _navigationStarted = false;
 
   @override
   void initState() {
@@ -46,7 +47,9 @@ class _SplashScreenState extends State<SplashScreen>
       _exitCtrl,
     ]);
     _generateParticles();
-    _startSequence();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _startSequence();
+    });
   }
 
   void _initAnimations() {
@@ -114,22 +117,33 @@ class _SplashScreenState extends State<SplashScreen>
   }
 
   Future<void> _startSequence() async {
+    if (_navigationStarted) return;
+    if (MediaQuery.disableAnimationsOf(context)) {
+      _navigationStarted = true;
+      Navigator.of(context).pushReplacementNamed('/home');
+      return;
+    }
     await Future.delayed(const Duration(milliseconds: 200));
+    if (!mounted) return;
 
     // Logo 落下
     _logoCtrl.forward();
     await Future.delayed(const Duration(milliseconds: 600));
+    if (!mounted) return;
 
     // 文字淡入
     _textCtrl.forward();
     await Future.delayed(const Duration(milliseconds: 300));
+    if (!mounted) return;
 
     // 星光散開
     _starCtrl.forward();
     await Future.delayed(const Duration(milliseconds: 1200));
+    if (!mounted) return;
 
     // 停留
     await Future.delayed(const Duration(milliseconds: 400));
+    if (!mounted) return;
 
     // 退場
     _exitCtrl.forward();
@@ -137,6 +151,7 @@ class _SplashScreenState extends State<SplashScreen>
 
     // 跳轉主頁
     if (mounted) {
+      _navigationStarted = true;
       Navigator.of(context).pushReplacementNamed('/home');
     }
   }

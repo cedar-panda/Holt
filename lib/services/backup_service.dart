@@ -11,8 +11,10 @@ import 'package:sqflite/sqflite.dart';
 import '../memory/database.dart';
 import '../memory/emotion_coordinates.dart';
 import '../models/message.dart';
+import '../utils/app_file_safety.dart';
 import 'character_timeline_service.dart';
 import 'keep_alive_service.dart';
+import 'model_cost_policy.dart';
 
 /// JSON 備份和本地資料庫備份。
 ///
@@ -260,6 +262,14 @@ class BackupService {
       rethrow;
     }
 
+    try {
+      await ModelCostPolicy.validateCurrentSelection();
+    } catch (error) {
+      // The restore is already committed; a policy check must not report the
+      // whole restore as failed. Startup/settings will retry the same rule.
+      debugPrint('Post-restore model cost policy check failed: $error');
+    }
+
     final charCount = prepared.tables['characters']!.length;
     final convCount = prepared.tables['conversations']!.length;
     final messageCount = prepared.tables['messages']!.length;
@@ -358,6 +368,8 @@ class BackupService {
 
     // Old and new rows both pass through path sanitisation and safe defaults.
     _normalizeCommonRows(result, fallbackTime, isLegacy: isLegacy);
+    _normalizeSpiderWebLinks(result);
+    _deduplicateSavedMessages(result);
     _validatePrimaryKeys(result, strict: !isLegacy);
     final droppedOrphanMessageCount = _validateMessageConversationLinks(result);
 
@@ -585,6 +597,41 @@ class BackupService {
     }
   }
 
+  static void _normalizeSpiderWebLinks(
+    Map<String, List<Map<String, Object?>>> tables,
+  ) {
+    final normalized = <Map<String, Object?>>[];
+    final seen = <String>{};
+    for (final link in tables['spider_web_links']!) {
+      final first = link['memory_id_1'];
+      final second = link['memory_id_2'];
+      if (first is! int || second is! int || first == second) continue;
+      final low = first < second ? first : second;
+      final high = first < second ? second : first;
+      final characterId = _nonEmptyString(
+        link['character_id'],
+        fallback: 'default',
+      );
+      if (!seen.add('$characterId:$low:$high')) continue;
+      normalized.add(
+        Map<String, Object?>.from(link)
+          ..['character_id'] = characterId
+          ..['memory_id_1'] = low
+          ..['memory_id_2'] = high,
+      );
+    }
+    tables['spider_web_links'] = normalized;
+  }
+
+  static void _deduplicateSavedMessages(
+    Map<String, List<Map<String, Object?>>> tables,
+  ) {
+    final seen = <String>{};
+    tables['saved_messages'] = tables['saved_messages']!
+        .where((row) => seen.add(row['message_id']?.toString() ?? ''))
+        .toList(growable: false);
+  }
+
   static String _archiveCharacterId(Map<String, Object?> archived) {
     final direct = archived['character_id']?.toString().trim() ?? '';
     if (direct.isNotEmpty) return direct;
@@ -678,24 +725,55 @@ class BackupService {
       final columns = schemaColumns[table]!;
       final rows = <Map<String, Object?>>[];
       for (final source in normalized.tables[table]!) {
+        final row = <String, Object?>{
+          for (final entry in source.entries)
+            if (columns.contains(entry.key)) entry.key: entry.value,
+        };
+        final pathColumn = switch (table) {
+          'characters' || 'messages' || 'shop_items' => 'image_path',
+          'stickers' || 'saved_voices' => 'file_path',
+          _ => null,
+        };
+        // characters uses avatar_path rather than image_path.
+        final effectivePathColumn = table == 'characters'
+            ? 'avatar_path'
+            : pathColumn;
+        if (effectivePathColumn != null &&
+            row.containsKey(effectivePathColumn)) {
+          final safePath = await AppFileSafety.normalizeOwnedPath(
+            row[effectivePathColumn],
+          );
+          row[effectivePathColumn] = switch (table) {
+            'messages' || 'characters' || 'saved_voices' => safePath,
+            _ => safePath ?? '',
+          };
+        }
         if (table == 'saved_voices') {
-          final path = source['file_path'];
+          final path = row['file_path'];
           if (path is! String || path.isEmpty || !await File(path).exists()) {
             skippedVoiceCount++;
             continue;
           }
         }
-        rows.add(<String, Object?>{
-          for (final entry in source.entries)
-            if (columns.contains(entry.key)) entry.key: entry.value,
-        });
+        rows.add(row);
       }
       filtered[table] = rows;
     }
 
+    final safePreferences = <String, Object?>{};
+    for (final entry in normalized.preferences.entries) {
+      final looksLikePath = entry.key.toLowerCase().contains('path');
+      if (!looksLikePath || entry.value is! String) {
+        safePreferences[entry.key] = entry.value;
+        continue;
+      }
+      safePreferences[entry.key] =
+          await AppFileSafety.normalizeOwnedPath(entry.value) ?? '';
+    }
+
     return _PreparedBackup(
       tables: filtered,
-      preferences: normalized.preferences,
+      preferences: safePreferences,
       isLegacy: normalized.isLegacy,
       skippedVoiceCount: skippedVoiceCount,
       droppedOrphanMessageCount: normalized.droppedOrphanMessageCount,
@@ -878,7 +956,7 @@ class BackupService {
   // 2) 本地全量備份（覆蓋式）
   // ════════════════════════════════════
 
-  /// 備份 SQLite DB + 可攜式 SharedPreferences 到 app 私有資料夾。
+  /// 備份 SQLite 原子快照 + 可攜式 SharedPreferences 到 app 私有資料夾。
   static Future<String> saveLocalBackup() {
     return _operationLock.synchronized(_saveLocalBackupUnlocked);
   }
@@ -899,30 +977,15 @@ class BackupService {
     if (await stagingDir.exists()) await stagingDir.delete(recursive: true);
     await stagingDir.create(recursive: true);
 
-    final dbPath = p.join(await getDatabasesPath(), 'yanci.db');
-    final dbFile = File(dbPath);
-    var dbVersion = 0;
-
-    if (await dbFile.exists()) {
-      final db = await DatabaseHelper.database;
-      final versionRows = await db.rawQuery('PRAGMA user_version');
-      dbVersion = _pragmaInt(versionRows, 'user_version');
-      try {
-        await db.rawQuery('PRAGMA wal_checkpoint(TRUNCATE)');
-      } catch (_) {
-        // 個別 SQLite 版本不支援 TRUNCATE；仍會連同 WAL/SHM 備份。
-      }
-
-      await dbFile.copy(p.join(stagingDir.path, 'yanci.db'));
-      final walFile = File('$dbPath-wal');
-      final shmFile = File('$dbPath-shm');
-      if (await walFile.exists()) {
-        await walFile.copy(p.join(stagingDir.path, 'yanci.db-wal'));
-      }
-      if (await shmFile.exists()) {
-        await shmFile.copy(p.join(stagingDir.path, 'yanci.db-shm'));
-      }
-    }
+    final db = await DatabaseHelper.database;
+    final versionRows = await db.rawQuery('PRAGMA user_version');
+    final dbVersion = _pragmaInt(versionRows, 'user_version');
+    final snapshotPath = p.join(stagingDir.path, 'yanci.db');
+    final snapshotFile = File(snapshotPath);
+    if (await snapshotFile.exists()) await snapshotFile.delete();
+    // VACUUM INTO is a single consistent SQLite snapshot. No WAL/SHM sidecars
+    // are copied, so a chat write cannot produce a mixed-time backup.
+    await db.execute(_vacuumIntoSql(snapshotPath));
 
     final prefs = await SharedPreferences.getInstance();
     await File(p.join(stagingDir.path, 'preferences.json')).writeAsString(
@@ -948,6 +1011,14 @@ class BackupService {
     await stagingDir.rename(backupDir.path);
     return backupDir.path;
   }
+
+  static String _vacuumIntoSql(String path) {
+    final escaped = path.replaceAll("'", "''");
+    return "VACUUM INTO '$escaped'";
+  }
+
+  @visibleForTesting
+  static String vacuumIntoSqlForTesting(String path) => _vacuumIntoSql(path);
 
   static Future<DateTime?> getLastBackupTime() async {
     try {

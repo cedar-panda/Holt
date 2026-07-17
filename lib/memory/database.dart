@@ -1,3 +1,5 @@
+// ignore_for_file: unnecessary_string_escapes
+
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
@@ -7,6 +9,7 @@ import 'package:flutter/foundation.dart';
 import 'package:uuid/uuid.dart';
 import '../models/message.dart';
 import '../models/memory.dart';
+import '../utils/app_file_safety.dart';
 
 /// 本地數據庫
 class DatabaseHelper {
@@ -14,7 +17,7 @@ class DatabaseHelper {
   static Future<Database>? _dbInitFuture;
   static Future<Database> Function() _databaseInitializer = _initDatabase;
   static const String _dbName = 'yanci.db';
-  static const int _dbVersion = 35;
+  static const int _dbVersion = 36;
   static final Random _windowIdRandom = Random.secure();
 
   static Future<Database> get database async {
@@ -82,13 +85,7 @@ class DatabaseHelper {
     ''');
 
     await db.execute(
-      'CREATE INDEX idx_messages_conv ON messages(conversation_id)',
-    );
-    await db.execute(
       'CREATE INDEX IF NOT EXISTS idx_msg_char_time ON messages(character_id, created_at)',
-    );
-    await db.execute(
-      'CREATE INDEX IF NOT EXISTS idx_conv_char ON conversations(character_id)',
     );
 
     await _createMemoryTables(db);
@@ -102,6 +99,7 @@ class DatabaseHelper {
     await _createEmotionTables(db);
     await _createCharacterTimelineTable(db);
     await _createKnownIndexes(db);
+    await _createSavedMessageUniqueIndex(db);
   }
 
   /// 用量記錄表
@@ -253,6 +251,8 @@ class DatabaseHelper {
           'ON emotion_points(character_id, status)',
       'CREATE INDEX IF NOT EXISTS idx_emo_memory '
           'ON emotion_points(character_id, memory_id)',
+      'CREATE INDEX IF NOT EXISTS idx_emo_char_type_time '
+          'ON emotion_points(character_id, type, created_at DESC)',
       'CREATE INDEX IF NOT EXISTS idx_grudge_char '
           'ON grudge_seals(character_id)',
       'CREATE UNIQUE INDEX IF NOT EXISTS idx_timeline_state '
@@ -303,7 +303,8 @@ class DatabaseHelper {
         memory_id_1 INTEGER NOT NULL,
         memory_id_2 INTEGER NOT NULL,
         created_at TEXT NOT NULL,
-        UNIQUE(memory_id_1, memory_id_2)
+        CHECK(memory_id_1 < memory_id_2),
+        UNIQUE(character_id, memory_id_1, memory_id_2)
       )
     ''');
     await db.execute(
@@ -349,11 +350,6 @@ class DatabaseHelper {
         archived_at TEXT NOT NULL,
         reason TEXT NOT NULL
       )
-    ''');
-
-    await db.execute('''
-      CREATE INDEX IF NOT EXISTS idx_mem_char_mode 
-      ON memories(character_id, mode, status)
     ''');
   }
 
@@ -713,6 +709,112 @@ class DatabaseHelper {
         "TEXT NOT NULL DEFAULT ''",
       );
     }
+    if (oldVersion < 36) {
+      await _migrateToV36(db);
+    }
+  }
+
+  static Future<void> _migrateToV36(Database db) async {
+    final hadSpiderLinks = await _tableExists(db, 'spider_web_links');
+    await db.execute('DROP TABLE IF EXISTS spider_web_links_v36');
+    await db.execute('''
+      CREATE TABLE spider_web_links_v36 (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        character_id TEXT NOT NULL,
+        memory_id_1 INTEGER NOT NULL,
+        memory_id_2 INTEGER NOT NULL,
+        created_at TEXT NOT NULL,
+        CHECK(memory_id_1 < memory_id_2),
+        UNIQUE(character_id, memory_id_1, memory_id_2)
+      )
+    ''');
+    if (hadSpiderLinks) {
+      await db.execute('''
+        INSERT OR IGNORE INTO spider_web_links_v36
+          (id, character_id, memory_id_1, memory_id_2, created_at)
+        SELECT
+          id,
+          character_id,
+          CASE WHEN memory_id_1 < memory_id_2 THEN memory_id_1 ELSE memory_id_2 END,
+          CASE WHEN memory_id_1 < memory_id_2 THEN memory_id_2 ELSE memory_id_1 END,
+          created_at
+        FROM spider_web_links
+        WHERE memory_id_1 != memory_id_2
+        ORDER BY id ASC
+      ''');
+      await db.execute('DROP TABLE spider_web_links');
+    }
+    await db.execute(
+      'ALTER TABLE spider_web_links_v36 RENAME TO spider_web_links',
+    );
+
+    // Keep the oldest saved row when an old database already contains a
+    // double-tap duplicate, then let the unique index prevent recurrence.
+    if (await _tableExists(db, 'saved_messages')) {
+      await db.execute('''
+        DELETE FROM saved_messages
+        WHERE id NOT IN (
+          SELECT MIN(id) FROM saved_messages GROUP BY message_id
+        )
+      ''');
+      await db.execute(
+        'CREATE UNIQUE INDEX IF NOT EXISTS idx_saved_message_unique '
+        'ON saved_messages(message_id)',
+      );
+    }
+
+    if (await _hasAllKnownIndexTables(db)) {
+      await _createKnownIndexes(db);
+    }
+    for (final index in const [
+      'idx_messages_conv',
+      'idx_mem_char_mode',
+      'idx_saved_char',
+      'idx_conv_char',
+    ]) {
+      await db.execute('DROP INDEX IF EXISTS $index');
+    }
+  }
+
+  static Future<bool> _tableExists(Database db, String table) async {
+    final rows = await db.query(
+      'sqlite_master',
+      columns: ['name'],
+      where: "type = 'table' AND name = ?",
+      whereArgs: [table],
+      limit: 1,
+    );
+    return rows.isNotEmpty;
+  }
+
+  static Future<bool> _hasAllKnownIndexTables(Database db) async {
+    const required = {
+      'messages',
+      'conversations',
+      'memories',
+      'spider_web_links',
+      'backpack_items',
+      'archive',
+      'sticky_notes',
+      'usage_logs',
+      'saved_voices',
+      'saved_messages',
+      'context_summaries',
+      'context_keywords',
+      'emotion_points',
+      'grudge_seals',
+      'character_timeline',
+    };
+    final rows = await db.query(
+      'sqlite_master',
+      columns: ['name'],
+      where: "type = 'table'",
+    );
+    final actual = rows
+        .map((row) => row['name']?.toString())
+        .whereType<String>()
+        .toSet();
+    return actual.containsAll(required);
   }
 
   /// v33 是修復性 migration：把先前的懶建 schema 收回主資料庫版本，
@@ -1032,17 +1134,38 @@ class DatabaseHelper {
   /// 刪除單條語音
   static Future<void> deleteVoice(int id) async {
     final db = await database;
-    await db.delete('saved_voices', where: 'id = ?', whereArgs: [id]);
+    final path = await db.transaction<String?>((txn) async {
+      final rows = await txn.query(
+        'saved_voices',
+        columns: ['file_path'],
+        where: 'id = ?',
+        whereArgs: [id],
+        limit: 1,
+      );
+      await txn.delete('saved_voices', where: 'id = ?', whereArgs: [id]);
+      return rows.isEmpty ? null : rows.first['file_path'] as String?;
+    });
+    await AppFileSafety.deleteOwnedFiles([path]);
   }
 
   /// 清除指定角色的語音緩存
   static Future<void> clearAllVoices({required String characterId}) async {
     final db = await database;
-    await db.delete(
-      'saved_voices',
-      where: 'character_id = ?',
-      whereArgs: [characterId],
-    );
+    final paths = await db.transaction<List<String>>((txn) async {
+      final rows = await txn.query(
+        'saved_voices',
+        columns: ['file_path'],
+        where: 'character_id = ?',
+        whereArgs: [characterId],
+      );
+      await txn.delete(
+        'saved_voices',
+        where: 'character_id = ?',
+        whereArgs: [characterId],
+      );
+      return rows.map((row) => row['file_path']).whereType<String>().toList();
+    });
+    await AppFileSafety.deleteOwnedFiles(paths);
   }
 
   /// 語音總數
@@ -1082,19 +1205,19 @@ class DatabaseHelper {
   }) async {
     final db = await database;
     return db.rawQuery(
-      '''
+      """
       SELECT recent.id, recent.text, recent.is_user, recent.created_at, recent.title
       FROM (
         SELECT m.id, m.text, m.is_user, m.created_at, c.title
         FROM messages m
         LEFT JOIN conversations c ON m.conversation_id = c.id
-        WHERE m.character_id = ? AND m.text LIKE ?
+        WHERE m.character_id = ? AND m.text LIKE ? ESCAPE '\'
         ORDER BY m.created_at DESC, m.id DESC
         LIMIT ?
       ) AS recent
       ORDER BY recent.created_at ASC, recent.id ASC
-    ''',
-      [characterId, '%$keyword%', limit],
+    """,
+      [characterId, _likeContains(keyword), limit],
     );
   }
 
@@ -1221,129 +1344,125 @@ class DatabaseHelper {
 
   static Future<void> deleteCharacter(String id) async {
     final db = await database;
-    // ═══ 級聯清理：對話（含其語音/收藏）、記憶、貼圖（含文件）═══
-    final convs = await db.query(
-      'conversations',
-      columns: ['id'],
-      where: 'character_id = ?',
-      whereArgs: [id],
-    );
-    final convIds = convs.map((c) => c['id'] as String).toList();
+    final filesToDelete = await db.transaction<Set<String>>((txn) async {
+      final files = <String>{};
+      final convs = await txn.query(
+        'conversations',
+        columns: ['id'],
+        where: 'character_id = ?',
+        whereArgs: [id],
+      );
+      final convIds = convs.map((c) => c['id'] as String).toList();
 
-    // 收集所有要刪除的語音文件
-    final voices = <Map<String, Object?>>[];
-    for (final cid in convIds) {
-      voices.addAll(
-        await db.query(
+      for (final cid in convIds) {
+        final voices = await txn.query(
           'saved_voices',
           columns: ['file_path'],
           where: 'source_conversation_id = ?',
           whereArgs: [cid],
-        ),
-      );
-    }
-    voices.addAll(
-      await db.query(
+        );
+        files.addAll(voices.map((row) => row['file_path']).whereType<String>());
+        final images = await txn.query(
+          'messages',
+          columns: ['image_path'],
+          where: 'conversation_id = ?',
+          whereArgs: [cid],
+        );
+        files.addAll(
+          images.map((row) => row['image_path']).whereType<String>(),
+        );
+      }
+      final voices = await txn.query(
         'saved_voices',
         columns: ['file_path'],
         where: 'character_id = ?',
         whereArgs: [id],
-      ),
-    );
-
-    for (final v in voices) {
-      try {
-        final f = File(v['file_path'] as String);
-        if (await f.exists()) await f.delete();
-      } catch (e) {
-        debugPrint('Failed to delete voice file: $e');
-      }
-    }
-
-    // 貼圖文件
-    final stickers = await db.query(
-      'stickers',
-      columns: ['file_path'],
-      where: 'character_id = ?',
-      whereArgs: [id],
-    );
-    for (final st in stickers) {
-      try {
-        final f = File(st['file_path'] as String);
-        if (await f.exists()) await f.delete();
-      } catch (e) {
-        debugPrint('Failed to delete sticker file: $e');
-      }
-    }
-
-    // 批量執行資料庫刪除
-    final batch = db.batch();
-    for (final cid in convIds) {
-      batch.delete(
-        'saved_voices',
-        where: 'source_conversation_id = ?',
-        whereArgs: [cid],
       );
+      files.addAll(voices.map((row) => row['file_path']).whereType<String>());
+      final stickers = await txn.query(
+        'stickers',
+        columns: ['file_path'],
+        where: 'character_id = ?',
+        whereArgs: [id],
+      );
+      files.addAll(stickers.map((row) => row['file_path']).whereType<String>());
+
+      final batch = txn.batch();
+      for (final cid in convIds) {
+        batch.delete(
+          'saved_voices',
+          where: 'source_conversation_id = ?',
+          whereArgs: [cid],
+        );
+        batch.delete(
+          'saved_messages',
+          where: 'conversation_id = ?',
+          whereArgs: [cid],
+        );
+        batch.delete(
+          'messages',
+          where: 'conversation_id = ?',
+          whereArgs: [cid],
+        );
+        batch.delete('conversations', where: 'id = ?', whereArgs: [cid]);
+      }
+      batch.delete('stickers', where: 'character_id = ?', whereArgs: [id]);
+      batch.delete('saved_voices', where: 'character_id = ?', whereArgs: [id]);
       batch.delete(
         'saved_messages',
-        where: 'conversation_id = ?',
-        whereArgs: [cid],
+        where: 'character_id = ?',
+        whereArgs: [id],
       );
-      batch.delete('messages', where: 'conversation_id = ?', whereArgs: [cid]);
-      batch.delete('conversations', where: 'id = ?', whereArgs: [cid]);
-    }
-    batch.delete('stickers', where: 'character_id = ?', whereArgs: [id]);
-    batch.delete('saved_voices', where: 'character_id = ?', whereArgs: [id]);
-    batch.delete('saved_messages', where: 'character_id = ?', whereArgs: [id]);
-    // These tables used to be lazily created and were omitted from character
-    // deletion, leaving cross-feature references behind indefinitely.
-    batch.rawDelete(
-      'DELETE FROM spider_web_links '
-      'WHERE character_id = ? '
-      'OR memory_id_1 IN '
-      '(SELECT id FROM memories WHERE character_id = ?) '
-      'OR memory_id_2 IN '
-      '(SELECT id FROM memories WHERE character_id = ?)',
-      [id, id, id],
-    );
-    batch.rawDelete(
-      'DELETE FROM emotion_points '
-      'WHERE character_id = ? '
-      'OR memory_id IN '
-      '(SELECT id FROM memories WHERE character_id = ?)',
-      [id, id],
-    );
-    batch.rawDelete(
-      'DELETE FROM grudge_seals '
-      'WHERE character_id = ? '
-      'OR memory_id IN '
-      '(SELECT id FROM memories WHERE character_id = ?)',
-      [id, id],
-    );
-    batch.rawDelete(
-      'DELETE FROM character_timeline '
-      'WHERE character_id = ? '
-      'OR source_memory_id IN '
-      '(SELECT id FROM memories WHERE character_id = ?)',
-      [id, id],
-    );
-    batch.delete('archive', where: 'character_id = ?', whereArgs: [id]);
-    batch.delete('backpack_items', where: 'owner_id = ?', whereArgs: [id]);
-    batch.delete('sticky_notes', where: 'character_id = ?', whereArgs: [id]);
-    batch.delete('usage_logs', where: 'character_id = ?', whereArgs: [id]);
-    batch.delete('memories', where: 'character_id = ?', whereArgs: [id]);
-    batch.delete(
-      'context_summaries',
-      where: 'character_id = ?',
-      whereArgs: [id],
-    );
-    batch.delete(
-      'context_keywords',
-      where: 'character_id = ?',
-      whereArgs: [id],
-    );
-    batch.delete('characters', where: 'id = ?', whereArgs: [id]);
-    await batch.commit(noResult: true);
+      batch.rawDelete(
+        'DELETE FROM spider_web_links '
+        'WHERE character_id = ? '
+        'OR memory_id_1 IN '
+        '(SELECT id FROM memories WHERE character_id = ?) '
+        'OR memory_id_2 IN '
+        '(SELECT id FROM memories WHERE character_id = ?)',
+        [id, id, id],
+      );
+      batch.rawDelete(
+        'DELETE FROM emotion_points '
+        'WHERE character_id = ? '
+        'OR memory_id IN '
+        '(SELECT id FROM memories WHERE character_id = ?)',
+        [id, id],
+      );
+      batch.rawDelete(
+        'DELETE FROM grudge_seals '
+        'WHERE character_id = ? '
+        'OR memory_id IN '
+        '(SELECT id FROM memories WHERE character_id = ?)',
+        [id, id],
+      );
+      batch.rawDelete(
+        'DELETE FROM character_timeline '
+        'WHERE character_id = ? '
+        'OR source_memory_id IN '
+        '(SELECT id FROM memories WHERE character_id = ?)',
+        [id, id],
+      );
+      batch.delete('archive', where: 'character_id = ?', whereArgs: [id]);
+      batch.delete('backpack_items', where: 'owner_id = ?', whereArgs: [id]);
+      batch.delete('sticky_notes', where: 'character_id = ?', whereArgs: [id]);
+      batch.delete('usage_logs', where: 'character_id = ?', whereArgs: [id]);
+      batch.delete('memories', where: 'character_id = ?', whereArgs: [id]);
+      batch.delete(
+        'context_summaries',
+        where: 'character_id = ?',
+        whereArgs: [id],
+      );
+      batch.delete(
+        'context_keywords',
+        where: 'character_id = ?',
+        whereArgs: [id],
+      );
+      batch.delete('characters', where: 'id = ?', whereArgs: [id]);
+      await batch.commit(noResult: true);
+      return files;
+    });
+    await AppFileSafety.deleteOwnedFiles(filesToDelete);
   }
 
   // ═══════════════════════════════════
@@ -1400,8 +1519,8 @@ class DatabaseHelper {
     String? characterId,
   }) async {
     final db = await database;
-    String where = 'title LIKE ?';
-    List<dynamic> args = ['%$query%'];
+    String where = "title LIKE ? ESCAPE '\\'";
+    List<dynamic> args = [_likeContains(query)];
     if (characterId != null) {
       where += ' AND character_id = ?';
       args.add(characterId);
@@ -1604,35 +1723,43 @@ class DatabaseHelper {
 
   static Future<void> deleteConversation(String id) async {
     final db = await database;
-    // ═══ 級聯清理：語音（含文件）、收藏 ═══
-    // 語音文件不刪會永久佔磁盤
-    final voices = await db.query(
-      'saved_voices',
-      columns: ['id', 'file_path'],
-      where: 'source_conversation_id = ?',
-      whereArgs: [id],
-    );
-    for (final v in voices) {
-      try {
-        final f = File(v['file_path'] as String);
-        if (await f.exists()) await f.delete();
-      } catch (e) {
-        debugPrint('Failed to delete voice file: $e');
-      }
-    }
-    await db.delete(
-      'saved_voices',
-      where: 'source_conversation_id = ?',
-      whereArgs: [id],
-    );
-    await db.delete(
-      'saved_messages',
-      where: 'conversation_id = ?',
-      whereArgs: [id],
-    );
-    // 記憶刻意不刪：記憶的設計就是要活得比對話久
-    await db.delete('messages', where: 'conversation_id = ?', whereArgs: [id]);
-    await db.delete('conversations', where: 'id = ?', whereArgs: [id]);
+    final filesToDelete = await db.transaction<Set<String>>((txn) async {
+      final voices = await txn.query(
+        'saved_voices',
+        columns: ['file_path'],
+        where: 'source_conversation_id = ?',
+        whereArgs: [id],
+      );
+      final images = await txn.query(
+        'messages',
+        columns: ['image_path'],
+        where: 'conversation_id = ?',
+        whereArgs: [id],
+      );
+      final files = <String>{
+        ...voices.map((row) => row['file_path']).whereType<String>(),
+        ...images.map((row) => row['image_path']).whereType<String>(),
+      };
+      await txn.delete(
+        'saved_voices',
+        where: 'source_conversation_id = ?',
+        whereArgs: [id],
+      );
+      await txn.delete(
+        'saved_messages',
+        where: 'conversation_id = ?',
+        whereArgs: [id],
+      );
+      // 記憶刻意不刪：記憶的設計就是要活得比對話久。
+      await txn.delete(
+        'messages',
+        where: 'conversation_id = ?',
+        whereArgs: [id],
+      );
+      await txn.delete('conversations', where: 'id = ?', whereArgs: [id]);
+      return files;
+    });
+    await AppFileSafety.deleteOwnedFiles(filesToDelete);
   }
 
   // ═══════════════════════════════════
@@ -1779,7 +1906,7 @@ class DatabaseHelper {
       'messages',
       where: 'conversation_id = ?',
       whereArgs: [conversationId],
-      orderBy: 'created_at DESC',
+      orderBy: 'created_at DESC, id DESC',
       limit: 1,
     );
     if (maps.isEmpty) return null;
@@ -1788,23 +1915,43 @@ class DatabaseHelper {
 
   static Future<void> deleteMessageById(int id) async {
     final db = await database;
-    await db.delete('messages', where: 'id = ?', whereArgs: [id]);
+    final imagePaths = await db.transaction<List<String>>((txn) async {
+      final rows = await txn.query(
+        'messages',
+        columns: ['image_path'],
+        where: 'id = ?',
+        whereArgs: [id],
+        limit: 1,
+      );
+      await txn.delete('messages', where: 'id = ?', whereArgs: [id]);
+      return rows.map((row) => row['image_path']).whereType<String>().toList();
+    });
+    await AppFileSafety.deleteOwnedFiles(imagePaths);
   }
 
   static Future<void> deleteMessageByFingerprint(Message msg) async {
     final db = await database;
-    await db.delete(
-      'messages',
-      where:
-          'conversation_id = ? AND character_id = ? AND text = ? AND is_user = ? AND created_at = ?',
-      whereArgs: [
+    final imagePaths = await db.transaction<List<String>>((txn) async {
+      const where =
+          'conversation_id = ? AND character_id = ? AND text = ? '
+          'AND is_user = ? AND created_at = ?';
+      final args = [
         msg.conversationId,
         msg.characterId,
         msg.text,
         msg.isUser ? 1 : 0,
         msg.createdAt.toIso8601String(),
-      ],
-    );
+      ];
+      final rows = await txn.query(
+        'messages',
+        columns: ['image_path'],
+        where: where,
+        whereArgs: args,
+      );
+      await txn.delete('messages', where: where, whereArgs: args);
+      return rows.map((row) => row['image_path']).whereType<String>().toList();
+    });
+    await AppFileSafety.deleteOwnedFiles(imagePaths);
   }
 
   /// 覆蓋消息文本（不刪除原記錄）
@@ -1884,8 +2031,10 @@ class DatabaseHelper {
     final db = await database;
     final maps = await db.query(
       'memories',
-      where: 'mode = ? AND status = ? AND character_id = ? AND content LIKE ?',
-      whereArgs: [mode, 'active', characterId, '%$keyword%'],
+      where:
+          "mode = ? AND status = ? AND character_id = ? "
+          "AND content LIKE ? ESCAPE '\\'",
+      whereArgs: [mode, 'active', characterId, _likeContains(keyword)],
       orderBy: 'created_at DESC',
       limit: limit,
     );
@@ -2033,7 +2182,18 @@ class DatabaseHelper {
 
   static Future<void> deleteSticker(int id) async {
     final db = await database;
-    await db.delete('stickers', where: 'id = ?', whereArgs: [id]);
+    final path = await db.transaction<String?>((txn) async {
+      final rows = await txn.query(
+        'stickers',
+        columns: ['file_path'],
+        where: 'id = ?',
+        whereArgs: [id],
+        limit: 1,
+      );
+      await txn.delete('stickers', where: 'id = ?', whereArgs: [id]);
+      return rows.isEmpty ? null : rows.first['file_path'] as String?;
+    });
+    await AppFileSafety.deleteOwnedFiles([path]);
   }
 
   static Future<void> updateStickerFilePath(int id, String filePath) async {
@@ -2478,7 +2638,15 @@ class DatabaseHelper {
       )
     ''');
     await db.execute(
-      'CREATE INDEX IF NOT EXISTS idx_saved_char ON saved_messages(character_id)',
+      'CREATE INDEX IF NOT EXISTS idx_saved_char_time '
+      'ON saved_messages(character_id, created_at DESC)',
+    );
+  }
+
+  static Future<void> _createSavedMessageUniqueIndex(Database db) {
+    return db.execute(
+      'CREATE UNIQUE INDEX IF NOT EXISTS idx_saved_message_unique '
+      'ON saved_messages(message_id)',
     );
   }
 
@@ -2491,25 +2659,44 @@ class DatabaseHelper {
   }) async {
     try {
       final db = await database;
-      return await db.insert('saved_messages', {
+      final inserted = await db.insert('saved_messages', {
         'message_id': messageId,
         'content': content,
         'character_id': characterId,
         'conversation_id': conversationId,
         'created_at': DateTime.now().toIso8601String(),
-      });
+      }, conflictAlgorithm: ConflictAlgorithm.ignore);
+      if (inserted > 0) return inserted;
+      final existing = await db.query(
+        'saved_messages',
+        columns: ['id'],
+        where: 'message_id = ?',
+        whereArgs: [messageId],
+        limit: 1,
+      );
+      return existing.isEmpty ? -1 : existing.first['id'] as int;
     } catch (e) {
       // 嘗試建表後重試
       try {
         final db = await database;
         await _createSavedMessagesTable(db);
-        return await db.insert('saved_messages', {
+        await _createSavedMessageUniqueIndex(db);
+        final inserted = await db.insert('saved_messages', {
           'message_id': messageId,
           'content': content,
           'character_id': characterId,
           'conversation_id': conversationId,
           'created_at': DateTime.now().toIso8601String(),
-        });
+        }, conflictAlgorithm: ConflictAlgorithm.ignore);
+        if (inserted > 0) return inserted;
+        final existing = await db.query(
+          'saved_messages',
+          columns: ['id'],
+          where: 'message_id = ?',
+          whereArgs: [messageId],
+          limit: 1,
+        );
+        return existing.isEmpty ? -1 : existing.first['id'] as int;
       } catch (_) {
         return -1;
       }
@@ -2565,8 +2752,10 @@ class DatabaseHelper {
     final db = await database;
     return await db.query(
       'saved_messages',
-      where: 'character_id = ? AND (content LIKE ? OR created_at LIKE ?)',
-      whereArgs: [characterId, '%$query%', '%$query%'],
+      where:
+          "character_id = ? AND "
+          "(content LIKE ? ESCAPE '\\' OR created_at LIKE ? ESCAPE '\\')",
+      whereArgs: [characterId, _likeContains(query), _likeContains(query)],
       orderBy: 'created_at DESC',
     );
   }
@@ -2576,6 +2765,17 @@ class DatabaseHelper {
     final db = await database;
     await db.delete('saved_messages', where: 'id = ?', whereArgs: [id]);
   }
+
+  static String _likeContains(String value) {
+    final escaped = value
+        .replaceAll('\\', '\\\\')
+        .replaceAll('%', '\\%')
+        .replaceAll('_', '\\_');
+    return '%$escaped%';
+  }
+
+  @visibleForTesting
+  static String likeContainsForTesting(String value) => _likeContains(value);
 
   // ═══════════════════════════════════
   // 上下文壓縮 CRUD

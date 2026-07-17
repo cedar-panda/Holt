@@ -1,4 +1,5 @@
 import 'settings/memory_settings.dart';
+import 'settings/api_settings.dart';
 import 'token_estimator.dart';
 
 enum ModelCostPolicyNotice {
@@ -19,9 +20,19 @@ class ModelCostPolicyResult {
 
 /// 模型費用設定的可見狀態規則。
 ///
-/// 只在用戶切換 provider／模型或保存有效 Inkling Key 時執行，不在
-/// 發送請求時暗中改寫設定。
+/// 在用戶切換 provider／模型、保存有效 Inkling Key，以及啟動／還原後
+/// 校驗一次；不在發送請求時暗中改寫設定。
 class ModelCostPolicy {
+  /// Re-applies the same cost rule after startup or a preferences restore.
+  static Future<ModelCostPolicyResult> validateCurrentSelection() async {
+    final provider = await ApiSettings.getApiProvider();
+    final model = await ApiSettings.getModelForProvider(provider);
+    final apiKey = provider == 'thinking_machines'
+        ? await ApiSettings.getThinkingMachinesApiKey()
+        : '';
+    return applySelection(provider: provider, model: model, apiKey: apiKey);
+  }
+
   static Future<void> setPromptCachingEnabled(bool enabled) async {
     final wasEnabled = await MemorySettings.getEnablePromptCaching();
 

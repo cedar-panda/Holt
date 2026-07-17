@@ -53,16 +53,34 @@ class StickerService {
     String? tags,
     String descriptionMethod = 'label',
   }) async {
-    return await DatabaseHelper.insertSticker({
-      'character_id': characterId,
-      'file_path': filePath,
-      'line': line,
-      'scene': scene,
-      'mood': mood,
-      'tags': tags,
-      'description_method': descriptionMethod,
-      'created_at': DateTime.now().toIso8601String(),
-    });
+    final source = File(filePath);
+    if (!await source.exists()) return -1;
+    final documents = await getApplicationDocumentsDirectory();
+    final stickerDir = Directory(p.join(documents.path, 'stickers'));
+    await stickerDir.create(recursive: true);
+    final rawExt = p.extension(filePath).toLowerCase();
+    final ext = RegExp(r'^\.[a-z0-9]{1,5}$').hasMatch(rawExt) ? rawExt : '.png';
+    final storedPath = p.join(
+      stickerDir.path,
+      'sticker_${DateTime.now().microsecondsSinceEpoch}$ext',
+    );
+    await source.copy(storedPath);
+    try {
+      return await DatabaseHelper.insertSticker({
+        'character_id': characterId,
+        'file_path': storedPath,
+        'line': line,
+        'scene': scene,
+        'mood': mood,
+        'tags': tags,
+        'description_method': descriptionMethod,
+        'created_at': DateTime.now().toIso8601String(),
+      });
+    } catch (_) {
+      final copied = File(storedPath);
+      if (await copied.exists()) await copied.delete();
+      rethrow;
+    }
   }
 
   /// 更新表情包描述

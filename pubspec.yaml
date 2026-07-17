@@ -40,6 +40,7 @@ dependencies:
   http: ^1.6.0
   sqflite: ^2.4.2+1
   path: ^1.9.1
+  characters: ^1.4.0
   flutter_gemma: ^0.16.1
   llamadart: ^0.8.5
   llamadart_llama_cpp_flutter: ^0.0.4

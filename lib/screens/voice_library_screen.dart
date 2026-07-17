@@ -158,10 +158,6 @@ class _VoiceLibraryScreenState extends State<VoiceLibraryScreen> {
       ),
     );
     if (confirm == true) {
-      // 刪除本地文件
-      final path = voice['file_path'] as String;
-      final file = File(path);
-      if (await file.exists()) await file.delete();
       await DatabaseHelper.deleteVoice(voice['id'] as int);
       _loadVoices();
     }
@@ -350,11 +346,6 @@ class _VoiceLibraryScreenState extends State<VoiceLibraryScreen> {
       ),
     );
     if (confirm == true) {
-      // 刪除所有本地文件
-      for (final v in _voices) {
-        final file = File(v['file_path'] as String);
-        if (await file.exists()) await file.delete();
-      }
       await DatabaseHelper.clearAllVoices(
         characterId: _characterId ?? 'default',
       );

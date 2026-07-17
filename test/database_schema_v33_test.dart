@@ -1,12 +1,16 @@
 import 'dart:convert';
+import 'dart:io';
 
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:project_yanci/memory/database.dart';
+import 'package:project_yanci/memory/emotion_coordinates.dart';
 import 'package:project_yanci/models/message.dart';
 import 'package:project_yanci/services/sticker_service.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
   late Database db;
 
   setUpAll(sqfliteFfiInit);
@@ -23,11 +27,11 @@ void main() {
   });
 
   test(
-    'fresh v33 schema contains runtime tables, columns, and hot indexes',
+    'fresh schema contains runtime tables, columns, and hot indexes',
     () async {
       await DatabaseHelper.createSchemaForTesting(db);
 
-      expect(DatabaseHelper.schemaVersionForTesting, 35);
+      expect(DatabaseHelper.schemaVersionForTesting, 36);
       expect(await _columnNames(db, 'messages'), contains('status'));
       expect(await _columnNames(db, 'characters'), contains('bio_clock'));
       expect(await _columnNames(db, 'sticky_notes'), contains('character_id'));
@@ -63,8 +67,21 @@ void main() {
           'idx_context_summary_char_time',
           'idx_context_keyword_char_time',
           'idx_emo_memory',
+          'idx_emo_char_type_time',
           'idx_timeline_memory',
+          'idx_saved_message_unique',
         ]),
+      );
+      expect(
+        indexes,
+        isNot(
+          containsAll(<String>[
+            'idx_messages_conv',
+            'idx_mem_char_mode',
+            'idx_saved_char',
+            'idx_conv_char',
+          ]),
+        ),
       );
 
       await db.insert('archive', {
@@ -88,6 +105,149 @@ void main() {
       );
     },
   );
+
+  test(
+    'v36 normalizes spider links, deduplicates saves, and uses compound indexes',
+    () async {
+      await DatabaseHelper.createSchemaForTesting(db);
+      await db.execute('DROP TABLE spider_web_links');
+      await db.execute('''
+        CREATE TABLE spider_web_links (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          character_id TEXT NOT NULL,
+          memory_id_1 INTEGER NOT NULL,
+          memory_id_2 INTEGER NOT NULL,
+          created_at TEXT NOT NULL,
+          UNIQUE(memory_id_1, memory_id_2)
+        )
+      ''');
+      final now = DateTime.now().toIso8601String();
+      await db.insert('spider_web_links', {
+        'character_id': 'char-a',
+        'memory_id_1': 9,
+        'memory_id_2': 5,
+        'created_at': now,
+      });
+      await db.insert('spider_web_links', {
+        'character_id': 'char-a',
+        'memory_id_1': 5,
+        'memory_id_2': 9,
+        'created_at': now,
+      });
+      await db.insert('spider_web_links', {
+        'character_id': 'char-a',
+        'memory_id_1': 7,
+        'memory_id_2': 7,
+        'created_at': now,
+      });
+
+      await db.execute('DROP INDEX idx_saved_message_unique');
+      await db.insert('saved_messages', {
+        'message_id': '42',
+        'content': 'first',
+        'character_id': 'char-a',
+        'created_at': now,
+      });
+      await db.insert('saved_messages', {
+        'message_id': '42',
+        'content': 'duplicate',
+        'character_id': 'char-a',
+        'created_at': now,
+      });
+      await db.execute(
+        'CREATE INDEX idx_messages_conv ON messages(conversation_id)',
+      );
+      await db.execute(
+        'CREATE INDEX idx_mem_char_mode ON memories(character_id, mode, status)',
+      );
+      await db.execute(
+        'CREATE INDEX idx_saved_char ON saved_messages(character_id)',
+      );
+      await db.execute(
+        'CREATE INDEX idx_conv_char ON conversations(character_id)',
+      );
+
+      await DatabaseHelper.upgradeSchemaForTesting(db, 35);
+
+      final links = await db.query('spider_web_links');
+      expect(links, hasLength(1));
+      expect(links.single['memory_id_1'], 5);
+      expect(links.single['memory_id_2'], 9);
+      expect(await db.query('saved_messages'), hasLength(1));
+      expect(
+        () => db.insert('saved_messages', {
+          'message_id': '42',
+          'content': 'blocked',
+          'character_id': 'char-a',
+          'created_at': now,
+        }),
+        throwsA(isA<DatabaseException>()),
+      );
+      expect(
+        () => db.insert('spider_web_links', {
+          'character_id': 'char-a',
+          'memory_id_1': 9,
+          'memory_id_2': 5,
+          'created_at': now,
+        }),
+        throwsA(isA<DatabaseException>()),
+      );
+
+      final indexes = await _objectNames(db, 'index');
+      expect(indexes, isNot(contains('idx_messages_conv')));
+      expect(indexes, isNot(contains('idx_mem_char_mode')));
+      expect(indexes, isNot(contains('idx_saved_char')));
+      expect(indexes, isNot(contains('idx_conv_char')));
+      expect(
+        await _queryPlanUses(
+          db,
+          'SELECT * FROM messages WHERE conversation_id = ? '
+              'ORDER BY created_at DESC, id DESC',
+          ['conv'],
+          'idx_messages_conv_time',
+        ),
+        isTrue,
+      );
+      expect(
+        await _queryPlanUses(
+          db,
+          'SELECT * FROM memories '
+              'WHERE character_id = ? AND mode = ? AND status = ? '
+              'ORDER BY created_at DESC',
+          ['char-a', 'story', 'active'],
+          'idx_mem_char_mode_time',
+        ),
+        isTrue,
+      );
+      expect(
+        await _queryPlanUses(
+          db,
+          'SELECT * FROM saved_messages WHERE character_id = ? '
+              'ORDER BY created_at DESC',
+          ['char-a'],
+          'idx_saved_char_time',
+        ),
+        isTrue,
+      );
+      expect(
+        await _queryPlanUses(
+          db,
+          'SELECT * FROM conversations WHERE character_id = ? '
+              'ORDER BY is_starred DESC, updated_at DESC',
+          ['char-a'],
+          'idx_conv_char_updated',
+        ),
+        isTrue,
+      );
+    },
+  );
+
+  test('LIKE search escapes wildcard characters', () {
+    expect(
+      DatabaseHelper.likeContainsForTesting(r'100%_done\ok'),
+      r'%100\%\_done\\ok%',
+    );
+  });
 
   test(
     'v34 migration adds message delivery status without changing text',
@@ -191,13 +351,14 @@ void main() {
 
   test('repairing a sticker file path does not change its prompt', () async {
     await DatabaseHelper.createSchemaForTesting(db);
-    final id = await StickerService.addSticker(
-      filePath: '/missing/old.webp',
-      characterId: StickerService.userBucket,
-      line: '嗚嗚',
-      mood: '委屈',
-      tags: '委屈',
-    );
+    final id = await DatabaseHelper.insertSticker({
+      'file_path': '/missing/old.webp',
+      'character_id': StickerService.userBucket,
+      'line': '嗚嗚',
+      'mood': '委屈',
+      'tags': '委屈',
+      'created_at': DateTime.now().toIso8601String(),
+    });
     final before = await StickerService.buildStickerPrompt(
       characterId: 'char-a',
     );
@@ -275,6 +436,18 @@ void main() {
         'archived_at': '2026-01-02T00:00:00.000',
         'reason': 'newer',
       });
+      await db.insert('saved_messages', {
+        'message_id': 'legacy-duplicate',
+        'content': 'first',
+        'character_id': 'char-a',
+        'created_at': '2026-01-01T00:00:00.000',
+      });
+      await db.insert('saved_messages', {
+        'message_id': 'legacy-duplicate',
+        'content': 'second',
+        'character_id': 'char-a',
+        'created_at': '2026-01-02T00:00:00.000',
+      });
 
       await DatabaseHelper.upgradeSchemaForTesting(db, 32);
 
@@ -296,6 +469,7 @@ void main() {
       expect(archives, hasLength(1));
       expect(archives.single['character_id'], 'char-a');
       expect(archives.single['reason'], 'newer');
+      expect(await db.query('saved_messages'), hasLength(1));
 
       expect(
         () => db.insert('archive', {
@@ -480,6 +654,92 @@ void main() {
       reason: 'deleting char-a must not touch char-b',
     );
   });
+
+  test(
+    'conversation deletion removes only app-owned media after DB rows',
+    () async {
+      await DatabaseHelper.createSchemaForTesting(db);
+      final root = await Directory.systemTemp.createTemp('holt-media-test-');
+      final documents = Directory('${root.path}/documents')..createSync();
+      final inside = File('${documents.path}/chat_images/inside.jpg');
+      inside.parent.createSync(recursive: true);
+      inside.writeAsStringSync('inside');
+      final outside = File('${root.path}/outside.jpg')
+        ..writeAsStringSync('outside');
+      const channel = MethodChannel('plugins.flutter.io/path_provider');
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (call) async {
+            if (call.method == 'getApplicationDocumentsDirectory') {
+              return documents.path;
+            }
+            return null;
+          });
+      try {
+        await DatabaseHelper.createConversation(
+          Conversation(id: 'conv-media', characterId: 'char-a'),
+        );
+        await DatabaseHelper.insertMessage(
+          Message(
+            conversationId: 'conv-media',
+            characterId: 'char-a',
+            text: 'inside',
+            isUser: true,
+            imagePath: inside.path,
+          ),
+        );
+        await DatabaseHelper.insertMessage(
+          Message(
+            conversationId: 'conv-media',
+            characterId: 'char-a',
+            text: 'outside',
+            isUser: true,
+            imagePath: outside.path,
+          ),
+        );
+
+        await DatabaseHelper.deleteConversation('conv-media');
+
+        expect(await inside.exists(), isFalse);
+        expect(await outside.exists(), isTrue);
+        expect(await db.query('messages'), isEmpty);
+        expect(await db.query('conversations'), isEmpty);
+      } finally {
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, null);
+        await root.delete(recursive: true);
+      }
+    },
+  );
+
+  test('emotion maintenance removes only old settled points', () async {
+    await DatabaseHelper.createSchemaForTesting(db);
+    final old = DateTime.now()
+        .subtract(const Duration(days: 91))
+        .toIso8601String();
+    final recent = DateTime.now().toIso8601String();
+    Future<void> insert(String status, String createdAt) {
+      return db
+          .insert('emotion_points', {
+            'character_id': 'char-a',
+            'type': '愜意',
+            'x': 0.0,
+            'y': 0.0,
+            'concentration': 1.0,
+            'status': status,
+            'created_at': createdAt,
+            'updated_at': createdAt,
+          })
+          .then((_) {});
+    }
+
+    await insert('resolved', old);
+    await insert('active', old);
+    await insert('dissipated', recent);
+
+    expect(await EmotionCoordinates.startupMaintenance('char-a'), 1);
+    final remaining = await db.query('emotion_points', orderBy: 'id ASC');
+    expect(remaining.map((row) => row['status']), ['active', 'dissipated']);
+  });
 }
 
 Future<Set<String>> _columnNames(Database db, String table) async {
@@ -495,6 +755,16 @@ Future<Set<String>> _objectNames(Database db, String type) async {
     whereArgs: [type],
   );
   return rows.map((row) => row['name'] as String).toSet();
+}
+
+Future<bool> _queryPlanUses(
+  Database db,
+  String sql,
+  List<Object?> args,
+  String index,
+) async {
+  final rows = await db.rawQuery('EXPLAIN QUERY PLAN $sql', args);
+  return rows.any((row) => row['detail']?.toString().contains(index) == true);
 }
 
 Future<void> _createRepresentativeV32Schema(Database db) async {
@@ -550,6 +820,16 @@ Future<void> _createRepresentativeV32Schema(Database db) async {
       content_snapshot TEXT NOT NULL,
       archived_at TEXT NOT NULL,
       reason TEXT NOT NULL
+    )
+  ''');
+  await db.execute('''
+    CREATE TABLE saved_messages (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      message_id TEXT NOT NULL,
+      content TEXT NOT NULL,
+      character_id TEXT DEFAULT 'default',
+      conversation_id TEXT,
+      created_at TEXT NOT NULL
     )
   ''');
 }
