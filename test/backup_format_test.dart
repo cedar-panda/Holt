@@ -38,6 +38,7 @@ void main() {
           'id': 'conv-1',
           'character_id': 'char-1',
           'window_summary_id': 'abc',
+          'summary_cursor_message_id': 999,
           'pinned_static_summary': 'stable prompt',
           'pinned_static_self_notes': 'stable self notes',
           'title': 'first',
@@ -75,6 +76,10 @@ void main() {
       expect(
         tables['conversations']!.single,
         containsPair('pinned_static_self_notes', 'stable self notes'),
+      );
+      expect(
+        tables['conversations']!.single,
+        containsPair('summary_cursor_message_id', 42),
       );
       expect(tables['messages']!.single, containsPair('id', 42));
       expect(tables['messages']!.single, containsPair('split_mode', 1));
@@ -156,6 +161,9 @@ void main() {
         'value': '約會',
         'week_group': '2025-W52',
         'confirmed': 0,
+        'source_message_id': 9,
+        'source_message_ids': '[9,7,9]',
+        'source_evidence': '那天正式約會了',
         'created_at': '2025-12-29T09:00:00.000',
         'updated_at': '2025-12-29T09:00:00.000',
       },
@@ -177,6 +185,9 @@ void main() {
     expect(rows, hasLength(1));
     expect(rows.single['confirmed'], 1);
     expect(rows.single['week_group'], '2026-W01');
+    expect(rows.single['source_message_id'], 7);
+    expect(rows.single['source_message_ids'], '[7,9]');
+    expect(rows.single['source_evidence'], '那天正式約會了');
   });
 
   test('v5 rejects an incomplete table manifest before restore', () {

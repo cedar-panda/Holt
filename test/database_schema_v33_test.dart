@@ -31,13 +31,25 @@ void main() {
     () async {
       await DatabaseHelper.createSchemaForTesting(db);
 
-      expect(DatabaseHelper.schemaVersionForTesting, 37);
+      expect(DatabaseHelper.schemaVersionForTesting, 38);
       expect(await _columnNames(db, 'messages'), contains('status'));
       expect(await _columnNames(db, 'characters'), contains('bio_clock'));
       expect(await _columnNames(db, 'sticky_notes'), contains('character_id'));
       expect(
         await _columnNames(db, 'conversations'),
         contains('pinned_static_self_notes'),
+      );
+      expect(
+        await _columnNames(db, 'conversations'),
+        contains('summary_cursor_message_id'),
+      );
+      expect(
+        await _columnNames(db, 'character_timeline'),
+        containsAll([
+          'source_message_id',
+          'source_message_ids',
+          'source_evidence',
+        ]),
       );
       expect(await _columnNames(db, 'archive'), contains('character_id'));
 
@@ -70,6 +82,7 @@ void main() {
           'idx_emo_char_type_time',
           'idx_timeline_memory',
           'idx_timeline_event_daily_unique',
+          'idx_timeline_source_message',
           'idx_saved_message_unique',
         ]),
       );
@@ -106,6 +119,71 @@ void main() {
       );
     },
   );
+
+  test('v38 backfills the automatic summary message cursor', () async {
+    await DatabaseHelper.createSchemaForTesting(db);
+    await db.insert('conversations', {
+      'id': 'conv-a',
+      'character_id': 'char-a',
+      'title': '',
+      'created_at': '2026-07-18T09:00:00.000',
+      'updated_at': '2026-07-18T12:00:00.000',
+    });
+    for (final entry in const [
+      (1, '2026-07-18T10:00:00.000'),
+      (2, '2026-07-18T11:00:00.000'),
+      (3, '2026-07-18T13:00:00.000'),
+    ]) {
+      await db.insert('messages', {
+        'id': entry.$1,
+        'conversation_id': 'conv-a',
+        'character_id': 'char-a',
+        'text': 'message ${entry.$1}',
+        'is_user': 1,
+        'created_at': entry.$2,
+      });
+    }
+    await db.insert('context_summaries', {
+      'character_id': 'char-a',
+      'source_conversation_id': 'conv-a',
+      'content': 'automatic summary',
+      'token_count': 20,
+      'created_at': '2026-07-18T12:00:00.000',
+    });
+
+    await DatabaseHelper.upgradeSchemaForTesting(db, 37);
+
+    expect(await DatabaseHelper.getConversationSummaryCursor('conv-a'), 2);
+  });
+
+  test('automatic summary and cursor persist together', () async {
+    await DatabaseHelper.createSchemaForTesting(db);
+    await db.insert('conversations', {
+      'id': 'conv-a',
+      'character_id': 'char-a',
+      'created_at': '2026-07-18T09:00:00.000',
+      'updated_at': '2026-07-18T09:00:00.000',
+    });
+
+    final summaryId = await DatabaseHelper.insertContextSummaryAndAdvanceCursor(
+      characterId: 'char-a',
+      content: 'summary',
+      tokenCount: 10,
+      conversationId: 'conv-a',
+      cursorMessageId: 72,
+      sourceWindowId: 'ABC',
+    );
+
+    expect(summaryId, greaterThan(0));
+    expect(await DatabaseHelper.getConversationSummaryCursor('conv-a'), 72);
+    final rows = await db.query(
+      'context_summaries',
+      where: 'id = ?',
+      whereArgs: [summaryId],
+    );
+    expect(rows.single['source_conversation_id'], 'conv-a');
+    expect(rows.single['source_window_id'], 'ABC');
+  });
 
   test(
     'v37 removes same-day timeline duplicates and repairs ISO week',

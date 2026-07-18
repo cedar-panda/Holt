@@ -18,7 +18,7 @@ class DatabaseHelper {
   static Future<Database>? _dbInitFuture;
   static Future<Database> Function() _databaseInitializer = _initDatabase;
   static const String _dbName = 'yanci.db';
-  static const int _dbVersion = 37;
+  static const int _dbVersion = 38;
   static final Random _windowIdRandom = Random.secure();
 
   static Future<Database> get database async {
@@ -59,6 +59,7 @@ class DatabaseHelper {
         id TEXT PRIMARY KEY,
         character_id TEXT DEFAULT 'default',
         window_summary_id TEXT DEFAULT '',
+        summary_cursor_message_id INTEGER NOT NULL DEFAULT 0,
         pinned_static_summary TEXT,
         pinned_static_self_notes TEXT,
         title TEXT,
@@ -206,6 +207,9 @@ class DatabaseHelper {
         key TEXT,
         value TEXT NOT NULL,
         source_memory_id INTEGER,
+        source_message_id INTEGER,
+        source_message_ids TEXT NOT NULL DEFAULT '[]',
+        source_evidence TEXT NOT NULL DEFAULT '',
         week_group TEXT,
         confirmed INTEGER NOT NULL DEFAULT 1,
         created_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -272,6 +276,8 @@ class DatabaseHelper {
           'character_id, type, confirmed, week_group, created_at)',
       'CREATE INDEX IF NOT EXISTS idx_timeline_memory '
           'ON character_timeline(character_id, source_memory_id)',
+      'CREATE INDEX IF NOT EXISTS idx_timeline_source_message '
+          'ON character_timeline(character_id, source_message_id)',
     ];
     for (final statement in statements) {
       await db.execute(statement);
@@ -724,6 +730,74 @@ class DatabaseHelper {
     }
     if (oldVersion < 37) {
       await _migrateToV37(db);
+    }
+    if (oldVersion < 38) {
+      await _migrateToV38(db);
+    }
+  }
+
+  static Future<void> _migrateToV38(Database db) async {
+    final hasConversations = await _tableExists(db, 'conversations');
+    final hasMessages = await _tableExists(db, 'messages');
+    final hasSummaries = await _tableExists(db, 'context_summaries');
+    final hasTimeline = await _tableExists(db, 'character_timeline');
+    if (hasConversations) {
+      await _safeAddColumn(
+        db,
+        'conversations',
+        'summary_cursor_message_id',
+        'INTEGER NOT NULL DEFAULT 0',
+      );
+    }
+    if (hasTimeline) {
+      await _safeAddColumn(
+        db,
+        'character_timeline',
+        'source_message_id',
+        'INTEGER',
+      );
+      await _safeAddColumn(
+        db,
+        'character_timeline',
+        'source_message_ids',
+        "TEXT NOT NULL DEFAULT '[]'",
+      );
+      await _safeAddColumn(
+        db,
+        'character_timeline',
+        'source_evidence',
+        "TEXT NOT NULL DEFAULT ''",
+      );
+    }
+
+    // Existing summary blocks predate the explicit cursor. Recover the last
+    // message that was already covered by an automatic window summary. Manual
+    // summaries are deliberately excluded because they may cover an arbitrary
+    // user-selected excerpt rather than the conversation prefix.
+    if (hasConversations && hasMessages && hasSummaries) {
+      await db.execute('''
+        UPDATE conversations
+        SET summary_cursor_message_id = COALESCE((
+          SELECT MAX(message.id)
+          FROM messages AS message
+          WHERE message.conversation_id = conversations.id
+            AND message.created_at <= (
+              SELECT MAX(summary.created_at)
+              FROM context_summaries AS summary
+              WHERE summary.source_conversation_id = conversations.id
+                AND summary.content NOT LIKE '【手動摘要】%'
+                AND summary.content NOT LIKE '[Manual Summary]%'
+            )
+        ), 0)
+        WHERE COALESCE(summary_cursor_message_id, 0) = 0
+      ''');
+    }
+
+    if (hasTimeline) {
+      await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_timeline_source_message '
+        'ON character_timeline(character_id, source_message_id)',
+      );
     }
   }
 
@@ -1673,6 +1747,19 @@ class DatabaseHelper {
     return value.isEmpty ? null : value;
   }
 
+  static Future<int> getConversationSummaryCursor(String id) async {
+    final db = await database;
+    final rows = await db.query(
+      'conversations',
+      columns: ['summary_cursor_message_id'],
+      where: 'id = ?',
+      whereArgs: [id],
+      limit: 1,
+    );
+    if (rows.isEmpty) return 0;
+    return (rows.first['summary_cursor_message_id'] as int?) ?? 0;
+  }
+
   /// 讀取對話的靜態摘要 pin。null = 從未釘過（含遷移前的既有對話）；
   /// 空字串 = 出生時無前情、已釘為空。兩者要分開，別用 DEFAULT ''。
   static Future<String?> getConversationPinnedSummary(String id) async {
@@ -1852,6 +1939,23 @@ class DatabaseHelper {
       where: 'conversation_id = ? AND id >= ?',
       whereArgs: [conversationId, fromId],
       orderBy: 'created_at ASC, id ASC',
+    );
+    return maps.map((m) => Message.fromMap(m)).toList();
+  }
+
+  /// Window-summary source after the last successfully persisted cursor.
+  /// Message ids are global and monotonic, so the conversation predicate keeps
+  /// this query deterministic even when several windows are active together.
+  static Future<List<Message>> getMessagesAfterId(
+    String conversationId,
+    int afterId,
+  ) async {
+    final db = await database;
+    final maps = await db.query(
+      'messages',
+      where: 'conversation_id = ? AND id > ?',
+      whereArgs: [conversationId, afterId],
+      orderBy: 'id ASC',
     );
     return maps.map((m) => Message.fromMap(m)).toList();
   }
@@ -2864,6 +2968,42 @@ class DatabaseHelper {
       'content': content,
       'token_count': tokenCount,
       'created_at': DateTime.now().toIso8601String(),
+    });
+  }
+
+  /// Persist one automatic summary and its covered-message cursor atomically.
+  /// A crash can therefore neither save a summary without advancing the
+  /// cursor nor advance the cursor without saving its summary.
+  static Future<int> insertContextSummaryAndAdvanceCursor({
+    required String characterId,
+    required String content,
+    required int tokenCount,
+    required String conversationId,
+    required int cursorMessageId,
+    String sourceWindowId = '',
+  }) async {
+    final db = await database;
+    return db.transaction<int>((txn) async {
+      final id = await txn.insert('context_summaries', {
+        'character_id': characterId,
+        'source_window_id': sourceWindowId,
+        'source_conversation_id': conversationId,
+        'content': content,
+        'token_count': tokenCount,
+        'created_at': DateTime.now().toIso8601String(),
+      });
+      final changed = await txn.rawUpdate(
+        '''
+        UPDATE conversations
+        SET summary_cursor_message_id = MAX(summary_cursor_message_id, ?)
+        WHERE id = ?
+        ''',
+        [cursorMessageId, conversationId],
+      );
+      if (changed != 1) {
+        throw StateError('Conversation $conversationId does not exist');
+      }
+      return id;
     });
   }
 

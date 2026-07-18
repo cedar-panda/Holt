@@ -1,9 +1,13 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:developer' as developer;
 
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../memory/database.dart';
+import '../models/message.dart';
+import '../services/character_timeline_service.dart';
 import '../services/settings_manager.dart';
 import '../services/token_estimator.dart';
 import '../services/local_ai_service.dart';
@@ -14,10 +18,10 @@ import '../services/locale_strings.dart';
 /// 三層結構：
 /// - 關鍵詞層 ≤ 1800 tokens（最舊摘要壓縮而來，觸發召回用）
 /// - 摘要層   ≤ 3600 tokens（滾動更新，180-450t / block）
-/// - 原文區   最新 ≤ 6000 tokens（未壓縮，觸發壓縮的計數池）
+/// - 原文區   從成功游標起約 6000 tokens（邊界氣泡完整納入，可略超）
 ///
 /// 觸發：token >= 6000
-/// 鏈式：前次摘要 + 新 6000t → 小模型 → 新 block
+/// 鏈式：前次摘要 + 游標後完整氣泡批次 → 小模型 → 新 block
 class ContextCompressor {
   static const int triggerTokens = 6000;
   static const int minCompressTokens = 500;
@@ -35,43 +39,27 @@ class ContextCompressor {
   // snapshot, so share the in-flight result instead of summarising it twice.
   static final Map<String, Future<int>> _conversationCompressionFlights = {};
 
-  // ═══ 壓縮 prompt ═══
-  // 「錯亂事實」的兩大根源已針對性加規則：
-  //   1. 腦補——小模型愛推測動機、補因果 → 「只記明確發生的」
-  //   2. 傳話漂移——鏈式整合時每輪 paraphrase 舊摘要，多輪後事實變形
-  //      → 「前次摘要原樣保留措辭，只刪減與追加，不改寫」
+  // ═══ 壓縮 + 時間線候選 prompt ═══
+  // 詳細規格由本地驗證器與測試承擔；正式 prompt 只保留正向准入條件，
+  // 避免長禁令清單既燒 token，又把不希望出現的概念反覆提示給小模型。
   static const String _compressPromptZh = '''
-你是窗口摘要器。將以下對話內容壓縮成簡潔的摘要。
+整合【前次摘要】與帶有消息 ID、本地時間及發言者的【新對話內容】。
 
-規則：
-- 只記錄對話中明確發生的事：說過的話、做過的決定、發生的事件
-- 禁止推測動機、補充因果、解讀言外之意；對話裡沒有的一個字都不要寫
-- 不確定的細節寧可省略，不要寫成模糊斷言
-- 保留關鍵情節、情緒轉折、重要決定、人物關係變化
-- 保留具體的名字、地點、時間、數字；重要的話保留原詞
-- 去掉寒暄、重複、過渡語
-- 用第三人稱，簡潔客觀
-- 輸出 180-450 tokens（中文約 180-450 字）
-- 只輸出摘要內容，不要前綴說明
+summary：以第三人稱保留原文明確成立的重要事件、決定、關係變化及具體資訊；前次摘要只作必要刪減與追加。中文約 180～450 字。
 
-如果有前次摘要：其中的內容原樣保留措辭，只做刪減與追加，不要改寫換說法。
+timeline：只從【新對話內容】提取候選。候選須同時具備：原文明確表達事情已完成或生效；對後續對話有持續回憶價值；能確定 YYYY-MM-DD；source_message_ids 全部來自新對話；evidence 是來源消息中的原文片段；value 保留 evidence 的核心事件用詞。同一事件合併，按 occurred_on 從早到晚排列；任一條件缺失時不提取。
+
+只輸出合法 JSON：{"summary":"文字","timeline":[{"type":"event","source_message_ids":[1],"occurred_on":"YYYY-MM-DD","date_basis":"message_time|relative|explicit","value":"第三人稱事件","evidence":"原文"}]}。無候選時 timeline 為空陣列。
 ''';
 
   static const String _compressPromptEn = '''
-You are a context compressor. Compress the following conversation into a concise summary.
+Combine 【Previous Summary】 with 【New Conversation】, whose messages include ids, local timestamps, and speaker roles.
 
-Rules:
-- Record only what explicitly happened: things said, decisions made, events that occurred
-- Never infer motives, add causality, or read between the lines; write nothing that is not in the conversation
-- When a detail is uncertain, omit it rather than writing a vague claim
-- Keep key events, emotional shifts, important decisions, relationship changes
-- Keep specific names, places, times, numbers; keep important lines verbatim
-- Remove greetings, repetition, filler
-- Use third person, concise and objective
-- Output 180-450 tokens
-- Output only the summary, no prefix
+summary: In 180-450 tokens, retain source-grounded important events, decisions, relationship changes, and specifics in concise third person. Only trim or append to a previous summary where necessary.
 
-If a previous summary is provided: keep its wording as-is, only trim or append — do not rephrase.
+timeline: Extract candidates only from 【New Conversation】. Every candidate must describe an explicitly completed or effective event with lasting recall value, resolve to YYYY-MM-DD, cite only new source_message_ids, quote exact source text as evidence, and retain the evidence's core event wording in value. Merge one event and order occurred_on oldest to newest. Omit a candidate unless every condition is met.
+
+Output valid JSON only: {"summary":"text","timeline":[{"type":"event","source_message_ids":[1],"occurred_on":"YYYY-MM-DD","date_basis":"message_time|relative|explicit","value":"third-person event","evidence":"exact quote"}]}. Use an empty timeline array when none qualify.
 ''';
 
   /// 簡中輸出強制指令：僅 zh_CN 語系附加；zh_TW / en 返回空字串，
@@ -124,12 +112,12 @@ Rules:
 
   /// 執行壓縮（由觸發點調用）
   ///
-  /// [messages] — 需要壓縮的對話原文（最近 6000t）
+  /// [messages] — 需要壓縮的完整消息氣泡
   /// [characterId] — 角色 ID
   ///
   /// 返回新摘要塊的 token 數，0 表示跳過
   static Future<int> compress({
-    required List<Map<String, String>> messages,
+    required List<Message> messages,
     required String characterId,
     String? conversationId,
   }) {
@@ -184,17 +172,16 @@ Rules:
   }
 
   static Future<int> _compressQueued({
-    required List<Map<String, String>> messages,
+    required List<Message> messages,
     required String characterId,
     required String conversationId,
   }) async {
     if (messages.isEmpty) return 0;
 
-    // 構建原文
-    final rawText = messages
-        .map((m) => '[${m['role']}] ${m['content']}')
-        .join('\n');
-    final rawTokens = TokenEstimator.estimate(rawText);
+    final rawTokens = messages.fold<int>(
+      0,
+      (total, message) => total + TokenEstimator.estimate(message.text),
+    );
     if (rawTokens < minCompressTokens) return 0; // 太短不壓
 
     // 取前次摘要（最新一塊）
@@ -208,11 +195,13 @@ Rules:
 
     // 組裝輸入
     final isEn = L.locale == 'en';
-    final identity = await _buildIdentityContext(characterId);
+    final identity = await _loadSummaryIdentity(characterId);
+    final identityPrompt = identity.format(includePersona: false);
+    final rawText = messages.map(_formatSourceMessage).join('\n\n');
     final promptParts = <String>[
       isEn ? _compressPromptEn : _zhPrompt(_compressPromptZh),
     ];
-    if (identity.isNotEmpty) promptParts.add(identity);
+    if (identityPrompt.isNotEmpty) promptParts.add(identityPrompt);
     final prompt = promptParts.join('\n\n');
     final userContent = StringBuffer();
     if (prevSummary != null && prevSummary.isNotEmpty) {
@@ -224,10 +213,12 @@ Rules:
     userContent.write(rawText);
 
     // 調用小模型
-    final summaryText = await _callModel(
+    final response = await _callModel(
       systemPrompt: prompt,
       userMessage: userContent.toString(),
     );
+    final decoded = _decodeCompressionResponse(response);
+    final summaryText = decoded.summary;
     if (summaryText.isEmpty) return 0;
 
     final summaryTokens = TokenEstimator.estimate(summaryText);
@@ -238,14 +229,35 @@ Rules:
             sourceConversationId,
           );
 
-    // 存入摘要層
-    await DatabaseHelper.insertContextSummary(
+    // 候選事件先經本地端來源、證據與日期驗證。即使模型的 timeline
+    // 欄位有問題，也只會丟棄候選，不會污染已生成的摘要。
+    await CharacterTimelineService.storeSummaryCandidates(
       characterId: characterId,
-      content: summaryText,
-      tokenCount: summaryTokens,
-      sourceWindowId: sourceWindowId,
-      sourceConversationId: sourceConversationId,
+      candidates: decoded.timeline,
+      sourceMessages: messages,
     );
+
+    final cursorMessageId = messages
+        .map((message) => message.id ?? 0)
+        .fold<int>(0, (largest, id) => id > largest ? id : largest);
+    if (sourceConversationId.isNotEmpty && cursorMessageId > 0) {
+      await DatabaseHelper.insertContextSummaryAndAdvanceCursor(
+        characterId: characterId,
+        content: summaryText,
+        tokenCount: summaryTokens,
+        conversationId: sourceConversationId,
+        cursorMessageId: cursorMessageId,
+        sourceWindowId: sourceWindowId,
+      );
+    } else {
+      await DatabaseHelper.insertContextSummary(
+        characterId: characterId,
+        content: summaryText,
+        tokenCount: summaryTokens,
+        sourceWindowId: sourceWindowId,
+        sourceConversationId: sourceConversationId,
+      );
+    }
 
     // 旋轉對話的 window_summary_id，讓舊的 sourceWindowId 被包含進未來的 prompt
     if (sourceConversationId.isNotEmpty) {
@@ -268,35 +280,62 @@ Rules:
     int minTokenThreshold = triggerTokens,
     int? thresholdTokenCount,
   }) async {
-    final messages = await DatabaseHelper.getMessages(conversationId);
+    final cursor = await DatabaseHelper.getConversationSummaryCursor(
+      conversationId,
+    );
+    final messages = await DatabaseHelper.getMessagesAfterId(
+      conversationId,
+      cursor,
+    );
     if (messages.isEmpty) return 0;
 
-    // 估算 token
-    final allText = messages.map((m) => m.text).join('\n');
-    final totalTokens = TokenEstimator.estimate(allText);
+    final totalTokens = _estimateMessageTokens(messages);
     final comparableTokens = thresholdTokenCount ?? totalTokens;
     if (comparableTokens < minTokenThreshold) return 0; // 太短跳過
 
-    // 取最近一段觸發窗口內的消息；單條最新消息超過上限時仍保留它，
-    // 避免長訊息讓關窗摘要收成空窗口。
-    final recentMsgs = <Map<String, String>>[];
-    int accum = 0;
-    for (int i = messages.length - 1; i >= 0; i--) {
-      final t = TokenEstimator.estimate(messages[i].text);
-      if (accum + t > triggerTokenLimit && recentMsgs.isNotEmpty) break;
-      accum += t;
-      recentMsgs.insert(0, {
-        'role': messages[i].isUser ? 'user' : 'assistant',
-        'content': messages[i].text,
-      });
-      if (accum >= triggerTokenLimit) break;
-    }
+    final recentMsgs = selectWholeBubbleBatch(messages, triggerTokenLimit);
 
     return compress(
       messages: recentMsgs,
       characterId: characterId,
       conversationId: conversationId,
     );
+  }
+
+  /// Remaining text after the last successfully persisted summary cursor.
+  static Future<int> pendingTokenCount(String conversationId) async {
+    final cursor = await DatabaseHelper.getConversationSummaryCursor(
+      conversationId,
+    );
+    final messages = await DatabaseHelper.getMessagesAfterId(
+      conversationId,
+      cursor,
+    );
+    return _estimateMessageTokens(messages);
+  }
+
+  static int _estimateMessageTokens(List<Message> messages) =>
+      messages.fold<int>(
+        0,
+        (total, message) => total + TokenEstimator.estimate(message.text),
+      );
+
+  /// Select oldest pending messages until the token target is crossed. The
+  /// crossing bubble is included in full, so a 5,800t prefix followed by a
+  /// 700t bubble becomes a 6,500t batch rather than silently losing 700t.
+  static List<Message> selectWholeBubbleBatch(
+    List<Message> messages,
+    int tokenLimit,
+  ) {
+    if (messages.isEmpty) return const [];
+    final selected = <Message>[];
+    int total = 0;
+    for (final message in messages) {
+      selected.add(message);
+      total += TokenEstimator.estimate(message.text);
+      if (total >= tokenLimit) break;
+    }
+    return selected;
   }
 
   /// 載入摘要包。
@@ -788,6 +827,90 @@ Rules:
     return out;
   }
 
+  static _DecodedCompression _decodeCompressionResponse(String response) {
+    var text = response.trim();
+    final fence = RegExp(r'^```(?:json)?\s*([\s\S]*?)\s*```$').firstMatch(text);
+    if (fence != null) text = fence.group(1)!.trim();
+    if (text.isEmpty) return const _DecodedCompression('', []);
+
+    try {
+      final decoded = jsonDecode(text);
+      if (decoded is Map) {
+        final rawSummary = decoded['summary'];
+        final summary = rawSummary is String ? rawSummary.trim() : '';
+        final timeline = <TimelineEventCandidate>[];
+        final rawTimeline = decoded['timeline'];
+        if (rawTimeline is List) {
+          for (final raw in rawTimeline) {
+            if (raw is! Map || raw['type']?.toString() != 'event') continue;
+            final rawIds = raw['source_message_ids'];
+            if (rawIds is! List) continue;
+            final ids =
+                rawIds
+                    .map((id) => id is num ? id.toInt() : null)
+                    .whereType<int>()
+                    .where((id) => id > 0)
+                    .toSet()
+                    .toList()
+                  ..sort();
+            if (ids.isEmpty) continue;
+            final occurredOn = raw['occurred_on'];
+            final dateBasis = raw['date_basis'];
+            final value = raw['value'];
+            final evidence = raw['evidence'];
+            if (occurredOn is! String ||
+                dateBasis is! String ||
+                value is! String ||
+                evidence is! String) {
+              continue;
+            }
+            timeline.add(
+              TimelineEventCandidate(
+                sourceMessageIds: ids,
+                occurredOn: occurredOn,
+                dateBasis: dateBasis,
+                value: value,
+                evidence: evidence,
+              ),
+            );
+          }
+        }
+        return _DecodedCompression(summary, timeline);
+      }
+    } on FormatException {
+      // A weak/local model may wrap or slightly damage its JSON. Recover only
+      // the summary string when it is independently decodable; timeline data
+      // is never guessed from malformed output.
+    }
+
+    final summaryField = RegExp(
+      r'"summary"\s*:\s*("(?:\\.|[^"\\])*")',
+    ).firstMatch(text);
+    if (summaryField != null) {
+      try {
+        final summary = jsonDecode(summaryField.group(1)!) as String;
+        return _DecodedCompression(summary.trim(), const []);
+      } on FormatException {
+        return const _DecodedCompression('', []);
+      }
+    }
+    if (!text.startsWith('{') && !text.startsWith('[')) {
+      // Backward-compatible plain summary response. This keeps summaries
+      // working with models that ignore the new JSON envelope, while safely
+      // dropping timeline candidates.
+      return _DecodedCompression(text, const []);
+    }
+    return const _DecodedCompression('', []);
+  }
+
+  @visibleForTesting
+  static Map<String, Object> decodeCompressionResponseForTesting(
+    String response,
+  ) {
+    final decoded = _decodeCompressionResponse(response);
+    return {'summary': decoded.summary, 'timeline': decoded.timeline};
+  }
+
   static String _mergeKeywordText(String existing, String added) {
     final seen = <String>{};
     final merged = <String>[];
@@ -840,7 +963,9 @@ Rules:
     }
   }
 
-  static Future<String> _buildIdentityContext(String characterId) async {
+  static Future<_SummaryIdentity> _loadSummaryIdentity(
+    String characterId,
+  ) async {
     final prefs = await SharedPreferences.getInstance();
     var userName = (prefs.getString('user_profile_nickname') ?? '').trim();
     if (userName.isEmpty) userName = (await UserSettings.getUserName()).trim();
@@ -852,13 +977,61 @@ Rules:
     }
     final persona = (char?['description'] as String? ?? '').trim();
 
-    if (userName.isEmpty && roleName.isEmpty && persona.isEmpty) return '';
+    return _SummaryIdentity(
+      userName: userName,
+      characterName: roleName,
+      persona: persona,
+    );
+  }
+
+  static Future<String> _buildIdentityContext(String characterId) async {
+    final identity = await _loadSummaryIdentity(characterId);
+    return identity.format(includePersona: true);
+  }
+
+  static String _formatSourceMessage(Message message) {
+    final time = message.createdAt.isUtc
+        ? message.createdAt.toLocal()
+        : message.createdAt;
+    final localTime =
+        '${time.year.toString().padLeft(4, '0')}-'
+        '${time.month.toString().padLeft(2, '0')}-'
+        '${time.day.toString().padLeft(2, '0')} '
+        '${time.hour.toString().padLeft(2, '0')}:'
+        '${time.minute.toString().padLeft(2, '0')}';
+    final role = message.isUser ? 'user' : 'char';
+    return '[msg:${message.id ?? 0} | local_time:$localTime | '
+        'speaker:$role]\n${message.text}';
+  }
+}
+
+class _SummaryIdentity {
+  final String userName;
+  final String characterName;
+  final String persona;
+
+  const _SummaryIdentity({
+    required this.userName,
+    required this.characterName,
+    required this.persona,
+  });
+
+  String format({required bool includePersona}) {
+    if (userName.isEmpty &&
+        characterName.isEmpty &&
+        (!includePersona || persona.isEmpty)) {
+      return '';
+    }
 
     if (L.locale == 'en') {
       final parts = <String>[];
       if (userName.isNotEmpty) parts.add('User name: $userName');
-      if (roleName.isNotEmpty) parts.add('Character name: $roleName');
-      if (persona.isNotEmpty) parts.add('Character card/persona:\n$persona');
+      if (characterName.isNotEmpty) {
+        parts.add('Character name: $characterName');
+      }
+      if (includePersona && persona.isNotEmpty) {
+        parts.add('Character card/persona:\n$persona');
+      }
       return 'Identity anchors for disambiguation:\n${parts.join('\n')}';
     }
 
@@ -866,14 +1039,21 @@ Rules:
     if (userName.isNotEmpty) {
       parts.add('${L.pick(en: '', zhTW: 'user 名為：')}$userName');
     }
-    if (roleName.isNotEmpty) {
-      parts.add('${L.pick(en: '', zhTW: '模型扮演角色名為：')}$roleName');
+    if (characterName.isNotEmpty) {
+      parts.add('${L.pick(en: '', zhTW: '模型扮演角色名為：')}$characterName');
     }
-    if (persona.isNotEmpty) {
+    if (includePersona && persona.isNotEmpty) {
       parts.add('${L.pick(en: '', zhTW: '角色人設卡：')}\n$persona');
     }
     return '${L.pick(en: '', zhTW: '人物辨識錨點：')}\n${parts.join('\n')}';
   }
+}
+
+class _DecodedCompression {
+  final String summary;
+  final List<TimelineEventCandidate> timeline;
+
+  const _DecodedCompression(this.summary, this.timeline);
 }
 
 class _SummarySegment {

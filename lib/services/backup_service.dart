@@ -483,6 +483,7 @@ class BackupService {
         'window_summary_id': legacyConv['window_summary_id']?.toString() ?? '',
         'pinned_static_summary': legacyConv['pinned_static_summary']
             ?.toString(),
+        'summary_cursor_message_id': 0,
         'title': legacyConv['title']?.toString() ?? '',
         'is_starred': _sqliteBool(legacyConv['is_starred']),
         'created_at': _validIsoString(legacyConv['created_at']) ?? fallbackTime,
@@ -562,6 +563,10 @@ class BackupService {
       );
       conversation['window_summary_id'] =
           conversation['window_summary_id']?.toString() ?? '';
+      final rawSummaryCursor = conversation['summary_cursor_message_id'];
+      conversation['summary_cursor_message_id'] = rawSummaryCursor is int
+          ? rawSummaryCursor.clamp(0, 0x7fffffff)
+          : 0;
       conversation['pinned_static_self_notes'] =
           conversation.containsKey('pinned_static_self_notes')
           ? conversation['pinned_static_self_notes']?.toString() ?? ''
@@ -609,6 +614,24 @@ class BackupService {
           : Message.statusComplete;
       message['created_at'] =
           _validIsoString(message['created_at']) ?? fallbackTime;
+    }
+
+    // A forged or stale backup cursor must not skip messages that are present
+    // in the restored conversation. Clamp it to that conversation's real id
+    // range; old backups naturally remain at zero.
+    final maxMessageIdByConversation = <String, int>{};
+    for (final message in tables['messages']!) {
+      final conversationId = message['conversation_id']?.toString() ?? '';
+      final id = message['id'];
+      if (conversationId.isEmpty || id is! int) continue;
+      final previous = maxMessageIdByConversation[conversationId] ?? 0;
+      if (id > previous) maxMessageIdByConversation[conversationId] = id;
+    }
+    for (final conversation in tables['conversations']!) {
+      final conversationId = conversation['id']?.toString() ?? '';
+      final maxId = maxMessageIdByConversation[conversationId] ?? 0;
+      final cursor = conversation['summary_cursor_message_id'] as int? ?? 0;
+      conversation['summary_cursor_message_id'] = cursor.clamp(0, maxId);
     }
 
     for (final sticker in tables['stickers']!) {
@@ -729,6 +752,31 @@ class BackupService {
       row['character_id'] = characterId;
       row['value'] = value;
       row['confirmed'] = _sqliteBool(row['confirmed'], defaultValue: 1);
+      final sourceIds = <int>{};
+      final rawSourceIds = row['source_message_ids'];
+      dynamic decodedSourceIds = rawSourceIds;
+      if (rawSourceIds is String && rawSourceIds.trim().isNotEmpty) {
+        try {
+          decodedSourceIds = jsonDecode(rawSourceIds);
+        } catch (_) {
+          decodedSourceIds = const <dynamic>[];
+        }
+      }
+      if (decodedSourceIds is List) {
+        for (final item in decodedSourceIds) {
+          if (item is int && item > 0) sourceIds.add(item);
+        }
+      }
+      final primarySourceId = row['source_message_id'];
+      if (primarySourceId is int && primarySourceId > 0) {
+        sourceIds.add(primarySourceId);
+      }
+      final sortedSourceIds = sourceIds.toList()..sort();
+      row['source_message_id'] = sortedSourceIds.isEmpty
+          ? null
+          : sortedSourceIds.first;
+      row['source_message_ids'] = jsonEncode(sortedSourceIds);
+      row['source_evidence'] = row['source_evidence']?.toString() ?? '';
       if (createdAt != null) row['week_group'] = isoWeekGroup(createdAt);
 
       final key =

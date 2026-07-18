@@ -1,8 +1,27 @@
-import 'package:flutter/foundation.dart' show debugPrint, visibleForTesting;
+import 'dart:convert';
+
+import 'package:flutter/foundation.dart' show debugPrint;
 
 import '../memory/database.dart';
+import '../models/message.dart';
 import '../utils/iso_week.dart';
 import 'locale_strings.dart';
+
+class TimelineEventCandidate {
+  final List<int> sourceMessageIds;
+  final String occurredOn;
+  final String dateBasis;
+  final String value;
+  final String evidence;
+
+  const TimelineEventCandidate({
+    required this.sourceMessageIds,
+    required this.occurredOn,
+    required this.dateBasis,
+    required this.value,
+    required this.evidence,
+  });
+}
 
 /// ═══════════════════════════════════════════════
 /// 角色生活化 Timeline 服務
@@ -12,107 +31,16 @@ import 'locale_strings.dart';
 /// - state（狀態變更）：髮型、住所、健康等，key UNIQUE 覆蓋
 /// - event（一次性事件）：看電影、吃飯、吵架，7天分段，自動清理
 ///
-/// 數據來源：掃描模型回覆中的關鍵詞（被動），不是模型主動打標籤。
+/// 事件來源：窗口摘要模型回傳候選，本服務核對來源消息、原文證據與
+/// 發生日期後才落庫。舊的回覆關鍵詞掃描已移除，避免只因提到「吵架」
+/// 就誤記為真的吵架。
 /// 注入方式：每個對話框第一條消息附帶狀態快照。
 ///
 class CharacterTimelineService {
   static bool _tableEnsured = false;
 
   // ─────────────────────────────────────────────
-  // A. 關鍵詞表
-  // ─────────────────────────────────────────────
-
-  /// 狀態變更關鍵詞 → (key, 默認 value 提取規則)
-  /// 只識別 char 的回覆，不掃 user 的消息
-  static const Map<String, String> kStateKeywords = {
-    // 外觀 — 髮型
-    '剪頭髮': '髮型', '剪髮': '髮型', '理髮': '髮型', '修剪頭髮': '髮型',
-    '染了頭髮': '髮型', '染頭髮': '髮型', '染髮': '髮型', '燙髮': '髮型',
-    '燙了頭髮': '髮型',
-    // 外觀 — 美甲
-    '做了美甲': '美甲', '做美甲': '美甲',
-    // 外觀 — 鬍子
-    '剃了鬍子': '鬍子', '剃鬚': '鬍子',
-    // 生活 — 住所
-    '搬家': '住所', '搬新家': '住所', '換了間屋子': '住所',
-    // 生活 — 工作
-    '剛換工作': '工作', '換工作': '工作', '換了工作': '工作',
-    // 生活 — 寵物
-    '養了動物': '寵物', '養了貓': '寵物', '養了狗': '寵物',
-    // 健康（模型自主提及時記錄）
-    '感冒': '健康', '發燒': '健康', '頭痛': '健康', '疲勞': '健康',
-    '失眠': '健康', '不舒服': '健康', '生病': '健康', '咳嗽': '健康',
-    '過敏': '健康', '肚子痛': '健康', '拉肚子': '健康',
-  };
-
-  /// 健康好轉關鍵詞（觸發時覆蓋健康 key 為「正常」）
-  /// 「好了」已移除——「好了好了別鬧」這種日常語氣誤觸率太高，
-  /// 一句撒嬌就把感冒治好了。
-  static const List<String> kHealthRecoveryKeywords = [
-    '好多了',
-    '恢復了',
-    '痊癒',
-    '不咳了',
-    '退燒了',
-    '精力旺盛',
-    '精神很好',
-    '睡得好',
-  ];
-
-  /// 一次性事件關鍵詞
-  /// 「出門」「回家」已移除——聊天裡出現頻率太高，事件表全是垃圾條目。
-  static const List<String> kEventKeywords = [
-    '吵架',
-    '看電影',
-    '去吃飯',
-    '商場購物',
-    '逛街',
-    '約會',
-    '旅行',
-    '聚餐',
-  ];
-
-  /// Mentions of an old, hypothetical, cancelled, or future event must not be
-  /// stamped onto the timeline as if they happened at reply time.
-  static const List<String> _nonOccurrenceMarkers = [
-    '上次',
-    '那次',
-    '之前',
-    '以前',
-    '曾經',
-    '當時',
-    '記得',
-    '回想',
-    '回憶',
-    '去年',
-    '前年',
-    '明天',
-    '後天',
-    '下次',
-    '改天',
-    '以後',
-    '將來',
-    '想去',
-    '想看',
-    '要不要',
-    '好不好',
-    '嗎',
-    '如果',
-    '假如',
-    '打算',
-    '準備去',
-    '沒去',
-    '沒有去',
-    '沒看',
-    '不去',
-    '不想',
-    '不是',
-    '取消',
-    '別去',
-  ];
-
-  // ─────────────────────────────────────────────
-  // B. 數據庫
+  // A. 數據庫
   // ─────────────────────────────────────────────
 
   static Future<void> _ensureTable() async {
@@ -126,6 +54,9 @@ class CharacterTimelineService {
         key TEXT,
         value TEXT NOT NULL,
         source_memory_id INTEGER,
+        source_message_id INTEGER,
+        source_message_ids TEXT NOT NULL DEFAULT '[]',
+        source_evidence TEXT NOT NULL DEFAULT '',
         week_group TEXT,
         confirmed INTEGER NOT NULL DEFAULT 1,
         created_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -151,120 +82,421 @@ class CharacterTimelineService {
   }
 
   // ─────────────────────────────────────────────
-  // C. 掃描模型回覆
+  // B. 摘要模型候選驗證
   // ─────────────────────────────────────────────
 
-  /// 掃描 char 回覆中的關鍵詞，自動歸檔
-  /// 返回新增/更新的條數
-  static Future<int> scanReply(
-    String characterId,
-    String charReply, {
-    @visibleForTesting DateTime? now,
+  /// 摘要模型只負責提出候選；本地端仍須逐項通過來源、證據、日期和
+  /// 發生語態檢查。任何格式或語義可疑的項目都直接略過，不阻斷摘要。
+  static Future<int> storeSummaryCandidates({
+    required String characterId,
+    required List<TimelineEventCandidate> candidates,
+    required List<Message> sourceMessages,
   }) async {
     await _ensureTable();
-    int count = 0;
-    final scanTime = now ?? DateTime.now();
+    if (candidates.isEmpty || sourceMessages.isEmpty) return 0;
 
-    // 1. 檢查健康好轉——只在「本來就有不正常的健康記錄」時才觸發，
-    //    否則健康詞和恢復詞同回覆出現時會互相打架
-    bool healthRecovered = false;
-    final states = await getStates(characterId);
-    final currentStates = <String, String>{
-      for (final state in states)
-        if (state['key'] is String && state['value'] is String)
-          state['key'] as String: state['value'] as String,
+    final sourceById = <int, Message>{
+      for (final message in sourceMessages)
+        if (message.id != null) message.id!: message,
     };
-    final healthRows = states.where((s) => s['key'] == '健康').toList();
-    final currentHealth = healthRows.isEmpty
-        ? null
-        : healthRows.first['value'] as String?;
-    if (currentHealth != null && currentHealth != '正常') {
-      for (final kw in kHealthRecoveryKeywords) {
-        if (charReply.contains(kw)) {
-          await upsertState(characterId, '健康', '正常');
-          currentStates['健康'] = '正常';
-          healthRecovered = true;
-          count++;
-          break;
-        }
-      }
+    final validated = <_ValidatedTimelineEvent>[];
+    for (final candidate in candidates) {
+      final event = _validateCandidate(candidate, sourceById);
+      if (event != null) validated.add(event);
     }
+    validated.sort((a, b) {
+      final dateOrder = a.occurredAt.compareTo(b.occurredAt);
+      if (dateOrder != 0) return dateOrder;
+      return a.sourceMessageIds.first.compareTo(b.sourceMessageIds.first);
+    });
+    if (validated.isEmpty) return 0;
 
-    // 2. 檢查狀態變更
-    // 舊版用 count > 0 判斷「健康已處理」——count 可能來自任何狀態，
-    // 會誤吞真正的健康記錄。改用專屬 flag。
-    final matchedStates = <String, String>{};
-    for (final entry in kStateKeywords.entries) {
-      if (charReply.contains(entry.key)) {
-        if (entry.value == '健康' && healthRecovered) continue;
-        final previous = matchedStates[entry.value];
-        if (previous == null || entry.key.length > previous.length) {
-          matchedStates[entry.value] = entry.key;
-        }
-      }
-    }
-    for (final match in matchedStates.entries) {
-      final value = _extractValue(match.value, match.key, charReply);
-      if (currentStates[match.key] == value) continue;
-      await upsertState(characterId, match.key, value);
-      currentStates[match.key] = value;
-      count++;
-    }
-
-    // 3. 檢查一次性事件。只記實際發生的句子；回憶、提議、否定與
-    //    未來安排不再錯蓋成「今天發生」。同事件同日由 DB 再做冪等保護。
-    for (final kw in kEventKeywords) {
-      final occurredAt = _eventOccurrenceTime(charReply, kw, scanTime);
-      if (occurredAt != null) {
-        final inserted = await addEvent(
-          characterId,
-          kw,
-          occurredAt: occurredAt,
+    final db = await DatabaseHelper.database;
+    return db.transaction<int>((txn) async {
+      int inserted = 0;
+      for (final event in validated) {
+        final dayStart = DateTime(
+          event.occurredAt.year,
+          event.occurredAt.month,
+          event.occurredAt.day,
         );
-        if (!inserted) continue;
-        count++;
-      }
-    }
+        final dayEnd = dayStart.add(const Duration(days: 1));
+        final existing = await txn.query(
+          'character_timeline',
+          where:
+              "character_id = ? AND type = 'event' "
+              'AND created_at >= ? AND created_at < ?',
+          whereArgs: [
+            characterId,
+            dayStart.toIso8601String(),
+            dayEnd.toIso8601String(),
+          ],
+          orderBy: 'id ASC',
+        );
+        Map<String, Object?>? duplicate;
+        for (final row in existing) {
+          if (_sameEventValue(row['value']?.toString() ?? '', event.value)) {
+            duplicate = row;
+            break;
+          }
+        }
+        if (duplicate != null) {
+          final mergedIds = <int>{
+            ..._decodeSourceIds(duplicate['source_message_ids']),
+            ...event.sourceMessageIds,
+          }.toList()..sort();
+          await txn.update(
+            'character_timeline',
+            {
+              'source_message_id': mergedIds.first,
+              'source_message_ids': jsonEncode(mergedIds),
+              if ((duplicate['source_evidence']?.toString() ?? '').isEmpty)
+                'source_evidence': event.evidence,
+            },
+            where: 'id = ?',
+            whereArgs: [duplicate['id']],
+          );
+          continue;
+        }
 
-    return count;
+        final now = DateTime.now().toIso8601String();
+        final id = await txn.rawInsert(
+          '''
+          INSERT OR IGNORE INTO character_timeline
+            (character_id, type, key, value, source_message_id,
+             source_message_ids, source_evidence, week_group, confirmed,
+             created_at, updated_at)
+          VALUES (?, 'event', NULL, ?, ?, ?, ?, ?, 1, ?, ?)
+          ''',
+          [
+            characterId,
+            event.value,
+            event.sourceMessageIds.first,
+            jsonEncode(event.sourceMessageIds),
+            event.evidence,
+            isoWeekGroup(event.occurredAt),
+            event.occurredAt.toIso8601String(),
+            now,
+          ],
+        );
+        if (id != 0) inserted++;
+      }
+      return inserted;
+    });
   }
 
-  static DateTime? _eventOccurrenceTime(
-    String reply,
-    String keyword,
-    DateTime now,
+  static _ValidatedTimelineEvent? _validateCandidate(
+    TimelineEventCandidate candidate,
+    Map<int, Message> sourceById,
   ) {
-    final sentencePattern = RegExp(
-      '[^。！？!?；;，,\\n]*${RegExp.escape(keyword)}[^。！？!?；;，,\\n]*',
+    final ids = candidate.sourceMessageIds.toSet().toList()..sort();
+    if (ids.isEmpty || ids.any((id) => !sourceById.containsKey(id))) {
+      return null;
+    }
+
+    final value = candidate.value.trim();
+    final evidence = candidate.evidence.trim();
+    if (value.length < 2 || value.length > 120 || value.contains('\n')) {
+      return null;
+    }
+    if (evidence.length < 2 ||
+        evidence.length > 240 ||
+        value.contains('<') ||
+        value.contains('>')) {
+      return null;
+    }
+
+    final evidenceMessages = ids
+        .map((id) => sourceById[id]!)
+        .where((message) => message.text.contains(evidence))
+        .toList();
+    if (evidenceMessages.isEmpty) return null;
+
+    final occurredDate = _parseStrictDate(candidate.occurredOn);
+    if (occurredDate == null) return null;
+    final basis = candidate.dateBasis.trim();
+    if (!const {'message_time', 'relative', 'explicit'}.contains(basis)) {
+      return null;
+    }
+    if (_hasNonOccurrenceCue(evidence, basis) ||
+        !_valueGroundedInEvidence(value, evidence)) {
+      return null;
+    }
+
+    DateTime? anchor;
+    for (final message in evidenceMessages) {
+      final local = message.createdAt.isUtc
+          ? message.createdAt.toLocal()
+          : message.createdAt;
+      final expected = switch (basis) {
+        'message_time' => DateTime(local.year, local.month, local.day),
+        'relative' => _relativeDateFromEvidence(evidence, local),
+        'explicit' => _explicitDateFromEvidence(evidence, local),
+        _ => null,
+      };
+      if (expected != null && _sameDay(expected, occurredDate)) {
+        anchor = local;
+        break;
+      }
+    }
+    if (anchor == null) return null;
+
+    // The local bubble timestamp is the upper bound for a completed event.
+    // This also catches a model turning an upcoming dated plan into history.
+    final latestSourceDate = ids
+        .map((id) {
+          final time = sourceById[id]!.createdAt;
+          return time.isUtc ? time.toLocal() : time;
+        })
+        .reduce((a, b) => a.isAfter(b) ? a : b);
+    if (occurredDate.isAfter(
+      DateTime(
+        latestSourceDate.year,
+        latestSourceDate.month,
+        latestSourceDate.day,
+      ),
+    )) {
+      return null;
+    }
+
+    final occurredAt = basis == 'message_time'
+        ? DateTime(
+            occurredDate.year,
+            occurredDate.month,
+            occurredDate.day,
+            anchor.hour,
+            anchor.minute,
+            anchor.second,
+          )
+        : DateTime(occurredDate.year, occurredDate.month, occurredDate.day, 12);
+    return _ValidatedTimelineEvent(
+      sourceMessageIds: ids,
+      occurredAt: occurredAt,
+      value: value,
+      evidence: evidence,
     );
-    for (final match in sentencePattern.allMatches(reply)) {
-      final sentence = match.group(0)?.trim() ?? '';
-      if (sentence.isEmpty) continue;
-      if (_nonOccurrenceMarkers.any(sentence.contains)) continue;
-      if (sentence.contains('前天')) {
-        return now.subtract(const Duration(days: 2));
-      }
-      if (sentence.contains('昨天')) {
-        return now.subtract(const Duration(days: 1));
-      }
-      return now;
+  }
+
+  static DateTime? _parseStrictDate(String raw) {
+    final match = RegExp(r'^(\d{4})-(\d{2})-(\d{2})$').firstMatch(raw.trim());
+    if (match == null) return null;
+    final year = int.parse(match.group(1)!);
+    final month = int.parse(match.group(2)!);
+    final day = int.parse(match.group(3)!);
+    final parsed = DateTime(year, month, day);
+    return parsed.year == year && parsed.month == month && parsed.day == day
+        ? parsed
+        : null;
+  }
+
+  static DateTime? _relativeDateFromEvidence(String evidence, DateTime anchor) {
+    final day = DateTime(anchor.year, anchor.month, anchor.day);
+    if (evidence.contains('前天') ||
+        evidence.toLowerCase().contains('day before yesterday')) {
+      return day.subtract(const Duration(days: 2));
+    }
+    if (evidence.contains('昨天') ||
+        evidence.toLowerCase().contains('yesterday')) {
+      return day.subtract(const Duration(days: 1));
+    }
+    if (evidence.contains('今天') || evidence.toLowerCase().contains('today')) {
+      return day;
     }
     return null;
   }
 
-  /// 從上下文提取更具體的值（簡單啟發式）
-  static String _extractValue(String keyword, String key, String text) {
-    // 對於健康類，直接用關鍵詞
-    if (key == '健康') return keyword;
+  static DateTime? _explicitDateFromEvidence(String evidence, DateTime anchor) {
+    final full = RegExp(
+      r'(\d{4})\s*(?:年|[-/.])\s*(\d{1,2})\s*(?:月|[-/.])\s*(\d{1,2})\s*日?',
+    ).firstMatch(evidence);
+    if (full != null) {
+      return _checkedDate(
+        int.parse(full.group(1)!),
+        int.parse(full.group(2)!),
+        int.parse(full.group(3)!),
+      );
+    }
+    final monthDay = RegExp(
+      r'(?<!\d)(\d{1,2})\s*(?:月|[/.-])\s*(\d{1,2})\s*日?',
+    ).firstMatch(evidence);
+    if (monthDay == null) return null;
+    return _checkedDate(
+      anchor.year,
+      int.parse(monthDay.group(1)!),
+      int.parse(monthDay.group(2)!),
+    );
+  }
 
-    // 對於其他類，嘗試提取關鍵詞附近的描述
-    // 簡單做法：用關鍵詞本身作為值
-    // TODO: 可以用小模型提取更精確的描述
-    return keyword;
+  static DateTime? _checkedDate(int year, int month, int day) {
+    final parsed = DateTime(year, month, day);
+    return parsed.year == year && parsed.month == month && parsed.day == day
+        ? parsed
+        : null;
+  }
+
+  static bool _sameDay(DateTime a, DateTime b) =>
+      a.year == b.year && a.month == b.month && a.day == b.day;
+
+  static bool _hasNonOccurrenceCue(String evidence, String basis) {
+    final normalized = evidence.toLowerCase();
+    const cues = [
+      '如果',
+      '假如',
+      '要是',
+      '要不要',
+      '打算',
+      '準備',
+      '准备',
+      '希望',
+      '想要',
+      '想去',
+      '取消',
+      '不要',
+      '別',
+      '别',
+      '沒有',
+      '没有',
+      '沒',
+      '未曾',
+      '不是',
+      '夢到',
+      '梦到',
+      '夢見',
+      '梦见',
+      '明天',
+      '後天',
+      '后天',
+      '下次',
+      '改天',
+      '將來',
+      '将来',
+      'if ',
+      'would ',
+      'plan to',
+      'want to',
+      'hope to',
+      "didn't",
+      'did not',
+      'do not',
+      "don't",
+      'never ',
+      'dreamed',
+      'tomorrow',
+      'next time',
+    ];
+    if (cues.any(normalized.contains)) return true;
+    if (basis == 'message_time') {
+      const vaguePast = [
+        '上次',
+        '之前',
+        '以前',
+        '曾經',
+        '曾经',
+        '當時',
+        '当时',
+        'last time',
+        'before',
+        'used to',
+      ];
+      if (vaguePast.any(normalized.contains)) return true;
+      if (normalized.endsWith('?') || normalized.endsWith('？')) return true;
+    }
+    return false;
+  }
+
+  /// The model may cite a real sentence but attach an unrelated event label.
+  /// Require at least one meaningful CJK bigram or Latin word to be shared by
+  /// the concise value and its verbatim evidence. The prompt asks the model to
+  /// retain the source event's core wording, making this a deterministic guard
+  /// against mappings such as evidence="做愛" → value="吵架".
+  static bool _valueGroundedInEvidence(String value, String evidence) {
+    String compact(String input) => input.toLowerCase().replaceAll(
+      RegExp(r'[\s，。！？、,.!?;；:：…「」『』（）()【】\[\]_\-—]'),
+      '',
+    );
+    final compactValue = compact(value);
+    final compactEvidence = compact(evidence);
+    const genericPairs = {
+      '兩人',
+      '两人',
+      '二人',
+      '我們',
+      '我们',
+      '你們',
+      '你们',
+      '他們',
+      '他们',
+      '她們',
+      '她们',
+      '雙方',
+      '双方',
+      '彼此',
+      '角色',
+      '用戶',
+      '用户',
+      '對方',
+      '对方',
+      '一起',
+      '發生',
+      '发生',
+      '正式',
+      '今天',
+      '昨天',
+      '前天',
+      '剛剛',
+      '刚刚',
+    };
+    for (int i = 0; i + 1 < compactValue.length; i++) {
+      final pair = compactValue.substring(i, i + 2);
+      if (!genericPairs.contains(pair) &&
+          RegExp(r'[\u3400-\u9fff]').hasMatch(pair) &&
+          compactEvidence.contains(pair)) {
+        return true;
+      }
+    }
+
+    final valueWords = value
+        .toLowerCase()
+        .split(RegExp(r'[^a-z0-9]+'))
+        .where((word) => word.length >= 4)
+        .toSet();
+    final evidenceWords = evidence
+        .toLowerCase()
+        .split(RegExp(r'[^a-z0-9]+'))
+        .where((word) => word.length >= 4)
+        .toSet();
+    return valueWords.intersection(evidenceWords).isNotEmpty;
+  }
+
+  static List<int> _decodeSourceIds(Object? raw) {
+    dynamic decoded = raw;
+    if (raw is String) {
+      try {
+        decoded = jsonDecode(raw);
+      } catch (_) {
+        return const [];
+      }
+    }
+    if (decoded is! List) return const [];
+    return decoded.whereType<int>().where((id) => id > 0).toList();
+  }
+
+  static bool _sameEventValue(String a, String b) {
+    String normalize(String value) => value.toLowerCase().replaceAll(
+      RegExp(r'[\s，。！？、,.!?;；:：…「」『』（）()【】\[\]_\-—]'),
+      '',
+    );
+    final left = normalize(a);
+    final right = normalize(b);
+    if (left.isEmpty || right.isEmpty) return false;
+    if (left == right) return true;
+    final shorter = left.length <= right.length ? left : right;
+    final longer = left.length > right.length ? left : right;
+    return shorter.length >= 4 && longer.contains(shorter);
   }
 
   // ─────────────────────────────────────────────
-  // D. CRUD
+  // C. CRUD
   // ─────────────────────────────────────────────
 
   /// 插入或更新狀態（state 類，key UNIQUE）
@@ -370,6 +602,7 @@ class CharacterTimelineService {
     DateTime? from,
     DateTime? until,
     int limit = 5,
+    bool ascending = false,
   }) async {
     await _ensureTable();
     final db = await DatabaseHelper.database;
@@ -396,7 +629,9 @@ class CharacterTimelineService {
       'character_timeline',
       where: clauses.join(' AND '),
       whereArgs: args,
-      orderBy: 'created_at DESC, id DESC',
+      orderBy: ascending
+          ? 'created_at ASC, id ASC'
+          : 'created_at DESC, id DESC',
       limit: limit,
     );
   }
@@ -592,4 +827,18 @@ class CharacterTimelineService {
       orderBy: 'created_at DESC',
     );
   }
+}
+
+class _ValidatedTimelineEvent {
+  final List<int> sourceMessageIds;
+  final DateTime occurredAt;
+  final String value;
+  final String evidence;
+
+  const _ValidatedTimelineEvent({
+    required this.sourceMessageIds,
+    required this.occurredAt,
+    required this.value,
+    required this.evidence,
+  });
 }

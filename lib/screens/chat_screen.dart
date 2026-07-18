@@ -1028,32 +1028,13 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _restoreTokensSinceSummary() async {
     try {
-      final p = await SharedPreferences.getInstance();
-      final count = p.getInt(_tokensSinceSummaryKey);
-      if (count != null) {
-        if (mounted) {
-          setState(() {
-            _tokensSinceSummary = count;
-          });
-        }
-        return;
-      }
-
-      final allMsgs = await DatabaseHelper.getMessages(widget.conversationId);
-      final summaries = await DatabaseHelper.getLatestContextSummaries(
-        _activeCharacterId,
-        limit: 1,
+      // The DB cursor is authoritative. The old timestamp comparison used the
+      // latest summary of the whole character, so one window could make
+      // another window appear fully summarized. SharedPreferences remains a
+      // quick persisted mirror, never the source of truth.
+      final calcCount = await ContextCompressor.pendingTokenCount(
+        widget.conversationId,
       );
-      DateTime? lastTime;
-      if (summaries.isNotEmpty) {
-        lastTime = DateTime.tryParse(summaries.first['created_at']);
-      }
-      int calcCount = 0;
-      for (final m in allMsgs) {
-        if (lastTime == null || m.createdAt.isAfter(lastTime)) {
-          calcCount += TokenEstimator.estimate(m.text);
-        }
-      }
       if (mounted) {
         setState(() {
           _tokensSinceSummary = calcCount;
@@ -1129,8 +1110,14 @@ class _ChatScreenState extends State<ChatScreen> {
                 thresholdTokenCount: _tokensSinceSummary,
               );
               if (compressedTokens > 0) {
+                final pendingTokens = await ContextCompressor.pendingTokenCount(
+                  convId,
+                );
                 final p = await SharedPreferences.getInstance();
-                await p.setInt('conversation:$convId:tokensSinceSummary', 0);
+                await p.setInt(
+                  'conversation:$convId:tokensSinceSummary',
+                  pendingTokens,
+                );
               }
             } catch (e) {
               debugPrint('Background compression failed: $e');
@@ -1659,23 +1646,14 @@ class _ChatScreenState extends State<ChatScreen> {
     final convId = conversationId ?? widget.conversationId;
     final charId = characterId ?? _activeCharacterId;
     final tokenLimit = triggerTokenLimit ?? ContextCompressor.triggerTokens;
-    final messages = await DatabaseHelper.getMessages(convId);
+    final cursor = await DatabaseHelper.getConversationSummaryCursor(convId);
+    final messages = await DatabaseHelper.getMessagesAfterId(convId, cursor);
     if (messages.isEmpty) return 0;
 
-    // 取最近一段觸發窗口內的消息；單條最新消息超過上限時仍保留它，
-    // 避免長訊息讓摘要觸發後收成空窗口。
-    final recentMsgs = <Map<String, String>>[];
-    int accum = 0;
-    for (int i = messages.length - 1; i >= 0; i--) {
-      final t = TokenEstimator.estimate(messages[i].text);
-      if (accum + t > tokenLimit && recentMsgs.isNotEmpty) break;
-      accum += t;
-      recentMsgs.insert(0, {
-        'role': messages[i].isUser ? 'user' : 'assistant',
-        'content': messages[i].text,
-      });
-      if (accum >= tokenLimit) break;
-    }
+    final recentMsgs = ContextCompressor.selectWholeBubbleBatch(
+      messages,
+      tokenLimit,
+    );
 
     if (recentMsgs.isEmpty) return 0;
 
@@ -1904,7 +1882,9 @@ class _ChatScreenState extends State<ChatScreen> {
       triggerTokenLimit: triggerTokenLimit,
     );
     if (compressedTokens > 0) {
-      _tokensSinceSummary = 0;
+      _tokensSinceSummary = await ContextCompressor.pendingTokenCount(
+        conversationId ?? widget.conversationId,
+      );
       await _saveTokensSinceSummary();
     }
   }
@@ -2846,12 +2826,9 @@ class _ChatScreenState extends State<ChatScreen> {
         processedText,
         characterId: _activeCharacterId,
       );
-      // ═══ 角色生活化：<life_fix> 處理 + 關鍵詞掃描 ═══
+      // ═══ 角色生活化：只處理明確 <life_fix>；事件由摘要模型候選
+      //     經本地驗證後寫入，不再掃回覆關鍵詞。═══
       processedText = await CharacterTimelineService.processLifeFix(
-        _activeCharacterId,
-        processedText,
-      );
-      await CharacterTimelineService.scanReply(
         _activeCharacterId,
         processedText,
       );
@@ -3829,12 +3806,8 @@ class _ChatScreenState extends State<ChatScreen> {
         processedText,
         characterId: _activeCharacterId,
       );
-      // ═══ 角色生活化：<life_fix> 處理 + 關鍵詞掃描 ═══
+      // ═══ 角色生活化：只處理明確 <life_fix>；時間線事件不掃關鍵詞。═══
       processedText = await CharacterTimelineService.processLifeFix(
-        _activeCharacterId,
-        processedText,
-      );
-      await CharacterTimelineService.scanReply(
         _activeCharacterId,
         processedText,
       );

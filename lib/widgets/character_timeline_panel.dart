@@ -94,6 +94,7 @@ class _CharacterTimelinePanelState extends State<CharacterTimelinePanel> {
       from: monthStart,
       until: monthEnd,
       limit: 200,
+      ascending: true,
     );
 
     final nodes = <_TimelineNode>[];
