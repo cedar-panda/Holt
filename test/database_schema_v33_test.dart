@@ -156,6 +156,70 @@ void main() {
     expect(await DatabaseHelper.getConversationSummaryCursor('conv-a'), 2);
   });
 
+  test(
+    'v35 database reaches v38 before indexes use new timeline columns',
+    () async {
+      await DatabaseHelper.createSchemaForTesting(db);
+
+      // Recreate the timeline table exactly as it existed before v38. The
+      // previous test suite upgraded a fresh v38 schema and therefore missed
+      // the ordering failure that only happened on a real device.
+      await db.execute('DROP TABLE character_timeline');
+      await db.execute('''
+        CREATE TABLE character_timeline (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          character_id TEXT NOT NULL,
+          type TEXT NOT NULL DEFAULT 'state',
+          key TEXT,
+          value TEXT NOT NULL,
+          source_memory_id INTEGER,
+          week_group TEXT,
+          confirmed INTEGER NOT NULL DEFAULT 1,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+      ''');
+      await db.insert('character_timeline', {
+        'character_id': 'char-a',
+        'type': 'event',
+        'value': '保留的舊事件',
+        'week_group': '2026-W29',
+        'created_at': '2026-07-18T12:00:00.000',
+        'updated_at': '2026-07-18T12:00:00.000',
+      });
+      await db.insert('conversations', {
+        'id': 'legacy-conversation',
+        'character_id': 'char-a',
+        'created_at': '2026-07-18T12:00:00.000',
+        'updated_at': '2026-07-18T12:00:00.000',
+      });
+      await db.insert('messages', {
+        'conversation_id': 'legacy-conversation',
+        'character_id': 'char-a',
+        'text': '不能遺失的聊天紀錄',
+        'is_user': 1,
+        'created_at': '2026-07-18T12:01:00.000',
+      });
+
+      await DatabaseHelper.upgradeSchemaForTesting(db, 35);
+
+      expect(
+        await _columnNames(db, 'character_timeline'),
+        containsAll([
+          'source_message_id',
+          'source_message_ids',
+          'source_evidence',
+        ]),
+      );
+      expect(
+        await _objectNames(db, 'index'),
+        contains('idx_timeline_source_message'),
+      );
+      expect((await db.query('messages')).single['text'], '不能遺失的聊天紀錄');
+      expect((await db.query('character_timeline')).single['value'], '保留的舊事件');
+    },
+  );
+
   test('automatic summary and cursor persist together', () async {
     await DatabaseHelper.createSchemaForTesting(db);
     await db.insert('conversations', {

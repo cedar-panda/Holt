@@ -734,6 +734,16 @@ class DatabaseHelper {
     if (oldVersion < 38) {
       await _migrateToV38(db);
     }
+
+    // Rebuild shared indexes only after every versioned column migration has
+    // completed. _migrateToV36 used to call this helper early; once v38 added
+    // an index over source_message_id, a real v35 database tried to create the
+    // index before v38 had added the column and the entire database open
+    // failed. Keeping this at the end also prevents future indexes from being
+    // pulled accidentally into an older migration step.
+    if (await _hasAllKnownIndexTables(db)) {
+      await _createKnownIndexes(db);
+    }
   }
 
   static Future<void> _migrateToV38(Database db) async {
@@ -904,9 +914,6 @@ class DatabaseHelper {
       );
     }
 
-    if (await _hasAllKnownIndexTables(db)) {
-      await _createKnownIndexes(db);
-    }
     for (final index in const [
       'idx_messages_conv',
       'idx_mem_char_mode',
