@@ -599,7 +599,7 @@ class L {
       'en': 'Last backup: {0}',
     },
     'me_backup_never': {'zh_TW': '尚未備份', 'zh_CN': '尚未备份', 'en': 'Never'},
-    'me_import_json': {'zh_TW': '導入數據', 'zh_CN': '导入数据', 'en': 'Import JSON'},
+    'me_import_json': {'zh_TW': '導入備份', 'zh_CN': '导入备份', 'en': 'Import backup'},
     'me_import_json_sub': {
       'zh_TW': '從備份還原',
       'zh_CN': '从备份还原',
@@ -621,11 +621,11 @@ class L {
       'zh_CN': '选择备份文件',
       'en': 'Select backup file',
     },
-    'me_export_json': {'zh_TW': '導出數據', 'zh_CN': '导出数据', 'en': 'Export JSON'},
+    'me_export_json': {'zh_TW': '完整備份', 'zh_CN': '完整备份', 'en': 'Full backup'},
     'me_export_json_sub': {
-      'zh_TW': 'JSON 格式',
-      'zh_CN': 'JSON 格式',
-      'en': 'JSON format',
+      'zh_TW': '資料與媒體 ZIP',
+      'zh_CN': '数据与媒体 ZIP',
+      'en': 'Data + media ZIP',
     },
     'me_local_backup': {'zh_TW': '本地備份', 'zh_CN': '本地备份', 'en': 'Local Backup'},
     'me_local_backup_sub': {

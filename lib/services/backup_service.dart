@@ -16,6 +16,7 @@ import '../utils/iso_week.dart';
 import 'character_timeline_service.dart';
 import 'keep_alive_service.dart';
 import 'model_cost_policy.dart';
+import 'portable_backup_bundle.dart';
 
 /// JSON 備份和本地資料庫備份。
 ///
@@ -134,6 +135,23 @@ class BackupService {
   }
 
   static Future<String> _exportAllAsJsonUnlocked() async {
+    final data = await _buildExportDataUnlocked();
+    final timestamp = DateTime.now()
+        .toIso8601String()
+        .replaceAll(':', '-')
+        .split('.')
+        .first;
+    final fileName = 'holt_export_$timestamp.json';
+    final dir = await _getExportDir();
+    final filePath = p.join(dir.path, fileName);
+    await File(filePath).writeAsString(
+      const JsonEncoder.withIndent('  ').convert(data),
+      flush: true,
+    );
+    return filePath;
+  }
+
+  static Future<Map<String, Object?>> _buildExportDataUnlocked() async {
     await _ensureOptionalTables();
     final db = await DatabaseHelper.database;
     await _verifyTableManifest(db);
@@ -174,7 +192,7 @@ class BackupService {
         .toList(growable: false);
 
     final prefs = await SharedPreferences.getInstance();
-    final data = <String, Object?>{
+    return <String, Object?>{
       'version': exportVersion,
       'type': 'holt_full_export',
       'app': 'Holt',
@@ -186,20 +204,50 @@ class BackupService {
       for (final table in appTables) table: tableData[table]!,
       'preferences': _exportablePreferences(prefs),
     };
+  }
 
+  /// Portable export containing JSON plus all app-owned referenced media.
+  static Future<String> exportPortableBundle() {
+    return _operationLock.synchronized(_exportPortableBundleUnlocked);
+  }
+
+  static Future<String> _exportPortableBundleUnlocked() async {
+    final data = await _buildExportDataUnlocked();
     final timestamp = DateTime.now()
         .toIso8601String()
         .replaceAll(':', '-')
         .split('.')
         .first;
-    final fileName = 'holt_export_$timestamp.json';
-    final dir = await _getExportDir();
-    final filePath = p.join(dir.path, fileName);
-    await File(filePath).writeAsString(
-      const JsonEncoder.withIndent('  ').convert(data),
-      flush: true,
+    final exportDir = await _getExportDir();
+    final documents = await getApplicationDocumentsDirectory();
+    final temporary = await getTemporaryDirectory();
+    final snapshotDir = Directory(
+      p.join(
+        temporary.path,
+        'holt_portable_db_${DateTime.now().microsecondsSinceEpoch}',
+      ),
     );
-    return filePath;
+    await snapshotDir.create(recursive: true);
+    final databaseSnapshot = File(p.join(snapshotDir.path, 'yanci.db'));
+    final output = File(
+      p.join(exportDir.path, 'holt_backup_$timestamp.holt.zip'),
+    );
+    try {
+      final db = await DatabaseHelper.database;
+      await db.execute(_vacuumIntoSql(databaseSnapshot.path));
+      final bundle = await PortableBackupBundle.create(
+        backupData: data,
+        databaseSnapshot: databaseSnapshot,
+        ownedRoot: documents,
+        workingRoot: temporary,
+        outputFile: output,
+      );
+      return bundle.path;
+    } finally {
+      if (await snapshotDir.exists()) {
+        await snapshotDir.delete(recursive: true);
+      }
+    }
   }
 
   // ════════════════════════════════════
@@ -213,6 +261,24 @@ class BackupService {
   /// 推回原訊息，摘要字串會明確提醒使用者。
   static Future<String> importFromJson(Map<String, dynamic> data) {
     return _operationLock.synchronized(() => _importFromJsonUnlocked(data));
+  }
+
+  /// Imports a verified portable media bundle. Extracted files are retained
+  /// only when the database transaction succeeds.
+  static Future<String> importPortableBundle(String path) {
+    return _operationLock.synchronized(() async {
+      final documents = await getApplicationDocumentsDirectory();
+      final extracted = await PortableBackupBundle.extract(
+        bundle: File(path),
+        destinationRoot: documents,
+      );
+      try {
+        return await _importFromJsonUnlocked(extracted.data);
+      } catch (_) {
+        await extracted.discard();
+        rethrow;
+      }
+    });
   }
 
   static Future<String> _importFromJsonUnlocked(

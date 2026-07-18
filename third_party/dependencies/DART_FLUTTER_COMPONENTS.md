@@ -12,7 +12,7 @@
 | `app_links_linux` | `1.0.3` | transitive | Apache-2.0 | VERIFIED_LOCAL_COPY |
 | `app_links_platform_interface` | `2.0.3` | transitive | Apache-2.0 | VERIFIED_LOCAL_COPY |
 | `app_links_web` | `1.0.4` | transitive | Apache-2.0 | VERIFIED_LOCAL_COPY |
-| `archive` | `4.0.9` | transitive | BSD-2-Clause, MIT | VERIFIED_LOCAL_COPY |
+| `archive` | `4.0.9` | direct main | BSD-2-Clause, MIT | VERIFIED_LOCAL_COPY |
 | `args` | `2.7.0` | transitive | BSD-3-Clause | VERIFIED_LOCAL_COPY |
 | `async` | `2.13.1` | transitive | BSD-3-Clause | VERIFIED_LOCAL_COPY |
 | `audioplayers` | `6.8.1` | direct main | MIT | VERIFIED_LOCAL_COPY |

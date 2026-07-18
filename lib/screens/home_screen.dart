@@ -8,6 +8,8 @@ import 'package:flutter/services.dart';
 import 'package:uuid/uuid.dart';
 import '../widgets/shop_backpack_sheets.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:path/path.dart' as p;
+import 'package:share_plus/share_plus.dart';
 import '../theme/app_theme.dart';
 import '../services/locale_strings.dart';
 import '../main.dart' show themeNotifier;
@@ -2914,7 +2916,7 @@ class _HomeScreenState extends State<HomeScreen>
 */
   // ═══ 備份操作 ═══
 
-  Future<void> _handleImportJson() async {
+  Future<void> _handleImportBackup() async {
     if (!mounted) return;
 
     // 使用系統文件選擇器（跨平台：Android / iOS / macOS 均可用）
@@ -3006,9 +3008,14 @@ class _HomeScreenState extends State<HomeScreen>
     try {
       final file = File(filePath);
       if (!await file.exists()) throw '檔案不存在：$filePath';
-      final jsonStr = await file.readAsString();
-      final data = jsonDecode(jsonStr) as Map<String, dynamic>;
-      final result = await BackupService.importFromJson(data);
+      final header = await file.openRead(0, 4).first;
+      final isZip =
+          header.length >= 2 && header[0] == 0x50 && header[1] == 0x4B;
+      final result = isZip
+          ? await BackupService.importPortableBundle(filePath)
+          : await BackupService.importFromJson(
+              jsonDecode(await file.readAsString()) as Map<String, dynamic>,
+            );
       await _reloadHomeAfterRestore();
       if (!mounted) return;
       ScaffoldMessenger.of(context).hideCurrentSnackBar();
@@ -3042,7 +3049,7 @@ class _HomeScreenState extends State<HomeScreen>
     }
   }
 
-  Future<void> _handleExportJson() async {
+  Future<void> _handleExportBackup() async {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -3057,20 +3064,11 @@ class _HomeScreenState extends State<HomeScreen>
       ),
     );
     try {
-      final path = await BackupService.exportAllAsJson();
+      final path = await BackupService.exportPortableBundle();
       if (!mounted) return;
       ScaffoldMessenger.of(context).hideCurrentSnackBar();
 
-      // 系統「另存為」對話框（SAF）：用戶自選位置（下載/雲端），
-      // 移動端必須帶 bytes，由系統寫入。部分 ROM 分享面板沒有
-      // 「存到檔案」目標，share 路線不可靠，改走這條。
-      final bytes = await File(path).readAsBytes();
-      final savedTo = await FilePicker.platform.saveFile(
-        dialogTitle: L.pick(en: 'Save backup', zhTW: '保存備份檔'),
-        fileName: path.split('/').last,
-        bytes: bytes,
-      );
-      if (savedTo == null) return; // 用戶取消，不彈成功提示
+      if (!await _saveExportedBackup(path)) return;
 
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -3106,6 +3104,38 @@ class _HomeScreenState extends State<HomeScreen>
         ),
       );
     }
+  }
+
+  Future<bool> _saveExportedBackup(String path) async {
+    final file = File(path);
+    final fileName = path.split('/').last;
+    final isMobile = Platform.isAndroid || Platform.isIOS;
+    final size = await file.length();
+
+    // Android/iOS 的 SAF 介面要求一次把 bytes 交給 plugin。大型媒體備份
+    // 這樣會造成記憶體尖峰，因此超過 32 MiB 改以檔案串流交給分享面板。
+    if (isMobile && size > 32 * 1024 * 1024) {
+      final result = await SharePlus.instance.share(
+        ShareParams(
+          files: <XFile>[XFile(path, mimeType: 'application/zip')],
+          fileNameOverrides: <String>[fileName],
+          title: L.pick(en: 'Save Holt backup', zhTW: '保存 Holt 備份'),
+          sharePositionOrigin: const Rect.fromLTWH(0, 0, 1, 1),
+        ),
+      );
+      return result.status != ShareResultStatus.dismissed;
+    }
+
+    final savedTo = await FilePicker.platform.saveFile(
+      dialogTitle: L.pick(en: 'Save backup', zhTW: '保存備份檔'),
+      fileName: fileName,
+      bytes: isMobile ? await file.readAsBytes() : null,
+    );
+    if (savedTo == null) return false;
+    if (!isMobile && p.normalize(savedTo) != p.normalize(path)) {
+      await file.copy(savedTo);
+    }
+    return true;
   }
 
   Future<void> _showBackupSheet() async {
@@ -3231,7 +3261,7 @@ class _HomeScreenState extends State<HomeScreen>
                 subtitle: L.get('me_export_json_sub'),
                 onTap: () {
                   Navigator.pop(sheetContext);
-                  _handleExportJson();
+                  _handleExportBackup();
                 },
               ),
               const SizedBox(height: 8),
@@ -3242,7 +3272,7 @@ class _HomeScreenState extends State<HomeScreen>
                 warning: true,
                 onTap: () {
                   Navigator.pop(sheetContext);
-                  _handleImportJson();
+                  _handleImportBackup();
                 },
               ),
             ],
