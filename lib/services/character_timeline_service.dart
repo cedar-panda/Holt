@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart' show debugPrint;
+import 'package:sqflite/sqflite.dart' show Transaction;
 
 import '../memory/database.dart';
 import '../models/message.dart';
@@ -8,16 +9,22 @@ import '../utils/iso_week.dart';
 import 'locale_strings.dart';
 
 class TimelineEventCandidate {
+  final String type;
+  final String subject;
   final List<int> sourceMessageIds;
   final String occurredOn;
   final String dateBasis;
+  final String? key;
   final String value;
   final String evidence;
 
   const TimelineEventCandidate({
+    required this.type,
+    required this.subject,
     required this.sourceMessageIds,
     required this.occurredOn,
     required this.dateBasis,
+    this.key,
     required this.value,
     required this.evidence,
   });
@@ -85,8 +92,9 @@ class CharacterTimelineService {
   // B. 摘要模型候選驗證
   // ─────────────────────────────────────────────
 
-  /// 摘要模型只負責提出候選；本地端仍須逐項通過來源、證據、日期和
-  /// 發生語態檢查。任何格式或語義可疑的項目都直接略過，不阻斷摘要。
+  /// 摘要模型只負責提出候選；本地端仍須逐項通過來源、主體、證據、
+  /// 日期和發生語態檢查。任何格式或語義可疑的項目都直接略過，
+  /// 不阻斷摘要。明確的「生理期第 N 天」會同時產生開始事件與當前狀態。
   static Future<int> storeSummaryCandidates({
     required String characterId,
     required List<TimelineEventCandidate> candidates,
@@ -99,10 +107,10 @@ class CharacterTimelineService {
       for (final message in sourceMessages)
         if (message.id != null) message.id!: message,
     };
-    final validated = <_ValidatedTimelineEvent>[];
+    final validated = <_ValidatedTimelineEntry>[];
     for (final candidate in candidates) {
-      final event = _validateCandidate(candidate, sourceById);
-      if (event != null) validated.add(event);
+      final entry = _validateCandidate(candidate, sourceById);
+      if (entry != null) validated.add(entry);
     }
     validated.sort((a, b) {
       final dateOrder = a.occurredAt.compareTo(b.occurredAt);
@@ -114,81 +122,46 @@ class CharacterTimelineService {
     final db = await DatabaseHelper.database;
     return db.transaction<int>((txn) async {
       int inserted = 0;
-      for (final event in validated) {
-        final dayStart = DateTime(
-          event.occurredAt.year,
-          event.occurredAt.month,
-          event.occurredAt.day,
-        );
-        final dayEnd = dayStart.add(const Duration(days: 1));
-        final existing = await txn.query(
-          'character_timeline',
-          where:
-              "character_id = ? AND type = 'event' "
-              'AND created_at >= ? AND created_at < ?',
-          whereArgs: [
-            characterId,
-            dayStart.toIso8601String(),
-            dayEnd.toIso8601String(),
-          ],
-          orderBy: 'id ASC',
-        );
-        Map<String, Object?>? duplicate;
-        for (final row in existing) {
-          if (_sameEventValue(row['value']?.toString() ?? '', event.value)) {
-            duplicate = row;
-            break;
+      for (final entry in validated) {
+        if (entry.type == 'state') {
+          if (await _storeValidatedState(txn, characterId, entry)) inserted++;
+          if (entry.derivedEventAt != null &&
+              entry.derivedEventValue != null &&
+              await _storeValidatedEvent(
+                txn,
+                characterId,
+                occurredAt: entry.derivedEventAt!,
+                value: entry.derivedEventValue!,
+                sourceMessageIds: entry.sourceMessageIds,
+                evidence: entry.evidence,
+              )) {
+            inserted++;
           }
-        }
-        if (duplicate != null) {
-          final mergedIds = <int>{
-            ..._decodeSourceIds(duplicate['source_message_ids']),
-            ...event.sourceMessageIds,
-          }.toList()..sort();
-          await txn.update(
-            'character_timeline',
-            {
-              'source_message_id': mergedIds.first,
-              'source_message_ids': jsonEncode(mergedIds),
-              if ((duplicate['source_evidence']?.toString() ?? '').isEmpty)
-                'source_evidence': event.evidence,
-            },
-            where: 'id = ?',
-            whereArgs: [duplicate['id']],
-          );
           continue;
         }
-
-        final now = DateTime.now().toIso8601String();
-        final id = await txn.rawInsert(
-          '''
-          INSERT OR IGNORE INTO character_timeline
-            (character_id, type, key, value, source_message_id,
-             source_message_ids, source_evidence, week_group, confirmed,
-             created_at, updated_at)
-          VALUES (?, 'event', NULL, ?, ?, ?, ?, ?, 1, ?, ?)
-          ''',
-          [
-            characterId,
-            event.value,
-            event.sourceMessageIds.first,
-            jsonEncode(event.sourceMessageIds),
-            event.evidence,
-            isoWeekGroup(event.occurredAt),
-            event.occurredAt.toIso8601String(),
-            now,
-          ],
-        );
-        if (id != 0) inserted++;
+        if (await _storeValidatedEvent(
+          txn,
+          characterId,
+          occurredAt: entry.occurredAt,
+          value: entry.value,
+          sourceMessageIds: entry.sourceMessageIds,
+          evidence: entry.evidence,
+        )) {
+          inserted++;
+        }
       }
       return inserted;
     });
   }
 
-  static _ValidatedTimelineEvent? _validateCandidate(
+  static _ValidatedTimelineEntry? _validateCandidate(
     TimelineEventCandidate candidate,
     Map<int, Message> sourceById,
   ) {
+    if (!const {'event', 'state'}.contains(candidate.type) ||
+        !const {'character', 'relationship'}.contains(candidate.subject)) {
+      return null;
+    }
     final ids = candidate.sourceMessageIds.toSet().toList()..sort();
     if (ids.isEmpty || ids.any((id) => !sourceById.containsKey(id))) {
       return null;
@@ -211,19 +184,48 @@ class CharacterTimelineService {
         .where((message) => message.text.contains(evidence))
         .toList();
     if (evidenceMessages.isEmpty) return null;
-
-    final occurredDate = _parseStrictDate(candidate.occurredOn);
-    if (occurredDate == null) return null;
-    final basis = candidate.dateBasis.trim();
-    if (!const {'message_time', 'relative', 'explicit'}.contains(basis)) {
+    if (_isLowValueAddressAction(evidence) ||
+        (candidate.subject == 'relationship' &&
+            !_hasRelationshipGrounding(evidence))) {
       return null;
     }
+
+    final evidenceDay = _menstrualDayFromText(evidence);
+    final menstrualDay =
+        evidenceDay ?? (_hasMenstrualStartCue(evidence) ? 1 : null);
+    final valueMenstrualDay = _menstrualDayFromText(value);
+    if (valueMenstrualDay != null && valueMenstrualDay != menstrualDay) {
+      return null;
+    }
+    final normalizedType = menstrualDay == null ? candidate.type : 'state';
+    var stateKey = normalizedType == 'state'
+        ? _canonicalStateKey(candidate.key ?? '')
+        : null;
+    if (menstrualDay != null) stateKey = '生理週期';
+    if (normalizedType == 'state' && stateKey == null) return null;
+    if (stateKey == '生理週期' && menstrualDay == null) return null;
+    if (normalizedType == 'state') {
+      final relationshipState = stateKey == '關係狀態';
+      if (relationshipState != (candidate.subject == 'relationship')) {
+        return null;
+      }
+    }
+
+    var occurredDate = _parseStrictDate(candidate.occurredOn);
+    if (occurredDate == null) return null;
+    final modelBasis = candidate.dateBasis.trim();
+    if (!const {'message_time', 'relative', 'explicit'}.contains(modelBasis)) {
+      return null;
+    }
+    final evidenceBasis = _dateBasisFromEvidence(evidence);
+    final basis = evidenceBasis ?? modelBasis;
     if (_hasNonOccurrenceCue(evidence, basis) ||
         !_valueGroundedInEvidence(value, evidence)) {
       return null;
     }
 
     DateTime? anchor;
+    DateTime? evidenceResolvedDate;
     for (final message in evidenceMessages) {
       final local = message.createdAt.isUtc
           ? message.createdAt.toLocal()
@@ -234,18 +236,28 @@ class CharacterTimelineService {
         'explicit' => _explicitDateFromEvidence(evidence, local),
         _ => null,
       };
+      if (evidenceBasis != null && expected != null) {
+        if (evidenceResolvedDate != null &&
+            !_sameDay(evidenceResolvedDate, expected)) {
+          return null;
+        }
+        evidenceResolvedDate = expected;
+        anchor ??= local;
+        continue;
+      }
       if (expected != null && _sameDay(expected, occurredDate)) {
         anchor = local;
         break;
       }
     }
+    if (evidenceResolvedDate != null) occurredDate = evidenceResolvedDate;
     if (anchor == null) return null;
 
     // The local bubble timestamp is the upper bound for a completed event.
     // This also catches a model turning an upcoming dated plan into history.
-    final latestSourceDate = ids
-        .map((id) {
-          final time = sourceById[id]!.createdAt;
+    final latestSourceDate = evidenceMessages
+        .map((message) {
+          final time = message.createdAt;
           return time.isUtc ? time.toLocal() : time;
         })
         .reduce((a, b) => a.isAfter(b) ? a : b);
@@ -259,7 +271,7 @@ class CharacterTimelineService {
       return null;
     }
 
-    final occurredAt = basis == 'message_time'
+    var occurredAt = basis == 'message_time'
         ? DateTime(
             occurredDate.year,
             occurredDate.month,
@@ -269,13 +281,347 @@ class CharacterTimelineService {
             anchor.second,
           )
         : DateTime(occurredDate.year, occurredDate.month, occurredDate.day, 12);
-    return _ValidatedTimelineEvent(
+    var normalizedValue = value;
+    DateTime? derivedEventAt;
+    String? derivedEventValue;
+    if (menstrualDay != null) {
+      if (menstrualDay < 1 || menstrualDay > 14) return null;
+      final startAt = DateTime(
+        occurredDate.year,
+        occurredDate.month,
+        occurredDate.day,
+        12,
+      ).subtract(Duration(days: menstrualDay - 1));
+      final observedDate = DateTime(
+        latestSourceDate.year,
+        latestSourceDate.month,
+        latestSourceDate.day,
+      );
+      final elapsed = observedDate.difference(
+        DateTime(occurredDate.year, occurredDate.month, occurredDate.day),
+      );
+      final observedDay = menstrualDay + elapsed.inDays;
+      if (observedDay < menstrualDay || observedDay > 14) return null;
+      occurredAt = startAt;
+      normalizedValue = '生理期第$observedDay天（推算；開始於${_dateOnly(startAt)}）';
+      derivedEventAt = startAt;
+      derivedEventValue = '生理期開始（推算）';
+    }
+
+    return _ValidatedTimelineEntry(
+      type: normalizedType,
+      key: stateKey,
       sourceMessageIds: ids,
       occurredAt: occurredAt,
-      value: value,
+      observedAt: latestSourceDate,
+      value: normalizedValue,
       evidence: evidence,
+      derivedEventAt: derivedEventAt,
+      derivedEventValue: derivedEventValue,
     );
   }
+
+  static Future<bool> _storeValidatedEvent(
+    Transaction txn,
+    String characterId, {
+    required DateTime occurredAt,
+    required String value,
+    required List<int> sourceMessageIds,
+    required String evidence,
+  }) async {
+    final dayStart = DateTime(
+      occurredAt.year,
+      occurredAt.month,
+      occurredAt.day,
+    );
+    final dayEnd = dayStart.add(const Duration(days: 1));
+    final existing = await txn.query(
+      'character_timeline',
+      where:
+          "character_id = ? AND type = 'event' "
+          'AND created_at >= ? AND created_at < ?',
+      whereArgs: [
+        characterId,
+        dayStart.toIso8601String(),
+        dayEnd.toIso8601String(),
+      ],
+      orderBy: 'id ASC',
+    );
+    Map<String, Object?>? duplicate;
+    for (final row in existing) {
+      if (_sameEventValue(row['value']?.toString() ?? '', value)) {
+        duplicate = Map<String, Object?>.from(row);
+        break;
+      }
+    }
+    if (duplicate != null) {
+      final mergedIds = <int>{
+        ..._decodeSourceIds(duplicate['source_message_ids']),
+        ...sourceMessageIds,
+      }.toList()..sort();
+      await txn.update(
+        'character_timeline',
+        {
+          'source_message_id': mergedIds.first,
+          'source_message_ids': jsonEncode(mergedIds),
+          if ((duplicate['source_evidence']?.toString() ?? '').isEmpty)
+            'source_evidence': evidence,
+        },
+        where: 'id = ?',
+        whereArgs: [duplicate['id']],
+      );
+      return false;
+    }
+
+    final now = DateTime.now().toIso8601String();
+    final id = await txn.rawInsert(
+      '''
+      INSERT OR IGNORE INTO character_timeline
+        (character_id, type, key, value, source_message_id,
+         source_message_ids, source_evidence, week_group, confirmed,
+         created_at, updated_at)
+      VALUES (?, 'event', NULL, ?, ?, ?, ?, ?, 1, ?, ?)
+      ''',
+      [
+        characterId,
+        value,
+        sourceMessageIds.first,
+        jsonEncode(sourceMessageIds),
+        evidence,
+        isoWeekGroup(occurredAt),
+        occurredAt.toIso8601String(),
+        now,
+      ],
+    );
+    return id != 0;
+  }
+
+  static Future<bool> _storeValidatedState(
+    Transaction txn,
+    String characterId,
+    _ValidatedTimelineEntry entry,
+  ) async {
+    final key = entry.key!;
+    final rows = await txn.query(
+      'character_timeline',
+      where: "character_id = ? AND type = 'state' AND key = ?",
+      whereArgs: [characterId, key],
+      limit: 1,
+    );
+    if (rows.isEmpty) {
+      final id = await txn.insert('character_timeline', {
+        'character_id': characterId,
+        'type': 'state',
+        'key': key,
+        'value': entry.value,
+        'source_message_id': entry.sourceMessageIds.first,
+        'source_message_ids': jsonEncode(entry.sourceMessageIds),
+        'source_evidence': entry.evidence,
+        'confirmed': 1,
+        'created_at': entry.occurredAt.toIso8601String(),
+        'updated_at': entry.observedAt.toIso8601String(),
+      });
+      return id != 0;
+    }
+
+    final existing = Map<String, Object?>.from(rows.single);
+    final sameValue = existing['value']?.toString() == entry.value;
+    final existingUpdatedAt = DateTime.tryParse(
+      existing['updated_at']?.toString() ?? '',
+    );
+    if (!sameValue &&
+        existingUpdatedAt != null &&
+        entry.observedAt.isBefore(existingUpdatedAt)) {
+      // A late summary from an older window must never roll a newer current
+      // state backwards. Its derived historical event is still stored.
+      return false;
+    }
+    final mergedIds = <int>{
+      ..._decodeSourceIds(existing['source_message_ids']),
+      ...entry.sourceMessageIds,
+    }.toList()..sort();
+    await txn.update(
+      'character_timeline',
+      {
+        'value': entry.value,
+        'source_message_id': mergedIds.first,
+        'source_message_ids': jsonEncode(mergedIds),
+        'source_evidence': entry.evidence,
+        if (!sameValue ||
+            entry.occurredAt.isBefore(
+              DateTime.tryParse(existing['created_at']?.toString() ?? '') ??
+                  entry.occurredAt,
+            ))
+          'created_at': entry.occurredAt.toIso8601String(),
+        if (existingUpdatedAt == null ||
+            !entry.observedAt.isBefore(existingUpdatedAt))
+          'updated_at': entry.observedAt.toIso8601String(),
+      },
+      where: 'id = ?',
+      whereArgs: [existing['id']],
+    );
+    return !sameValue;
+  }
+
+  static String? _canonicalStateKey(String raw) {
+    const aliases = <String, String>{
+      '髮型': '髮型',
+      '发型': '髮型',
+      'hairstyle': '髮型',
+      '美甲': '美甲',
+      'nails': '美甲',
+      '鬍子': '鬍子',
+      '胡子': '鬍子',
+      'beard': '鬍子',
+      '住所': '住所',
+      '住址': '住所',
+      'residence': '住所',
+      '工作': '工作',
+      'work': '工作',
+      '寵物': '寵物',
+      '宠物': '寵物',
+      'pet': '寵物',
+      '健康': '健康',
+      'health': '健康',
+      '關係狀態': '關係狀態',
+      '关系状态': '關係狀態',
+      'relationship status': '關係狀態',
+      '生理週期': '生理週期',
+      '生理周期': '生理週期',
+      '生理期': '生理週期',
+      '經期': '生理週期',
+      '经期': '生理週期',
+      '月經': '生理週期',
+      '月经': '生理週期',
+      'menstrual cycle': '生理週期',
+      'period': '生理週期',
+    };
+    return aliases[raw.trim().toLowerCase()];
+  }
+
+  static bool _isLowValueAddressAction(String evidence) {
+    final normalized = evidence.toLowerCase();
+    if (normalized.contains('改名') || normalized.contains('名字改')) {
+      return false;
+    }
+    const addressCues = [
+      '稱呼',
+      '称呼',
+      '叫作',
+      '叫做',
+      '喊作',
+      '喚作',
+      '唤作',
+      '暱稱',
+      '昵称',
+      'call you',
+      'called you',
+      'nickname',
+    ];
+    return addressCues.any(normalized.contains);
+  }
+
+  static bool _hasRelationshipGrounding(String evidence) {
+    final normalized = evidence.toLowerCase();
+    const relationshipCues = [
+      '我們',
+      '我们',
+      '咱們',
+      '咱们',
+      '兩人',
+      '两人',
+      '雙方',
+      '双方',
+      '彼此',
+      '一起',
+      '交往',
+      '告白',
+      '和好',
+      '分手',
+      '結婚',
+      '结婚',
+      '離婚',
+      '离婚',
+      '約會',
+      '约会',
+      '關係',
+      '关系',
+      'we ',
+      'both ',
+      'together',
+      'relationship',
+      'dating',
+      'married',
+      'broke up',
+      'made up',
+    ];
+    return relationshipCues.any(normalized.contains);
+  }
+
+  static int? _menstrualDayFromText(String text) {
+    final zh = RegExp(
+      r'(?:生理期|經期|经期|月經|月经)\s*(?:的)?\s*第?\s*([0-9一二三四五六七八九十兩两]+)\s*天',
+    ).firstMatch(text);
+    if (zh != null) return _parseDayNumber(zh.group(1)!);
+
+    final normalized = text.toLowerCase();
+    final enAfter = RegExp(
+      r'(?:period|menstrual)[^\d]{0,20}day\s*(\d{1,2})',
+    ).firstMatch(normalized);
+    final enBefore = RegExp(
+      r'day\s*(\d{1,2})[^\d]{0,20}(?:period|menstrual)',
+    ).firstMatch(normalized);
+    final digits = enAfter?.group(1) ?? enBefore?.group(1);
+    return digits == null ? null : int.tryParse(digits);
+  }
+
+  static bool _hasMenstrualStartCue(String text) {
+    final normalized = text.toLowerCase();
+    const cues = [
+      '生理期開始',
+      '生理期开始',
+      '來生理期',
+      '来生理期',
+      '月經來了',
+      '月经来了',
+      '經期開始',
+      '经期开始',
+      'period started',
+      'period began',
+      'menstruation started',
+    ];
+    return cues.any(normalized.contains);
+  }
+
+  static int? _parseDayNumber(String raw) {
+    final digits = int.tryParse(raw);
+    if (digits != null) return digits;
+    const units = <String, int>{
+      '一': 1,
+      '二': 2,
+      '兩': 2,
+      '两': 2,
+      '三': 3,
+      '四': 4,
+      '五': 5,
+      '六': 6,
+      '七': 7,
+      '八': 8,
+      '九': 9,
+      '十': 10,
+    };
+    if (units.containsKey(raw)) return units[raw];
+    if (raw.startsWith('十') && raw.length == 2) {
+      final tail = units[raw.substring(1)];
+      return tail == null ? null : 10 + tail;
+    }
+    return null;
+  }
+
+  static String _dateOnly(DateTime date) =>
+      '${date.year.toString().padLeft(4, '0')}-'
+      '${date.month.toString().padLeft(2, '0')}-'
+      '${date.day.toString().padLeft(2, '0')}';
 
   static DateTime? _parseStrictDate(String raw) {
     final match = RegExp(r'^(\d{4})-(\d{2})-(\d{2})$').firstMatch(raw.trim());
@@ -303,6 +649,24 @@ class CharacterTimelineService {
       return day;
     }
     return null;
+  }
+
+  static String? _dateBasisFromEvidence(String evidence) {
+    if (RegExp(
+      r'(?:\d{4}\s*(?:年|[-/.])\s*)?\d{1,2}\s*(?:月|[/.-])\s*\d{1,2}\s*日?',
+    ).hasMatch(evidence)) {
+      return 'explicit';
+    }
+    final normalized = evidence.toLowerCase();
+    const relativeCues = [
+      '今天',
+      '昨天',
+      '前天',
+      'today',
+      'yesterday',
+      'day before yesterday',
+    ];
+    return relativeCues.any(normalized.contains) ? 'relative' : null;
   }
 
   static DateTime? _explicitDateFromEvidence(String evidence, DateTime anchor) {
@@ -656,21 +1020,33 @@ class CharacterTimelineService {
   // ─────────────────────────────────────────────
 
   /// 狀態快照（每個對話框第一條消息注入）
-  static Future<String> stateSnapshotPrompt(String characterId) async {
+  static Future<String> stateSnapshotPrompt(
+    String characterId, {
+    DateTime? now,
+  }) async {
     final states = await getStates(characterId);
     if (states.isEmpty) return '';
 
-    final buf = StringBuffer();
-    buf.writeln(L.pick(en: '【Your recent life status】', zhTW: '【你的近期生活狀態】'));
-
+    final lines = <String>[];
     for (final s in states) {
       final key = s['key'] as String;
-      final value = s['value'] as String;
-      final updated = s['updated_at'] as String;
-      final date = updated.substring(0, 10); // YYYY-MM-DD
-      buf.writeln(
+      final storedValue = s['value'] as String;
+      final value = _stateValueForDate(key, storedValue, now ?? DateTime.now());
+      if (value == null) continue;
+      final dateSource = key == '生理週期'
+          ? s['created_at'] as String
+          : s['updated_at'] as String;
+      final date = dateSource.substring(0, 10); // YYYY-MM-DD
+      lines.add(
         '$key${L.pick(en: ': ', zhTW: '：')}$value${L.pick(en: ' (since ', zhTW: '（')}$date${L.pick(en: ')', zhTW: ' 起）')}',
       );
+    }
+    if (lines.isEmpty) return '';
+
+    final buf = StringBuffer();
+    buf.writeln(L.pick(en: '【Your recent life status】', zhTW: '【你的近期生活狀態】'));
+    for (final line in lines) {
+      buf.writeln(line);
     }
 
     buf.writeln(
@@ -681,6 +1057,20 @@ class CharacterTimelineService {
     );
 
     return buf.toString().trimRight();
+  }
+
+  static String? _stateValueForDate(String key, String value, DateTime now) {
+    if (key != '生理週期') return value;
+    final match = RegExp(
+      r'^生理期第\d+天（推算；開始於(\d{4}-\d{2}-\d{2})）$',
+    ).firstMatch(value);
+    if (match == null) return value;
+    final start = _parseStrictDate(match.group(1)!);
+    if (start == null) return null;
+    final today = DateTime(now.year, now.month, now.day);
+    final day = today.difference(start).inDays + 1;
+    if (day < 1 || day > 14) return null;
+    return '生理期第$day天（推算；開始於${_dateOnly(start)}）';
   }
 
   /// 回憶觸發（user 說「你還記得上次……」時注入相關時間線）
@@ -779,7 +1169,7 @@ class CharacterTimelineService {
     );
   }
 
-  /// 啟動維護：過期事件清理 + 健康自動回正。
+  /// 啟動維護：過期事件清理 + 健康自動回正 + 推算經期狀態到期。
   /// main.dart 啟動時對活躍角色調用（fire-and-forget）。
   static Future<void> startupMaintenance(String characterId) async {
     await _ensureTable();
@@ -808,6 +1198,23 @@ class CharacterTimelineService {
       await upsertState(characterId, '健康', '正常');
       debugPrint('時間線維護：健康狀態超過 7 天未更新，自動回正');
     }
+
+    // 摘要只能根據最近一次明確的「第 N 天」向消息當天推算，不能把
+    // 這個推算永久當成事實。超過 10 天沒有新證據時移除快照，
+    // 但保留「生理期開始（推算）」歷史事件供時間線查看。
+    final periodCutoff = DateTime.now()
+        .subtract(const Duration(days: 10))
+        .toIso8601String();
+    final expiredPeriods = await db.delete(
+      'character_timeline',
+      where:
+          "character_id = ? AND type = 'state' AND key = '生理週期' "
+          "AND value LIKE '生理期第%（推算；開始於%' AND updated_at < ?",
+      whereArgs: [characterId, periodCutoff],
+    );
+    if (expiredPeriods > 0) {
+      debugPrint('時間線維護：移除過期的推算經期狀態');
+    }
   }
 
   // ─────────────────────────────────────────────
@@ -829,16 +1236,26 @@ class CharacterTimelineService {
   }
 }
 
-class _ValidatedTimelineEvent {
+class _ValidatedTimelineEntry {
+  final String type;
+  final String? key;
   final List<int> sourceMessageIds;
   final DateTime occurredAt;
+  final DateTime observedAt;
   final String value;
   final String evidence;
+  final DateTime? derivedEventAt;
+  final String? derivedEventValue;
 
-  const _ValidatedTimelineEvent({
+  const _ValidatedTimelineEntry({
+    required this.type,
+    required this.key,
     required this.sourceMessageIds,
     required this.occurredAt,
+    required this.observedAt,
     required this.value,
     required this.evidence,
+    required this.derivedEventAt,
+    required this.derivedEventValue,
   });
 }

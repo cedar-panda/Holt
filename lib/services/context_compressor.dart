@@ -45,26 +45,46 @@ class ContextCompressor {
   static const String _compressPromptZh = '''
 整合【前次摘要】與帶有消息 ID、本地時間及發言者的【新對話內容】。
 
-summary：以第三人稱保留原文明確成立的重要事件、決定、關係變化及具體資訊；前次摘要只作必要刪減與追加。中文約 180～450 字。
+summary：將對話內容壓縮成簡潔摘要。
+- 只記錄對話中明確發生的事：說過的話、做過的決定、發生的事件
+- 禁止推測動機、補充因果、解讀言外之意；對話裡沒有的一個字都不要寫
+- 不確定的細節寧可省略，不要寫成模糊斷言
+- 保留關鍵情節、情緒轉折、重要決定、人物關係變化
+- 保留具體的名字、地點、時間、數字；重要的話保留原詞
+- 去掉寒暄、重複、過渡語
+- 用第三人稱，簡潔客觀
+- 輸出 180～450 tokens（中文約 180～450 字）
+- summary 欄位只放摘要正文，不要前綴說明
+如果有前次摘要：其中的內容原樣保留措辭，只做刪減與追加，不要改寫換說法。
 
-timeline：只從【新對話內容】提取候選。候選須同時具備：原文明確表達事情已完成或生效；對後續對話有持續回憶價值；能確定 YYYY-MM-DD；source_message_ids 全部來自新對話；evidence 是來源消息中的原文片段；value 保留 evidence 的核心事件用詞。同一事件合併，按 occurred_on 從早到晚排列；任一條件缺失時不提取。
+timeline：只從【新對話內容】提取屬於角色本人或雙方關係、對後續有持續回憶價值的候選。event 是已完成的角色事件或雙方共同事件；state 是已生效的持續狀態，key 使用髮型、美甲、鬍子、住所、工作、寵物、健康、關係狀態、生理週期之一。subject 使用 character；雙方共同事件或關係狀態使用 relationship。每項須能確定 YYYY-MM-DD，source_message_ids 全部來自新對話，evidence 是來源原文片段，value 保留其核心用詞。occurred_on 表示原文直接描述的事件或狀態日期；「第 N 天」照原文保留，由本地計算開始日。同一項合併，按 occurred_on 從早到晚排列。
 
-只輸出合法 JSON：{"summary":"文字","timeline":[{"type":"event","source_message_ids":[1],"occurred_on":"YYYY-MM-DD","date_basis":"message_time|relative|explicit","value":"第三人稱事件","evidence":"原文"}]}。無候選時 timeline 為空陣列。
+只輸出合法 JSON：{"summary":"文字","timeline":[{"type":"event","subject":"relationship","source_message_ids":[1],"occurred_on":"YYYY-MM-DD","date_basis":"message_time|relative|explicit","value":"第三人稱事件","evidence":"原文"},{"type":"state","subject":"character","source_message_ids":[2],"occurred_on":"YYYY-MM-DD","date_basis":"message_time|relative|explicit","key":"健康","value":"第三人稱狀態","evidence":"原文"}]}。無候選時 timeline 為空陣列。
 ''';
 
   static const String _compressPromptEn = '''
 Combine 【Previous Summary】 with 【New Conversation】, whose messages include ids, local timestamps, and speaker roles.
 
-summary: In 180-450 tokens, retain source-grounded important events, decisions, relationship changes, and specifics in concise third person. Only trim or append to a previous summary where necessary.
+summary: Compress the conversation into a concise summary.
+- Record only what explicitly happened: things said, decisions made, events that occurred
+- Never infer motives, add causality, or read between the lines; write nothing absent from the conversation
+- When a detail is uncertain, omit it rather than writing a vague claim
+- Keep key events, emotional shifts, important decisions, and relationship changes
+- Keep specific names, places, times, numbers, and important original wording
+- Remove greetings, repetition, and filler
+- Use third person, concise and objective
+- Output 180-450 tokens
+- Put only the summary body in the summary field, with no prefix
+If a previous summary is provided, keep its wording as-is and only trim or append; do not rephrase it.
 
-timeline: Extract candidates only from 【New Conversation】. Every candidate must describe an explicitly completed or effective event with lasting recall value, resolve to YYYY-MM-DD, cite only new source_message_ids, quote exact source text as evidence, and retain the evidence's core event wording in value. Merge one event and order occurred_on oldest to newest. Omit a candidate unless every condition is met.
+timeline: Extract only lasting candidates belonging to the character or the shared relationship from 【New Conversation】. An event is a completed character event or shared event. A state is an effective ongoing state whose key is hairstyle, nails, beard, residence, work, pet, health, relationship status, or menstrual cycle. Use subject=character, or subject=relationship for shared events and relationship status. Every item must resolve to YYYY-MM-DD, cite only new source_message_ids, quote exact source text as evidence, and retain its core wording in value. occurred_on is the date directly described by the source; preserve "day N" wording so the app can derive its start date. Merge one item and order occurred_on oldest to newest.
 
-Output valid JSON only: {"summary":"text","timeline":[{"type":"event","source_message_ids":[1],"occurred_on":"YYYY-MM-DD","date_basis":"message_time|relative|explicit","value":"third-person event","evidence":"exact quote"}]}. Use an empty timeline array when none qualify.
+Output valid JSON only: {"summary":"text","timeline":[{"type":"event","subject":"relationship","source_message_ids":[1],"occurred_on":"YYYY-MM-DD","date_basis":"message_time|relative|explicit","value":"third-person event","evidence":"exact quote"},{"type":"state","subject":"character","source_message_ids":[2],"occurred_on":"YYYY-MM-DD","date_basis":"message_time|relative|explicit","key":"health","value":"third-person state","evidence":"exact quote"}]}. Use an empty timeline array when none qualify.
 ''';
 
-  /// 簡中輸出強制指令：僅 zh_CN 語系附加；zh_TW / en 返回空字串，
-  /// 既有語系的 prompt 文本逐字節不變（緩存前綴穩定鐵律，見
-  /// docs/cache完整攻略指南）。壓縮請求本身不進聊天緩存條目。
+  /// 簡中輸出強制指令：僅 zh_CN 語系附加；zh_TW / en 返回空字串。
+  /// 壓縮請求使用獨立 adapter 調用，不進聊天緩存條目，因此調整摘要
+  /// 與時間線規則不會改動 Claude 對話的緩存前綴。
   static String get _zhCnDirective =>
       L.locale == 'zh_CN' ? '\n请注意：请使用简体中文输出。' : '';
 
@@ -842,7 +862,13 @@ Rules:
         final rawTimeline = decoded['timeline'];
         if (rawTimeline is List) {
           for (final raw in rawTimeline) {
-            if (raw is! Map || raw['type']?.toString() != 'event') continue;
+            if (raw is! Map) continue;
+            final type = raw['type']?.toString().trim() ?? '';
+            final subject = raw['subject']?.toString().trim() ?? '';
+            if (!const {'event', 'state'}.contains(type) ||
+                !const {'character', 'relationship'}.contains(subject)) {
+              continue;
+            }
             final rawIds = raw['source_message_ids'];
             if (rawIds is! List) continue;
             final ids =
@@ -858,17 +884,22 @@ Rules:
             final dateBasis = raw['date_basis'];
             final value = raw['value'];
             final evidence = raw['evidence'];
+            final rawKey = raw['key'];
             if (occurredOn is! String ||
                 dateBasis is! String ||
                 value is! String ||
-                evidence is! String) {
+                evidence is! String ||
+                (type == 'state' && rawKey is! String)) {
               continue;
             }
             timeline.add(
               TimelineEventCandidate(
+                type: type,
+                subject: subject,
                 sourceMessageIds: ids,
                 occurredOn: occurredOn,
                 dateBasis: dateBasis,
+                key: type == 'state' ? (rawKey as String) : null,
                 value: value,
                 evidence: evidence,
               ),

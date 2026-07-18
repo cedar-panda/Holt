@@ -67,6 +67,8 @@ void main() {
         sourceMessages: messages,
         candidates: const [
           TimelineEventCandidate(
+            type: 'event',
+            subject: 'relationship',
             sourceMessageIds: [41],
             occurredOn: '2026-07-18',
             dateBasis: 'message_time',
@@ -74,6 +76,8 @@ void main() {
             evidence: '現在不要跟我吵架',
           ),
           TimelineEventCandidate(
+            type: 'event',
+            subject: 'relationship',
             sourceMessageIds: [41],
             occurredOn: '2026-07-18',
             dateBasis: 'message_time',
@@ -81,6 +85,8 @@ void main() {
             evidence: '我們剛剛做愛了',
           ),
           TimelineEventCandidate(
+            type: 'event',
+            subject: 'relationship',
             sourceMessageIds: [41],
             occurredOn: '2026-07-17',
             dateBasis: 'relative',
@@ -128,6 +134,8 @@ void main() {
           sourceMessages: messages,
           candidates: const [
             TimelineEventCandidate(
+              type: 'event',
+              subject: 'relationship',
               sourceMessageIds: [52],
               occurredOn: '2026-07-18',
               dateBasis: 'relative',
@@ -135,6 +143,8 @@ void main() {
               evidence: '今天我們旅行回來了',
             ),
             TimelineEventCandidate(
+              type: 'event',
+              subject: 'relationship',
               sourceMessageIds: [51],
               occurredOn: '2026-07-12',
               dateBasis: 'explicit',
@@ -182,6 +192,8 @@ void main() {
         sourceMessages: messages,
         candidates: const [
           TimelineEventCandidate(
+            type: 'event',
+            subject: 'relationship',
             sourceMessageIds: [61],
             occurredOn: '2026-07-17',
             dateBasis: 'relative',
@@ -189,6 +201,8 @@ void main() {
             evidence: '昨天我們一起看了電影',
           ),
           TimelineEventCandidate(
+            type: 'event',
+            subject: 'relationship',
             sourceMessageIds: [62],
             occurredOn: '2026-07-17',
             dateBasis: 'relative',
@@ -205,6 +219,134 @@ void main() {
         61,
         62,
       ]);
+    },
+  );
+
+  test(
+    'period day derives character state and start while nickname is rejected',
+    () async {
+      final messages = <Message>[
+        Message(
+          id: 71,
+          conversationId: 'conv-a',
+          characterId: 'char-a',
+          text: '晏辭，你昨天是生理期第二天。我稱呼晏辭為大小姐。',
+          isUser: true,
+          createdAt: DateTime(2026, 7, 18, 20, 30),
+        ),
+      ];
+
+      final changed = await CharacterTimelineService.storeSummaryCandidates(
+        characterId: 'char-a',
+        sourceMessages: messages,
+        candidates: const [
+          TimelineEventCandidate(
+            type: 'state',
+            subject: 'character',
+            sourceMessageIds: [71],
+            // Intentionally wrong model date/basis: local evidence parsing must
+            // still resolve 「昨天」 before deriving the cycle start.
+            occurredOn: '2026-07-18',
+            dateBasis: 'message_time',
+            key: '生理週期',
+            value: '晏辭處於生理期第二天',
+            evidence: '你昨天是生理期第二天',
+          ),
+          TimelineEventCandidate(
+            type: 'event',
+            subject: 'relationship',
+            sourceMessageIds: [71],
+            occurredOn: '2026-07-18',
+            dateBasis: 'message_time',
+            value: '昭昭稱呼晏辭為大小姐',
+            evidence: '我稱呼晏辭為大小姐',
+          ),
+        ],
+      );
+
+      expect(changed, 2);
+      final states = await CharacterTimelineService.getStates('char-a');
+      expect(states, hasLength(1));
+      expect(states.single['key'], '生理週期');
+      expect(states.single['value'], '生理期第3天（推算；開始於2026-07-16）');
+      expect(states.single['created_at'].toString(), startsWith('2026-07-16'));
+      expect(states.single['updated_at'].toString(), startsWith('2026-07-18'));
+      final snapshot = await CharacterTimelineService.stateSnapshotPrompt(
+        'char-a',
+        now: DateTime(2026, 7, 18, 23),
+      );
+      expect(snapshot, contains('生理期第3天（推算；開始於2026-07-16）'));
+
+      final events = await CharacterTimelineService.getEvents('char-a');
+      expect(events, hasLength(1));
+      expect(events.single['value'], '生理期開始（推算）');
+      expect(events.single['created_at'].toString(), startsWith('2026-07-16'));
+      expect(jsonDecode(events.single['source_message_ids'] as String), [71]);
+    },
+  );
+
+  test(
+    'an older window cannot roll a newer character state backwards',
+    () async {
+      final newer = Message(
+        id: 81,
+        conversationId: 'conv-new',
+        characterId: 'char-a',
+        text: '你今天感冒了。',
+        isUser: true,
+        createdAt: DateTime(2026, 7, 18, 20),
+      );
+      final older = Message(
+        id: 82,
+        conversationId: 'conv-old',
+        characterId: 'char-a',
+        text: '你昨天還很健康。',
+        isUser: true,
+        createdAt: DateTime(2026, 7, 18, 10),
+      );
+
+      expect(
+        await CharacterTimelineService.storeSummaryCandidates(
+          characterId: 'char-a',
+          sourceMessages: [newer],
+          candidates: const [
+            TimelineEventCandidate(
+              type: 'state',
+              subject: 'character',
+              sourceMessageIds: [81],
+              occurredOn: '2026-07-18',
+              dateBasis: 'relative',
+              key: '健康',
+              value: '晏辭感冒',
+              evidence: '你今天感冒了',
+            ),
+          ],
+        ),
+        1,
+      );
+      expect(
+        await CharacterTimelineService.storeSummaryCandidates(
+          characterId: 'char-a',
+          sourceMessages: [older],
+          candidates: const [
+            TimelineEventCandidate(
+              type: 'state',
+              subject: 'character',
+              sourceMessageIds: [82],
+              occurredOn: '2026-07-17',
+              dateBasis: 'relative',
+              key: '健康',
+              value: '晏辭健康正常',
+              evidence: '你昨天還很健康',
+            ),
+          ],
+        ),
+        0,
+      );
+
+      final states = await CharacterTimelineService.getStates('char-a');
+      expect(states.single['value'], '晏辭感冒');
+      expect(states.single['source_message_id'], 81);
     },
   );
 

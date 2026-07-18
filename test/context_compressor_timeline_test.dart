@@ -33,7 +33,7 @@ void main() {
 
   test('valid JSON separates summary text from timeline candidates', () {
     final decoded = ContextCompressor.decodeCompressionResponseForTesting('''
-{"summary":"兩人回顧前一天的電影。","timeline":[{"type":"event","source_message_ids":[12,11,12],"occurred_on":"2026-07-17","date_basis":"relative","value":"兩人一起看電影","evidence":"昨天我們去看了電影"}]}
+{"summary":"兩人回顧前一天的電影。","timeline":[{"type":"event","subject":"relationship","source_message_ids":[12,11,12],"occurred_on":"2026-07-17","date_basis":"relative","value":"兩人一起看電影","evidence":"昨天我們去看了電影"}]}
 ''');
 
     expect(decoded['summary'], '兩人回顧前一天的電影。');
@@ -41,6 +41,29 @@ void main() {
     expect(timeline, hasLength(1));
     expect(timeline.single.sourceMessageIds, [11, 12]);
     expect(timeline.single.occurredOn, '2026-07-17');
+    expect(timeline.single.subject, 'relationship');
+    expect(timeline.single.type, 'event');
+  });
+
+  test('valid state JSON keeps subject and state key', () {
+    final decoded = ContextCompressor.decodeCompressionResponseForTesting('''
+{"summary":"晏辭處於生理期。","timeline":[{"type":"state","subject":"character","source_message_ids":[21],"occurred_on":"2026-07-17","date_basis":"relative","key":"生理週期","value":"晏辭處於生理期第二天","evidence":"你昨天是生理期第二天"}]}
+''');
+
+    final timeline = decoded['timeline']! as List<TimelineEventCandidate>;
+    expect(timeline, hasLength(1));
+    expect(timeline.single.type, 'state');
+    expect(timeline.single.subject, 'character');
+    expect(timeline.single.key, '生理週期');
+  });
+
+  test('timeline candidate without an owner is not accepted', () {
+    final decoded = ContextCompressor.decodeCompressionResponseForTesting('''
+{"summary":"保留摘要。","timeline":[{"type":"event","source_message_ids":[1],"occurred_on":"2026-07-18","date_basis":"message_time","value":"稱呼大小姐","evidence":"我稱呼她為大小姐"}]}
+''');
+
+    expect(decoded['summary'], '保留摘要。');
+    expect(decoded['timeline'], isEmpty);
   });
 
   test('malformed JSON may recover summary but never guesses timeline', () {
