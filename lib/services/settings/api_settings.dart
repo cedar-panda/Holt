@@ -12,6 +12,7 @@ import '../openai_compatible_service.dart';
 import '../thinking_machines_service.dart';
 import '../local_model_service.dart';
 import '../locale_strings.dart';
+import 'memory_settings.dart';
 
 /// 使用者尚未完成 API 來源設定。這類錯誤應由 UI 引導設定，不能當成
 /// 角色回覆寫入聊天紀錄。
@@ -783,6 +784,23 @@ class ApiSettings {
     final normalized = modelId.trim();
     if (normalized.isEmpty) return buildAdapter();
     final provider = await resolveStarredModelProvider(normalized);
+    return buildAdapter(overrideModel: normalized, overrideProvider: provider);
+  }
+
+  /// 窗口摘要模型使用自己保存的「來源＋模型」；舊版只存模型名時才走
+  /// 星標來源推斷。這條路徑不會因目前聊天 provider 改變而漂移。
+  static Future<String> resolveSummaryModelProvider(String modelId) async {
+    final normalized = modelId.trim();
+    if (normalized.isEmpty) return getApiProvider();
+    final savedProvider = await MemorySettings.getSummaryProvider();
+    if (savedProvider.isNotEmpty) return savedProvider;
+    return resolveStarredModelProvider(normalized);
+  }
+
+  static Future<ApiAdapter> buildAdapterForSummaryModel(String modelId) async {
+    final normalized = modelId.trim();
+    if (normalized.isEmpty) return buildAdapter();
+    final provider = await resolveSummaryModelProvider(normalized);
     return buildAdapter(overrideModel: normalized, overrideProvider: provider);
   }
 

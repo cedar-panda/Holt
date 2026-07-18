@@ -980,7 +980,7 @@ Rules:
       if (model.isEmpty) {
         model = await ApiSettings.getModel();
       }
-      final adapter = await ApiSettings.buildAdapterForModel(model);
+      final adapter = await ApiSettings.buildAdapterForSummaryModel(model);
       return await adapter.sendMessage(
         messages: [
           {'role': 'user', 'content': userMessage},

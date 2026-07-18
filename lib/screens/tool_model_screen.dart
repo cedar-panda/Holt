@@ -15,7 +15,6 @@ class ToolModelScreen extends StatefulWidget {
 
 class _ToolModelScreenState extends State<ToolModelScreen> {
   String _stickerVisionModel = '';
-  String _summaryModel = '';
   Set<String> _starredModels = {};
 
   @override
@@ -26,13 +25,11 @@ class _ToolModelScreenState extends State<ToolModelScreen> {
 
   Future<void> _loadSettings() async {
     final stickerModel = await UserSettings.getStickerVisionModel();
-    final summaryModel = await MemorySettings.getSummaryModel();
     final starred = await ApiSettings.getStarredModels();
 
     if (mounted) {
       setState(() {
         _stickerVisionModel = stickerModel;
-        _summaryModel = summaryModel;
         _starredModels = starred.toSet();
       });
     }
@@ -40,7 +37,6 @@ class _ToolModelScreenState extends State<ToolModelScreen> {
 
   Future<void> _saveSettings() async {
     await UserSettings.saveStickerVisionModel(_stickerVisionModel);
-    await MemorySettings.saveSummaryModel(_summaryModel);
 
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -135,40 +131,6 @@ class _ToolModelScreenState extends State<ToolModelScreen> {
     );
   }
 
-  void _showSummaryModelHelp() {
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: YanciTheme.isDark
-            ? const Color(0xFF2C2C2E)
-            : Colors.white,
-        title: Text(
-          L.get('settings_summary_model'),
-          style: YanciTheme.bodyText.copyWith(
-            fontSize: 16,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        content: Text(
-          L.pick(
-            en: 'Used for background summary tasks (Window Summary & Auto Memory). Requires a model from your "Starred" list in API Settings. If left blank, it defaults to the main model.',
-            zhTW: '用於背景摘要任務（窗口摘要、自動記憶）。\n僅能從 API 設定中你「打星標」的模型裡選擇。留空則代表跟主要模型相同。',
-          ),
-          style: YanciTheme.bodyText.copyWith(fontSize: 14),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: Text(
-              L.pick(en: 'OK', zhTW: '好'),
-              style: TextStyle(color: YanciTheme.accent),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -228,57 +190,6 @@ class _ToolModelScreenState extends State<ToolModelScreen> {
                             onChanged: (v) =>
                                 setState(() => _stickerVisionModel = v),
                           ),
-                        ],
-                      ),
-                    ),
-
-                    const SizedBox(height: YanciTheme.spacingLg),
-
-                    Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        _buildSectionTitle(L.get('settings_summary_model')),
-                        const SizedBox(width: 4),
-                        GestureDetector(
-                          behavior: HitTestBehavior.opaque,
-                          onTap: _showSummaryModelHelp,
-                          child: Padding(
-                            padding: const EdgeInsets.all(2),
-                            child: Icon(
-                              Icons.help_outline_rounded,
-                              size: 15,
-                              color: YanciTheme.textSecondary.withValues(
-                                alpha: 0.6,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: YanciTheme.spacingSm),
-                    _buildGlassCard(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          _buildModelDropdown(
-                            value: _summaryModel,
-                            onChanged: (v) => setState(() => _summaryModel = v),
-                          ),
-                          if (_summaryModel.isEmpty) ...[
-                            const SizedBox(height: 4),
-                            Text(
-                              L.pick(
-                                en: 'Blank means same as main model; choose a cheap model if the main model is expensive.',
-                                zhTW: '留空會使用主模型；主模型貴的話，建議改選便宜摘要模型。',
-                              ),
-                              style: YanciTheme.bodySmall.copyWith(
-                                fontSize: 10,
-                                color: YanciTheme.textSecondary.withValues(
-                                  alpha: 0.55,
-                                ),
-                              ),
-                            ),
-                          ],
                         ],
                       ),
                     ),

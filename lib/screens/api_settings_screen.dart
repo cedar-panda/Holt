@@ -118,9 +118,12 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
   String _thinkingMachinesEffort = 'high';
 
   String _selectedModel = '';
+  String _summaryProvider = MemorySettings.defaultSummaryProvider;
+  String _summaryModel = MemorySettings.defaultSummaryModel;
   List<ModelInfo> _models = [];
   List<ModelInfo> _filteredModels = [];
   Set<String> _starredModels = {};
+  Map<String, String> _starredModelProviders = {};
   final _modelSearchController = TextEditingController();
 
   bool _isFetchingModels = false;
@@ -158,6 +161,20 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
         await ApiSettings.getThinkingMachinesEffort();
 
     final starred = await ApiSettings.getStarredModels();
+    var starredProviders = await ApiSettings.getStarredModelProviders();
+    for (final model in starred) {
+      if ((starredProviders[model] ?? '').isEmpty) {
+        await ApiSettings.resolveStarredModelProvider(model);
+      }
+    }
+    starredProviders = await ApiSettings.getStarredModelProviders();
+    final summaryModel = await MemorySettings.getSummaryModel();
+    var summaryProvider = await MemorySettings.getSummaryProvider();
+    if (summaryModel.isNotEmpty && summaryProvider.isEmpty) {
+      summaryProvider = await ApiSettings.resolveStarredModelProvider(
+        summaryModel,
+      );
+    }
     final savedModel = await ApiSettings.getModelForProvider(provider);
 
     if (mounted) {
@@ -183,7 +200,10 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
         _thinkingMachinesEffort = thinkingMachinesEffort;
 
         _starredModels = starred.toSet();
+        _starredModelProviders = starredProviders;
         _selectedModel = savedModel;
+        _summaryProvider = summaryProvider;
+        _summaryModel = summaryModel;
         _lastPolicySelectionWasClaude = TokenEstimator.isClaudePromptCacheModel(
           provider: provider,
           model: savedModel,
@@ -421,6 +441,142 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
     return _selectedModel;
   }
 
+  static const String _summarySelectionSeparator = '\u0000';
+
+  String _summarySelectionValue(String provider, String model) {
+    if (model.isEmpty) return '';
+    return '$provider$_summarySelectionSeparator$model';
+  }
+
+  List<({String provider, String model})> _summaryModelOptions() {
+    final options = <({String provider, String model})>[];
+    final seen = <String>{};
+
+    void add(String provider, String model) {
+      final normalizedModel = model.trim();
+      final normalizedProvider = normalizedModel.isEmpty ? '' : provider.trim();
+      final value = _summarySelectionValue(normalizedProvider, normalizedModel);
+      if (seen.add(value)) {
+        options.add((provider: normalizedProvider, model: normalizedModel));
+      }
+    }
+
+    add('', '');
+    add(
+      MemorySettings.defaultSummaryProvider,
+      MemorySettings.defaultSummaryModel,
+    );
+    add(_summaryProvider, _summaryModel);
+
+    final starred = _starredModels.toList()..sort();
+    for (final model in starred) {
+      final provider = _starredModelProviders[model] ?? '';
+      if (provider.isNotEmpty) add(provider, model);
+    }
+    return options;
+  }
+
+  String _providerLabel(String provider) => switch (provider) {
+    'openrouter' => 'OpenRouter',
+    'gemini' => 'Google Gemini',
+    'deepseek' => 'DeepSeek',
+    'qwen' => 'Qwen',
+    'bedrock' => 'AWS Bedrock',
+    'thinking_machines' => 'Thinking Machines',
+    'openai_compatible' => 'OpenAI Compatible',
+    'local' => L.pick(en: 'Local Model', zhTW: '本地模型'),
+    'local_api' => 'Local API',
+    _ => provider,
+  };
+
+  Widget _buildSummaryModelCard() {
+    final options = _summaryModelOptions();
+    final selected = _summarySelectionValue(_summaryProvider, _summaryModel);
+    final selectedValue =
+        options.any(
+          (option) =>
+              _summarySelectionValue(option.provider, option.model) == selected,
+        )
+        ? selected
+        : '';
+
+    return _buildGlassCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Semantics(
+            label: L.get('settings_summary_model'),
+            child: DropdownButton<String>(
+              value: selectedValue,
+              isExpanded: true,
+              underline: const SizedBox(),
+              dropdownColor: YanciTheme.isDark
+                  ? const Color(0xF0302830)
+                  : Colors.white,
+              style: YanciTheme.bodyText.copyWith(fontSize: 12),
+              items: options.map((option) {
+                final value = _summarySelectionValue(
+                  option.provider,
+                  option.model,
+                );
+                final label = option.model.isEmpty
+                    ? L.pick(
+                        en: 'Follow chat model',
+                        zhTW: '跟隨聊天模型',
+                        zhCN: '跟随聊天模型',
+                      )
+                    : '${_providerLabel(option.provider)} · ${option.model}';
+                return DropdownMenuItem<String>(
+                  value: value,
+                  child: Text(
+                    label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: YanciTheme.bodyText.copyWith(
+                      fontSize: 12,
+                      color: option.model.isEmpty
+                          ? YanciTheme.textSecondary
+                          : YanciTheme.textPrimary,
+                    ),
+                  ),
+                );
+              }).toList(),
+              onChanged: (value) {
+                if (value == null) return;
+                if (value.isEmpty) {
+                  setState(() {
+                    _summaryProvider = '';
+                    _summaryModel = '';
+                  });
+                } else {
+                  final separator = value.indexOf(_summarySelectionSeparator);
+                  if (separator < 1) return;
+                  setState(() {
+                    _summaryProvider = value.substring(0, separator);
+                    _summaryModel = value.substring(separator + 1);
+                  });
+                }
+                _debouncedSave();
+              },
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            L.pick(
+              en: 'Window summaries and automatic memory use this API pair. Star another model above to add it here.',
+              zhTW: '窗口摘要與自動記憶使用這組來源和模型；在上方替其他模型加星即可加入選單。',
+              zhCN: '窗口摘要与自动记忆使用这组来源和模型；在上方为其他模型加星即可加入选单。',
+            ),
+            style: YanciTheme.bodySmall.copyWith(
+              fontSize: 10,
+              color: YanciTheme.textSecondary.withValues(alpha: 0.65),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   void _showCostPolicyNotice(ModelCostPolicyNotice notice) {
     if (!mounted || notice == ModelCostPolicyNotice.none) return;
     final message = switch (notice) {
@@ -503,6 +659,8 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
     final thinkingMachinesKey = _thinkingMachinesKeyCtrl.text.trim();
     final thinkingMachinesModel = _thinkingMachinesModelCtrl.text.trim();
     final thinkingMachinesEffort = _thinkingMachinesEffort;
+    final summaryProvider = _summaryProvider;
+    final summaryModel = _summaryModel;
 
     await ApiSettings.saveOpenRouterApiKey(openRouterKey);
     await ApiSettings.saveSystemPrompt(systemPrompt);
@@ -519,6 +677,10 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
     await ApiSettings.saveThinkingMachinesApiKey(thinkingMachinesKey);
     await ApiSettings.saveThinkingMachinesModel(thinkingMachinesModel);
     await ApiSettings.saveThinkingMachinesEffort(thinkingMachinesEffort);
+    await MemorySettings.saveSummarySelection(
+      provider: summaryProvider,
+      model: summaryModel,
+    );
     if (provider == 'thinking_machines' && thinkingMachinesKey.isNotEmpty) {
       await _applyCostPolicy(
         provider: provider,
@@ -711,22 +873,19 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
                       ? Colors.amber
                       : YanciTheme.textSecondary.withValues(alpha: 0.5),
                 ),
-                tooltip: L.pick(
-                  en: 'Add Inkling to tool models',
-                  zhTW: '加入工具模型星標',
-                ),
+                tooltip: L.pick(en: 'Star model', zhTW: '將模型加上星標'),
                 onPressed: () async {
                   await ApiSettings.toggleStarModel(
                     model,
                     provider: 'thinking_machines',
                   );
+                  final starredModels = await ApiSettings.getStarredModels();
+                  final providers =
+                      await ApiSettings.getStarredModelProviders();
                   if (!mounted) return;
                   setState(() {
-                    if (starred) {
-                      _starredModels.remove(model);
-                    } else {
-                      _starredModels.add(model);
-                    }
+                    _starredModels = starredModels.toSet();
+                    _starredModelProviders = providers;
                   });
                 },
               ),
@@ -1489,11 +1648,15 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
                                                       );
                                                       final starred =
                                                           await ApiSettings.getStarredModels();
+                                                      final providers =
+                                                          await ApiSettings.getStarredModelProviders();
                                                       if (!mounted) return;
-                                                      setState(
-                                                        () => _starredModels =
-                                                            starred.toSet(),
-                                                      );
+                                                      setState(() {
+                                                        _starredModels = starred
+                                                            .toSet();
+                                                        _starredModelProviders =
+                                                            providers;
+                                                      });
                                                     },
                                                     child: Padding(
                                                       padding:
@@ -1532,6 +1695,10 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
                                   ),
                                 ),
                             ],
+                            const SizedBox(height: YanciTheme.spacingLg),
+                            _buildSectionTitle(L.get('settings_summary_model')),
+                            const SizedBox(height: YanciTheme.spacingSm),
+                            _buildSummaryModelCard(),
                             const SizedBox(height: YanciTheme.spacingLg),
                             const ApiAdvancedSettings(),
                             const SizedBox(height: YanciTheme.spacingLg),

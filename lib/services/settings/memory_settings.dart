@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// 記憶系統設定（窗口摘要、模型寫入記憶、Token 預算、Prompt Caching）
@@ -5,8 +7,12 @@ class MemorySettings {
   // ═══ 摘要 ═══
   static const String _keySummarySource = 'summary_source';
   static const String _keySummaryModel = 'summary_model';
+  static const String _keySummarySelection = 'summary_model_selection_v1';
   static const String _keyMemoryMode = 'memory_mode';
   static const String _keyCustomMemoryPrompt = 'custom_memory_prompt';
+
+  static const String defaultSummaryProvider = 'gemini';
+  static const String defaultSummaryModel = 'gemini-3-flash';
 
   static Future<void> saveSummarySource(String source) async {
     final p = await SharedPreferences.getInstance();
@@ -21,11 +27,69 @@ class MemorySettings {
   static Future<void> saveSummaryModel(String v) async {
     final p = await SharedPreferences.getInstance();
     await p.setString(_keySummaryModel, v);
+    await p.remove(_keySummarySelection);
+  }
+
+  /// 摘要 API 必須把來源和模型當作同一個設定保存，避免同名模型被送到
+  /// 當前聊天來源。空值代表「跟隨聊天模型」。
+  static Future<void> saveSummarySelection({
+    required String provider,
+    required String model,
+  }) async {
+    final normalizedModel = model.trim();
+    final normalizedProvider = normalizedModel.isEmpty ? '' : provider.trim();
+    final p = await SharedPreferences.getInstance();
+    await p.setString(
+      _keySummarySelection,
+      jsonEncode({'provider': normalizedProvider, 'model': normalizedModel}),
+    );
+    // 保留舊 key，讓降級版本仍能讀到使用者選過的模型。
+    await p.setString(_keySummaryModel, normalizedModel);
   }
 
   static Future<String> getSummaryModel() async {
     final p = await SharedPreferences.getInstance();
-    return p.getString(_keySummaryModel) ?? '';
+    final selection = _decodeSummarySelection(
+      p.getString(_keySummarySelection),
+    );
+    if (selection != null) return selection.model;
+    if (p.containsKey(_keySummaryModel)) {
+      final legacyModel = (p.getString(_keySummaryModel) ?? '').trim();
+      return legacyModel.isEmpty ? defaultSummaryModel : legacyModel;
+    }
+    return defaultSummaryModel;
+  }
+
+  static Future<String> getSummaryProvider() async {
+    final p = await SharedPreferences.getInstance();
+    final selection = _decodeSummarySelection(
+      p.getString(_keySummarySelection),
+    );
+    if (selection != null) return selection.provider;
+    // 舊用戶若已選過模型，來源交給舊的星標映射推斷；只有從未選過的
+    // 使用者才套用 Gemini 3 Flash 預設。
+    if (p.containsKey(_keySummaryModel) &&
+        (p.getString(_keySummaryModel) ?? '').trim().isNotEmpty) {
+      return '';
+    }
+    return defaultSummaryProvider;
+  }
+
+  static ({String provider, String model})? _decodeSummarySelection(
+    String? raw,
+  ) {
+    if (raw == null || raw.isEmpty) return null;
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return null;
+      final provider = decoded['provider'];
+      final model = decoded['model'];
+      if (provider is! String || model is! String) return null;
+      if (model.trim().isEmpty && provider.trim().isNotEmpty) return null;
+      return (provider: provider.trim(), model: model.trim());
+    } catch (_) {
+      return null;
+    }
   }
 
   /// 記憶方案：daily / story / custom

@@ -2,6 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:project_yanci/services/settings/api_settings.dart';
+import 'package:project_yanci/services/settings/memory_settings.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -67,6 +68,56 @@ void main() {
       ),
       'openai_compatible',
     );
+  });
+
+  test(
+    'window summary defaults to Gemini 3 Flash as a provider pair',
+    () async {
+      expect(
+        await MemorySettings.getSummaryModel(),
+        MemorySettings.defaultSummaryModel,
+      );
+      expect(
+        await MemorySettings.getSummaryProvider(),
+        MemorySettings.defaultSummaryProvider,
+      );
+      expect(
+        await ApiSettings.resolveSummaryModelProvider(
+          await MemorySettings.getSummaryModel(),
+        ),
+        'gemini',
+      );
+    },
+  );
+
+  test('explicit follow-main summary selection stays empty', () async {
+    await MemorySettings.saveSummarySelection(provider: '', model: '');
+
+    expect(await MemorySettings.getSummaryModel(), isEmpty);
+    expect(await MemorySettings.getSummaryProvider(), isEmpty);
+  });
+
+  test('legacy summary model keeps its starred API provider', () async {
+    const model = '[A-按次]gemini-3-flash';
+    await ApiSettings.toggleStarModel(model, provider: 'openai_compatible');
+    await MemorySettings.saveSummaryModel(model);
+
+    expect(await MemorySettings.getSummaryModel(), model);
+    expect(await MemorySettings.getSummaryProvider(), isEmpty);
+    expect(
+      await ApiSettings.resolveSummaryModelProvider(model),
+      'openai_compatible',
+    );
+  });
+
+  test('summary provider and model are saved and restored together', () async {
+    await MemorySettings.saveSummarySelection(
+      provider: 'openrouter',
+      model: 'google/gemini-3-flash',
+    );
+
+    expect(await MemorySettings.getSummaryProvider(), 'openrouter');
+    expect(await MemorySettings.getSummaryModel(), 'google/gemini-3-flash');
   });
 
   test('removing a star also removes its provider association', () async {

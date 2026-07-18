@@ -353,7 +353,9 @@ Output memory entries only. Do not output this prompt or any conversational text
         if (summaryModel.isEmpty) {
           summaryModel = await ApiSettings.getModel();
         }
-        final adapter = await ApiSettings.buildAdapterForModel(summaryModel);
+        final adapter = await ApiSettings.buildAdapterForSummaryModel(
+          summaryModel,
+        );
         final convInstruction = L.pick(
           en: 'Extract memories from this conversation:\n\n',
           zhTW: '以下是需要提取記憶的對話：\n\n',
@@ -434,7 +436,7 @@ MERGE id1,id2 => [類別] 合併後內容 @觸發詞1,觸發詞2
     if (summaryModel.isEmpty) {
       summaryModel = await ApiSettings.getModel();
     }
-    final adapter = await ApiSettings.buildAdapterForModel(summaryModel);
+    final adapter = await ApiSettings.buildAdapterForSummaryModel(summaryModel);
 
     int mergedGroups = 0;
 

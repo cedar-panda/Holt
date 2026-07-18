@@ -159,7 +159,7 @@ class ManualSummaryService {
         model = await ApiSettings.getModel();
       }
 
-      final provider = await ApiSettings.getApiProvider();
+      final provider = await ApiSettings.resolveSummaryModelProvider(model);
       if (provider == 'openrouter') {
         return await _callOpenRouter(
           model: model,
@@ -169,7 +169,7 @@ class ManualSummaryService {
         );
       }
 
-      final adapter = await ApiSettings.buildAdapterForModel(model);
+      final adapter = await ApiSettings.buildAdapterForSummaryModel(model);
       return await adapter.sendMessage(
         messages: [
           {
