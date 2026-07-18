@@ -7,6 +7,7 @@ import 'package:http/http.dart' as http;
 import 'api_adapter.dart';
 import 'locale_strings.dart';
 import 'sse_stream.dart';
+import 'stream_transport.dart';
 
 /// Thinking Machines 第一方 Inkling API。
 ///
@@ -192,9 +193,10 @@ class ThinkingMachinesService implements ApiAdapter {
         ..headers.addAll(_headers(apiKey))
         ..body = jsonEncode(body);
 
-      final response = await client
-          .send(request)
-          .timeout(const Duration(seconds: 30));
+      final response = await StreamTransport.waitForResponseStart(
+        client.send(request),
+        provider: 'Thinking Machines',
+      );
       if (response.statusCode < 200 || response.statusCode >= 300) {
         final errorBody = await response.stream.bytesToString().timeout(
           SseStream.defaultIdleTimeout,

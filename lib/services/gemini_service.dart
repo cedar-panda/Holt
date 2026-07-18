@@ -6,6 +6,7 @@ import 'api_adapter.dart';
 import 'locale_strings.dart';
 import 'settings/memory_settings.dart';
 import 'sse_stream.dart';
+import 'stream_transport.dart';
 import 'token_estimator.dart';
 
 /// Google Gemini API 直連
@@ -123,9 +124,10 @@ class GeminiService implements ApiAdapter {
       request.headers.addAll({'Content-Type': 'application/json'});
       request.body = jsonEncode(body);
 
-      final response = await client
-          .send(request)
-          .timeout(const Duration(seconds: 30));
+      final response = await StreamTransport.waitForResponseStart(
+        client.send(request),
+        provider: 'Gemini',
+      );
 
       if (response.statusCode != 200) {
         final err = await response.stream.bytesToString().timeout(

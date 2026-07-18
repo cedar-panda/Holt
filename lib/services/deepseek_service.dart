@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'api_adapter.dart';
 import 'sse_stream.dart';
+import 'stream_transport.dart';
 
 /// DeepSeek API（OpenAI 兼容格式，自動 prompt caching）
 /// 不需要手動標記 cache_control，DeepSeek 自動緩存重複前綴
@@ -92,9 +93,10 @@ class DeepSeekService implements ApiAdapter {
     _activeClient?.close();
     _activeClient = client;
     try {
-      final response = await client
-          .send(request)
-          .timeout(const Duration(seconds: 30));
+      final response = await StreamTransport.waitForResponseStart(
+        client.send(request),
+        provider: 'DeepSeek',
+      );
 
       if (response.statusCode != 200) {
         final err = await response.stream.bytesToString().timeout(

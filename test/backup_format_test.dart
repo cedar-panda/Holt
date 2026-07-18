@@ -146,6 +146,39 @@ void main() {
     expect(tables['archive']!.single['character_id'], 'char-1');
   });
 
+  test('timeline import deduplicates a day and repairs ISO week-year', () {
+    final backup = _emptyV5();
+    backup['character_timeline'] = <dynamic>[
+      <String, dynamic>{
+        'id': 1,
+        'character_id': 'char-a',
+        'type': 'event',
+        'value': '約會',
+        'week_group': '2025-W52',
+        'confirmed': 0,
+        'created_at': '2025-12-29T09:00:00.000',
+        'updated_at': '2025-12-29T09:00:00.000',
+      },
+      <String, dynamic>{
+        'id': 2,
+        'character_id': 'char-a',
+        'type': 'event',
+        'value': '約會',
+        'week_group': '2025-W52',
+        'confirmed': 1,
+        'created_at': '2025-12-29T20:00:00.000',
+        'updated_at': '2025-12-29T20:00:00.000',
+      },
+    ];
+
+    final rows = BackupService.normalizeForTesting(
+      backup,
+    )['character_timeline']!;
+    expect(rows, hasLength(1));
+    expect(rows.single['confirmed'], 1);
+    expect(rows.single['week_group'], '2026-W01');
+  });
+
   test('v5 rejects an incomplete table manifest before restore', () {
     final backup = _emptyV5();
     final schema = backup['schema'] as Map<String, dynamic>;

@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 import 'package:crypto/crypto.dart';
 import 'api_adapter.dart';
 import 'aws_event_stream.dart';
+import 'stream_transport.dart';
 import 'settings/memory_settings.dart';
 import 'token_estimator.dart';
 
@@ -112,9 +113,10 @@ class BedrockService implements ApiAdapter {
       request.headers.addAll(headers);
       request.body = bodyStr;
 
-      final response = await client
-          .send(request)
-          .timeout(const Duration(seconds: 30));
+      final response = await StreamTransport.waitForResponseStart(
+        client.send(request),
+        provider: 'Amazon Bedrock',
+      );
 
       if (response.statusCode != 200) {
         final errorBody = await response.stream.bytesToString().timeout(

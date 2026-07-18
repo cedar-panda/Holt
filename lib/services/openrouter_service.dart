@@ -8,6 +8,7 @@ import 'cache_debug_log.dart';
 import 'locale_strings.dart';
 import 'settings_manager.dart';
 import 'sse_stream.dart';
+import 'stream_transport.dart';
 import 'token_estimator.dart';
 
 /// OpenRouter API 實現（含 Anthropic prompt caching）
@@ -219,9 +220,10 @@ class OpenRouterService implements ApiAdapter {
       request.headers.addAll(_headers());
       request.body = jsonEncode(body);
 
-      final response = await client
-          .send(request)
-          .timeout(const Duration(seconds: 30));
+      final response = await StreamTransport.waitForResponseStart(
+        client.send(request),
+        provider: 'OpenRouter',
+      );
 
       if (response.statusCode != 200) {
         final errorBody = await response.stream.bytesToString().timeout(

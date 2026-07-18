@@ -6,6 +6,7 @@ import 'api_adapter.dart';
 import 'openrouter_service.dart' show ModelInfo;
 import 'settings/memory_settings.dart';
 import 'sse_stream.dart';
+import 'stream_transport.dart';
 import 'token_estimator.dart';
 
 /// OpenAI 兼容 API（支持任何中轉站 / 自建端點）
@@ -202,9 +203,10 @@ class OpenAICompatibleService implements ApiAdapter {
 
       final http.StreamedResponse response;
       try {
-        response = await client
-            .send(request)
-            .timeout(const Duration(seconds: 30));
+        response = await StreamTransport.waitForResponseStart(
+          client.send(request),
+          provider: 'OpenAI-compatible API',
+        );
       } on SocketException catch (e) {
         throw Exception(_friendlyNetworkError(e));
       } on HttpException catch (e) {

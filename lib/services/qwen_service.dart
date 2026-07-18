@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'api_adapter.dart';
 import 'sse_stream.dart';
+import 'stream_transport.dart';
 
 /// 通義千問 API（阿里雲 DashScope，OpenAI 兼容格式）
 /// endpoint: compatible-mode/v1
@@ -83,9 +84,10 @@ class QwenService implements ApiAdapter {
     _activeClient?.close();
     _activeClient = client;
     try {
-      final response = await client
-          .send(request)
-          .timeout(const Duration(seconds: 30));
+      final response = await StreamTransport.waitForResponseStart(
+        client.send(request),
+        provider: 'Qwen',
+      );
 
       if (response.statusCode != 200) {
         final err = await response.stream.bytesToString().timeout(

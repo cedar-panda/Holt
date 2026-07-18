@@ -10,6 +10,7 @@ import 'package:uuid/uuid.dart';
 import '../models/message.dart';
 import '../models/memory.dart';
 import '../utils/app_file_safety.dart';
+import '../utils/iso_week.dart';
 
 /// 本地數據庫
 class DatabaseHelper {
@@ -17,7 +18,7 @@ class DatabaseHelper {
   static Future<Database>? _dbInitFuture;
   static Future<Database> Function() _databaseInitializer = _initDatabase;
   static const String _dbName = 'yanci.db';
-  static const int _dbVersion = 36;
+  static const int _dbVersion = 37;
   static final Random _windowIdRandom = Random.secure();
 
   static Future<Database> get database async {
@@ -100,6 +101,7 @@ class DatabaseHelper {
     await _createCharacterTimelineTable(db);
     await _createKnownIndexes(db);
     await _createSavedMessageUniqueIndex(db);
+    await _createTimelineEventUniqueIndex(db);
   }
 
   /// 用量記錄表
@@ -210,6 +212,14 @@ class DatabaseHelper {
         updated_at TEXT NOT NULL DEFAULT (datetime('now'))
       )
     ''');
+  }
+
+  static Future<void> _createTimelineEventUniqueIndex(Database db) {
+    return db.execute(
+      'CREATE UNIQUE INDEX IF NOT EXISTS idx_timeline_event_daily_unique '
+      'ON character_timeline(character_id, value, substr(created_at, 1, 10)) '
+      "WHERE type = 'event'",
+    );
   }
 
   /// 所有 fresh install 與 migration 最終都會走到這裡，確保查詢規劃一致。
@@ -712,6 +722,63 @@ class DatabaseHelper {
     if (oldVersion < 36) {
       await _migrateToV36(db);
     }
+    if (oldVersion < 37) {
+      await _migrateToV37(db);
+    }
+  }
+
+  static Future<void> _migrateToV37(Database db) async {
+    if (!await _tableExists(db, 'character_timeline')) return;
+
+    // If any copy was confirmed, retain that state on the oldest row before
+    // collapsing same-day duplicates produced by the old keyword scanner.
+    await db.execute('''
+      UPDATE character_timeline
+      SET confirmed = 1
+      WHERE type = 'event' AND EXISTS (
+        SELECT 1
+        FROM character_timeline AS duplicate
+        WHERE duplicate.type = 'event'
+          AND duplicate.character_id = character_timeline.character_id
+          AND duplicate.value = character_timeline.value
+          AND substr(duplicate.created_at, 1, 10) =
+              substr(character_timeline.created_at, 1, 10)
+          AND duplicate.confirmed = 1
+      )
+    ''');
+    await db.execute('''
+      DELETE FROM character_timeline
+      WHERE type = 'event' AND id NOT IN (
+        SELECT MIN(id)
+        FROM character_timeline
+        WHERE type = 'event'
+        GROUP BY character_id, value, substr(created_at, 1, 10)
+      )
+    ''');
+
+    // Repair the old simplified calendar-week calculation, including dates
+    // at ISO week-year boundaries.
+    final events = await db.query(
+      'character_timeline',
+      columns: ['id', 'created_at'],
+      where: "type = 'event'",
+    );
+    final batch = db.batch();
+    for (final event in events) {
+      final id = event['id'] as int?;
+      final createdAt = DateTime.tryParse(
+        event['created_at']?.toString() ?? '',
+      );
+      if (id == null || createdAt == null) continue;
+      batch.update(
+        'character_timeline',
+        {'week_group': isoWeekGroup(createdAt)},
+        where: 'id = ?',
+        whereArgs: [id],
+      );
+    }
+    await batch.commit(noResult: true);
+    await _createTimelineEventUniqueIndex(db);
   }
 
   static Future<void> _migrateToV36(Database db) async {

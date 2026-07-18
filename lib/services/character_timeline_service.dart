@@ -1,6 +1,7 @@
-import 'package:flutter/foundation.dart' show debugPrint;
+import 'package:flutter/foundation.dart' show debugPrint, visibleForTesting;
 
 import '../memory/database.dart';
+import '../utils/iso_week.dart';
 import 'locale_strings.dart';
 
 /// ═══════════════════════════════════════════════
@@ -71,6 +72,45 @@ class CharacterTimelineService {
     '聚餐',
   ];
 
+  /// Mentions of an old, hypothetical, cancelled, or future event must not be
+  /// stamped onto the timeline as if they happened at reply time.
+  static const List<String> _nonOccurrenceMarkers = [
+    '上次',
+    '那次',
+    '之前',
+    '以前',
+    '曾經',
+    '當時',
+    '記得',
+    '回想',
+    '回憶',
+    '去年',
+    '前年',
+    '明天',
+    '後天',
+    '下次',
+    '改天',
+    '以後',
+    '將來',
+    '想去',
+    '想看',
+    '要不要',
+    '好不好',
+    '嗎',
+    '如果',
+    '假如',
+    '打算',
+    '準備去',
+    '沒去',
+    '沒有去',
+    '沒看',
+    '不去',
+    '不想',
+    '不是',
+    '取消',
+    '別去',
+  ];
+
   // ─────────────────────────────────────────────
   // B. 數據庫
   // ─────────────────────────────────────────────
@@ -102,6 +142,11 @@ class CharacterTimelineService {
       CREATE INDEX IF NOT EXISTS idx_timeline_event_lookup
       ON character_timeline (character_id, type, confirmed, week_group, created_at)
     ''');
+    await db.execute('''
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_timeline_event_daily_unique
+      ON character_timeline (character_id, value, substr(created_at, 1, 10))
+      WHERE type = 'event'
+    ''');
     _tableEnsured = true;
   }
 
@@ -111,14 +156,24 @@ class CharacterTimelineService {
 
   /// 掃描 char 回覆中的關鍵詞，自動歸檔
   /// 返回新增/更新的條數
-  static Future<int> scanReply(String characterId, String charReply) async {
+  static Future<int> scanReply(
+    String characterId,
+    String charReply, {
+    @visibleForTesting DateTime? now,
+  }) async {
     await _ensureTable();
     int count = 0;
+    final scanTime = now ?? DateTime.now();
 
     // 1. 檢查健康好轉——只在「本來就有不正常的健康記錄」時才觸發，
     //    否則健康詞和恢復詞同回覆出現時會互相打架
     bool healthRecovered = false;
     final states = await getStates(characterId);
+    final currentStates = <String, String>{
+      for (final state in states)
+        if (state['key'] is String && state['value'] is String)
+          state['key'] as String: state['value'] as String,
+    };
     final healthRows = states.where((s) => s['key'] == '健康').toList();
     final currentHealth = healthRows.isEmpty
         ? null
@@ -127,6 +182,7 @@ class CharacterTimelineService {
       for (final kw in kHealthRecoveryKeywords) {
         if (charReply.contains(kw)) {
           await upsertState(characterId, '健康', '正常');
+          currentStates['健康'] = '正常';
           healthRecovered = true;
           count++;
           break;
@@ -137,27 +193,63 @@ class CharacterTimelineService {
     // 2. 檢查狀態變更
     // 舊版用 count > 0 判斷「健康已處理」——count 可能來自任何狀態，
     // 會誤吞真正的健康記錄。改用專屬 flag。
+    final matchedStates = <String, String>{};
     for (final entry in kStateKeywords.entries) {
       if (charReply.contains(entry.key)) {
         if (entry.value == '健康' && healthRecovered) continue;
-        await upsertState(
-          characterId,
-          entry.value,
-          _extractValue(entry.key, entry.value, charReply),
-        );
-        count++;
+        final previous = matchedStates[entry.value];
+        if (previous == null || entry.key.length > previous.length) {
+          matchedStates[entry.value] = entry.key;
+        }
       }
     }
+    for (final match in matchedStates.entries) {
+      final value = _extractValue(match.value, match.key, charReply);
+      if (currentStates[match.key] == value) continue;
+      await upsertState(characterId, match.key, value);
+      currentStates[match.key] = value;
+      count++;
+    }
 
-    // 3. 檢查一次性事件。直接命中關鍵詞先確認，否則現有讀取流程永遠不會展示。
+    // 3. 檢查一次性事件。只記實際發生的句子；回憶、提議、否定與
+    //    未來安排不再錯蓋成「今天發生」。同事件同日由 DB 再做冪等保護。
     for (final kw in kEventKeywords) {
-      if (charReply.contains(kw)) {
-        await addEvent(characterId, kw);
+      final occurredAt = _eventOccurrenceTime(charReply, kw, scanTime);
+      if (occurredAt != null) {
+        final inserted = await addEvent(
+          characterId,
+          kw,
+          occurredAt: occurredAt,
+        );
+        if (!inserted) continue;
         count++;
       }
     }
 
     return count;
+  }
+
+  static DateTime? _eventOccurrenceTime(
+    String reply,
+    String keyword,
+    DateTime now,
+  ) {
+    final sentencePattern = RegExp(
+      '[^。！？!?；;，,\\n]*${RegExp.escape(keyword)}[^。！？!?；;，,\\n]*',
+    );
+    for (final match in sentencePattern.allMatches(reply)) {
+      final sentence = match.group(0)?.trim() ?? '';
+      if (sentence.isEmpty) continue;
+      if (_nonOccurrenceMarkers.any(sentence.contains)) continue;
+      if (sentence.contains('前天')) {
+        return now.subtract(const Duration(days: 2));
+      }
+      if (sentence.contains('昨天')) {
+        return now.subtract(const Duration(days: 1));
+      }
+      return now;
+    }
+    return null;
   }
 
   /// 從上下文提取更具體的值（簡單啟發式）
@@ -193,6 +285,8 @@ class CharacterTimelineService {
       VALUES (?, 'state', ?, ?, ?, 1, ?, ?)
       ON CONFLICT (character_id, key) WHERE type = 'state'
       DO UPDATE SET value = ?, source_memory_id = ?, updated_at = ?
+      WHERE character_timeline.value IS NOT excluded.value
+         OR character_timeline.source_memory_id IS NOT excluded.source_memory_id
     ''',
       [
         characterId,
@@ -209,28 +303,38 @@ class CharacterTimelineService {
   }
 
   /// 新增一次性事件
-  static Future<void> addEvent(
+  static Future<bool> addEvent(
     String characterId,
     String value, {
     bool confirmed = true,
     int? sourceMemoryId,
+    DateTime? occurredAt,
   }) async {
     await _ensureTable();
     final db = await DatabaseHelper.database;
-    final now = DateTime.now();
-    final weekGroup = _weekGroup(now);
+    final now = occurredAt ?? DateTime.now();
+    final normalizedValue = value.trim();
+    if (normalizedValue.isEmpty) return false;
+    final weekGroup = isoWeekGroup(now);
 
-    await db.insert('character_timeline', {
-      'character_id': characterId,
-      'type': 'event',
-      'key': null,
-      'value': value,
-      'source_memory_id': sourceMemoryId,
-      'week_group': weekGroup,
-      'confirmed': confirmed ? 1 : 0,
-      'created_at': now.toIso8601String(),
-      'updated_at': now.toIso8601String(),
-    });
+    final id = await db.rawInsert(
+      '''
+      INSERT OR IGNORE INTO character_timeline
+        (character_id, type, key, value, source_memory_id, week_group,
+         confirmed, created_at, updated_at)
+      VALUES (?, 'event', NULL, ?, ?, ?, ?, ?, ?)
+      ''',
+      [
+        characterId,
+        normalizedValue,
+        sourceMemoryId,
+        weekGroup,
+        confirmed ? 1 : 0,
+        now.toIso8601String(),
+        now.toIso8601String(),
+      ],
+    );
+    return id != 0;
   }
 
   /// 確認一次性事件
@@ -263,26 +367,36 @@ class CharacterTimelineService {
   static Future<List<Map<String, dynamic>>> getEvents(
     String characterId, {
     String? weekGroup,
+    DateTime? from,
+    DateTime? until,
     int limit = 5,
   }) async {
     await _ensureTable();
     final db = await DatabaseHelper.database;
 
+    final clauses = <String>[
+      'character_id = ?',
+      "type = 'event'",
+      'confirmed = 1',
+    ];
+    final args = <Object?>[characterId];
     if (weekGroup != null) {
-      return db.query(
-        'character_timeline',
-        where:
-            "character_id = ? AND type = 'event' AND week_group = ? AND confirmed = 1",
-        whereArgs: [characterId, weekGroup],
-        orderBy: 'created_at DESC',
-        limit: limit,
-      );
+      clauses.add('week_group = ?');
+      args.add(weekGroup);
+    }
+    if (from != null) {
+      clauses.add('created_at >= ?');
+      args.add(from.toIso8601String());
+    }
+    if (until != null) {
+      clauses.add('created_at < ?');
+      args.add(until.toIso8601String());
     }
     return db.query(
       'character_timeline',
-      where: "character_id = ? AND type = 'event' AND confirmed = 1",
-      whereArgs: [characterId],
-      orderBy: 'created_at DESC',
+      where: clauses.join(' AND '),
+      whereArgs: args,
+      orderBy: 'created_at DESC, id DESC',
       limit: limit,
     );
   }
@@ -464,16 +578,6 @@ class CharacterTimelineService {
   // ─────────────────────────────────────────────
   // 工具
   // ─────────────────────────────────────────────
-
-  /// 計算 ISO week group（如 2026-W25）
-  static String _weekGroup(DateTime dt) {
-    // 簡化版 ISO week：用年+週數。
-    // 年初幾天可能算出 week 0（如元旦落在週一），鉗到 1。
-    final jan1 = DateTime(dt.year, 1, 1);
-    final dayOfYear = dt.difference(jan1).inDays;
-    final week = ((dayOfYear + jan1.weekday - 1) / 7).ceil().clamp(1, 53);
-    return '${dt.year}-W${week.toString().padLeft(2, '0')}';
-  }
 
   /// 導出完整數據
   static Future<List<Map<String, dynamic>>> exportAll(

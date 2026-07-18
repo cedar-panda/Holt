@@ -12,6 +12,7 @@ import '../memory/database.dart';
 import '../memory/emotion_coordinates.dart';
 import '../models/message.dart';
 import '../utils/app_file_safety.dart';
+import '../utils/iso_week.dart';
 import 'character_timeline_service.dart';
 import 'keep_alive_service.dart';
 import 'model_cost_policy.dart';
@@ -370,6 +371,7 @@ class BackupService {
     _normalizeCommonRows(result, fallbackTime, isLegacy: isLegacy);
     _normalizeSpiderWebLinks(result);
     _deduplicateSavedMessages(result);
+    _normalizeTimelineEvents(result, fallbackTime);
     _validatePrimaryKeys(result, strict: !isLegacy);
     final droppedOrphanMessageCount = _validateMessageConversationLinks(result);
 
@@ -630,6 +632,50 @@ class BackupService {
     tables['saved_messages'] = tables['saved_messages']!
         .where((row) => seen.add(row['message_id']?.toString() ?? ''))
         .toList(growable: false);
+  }
+
+  static void _normalizeTimelineEvents(
+    Map<String, List<Map<String, Object?>>> tables,
+    String fallbackTime,
+  ) {
+    final normalized = <Map<String, Object?>>[];
+    final eventByDay = <String, Map<String, Object?>>{};
+    for (final source in tables['character_timeline']!) {
+      final row = Map<String, Object?>.from(source);
+      final createdAtString =
+          _validIsoString(row['created_at']) ?? fallbackTime;
+      final updatedAtString =
+          _validIsoString(row['updated_at']) ?? createdAtString;
+      row['created_at'] = createdAtString;
+      row['updated_at'] = updatedAtString;
+      if (row['type']?.toString() != 'event') {
+        normalized.add(row);
+        continue;
+      }
+
+      final value = row['value']?.toString().trim() ?? '';
+      if (value.isEmpty) continue;
+      final characterId = _nonEmptyString(
+        row['character_id'],
+        fallback: 'default',
+      );
+      final createdAt = DateTime.tryParse(createdAtString);
+      row['character_id'] = characterId;
+      row['value'] = value;
+      row['confirmed'] = _sqliteBool(row['confirmed'], defaultValue: 1);
+      if (createdAt != null) row['week_group'] = isoWeekGroup(createdAt);
+
+      final key =
+          '$characterId\u0000$value\u0000${createdAtString.substring(0, 10)}';
+      final existing = eventByDay[key];
+      if (existing != null) {
+        if (row['confirmed'] == 1) existing['confirmed'] = 1;
+        continue;
+      }
+      eventByDay[key] = row;
+      normalized.add(row);
+    }
+    tables['character_timeline'] = normalized;
   }
 
   static String _archiveCharacterId(Map<String, Object?> archived) {

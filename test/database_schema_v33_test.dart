@@ -31,7 +31,7 @@ void main() {
     () async {
       await DatabaseHelper.createSchemaForTesting(db);
 
-      expect(DatabaseHelper.schemaVersionForTesting, 36);
+      expect(DatabaseHelper.schemaVersionForTesting, 37);
       expect(await _columnNames(db, 'messages'), contains('status'));
       expect(await _columnNames(db, 'characters'), contains('bio_clock'));
       expect(await _columnNames(db, 'sticky_notes'), contains('character_id'));
@@ -69,6 +69,7 @@ void main() {
           'idx_emo_memory',
           'idx_emo_char_type_time',
           'idx_timeline_memory',
+          'idx_timeline_event_daily_unique',
           'idx_saved_message_unique',
         ]),
       );
@@ -102,6 +103,43 @@ void main() {
           'reason': 'duplicate',
         }),
         throwsA(isA<DatabaseException>()),
+      );
+    },
+  );
+
+  test(
+    'v37 removes same-day timeline duplicates and repairs ISO week',
+    () async {
+      await DatabaseHelper.createSchemaForTesting(db);
+      await db.execute('DROP INDEX idx_timeline_event_daily_unique');
+      for (final entry in <(String, int)>[
+        ('2025-12-29T09:00:00.000', 0),
+        ('2025-12-29T20:00:00.000', 1),
+        ('2025-12-30T09:00:00.000', 1),
+      ]) {
+        await db.insert('character_timeline', {
+          'character_id': 'char-a',
+          'type': 'event',
+          'value': '約會',
+          'week_group': '2025-W52',
+          'confirmed': entry.$2,
+          'created_at': entry.$1,
+          'updated_at': entry.$1,
+        });
+      }
+
+      await DatabaseHelper.upgradeSchemaForTesting(db, 36);
+
+      final rows = await db.query(
+        'character_timeline',
+        orderBy: 'created_at ASC',
+      );
+      expect(rows, hasLength(2));
+      expect(rows.first['confirmed'], 1);
+      expect(rows.every((row) => row['week_group'] == '2026-W01'), isTrue);
+      expect(
+        await _objectNames(db, 'index'),
+        contains('idx_timeline_event_daily_unique'),
       );
     },
   );

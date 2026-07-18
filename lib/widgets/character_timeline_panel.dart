@@ -87,16 +87,21 @@ class _CharacterTimelinePanelState extends State<CharacterTimelinePanel> {
     setState(() => _loading = true);
 
     final states = await CharacterTimelineService.getStates(characterId);
+    final monthStart = DateTime(_selectedDate.year, _selectedDate.month);
+    final monthEnd = DateTime(_selectedDate.year, _selectedDate.month + 1);
     final events = await CharacterTimelineService.getEvents(
       characterId,
-      limit: 50,
+      from: monthStart,
+      until: monthEnd,
+      limit: 200,
     );
 
     final nodes = <_TimelineNode>[];
 
     for (final s in states) {
-      final dt =
-          DateTime.tryParse(s['updated_at'] as String? ?? '') ?? DateTime.now();
+      final parsed = DateTime.tryParse(s['updated_at'] as String? ?? '');
+      if (parsed == null) continue;
+      final dt = parsed.isUtc ? parsed.toLocal() : parsed;
       nodes.add(
         _TimelineNode(
           type: _NodeType.state,
@@ -108,8 +113,9 @@ class _CharacterTimelinePanelState extends State<CharacterTimelinePanel> {
     }
 
     for (final e in events) {
-      final dt =
-          DateTime.tryParse(e['created_at'] as String? ?? '') ?? DateTime.now();
+      final parsed = DateTime.tryParse(e['created_at'] as String? ?? '');
+      if (parsed == null) continue;
+      final dt = parsed.isUtc ? parsed.toLocal() : parsed;
       nodes.add(
         _TimelineNode(
           type: _NodeType.event,
