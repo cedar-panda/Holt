@@ -46,6 +46,7 @@ import '../services/scratch_service.dart';
 import '../services/transfer_service.dart';
 import '../widgets/scratch_card.dart';
 import '../widgets/shop_backpack_sheets.dart';
+import '../widgets/sticker_preview_quality.dart';
 import 'call_screen.dart';
 import 'manual_summary_clean_screen.dart';
 import '../services/call_audio_pipeline.dart';
@@ -4157,16 +4158,30 @@ class _ChatScreenState extends State<ChatScreen> {
                         },
                         child: ClipRRect(
                           borderRadius: BorderRadius.circular(8),
-                          child: Image.file(
-                            File(s.filePath),
-                            cacheWidth: 128,
-                            cacheHeight: 128,
-                            fit: BoxFit.cover,
-                            filterQuality: FilterQuality.none,
-                            errorBuilder: (_, _, _) => Container(
-                              color: YanciTheme.glassInputBg,
-                              child: const Icon(Icons.broken_image, size: 20),
-                            ),
+                          child: LayoutBuilder(
+                            builder: (context, constraints) {
+                              final cacheDimension =
+                                  StickerPreviewQuality.cacheDimension(
+                                    context,
+                                    logicalSize:
+                                        constraints.biggest.shortestSide,
+                                    previousMinimum: 128,
+                                  );
+                              return Image.file(
+                                File(s.filePath),
+                                cacheWidth: cacheDimension,
+                                cacheHeight: cacheDimension,
+                                fit: BoxFit.cover,
+                                filterQuality: FilterQuality.medium,
+                                errorBuilder: (_, _, _) => Container(
+                                  color: YanciTheme.glassInputBg,
+                                  child: const Icon(
+                                    Icons.broken_image,
+                                    size: 20,
+                                  ),
+                                ),
+                              );
+                            },
                           ),
                         ),
                       );
@@ -4412,10 +4427,20 @@ class _ChatScreenState extends State<ChatScreen> {
                                 File(_pendingSticker!.filePath),
                                 width: 48,
                                 height: 48,
-                                cacheWidth: 64,
-                                cacheHeight: 64,
+                                cacheWidth:
+                                    StickerPreviewQuality.cacheDimension(
+                                      context,
+                                      logicalSize: 48,
+                                      previousMinimum: 64,
+                                    ),
+                                cacheHeight:
+                                    StickerPreviewQuality.cacheDimension(
+                                      context,
+                                      logicalSize: 48,
+                                      previousMinimum: 64,
+                                    ),
                                 fit: BoxFit.cover,
-                                filterQuality: FilterQuality.none,
+                                filterQuality: FilterQuality.medium,
                                 errorBuilder: (_, _, _) => Container(
                                   width: 48,
                                   height: 48,

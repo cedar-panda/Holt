@@ -19,6 +19,7 @@ import 'marriage_cert_card.dart';
 import 'scratch_card.dart';
 import 'transfer_card.dart';
 import 'tts_play_button.dart';
+import 'sticker_preview_quality.dart';
 
 /// 聊天氣泡 — 思考鏈 + markdown + 表情包圖片 + 長按菜單
 class ChatBubble extends StatefulWidget {
@@ -1493,6 +1494,12 @@ class _StickerImage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    const displaySize = 100.0;
+    final cacheDimension = StickerPreviewQuality.cacheDimension(
+      context,
+      logicalSize: displaySize,
+      previousMinimum: 128,
+    );
     return FutureBuilder<List<StickerInfo>>(
       future: _findSticker(),
       builder: (ctx, snap) {
@@ -1515,16 +1522,16 @@ class _StickerImage extends StatelessWidget {
             child: File(path).existsSync()
                 ? Image.file(
                     File(path),
-                    width: 100,
-                    height: 100,
-                    cacheWidth: 128,
-                    cacheHeight: 128,
+                    width: displaySize,
+                    height: displaySize,
+                    cacheWidth: cacheDimension,
+                    cacheHeight: cacheDimension,
                     fit: BoxFit.cover,
-                    filterQuality: FilterQuality.none,
+                    filterQuality: FilterQuality.medium,
                   )
                 : Container(
-                    width: 100,
-                    height: 100,
+                    width: displaySize,
+                    height: displaySize,
                     color: YanciTheme.glassInputBg,
                     child: const Icon(Icons.broken_image),
                   ),

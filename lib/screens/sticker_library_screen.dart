@@ -4,6 +4,7 @@ import 'package:image_picker/image_picker.dart';
 import '../theme/app_theme.dart';
 import '../services/locale_strings.dart';
 import '../widgets/gradient_background.dart';
+import '../widgets/sticker_preview_quality.dart';
 import '../services/sticker_service.dart';
 import '../memory/database.dart';
 import '../utils/latest_request_gate.dart';
@@ -192,10 +193,18 @@ class _StickerLibraryScreenState extends State<StickerLibraryScreen> {
                             File(filePath),
                             width: 120,
                             height: 120,
-                            cacheWidth: 160,
-                            cacheHeight: 160,
+                            cacheWidth: StickerPreviewQuality.cacheDimension(
+                              ctx,
+                              logicalSize: 120,
+                              previousMinimum: 160,
+                            ),
+                            cacheHeight: StickerPreviewQuality.cacheDimension(
+                              ctx,
+                              logicalSize: 120,
+                              previousMinimum: 160,
+                            ),
                             fit: BoxFit.cover,
-                            filterQuality: FilterQuality.none,
+                            filterQuality: FilterQuality.medium,
                           )
                         : Container(
                             width: 120,
@@ -743,12 +752,25 @@ class _StickerLibraryScreenState extends State<StickerLibraryScreen> {
                                 fit: StackFit.expand,
                                 children: [
                                   File(s.filePath).existsSync()
-                                      ? Image.file(
-                                          File(s.filePath),
-                                          cacheWidth: 128,
-                                          cacheHeight: 128,
-                                          fit: BoxFit.cover,
-                                          filterQuality: FilterQuality.none,
+                                      ? LayoutBuilder(
+                                          builder: (context, constraints) {
+                                            final cacheDimension =
+                                                StickerPreviewQuality.cacheDimension(
+                                                  context,
+                                                  logicalSize: constraints
+                                                      .biggest
+                                                      .shortestSide,
+                                                  previousMinimum: 128,
+                                                );
+                                            return Image.file(
+                                              File(s.filePath),
+                                              cacheWidth: cacheDimension,
+                                              cacheHeight: cacheDimension,
+                                              fit: BoxFit.cover,
+                                              filterQuality:
+                                                  FilterQuality.medium,
+                                            );
+                                          },
                                         )
                                       : Container(
                                           color: YanciTheme.glassInputBg,
