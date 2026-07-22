@@ -610,23 +610,8 @@ class _HomeScreenState extends State<HomeScreen>
             Positioned(
               top: 12,
               left: 20,
-              child: Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 7,
-                ),
-                decoration: BoxDecoration(
-                  color: YanciTheme.isDark
-                      ? Colors.white.withValues(alpha: 0.08)
-                      : Colors.white.withValues(alpha: 0.45),
-                  borderRadius: BorderRadius.circular(18),
-                  border: Border.all(
-                    color: YanciTheme.isDark
-                        ? Colors.white.withValues(alpha: 0.1)
-                        : Colors.white.withValues(alpha: 0.6),
-                    width: 0.5,
-                  ),
-                ),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 7),
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
@@ -654,25 +639,16 @@ class _HomeScreenState extends State<HomeScreen>
                   child: GestureDetector(
                     behavior: HitTestBehavior.opaque,
                     onTap: _showAbilityModulesScreen,
-                    child: Container(
-                      width: 48,
-                      height: 48,
-                      decoration: BoxDecoration(
-                        color: YanciTheme.isDark
-                            ? Colors.white.withValues(alpha: 0.08)
-                            : Colors.white.withValues(alpha: 0.45),
-                        shape: BoxShape.circle,
-                        border: Border.all(
-                          color: YanciTheme.isDark
-                              ? Colors.white.withValues(alpha: 0.1)
-                              : Colors.white.withValues(alpha: 0.6),
-                          width: 0.5,
+                    child: SizedBox.square(
+                      dimension: 48,
+                      child: Center(
+                        child: Icon(
+                          Icons.extension_outlined,
+                          size: 22,
+                          color: YanciTheme.textSecondary.withValues(
+                            alpha: 0.6,
+                          ),
                         ),
-                      ),
-                      child: Icon(
-                        Icons.dashboard_customize_rounded,
-                        size: 22,
-                        color: YanciTheme.textSecondary.withValues(alpha: 0.6),
                       ),
                     ),
                   ),
@@ -691,25 +667,16 @@ class _HomeScreenState extends State<HomeScreen>
                   child: GestureDetector(
                     behavior: HitTestBehavior.opaque,
                     onTap: _showConversationList,
-                    child: Container(
-                      width: 48,
-                      height: 48,
-                      decoration: BoxDecoration(
-                        color: YanciTheme.isDark
-                            ? Colors.white.withValues(alpha: 0.08)
-                            : Colors.white.withValues(alpha: 0.45),
-                        shape: BoxShape.circle,
-                        border: Border.all(
-                          color: YanciTheme.isDark
-                              ? Colors.white.withValues(alpha: 0.1)
-                              : Colors.white.withValues(alpha: 0.6),
-                          width: 0.5,
+                    child: SizedBox.square(
+                      dimension: 48,
+                      child: Center(
+                        child: Icon(
+                          Icons.history_rounded,
+                          size: 22,
+                          color: YanciTheme.textSecondary.withValues(
+                            alpha: 0.6,
+                          ),
                         ),
-                      ),
-                      child: Icon(
-                        Icons.history_rounded,
-                        size: 22,
-                        color: YanciTheme.textSecondary.withValues(alpha: 0.6),
                       ),
                     ),
                   ),
@@ -1085,26 +1052,10 @@ class _HomeScreenState extends State<HomeScreen>
               child: SizedBox.square(
                 dimension: 48,
                 child: Center(
-                  child: Container(
-                    width: 38,
-                    height: 38,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: YanciTheme.isDark
-                          ? Colors.white.withValues(alpha: 0.07)
-                          : Colors.white.withValues(alpha: 0.48),
-                      border: Border.all(
-                        color: YanciTheme.accent.withValues(alpha: 0.24),
-                        width: 0.7,
-                      ),
-                    ),
-                    child: Center(
-                      child: Icon(
-                        Icons.edit_rounded,
-                        size: 17,
-                        color: YanciTheme.accent.withValues(alpha: 0.65),
-                      ),
-                    ),
+                  child: Icon(
+                    Icons.edit_rounded,
+                    size: 19,
+                    color: YanciTheme.accent.withValues(alpha: 0.65),
                   ),
                 ),
               ),
@@ -3464,52 +3415,80 @@ class _HomeScreenState extends State<HomeScreen>
 
   Widget _navItem(int index, IconData icon, String label) {
     final isActive = _currentTab == index;
-    final color = isActive ? YanciTheme.accent : YanciTheme.navInactive;
 
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTap: () async {
-        HapticFeedback.selectionClick();
-        if (index == 0) {
-          Navigator.of(context).pushNamed('/api_settings');
-          return;
-        }
-        if (index == 1) {
-          Navigator.of(context).pushNamed('/usage');
-          return;
-        }
-        if (index == 3) {
-          await Navigator.of(context).pushNamed('/character_list');
-          if (mounted) _loadCharacters(selectId: _activeCharacterId);
-          return;
-        }
-        setState(() => _currentTab = index);
-        _syncHomeAnimations();
-      },
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 200),
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-        decoration: BoxDecoration(
-          color: isActive
-              ? YanciTheme.accent.withValues(alpha: 0.1)
-              : Colors.transparent,
-          borderRadius: BorderRadius.circular(16),
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, size: 22, color: color),
-            const SizedBox(height: 3),
-            Text(
-              label,
-              style: TextStyle(
-                fontSize: 10,
-                fontWeight: isActive ? FontWeight.w600 : FontWeight.w400,
-                color: color,
-                fontFamily: YanciTheme.fontFamily,
+    return Semantics(
+      button: true,
+      selected: isActive,
+      label: label,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () async {
+          HapticFeedback.selectionClick();
+          if (index == 0) {
+            Navigator.of(context).pushNamed('/api_settings');
+            return;
+          }
+          if (index == 1) {
+            Navigator.of(context).pushNamed('/usage');
+            return;
+          }
+          if (index == 3) {
+            await Navigator.of(context).pushNamed('/character_list');
+            if (mounted) _loadCharacters(selectId: _activeCharacterId);
+            return;
+          }
+          setState(() => _currentTab = index);
+          _syncHomeAnimations();
+        },
+        child: TweenAnimationBuilder<double>(
+          tween: Tween<double>(end: isActive ? 1 : 0),
+          duration: _reduceMotion
+              ? Duration.zero
+              : const Duration(milliseconds: 180),
+          curve: Curves.easeOutCubic,
+          builder: (context, progress, child) {
+            final color = Color.lerp(
+              YanciTheme.navInactive,
+              YanciTheme.accent,
+              progress,
+            )!;
+            final padding = EdgeInsets.lerp(
+              const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+              progress,
+            )!;
+
+            return Container(
+              constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+              padding: padding,
+              decoration: BoxDecoration(
+                color: YanciTheme.accent.withValues(alpha: 0.12 * progress),
+                borderRadius: BorderRadius.circular(16 + 2 * progress),
               ),
-            ),
-          ],
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(icon, size: 22 + progress, color: color),
+                  const SizedBox(height: 3),
+                  Text(
+                    label,
+                    style: TextStyle(
+                      fontSize: 10,
+                      fontWeight:
+                          FontWeight.lerp(
+                            FontWeight.w400,
+                            FontWeight.w600,
+                            progress,
+                          ) ??
+                          FontWeight.w400,
+                      color: color,
+                      fontFamily: YanciTheme.fontFamily,
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
         ),
       ),
     );

@@ -270,23 +270,8 @@ class _CharacterTimelinePanelState extends State<CharacterTimelinePanel> {
           padding: const EdgeInsets.symmetric(horizontal: 24),
           child: Row(
             children: [
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 7,
-                ),
-                decoration: BoxDecoration(
-                  color: YanciTheme.isDark
-                      ? Colors.white.withValues(alpha: 0.08)
-                      : Colors.white.withValues(alpha: 0.45),
-                  borderRadius: BorderRadius.circular(18),
-                  border: Border.all(
-                    color: YanciTheme.isDark
-                        ? Colors.white.withValues(alpha: 0.1)
-                        : Colors.white.withValues(alpha: 0.6),
-                    width: 0.5,
-                  ),
-                ),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 7),
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
@@ -302,42 +287,32 @@ class _CharacterTimelinePanelState extends State<CharacterTimelinePanel> {
                 ),
               ),
               const SizedBox(width: 8),
-              GestureDetector(
-                onTap: () {
-                  showModalBottomSheet(
-                    context: context,
-                    isScrollControlled: true,
-                    backgroundColor: Colors.transparent,
-                    builder: (ctx) =>
-                        BackpackBottomSheet(ownerId: widget.characterId),
-                  );
-                },
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 7,
-                  ),
-                  decoration: BoxDecoration(
-                    color: YanciTheme.isDark
-                        ? Colors.white.withValues(alpha: 0.08)
-                        : Colors.white.withValues(alpha: 0.45),
-                    borderRadius: BorderRadius.circular(18),
-                    border: Border.all(
-                      color: YanciTheme.isDark
-                          ? Colors.white.withValues(alpha: 0.1)
-                          : Colors.white.withValues(alpha: 0.6),
-                      width: 0.5,
-                    ),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        Icons.backpack_outlined,
-                        size: 18,
-                        color: YanciTheme.accent,
+              Tooltip(
+                message: L.pick(en: 'Backpack', zhTW: '背包'),
+                child: Semantics(
+                  button: true,
+                  label: L.pick(en: 'Backpack', zhTW: '背包'),
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: () {
+                      showModalBottomSheet(
+                        context: context,
+                        isScrollControlled: true,
+                        backgroundColor: Colors.transparent,
+                        builder: (ctx) =>
+                            BackpackBottomSheet(ownerId: widget.characterId),
+                      );
+                    },
+                    child: SizedBox.square(
+                      dimension: 40,
+                      child: Center(
+                        child: Icon(
+                          Icons.backpack_outlined,
+                          size: 18,
+                          color: YanciTheme.accent,
+                        ),
                       ),
-                    ],
+                    ),
                   ),
                 ),
               ),
