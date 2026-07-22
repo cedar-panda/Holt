@@ -107,7 +107,11 @@ class L {
       'zh_CN': '已选择图片，输入文字后一起发送',
       'en': 'Image selected, type to send together',
     },
-    'chat_thinking': {'zh_TW': '思考過程', 'zh_CN': '思考过程', 'en': 'Thinking'},
+    'chat_thinking': {
+      'zh_TW': 'Thinking',
+      'zh_CN': 'Thinking',
+      'en': 'Thinking',
+    },
     'chat_memory_noted': {
       'zh_TW': '📝 已記下',
       'zh_CN': '📝 已记下',

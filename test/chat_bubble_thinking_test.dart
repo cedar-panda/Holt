@@ -8,6 +8,14 @@ import 'package:project_yanci/widgets/chat_bubble.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  test('thinking label stays English in every interface locale', () async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    for (final locale in const ['zh_TW', 'zh_CN', 'en']) {
+      await L.setLocale(locale);
+      expect(L.get('chat_thinking'), 'Thinking');
+    }
+  });
+
   testWidgets('thinking block stays transparent and remains expandable', (
     tester,
   ) async {
@@ -25,6 +33,7 @@ void main() {
 
     expect(find.byIcon(Icons.bubble_chart_outlined), findsOneWidget);
     expect(find.byIcon(Icons.psychology_outlined), findsNothing);
+    expect(find.text('Thinking'), findsOneWidget);
 
     final thinkingContainer = tester.widget<Container>(
       find.byKey(const ValueKey('thinking-chain-container')),
