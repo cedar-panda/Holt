@@ -2672,8 +2672,9 @@ class _ChatScreenState extends State<ChatScreen> {
     if (thinkingEnabled && providerName != 'thinking_machines') {
       dynamicParts.add(
         L.pick(
-          en: '【Thinking Mode】Before replying, show your inner thought process in <think>...</think> tags (first person), then reply normally.',
-          zhTW: '【思考模式】在回覆前，用 <think>...</think> 標籤展示你的內心思考過程（第一人稱），思考完再正常回覆。',
+          en: '【Thinking Mode】Before replying, show your inner thought process in <think>...</think> tags (first person). Use the same language as the normal reply for the thought process, then reply normally.',
+          zhTW:
+              '【思考模式】在回覆前，用 <think>...</think> 標籤展示你的內心思考過程（第一人稱），思考內容必須與正常回覆使用相同語言，思考完再正常回覆。',
         ),
       );
     }
@@ -3629,8 +3630,9 @@ class _ChatScreenState extends State<ChatScreen> {
     if (thinkingOn && imgProviderName != 'thinking_machines') {
       dynamicParts.add(
         L.pick(
-          en: '【Thinking Mode】Before replying, show your inner thought process in <think>...</think> tags (first person), then reply normally.',
-          zhTW: '【思考模式】在回覆前，用 <think>...</think> 標籤展示你的內心思考過程（第一人稱），思考完再正常回覆。',
+          en: '【Thinking Mode】Before replying, show your inner thought process in <think>...</think> tags (first person). Use the same language as the normal reply for the thought process, then reply normally.',
+          zhTW:
+              '【思考模式】在回覆前，用 <think>...</think> 標籤展示你的內心思考過程（第一人稱），思考內容必須與正常回覆使用相同語言，思考完再正常回覆。',
         ),
       );
     }
