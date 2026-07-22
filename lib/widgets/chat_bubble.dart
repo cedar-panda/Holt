@@ -1399,16 +1399,9 @@ class _ChatBubbleState extends State<ChatBubble>
     return GestureDetector(
       onTap: () => setState(() => _thinkingExpanded = !_thinkingExpanded),
       child: Container(
+        key: const ValueKey('thinking-chain-container'),
         margin: const EdgeInsets.only(bottom: 4),
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-        decoration: BoxDecoration(
-          color: YanciTheme.accent.withValues(alpha: 0.04),
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(
-            color: YanciTheme.accent.withValues(alpha: 0.08),
-            width: 0.5,
-          ),
-        ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -1416,7 +1409,7 @@ class _ChatBubbleState extends State<ChatBubble>
               mainAxisSize: MainAxisSize.min,
               children: [
                 Icon(
-                  Icons.psychology_outlined,
+                  Icons.bubble_chart_outlined,
                   size: 12,
                   color: thinkLabelColor,
                 ),
