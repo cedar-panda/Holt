@@ -42,6 +42,7 @@ class ChatBubble extends StatefulWidget {
   final bool selectable;
   final bool selected;
   final VoidCallback? onSelectionToggle;
+  final bool captureMode;
 
   /// 記憶過程日誌（注入/寫入/刪除/合併，Done 收尾），空則不顯示
   final String memoryLog;
@@ -86,6 +87,7 @@ class ChatBubble extends StatefulWidget {
     this.selectable = false,
     this.selected = false,
     this.onSelectionToggle,
+    this.captureMode = false,
     this.memoryLog = '',
     this.scratchData,
     this.transferData,
@@ -208,8 +210,12 @@ class _ChatBubbleState extends State<ChatBubble>
       ),
     );
 
-    _entryCtrl.forward();
-    _checkSaved();
+    if (widget.captureMode) {
+      _entryCtrl.value = 1;
+    } else {
+      _entryCtrl.forward();
+      _checkSaved();
+    }
   }
 
   Future<void> _checkSaved() async {
@@ -886,7 +892,10 @@ class _ChatBubbleState extends State<ChatBubble>
                                           ),
                                         ),
                                       );
-                                      if (!widget.isUser) return bubble;
+                                      if (!widget.isUser ||
+                                          widget.captureMode) {
+                                        return bubble;
+                                      }
                                       return GestureDetector(
                                         onLongPressStart: (d) =>
                                             _showContextMenu(

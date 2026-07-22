@@ -48,4 +48,27 @@ void main() {
     expect(find.text('正常回覆'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('capture mode paints bubble content without waiting for ticker', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    await L.setLocale('zh_TW');
+
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: TickerMode(
+          enabled: false,
+          child: Scaffold(
+            body: ChatBubble(text: '長截圖內容', isUser: false, captureMode: true),
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('長截圖內容'), findsOneWidget);
+    final opacity = tester.widgetList<Opacity>(find.byType(Opacity));
+    expect(opacity.any((widget) => widget.opacity == 0), isFalse);
+    expect(tester.takeException(), isNull);
+  });
 }

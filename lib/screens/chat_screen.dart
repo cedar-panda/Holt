@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../theme/app_theme.dart';
@@ -50,6 +51,7 @@ import '../widgets/sticker_preview_quality.dart';
 import 'call_screen.dart';
 import 'manual_summary_clean_screen.dart';
 import '../services/call_audio_pipeline.dart';
+import '../services/chat_long_screenshot_service.dart';
 
 /// 聊天頁面 — 完整版（2.0：adapter 工廠 + 角色綁定）
 class ChatScreen extends StatefulWidget {
@@ -100,6 +102,7 @@ class _ChatScreenState extends State<ChatScreen> {
   final TokenTracker _tokenTracker = TokenTracker();
   bool _isGenerating = false;
   bool _isGeneratingImage = false;
+  bool _isCapturingLongScreenshot = false;
 
   /// 生成態統一入口：熄屏/退後台會凍結流式回覆，
   /// 生成期間掛前台服務保護（GenerationForegroundGuard），結束即撤
@@ -5829,6 +5832,335 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
+  Future<void> _captureLongScreenshot() async {
+    if (_isCapturingLongScreenshot) return;
+    if (_isGenerating) {
+      _showLongScreenshotSnack(
+        L.pick(
+          en: 'Wait for this reply to finish before taking a screenshot.',
+          zhTW: '等這段回覆完成後再截圖。',
+        ),
+      );
+      return;
+    }
+
+    final renderFrom = _renderFrom.clamp(0, _messages.length);
+    final visibleMessages = <Message>[
+      ..._olderMessages,
+      ..._messages.sublist(renderFrom),
+    ];
+    if (visibleMessages.isEmpty) {
+      _showLongScreenshotSnack(
+        L.pick(en: 'There is no chat to capture yet.', zhTW: '目前沒有可截取的對話。'),
+      );
+      return;
+    }
+
+    // The normal window is 50 messages. If the user has manually expanded
+    // older history, keep the export predictable by taking the latest 50.
+    const maxMessages = 50;
+    final omitted = visibleMessages.length > maxMessages
+        ? visibleMessages.length - maxMessages
+        : 0;
+    final captureMessages = omitted > 0
+        ? visibleMessages.sublist(omitted)
+        : visibleMessages;
+
+    setState(() => _isCapturingLongScreenshot = true);
+    try {
+      await _precacheLongScreenshotImages(captureMessages);
+      if (!mounted) return;
+      final items = _buildLongScreenshotItems(captureMessages);
+      final result = await ChatLongScreenshotService.captureAndSave(
+        context: context,
+        items: items,
+        backgroundColor: YanciTheme.backgroundGradient.first,
+        pixelRatio: 2,
+      );
+      if (!mounted) return;
+      HapticFeedback.lightImpact();
+      final text = omitted > 0
+          ? L.pick(
+              en: 'Saved the latest $maxMessages messages to Gallery.',
+              zhTW: '對話較長，已將最近 $maxMessages 條保存到相簿。',
+            )
+          : L.pick(en: 'Long screenshot saved to Gallery.', zhTW: '長截圖已保存到相簿。');
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(text),
+          action: SnackBarAction(
+            label: L.pick(en: 'Share', zhTW: '分享'),
+            textColor: Colors.white,
+            onPressed: () => unawaited(_shareLongScreenshot(result.path)),
+          ),
+          backgroundColor: YanciTheme.accent,
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 4),
+          margin: const EdgeInsets.only(bottom: 80, left: 16, right: 16),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      _showLongScreenshotSnack(
+        L.pick(en: 'Long screenshot failed: $error', zhTW: '長截圖失敗：$error'),
+        isError: true,
+      );
+    } finally {
+      if (mounted) setState(() => _isCapturingLongScreenshot = false);
+    }
+  }
+
+  Future<void> _precacheLongScreenshotImages(List<Message> messages) async {
+    final paths = <String>{
+      if (_showChatAvatar && _userAvatarPath != null) _userAvatarPath!,
+      if (_showChatAvatar && _charAvatarPath != null) _charAvatarPath!,
+      for (final message in messages)
+        if (message.imagePath != null && message.imagePath != 'generating')
+          message.imagePath!,
+    }.where((path) => File(path).existsSync()).toList(growable: false);
+
+    // Small batches avoid decoding every photo at once on memory-constrained
+    // phones while still keeping the capture wait short.
+    for (var i = 0; i < paths.length; i += 3) {
+      final end = (i + 3).clamp(0, paths.length);
+      await Future.wait<void>(
+        paths.sublist(i, end).map((path) async {
+          try {
+            await precacheImage(
+              FileImage(File(path)),
+              context,
+            ).timeout(const Duration(seconds: 3));
+          } catch (_) {
+            // ChatBubble already renders a broken-image fallback.
+          }
+        }),
+      );
+      if (!mounted) return;
+    }
+  }
+
+  List<Widget> _buildLongScreenshotItems(List<Message> messages) {
+    final charReplyAfter = List<bool>.filled(messages.length, false);
+    var seenCharReply = false;
+    for (var i = messages.length - 1; i >= 0; i--) {
+      charReplyAfter[i] = seenCharReply;
+      if (!messages[i].isUser && messages[i].text.trim().isNotEmpty) {
+        seenCharReply = true;
+      }
+    }
+
+    final items = <Widget>[];
+    for (var i = 0; i < messages.length; i++) {
+      final message = messages[i];
+      final callMatch = _callDividerRe.firstMatch(message.text.trim());
+      if (callMatch != null) {
+        final kind = callMatch.group(1)!;
+        final duration = callMatch.group(2);
+        final (label, icon) = switch (kind) {
+          'ended' => (
+            L.pick(en: 'Call ended', zhTW: '通話已結束'),
+            Icons.call_end_rounded,
+          ),
+          'signal_lost' => (
+            L.pick(en: 'Call dropped', zhTW: '通話中斷'),
+            Icons.signal_cellular_connected_no_internet_0_bar_rounded,
+          ),
+          'declined' => (
+            L.pick(en: 'Call declined', zhTW: '已拒絕來電'),
+            Icons.phone_disabled_rounded,
+          ),
+          'declined_by_you' => (
+            L.pick(en: 'Declined by them', zhTW: '對方已拒絕'),
+            Icons.phone_disabled_rounded,
+          ),
+          _ => (
+            L.pick(en: 'Missed call', zhTW: '未接來電'),
+            Icons.phone_missed_rounded,
+          ),
+        };
+        items.add(
+          _buildLongScreenshotCallDivider(
+            duration == null ? label : '$label · $duration',
+            icon,
+          ),
+        );
+        continue;
+      }
+
+      if (_splitReply &&
+          !message.isUser &&
+          message.splitMode &&
+          message.text.contains('\n\n')) {
+        final parts = message.text
+            .split('\n\n')
+            .where((part) => part.trim().isNotEmpty)
+            .toList(growable: false);
+        for (var partIndex = 0; partIndex < parts.length; partIndex++) {
+          items.add(
+            _buildLongScreenshotBubble(
+              message: message,
+              text: parts[partIndex].trim(),
+              timestamp: partIndex == parts.length - 1
+                  ? message.createdAt
+                  : null,
+              imagePath: partIndex == 0 ? message.imagePath : null,
+              messageKey: 'longshot_${message.id}_$partIndex',
+            ),
+          );
+        }
+        continue;
+      }
+
+      final giftMatch = message.isUser
+          ? _giftTagRe.firstMatch(message.text)
+          : null;
+      items.add(
+        _buildLongScreenshotBubble(
+          message: message,
+          text: message.text,
+          timestamp: message.createdAt,
+          imagePath: message.imagePath,
+          messageKey: 'longshot_${message.id}',
+          giftName: giftMatch?.group(1)?.trim(),
+          giftAccepted: giftMatch != null && charReplyAfter[i],
+          includeCards: true,
+        ),
+      );
+    }
+    return items;
+  }
+
+  Widget _buildLongScreenshotBubble({
+    required Message message,
+    required String text,
+    required DateTime? timestamp,
+    required String? imagePath,
+    required String messageKey,
+    String? giftName,
+    bool giftAccepted = false,
+    bool includeCards = false,
+  }) {
+    final hasMarriageCert =
+        (message.isUser && _marriageCertTagRe.hasMatch(message.text)) ||
+        (!message.isUser && message.text.contains(_marriageCertCharTag));
+    final persistedMessageKey = 'msg_${message.id}';
+    return ChatBubble(
+      key: ValueKey<String>(messageKey),
+      text: text,
+      isUser: message.isUser,
+      timestamp: timestamp,
+      imagePath: imagePath,
+      messageId: persistedMessageKey,
+      conversationId: widget.conversationId,
+      conversationTitle: _characterName,
+      characterId: _activeCharacterId,
+      showAvatar: _showChatAvatar,
+      avatarPath: message.isUser ? _userAvatarPath : _charAvatarPath,
+      showToolbar: false,
+      cacheHit: false,
+      incomplete: message.isIncomplete,
+      captureMode: true,
+      memoryLog: '',
+      scratchData: includeCards ? _scratchDataMap[persistedMessageKey] : null,
+      transferData: includeCards ? _transferDataMap[persistedMessageKey] : null,
+      giftName: giftName,
+      giftAccepted: giftAccepted,
+      marriageCert: includeCards && hasMarriageCert
+          ? MarriageCertDisplay(
+              userName: _userNameCache,
+              charName: _characterName,
+              signed: _isMarried,
+              date: _marriageDate,
+            )
+          : null,
+    );
+  }
+
+  Widget _buildLongScreenshotCallDivider(String label, IconData icon) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 10),
+      child: Row(
+        children: [
+          Expanded(
+            child: Container(
+              height: 0.6,
+              color: YanciTheme.accent.withValues(alpha: 0.22),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 10),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  icon,
+                  size: 12,
+                  color: YanciTheme.accent.withValues(alpha: 0.55),
+                ),
+                const SizedBox(width: 5),
+                Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: YanciTheme.accent.withValues(alpha: 0.65),
+                    fontFamily: YanciTheme.fontFamily,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Expanded(
+            child: Container(
+              height: 0.6,
+              color: YanciTheme.accent.withValues(alpha: 0.22),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _shareLongScreenshot(String path) async {
+    try {
+      final size = MediaQuery.sizeOf(context);
+      await SharePlus.instance.share(
+        ShareParams(
+          files: <XFile>[XFile(path, mimeType: 'image/png')],
+          title: L.pick(en: 'Holt long screenshot', zhTW: 'Holt 長截圖'),
+          sharePositionOrigin: Rect.fromLTWH(
+            size.width / 2,
+            size.height / 2,
+            1,
+            1,
+          ),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      _showLongScreenshotSnack(
+        L.pick(en: 'Share failed: $error', zhTW: '分享失敗：$error'),
+        isError: true,
+      );
+    }
+  }
+
+  void _showLongScreenshotSnack(String text, {bool isError = false}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(text),
+        backgroundColor: isError ? Colors.redAccent : YanciTheme.accent,
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 3),
+        margin: const EdgeInsets.only(bottom: 80, left: 16, right: 16),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+      ),
+    );
+  }
+
   Widget _buildAppBar() {
     return Padding(
       padding: const EdgeInsets.symmetric(
@@ -5950,36 +6282,44 @@ class _ChatScreenState extends State<ChatScreen> {
                     ),
                   ),
                   const SizedBox(width: 2),
-                  // ═══ 開新窗口 ═══
-                  GestureDetector(
-                    onTap: !_isChatReady
-                        ? null
-                        : () async {
-                            final convId = DateTime.now().millisecondsSinceEpoch
-                                .toString();
-                            final conv = Conversation(
-                              id: convId,
-                              characterId: _activeCharacterId,
-                            );
-                            await DatabaseHelper.createConversation(conv);
-                            // V2：開新窗口 → 慾望 ÷2
-                            await EmotionCoordinates.onNewWindow(
-                              _activeCharacterId,
-                            );
-                            if (mounted) {
-                              Navigator.of(context).pushReplacementNamed(
-                                '/chat',
-                                arguments: convId,
-                              );
-                            }
-                          },
-                    child: Icon(
-                      Icons.add_circle_outline_rounded,
-                      size: 22,
-                      color: YanciTheme.accent.withValues(alpha: 0.5),
+                  // ═══ 長截圖（取代低頻的新窗口入口）═══
+                  Semantics(
+                    button: true,
+                    enabled: _isChatReady && !_isCapturingLongScreenshot,
+                    label: L.pick(en: 'Long screenshot', zhTW: '長截圖'),
+                    child: Tooltip(
+                      message: L.pick(en: 'Long screenshot', zhTW: '長截圖'),
+                      excludeFromSemantics: true,
+                      child: GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onTap: _isChatReady && !_isCapturingLongScreenshot
+                            ? _captureLongScreenshot
+                            : null,
+                        child: Padding(
+                          padding: const EdgeInsets.all(9),
+                          child: _isCapturingLongScreenshot
+                              ? SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 1.7,
+                                    color: YanciTheme.accent.withValues(
+                                      alpha: 0.65,
+                                    ),
+                                  ),
+                                )
+                              : Icon(
+                                  Icons.panorama_vertical_outlined,
+                                  size: 22,
+                                  color: YanciTheme.accent.withValues(
+                                    alpha: 0.5,
+                                  ),
+                                ),
+                        ),
+                      ),
                     ),
                   ),
-                  const SizedBox(width: 8),
+                  const SizedBox(width: 1),
                 ],
               ),
             ],
