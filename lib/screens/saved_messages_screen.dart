@@ -174,7 +174,7 @@ class _SavedMessagesScreenState extends State<SavedMessagesScreen> {
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             Icon(
-                              Icons.star_outline_rounded,
+                              Icons.bookmark_border_rounded,
                               size: 48,
                               color: YanciTheme.textSecondary.withValues(
                                 alpha: 0.25,

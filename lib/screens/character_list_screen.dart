@@ -505,7 +505,7 @@ class _CharacterListScreenState extends State<CharacterListScreen> {
       _ResourceTab(Icons.bubble_chart_outlined, L.get('char_tab_memory'), () {
         Navigator.of(context).pushNamed('/memory', arguments: charId);
       }),
-      _ResourceTab(Icons.star_outline_rounded, L.get('char_tab_saved'), () {
+      _ResourceTab(Icons.bookmark_border_rounded, L.get('char_tab_saved'), () {
         Navigator.of(context).push(
           MaterialPageRoute(
             builder: (_) => SavedMessagesScreen(

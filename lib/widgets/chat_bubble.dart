@@ -1353,7 +1353,7 @@ class _ChatBubbleState extends State<ChatBubble>
     );
   }
 
-  /// 星星收藏圖標（kid star，點擊後實心）
+  /// 書籤收藏圖標，點擊後以實心書籤表示已收藏。
   Widget _buildBookmarkIcon({Color? color}) {
     final c = color ?? YanciTheme.textSecondary.withValues(alpha: 0.4);
     return SizedBox(
@@ -1361,7 +1361,7 @@ class _ChatBubbleState extends State<ChatBubble>
       height: 22,
       child: Center(
         child: Icon(
-          _isSaved ? Icons.star_rounded : Icons.star_outline_rounded,
+          _isSaved ? Icons.bookmark_rounded : Icons.bookmark_border_rounded,
           size: 20,
           color: c,
         ),
@@ -1683,7 +1683,7 @@ class _TypingIndicatorState extends State<_TypingIndicator>
   }
 }
 
-/// 方形複製圖標繪製器：兩個重疊的正方形線框
+/// 方角複製圖標繪製器：兩個重疊的正方形線框
 class _SquareCopyPainter extends CustomPainter {
   final Color color;
   const _SquareCopyPainter({required this.color});
@@ -1693,14 +1693,15 @@ class _SquareCopyPainter extends CustomPainter {
     final paint = Paint()
       ..color = color
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.3
+      ..strokeWidth = 1.35
       ..strokeCap = StrokeCap.round
       ..strokeJoin = StrokeJoin.round;
 
     final s = size.width;
-    final boxSize = s * 0.7;
-    final gap = s * 0.22;
-    final r = Radius.circular(s * 0.14);
+    // B 方案：保留不到 1px 的微圓角，視覺方正但不生硬。
+    final boxSize = s * 0.72;
+    final gap = s * 0.20;
+    final r = Radius.circular(s * 0.055);
 
     final backRect = RRect.fromRectAndRadius(
       Rect.fromLTWH(0, 0, boxSize, boxSize),

@@ -138,10 +138,10 @@ class _TtsPlayButtonState extends State<TtsPlayButton>
     }
   }
 
-  /// 靜態：play_circle 圖標
+  /// 靜態：聲波圖標；播放時切換成真正跳動的三條音波。
   Widget _buildIdleIcon() {
     return Icon(
-      Icons.play_circle_outline,
+      Icons.graphic_eq_rounded,
       size: widget.size,
       color: YanciTheme.textSecondary.withValues(alpha: 0.45),
     );

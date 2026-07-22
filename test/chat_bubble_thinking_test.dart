@@ -71,4 +71,30 @@ void main() {
     expect(opacity.any((widget) => widget.opacity == 0), isFalse);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('bubble actions use bookmark and sound-wave idle icons', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    await L.setLocale('zh_TW');
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ChatBubble(
+            text: '回覆內容',
+            isUser: false,
+            timestamp: DateTime(2026, 7, 22, 12),
+            captureMode: true,
+          ),
+        ),
+      ),
+    );
+
+    expect(find.byIcon(Icons.bookmark_border_rounded), findsOneWidget);
+    expect(find.byIcon(Icons.graphic_eq_rounded), findsOneWidget);
+    expect(find.byIcon(Icons.star_outline_rounded), findsNothing);
+    expect(find.byIcon(Icons.play_circle_outline), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
 }
