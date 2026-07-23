@@ -219,6 +219,9 @@ class BedrockService implements ApiAdapter {
     };
 
     if (structuredPrompt != null) {
+      final dynamicPrompt = structuredPrompt.dynamicForCache(
+        enabled: enableCache,
+      );
       final systemBlock = <String, dynamic>{
         'type': 'text',
         'text': structuredPrompt.staticPart,
@@ -228,11 +231,8 @@ class BedrockService implements ApiAdapter {
       }
       body['system'] = <Map<String, dynamic>>[
         systemBlock,
-        if (structuredPrompt.dynamicPart.isNotEmpty)
-          <String, dynamic>{
-            'type': 'text',
-            'text': structuredPrompt.dynamicPart,
-          },
+        if (dynamicPrompt.isNotEmpty)
+          <String, dynamic>{'type': 'text', 'text': dynamicPrompt},
       ];
     } else if (systemPrompt != null && systemPrompt.isNotEmpty) {
       body['system'] = systemPrompt;

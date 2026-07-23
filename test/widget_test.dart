@@ -162,7 +162,7 @@ void main() {
       );
 
       expect(body['session_id'], 'yanci_conv-test');
-      expect(body['cache_control'], const {'type': 'ephemeral', 'ttl': '1h'});
+      expect(body.containsKey('cache_control'), isFalse);
 
       final messages = body['messages'] as List;
       final system = messages.first as Map<String, dynamic>;
@@ -261,6 +261,43 @@ void main() {
     expect(latestUser['content'], 'latest user');
     expect(OpenRouterService.lastCacheDiagnostics['enable_cache'], isFalse);
     expect(OpenRouterService.lastCacheDiagnostics['latest_user_focus'], isTrue);
+  });
+
+  test('OpenRouter cache uses the window-stable runtime snapshot', () async {
+    SharedPreferences.setMockInitialValues({'enable_prompt_caching': true});
+    CacheSession.conversationId = 'conv-stable-runtime';
+    OpenRouterService.resetCacheStats();
+
+    final service = OpenRouterService(apiKey: 'test');
+    final body = await service.debugBuildBodyForTesting(
+      model: 'anthropic/claude-sonnet-4',
+      structuredPrompt: StructuredPrompt(
+        staticPart: 'static rules',
+        dynamicPart: 'live memory at 09:30',
+        cacheStableDynamicPart: 'window memory at 08:00',
+      ),
+      messages: const [
+        {'role': 'assistant', 'content': 'previous reply'},
+        {'role': 'user', 'content': 'actual latest message'},
+      ],
+    );
+
+    final messages = body['messages'] as List;
+    final systemBlocks =
+        (messages.first as Map<String, dynamic>)['content'] as List;
+    final runtimeText =
+        (systemBlocks.last as Map<String, dynamic>)['text'] as String;
+    expect(runtimeText, contains('window memory at 08:00'));
+    expect(runtimeText, isNot(contains('live memory at 09:30')));
+    final latestUser = messages.last as Map<String, dynamic>;
+    expect(
+      ((latestUser['content'] as List).single as Map<String, dynamic>)['text'],
+      'actual latest message',
+    );
+    expect(
+      OpenRouterService.lastCacheDiagnostics['dynamic_snapshot_active'],
+      isTrue,
+    );
   });
 
   test('OpenRouter non-Claude models keep runtime context in system', () async {

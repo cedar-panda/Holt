@@ -108,8 +108,8 @@ class OpenRouterService implements ApiAdapter {
   }
 
   /// Claude 在工具與動態背景很長時，偶爾會把上一輪當成當前任務。
-  /// 這兩個標記只包在最新 user 的未緩存 dynamic 增量中：不改 static
-  /// prompt、不移動 rolling breakpoint，也不寫回 messages/history。
+  /// 這兩個標記只包在 system runtime context 中：不改 static prompt、
+  /// 不移動 rolling breakpoint，也不寫回 messages/history。
   static bool _needsLatestUserFocus(String model) {
     final m = model.toLowerCase();
     return m.contains('anthropic') ||
@@ -350,13 +350,15 @@ class OpenRouterService implements ApiAdapter {
     final enableCache = useStructured && cacheEnabled && cacheControl != null;
     final focusLatestUser =
         structuredPrompt != null &&
-        structuredPrompt.dynamicPart.isNotEmpty &&
+        structuredPrompt.dynamicForCache(enabled: enableCache).isNotEmpty &&
         _needsLatestUserFocus(model);
+    final runtimeDynamicPart =
+        structuredPrompt?.dynamicForCache(enabled: enableCache) ?? '';
     final sentDynamicPart = structuredPrompt == null
         ? ''
         : (focusLatestUser
-              ? _focusedDynamicPart(structuredPrompt.dynamicPart)
-              : structuredPrompt.dynamicPart);
+              ? _focusedDynamicPart(runtimeDynamicPart)
+              : runtimeDynamicPart);
 
     if (useStructured) {
       final staticText = structuredPrompt.staticPart;
@@ -492,6 +494,14 @@ class OpenRouterService implements ApiAdapter {
       'dynamic_tokens': structuredPrompt == null
           ? 0
           : TokenEstimator.estimate(sentDynamicPart),
+      'dynamic_snapshot_active':
+          enableCache && structuredPrompt.cacheStableDynamicPart != null,
+      'dynamic_live_hash': structuredPrompt == null
+          ? ''
+          : _shortHash(structuredPrompt.dynamicPart),
+      'dynamic_sent_hash': sentDynamicPart.isEmpty
+          ? ''
+          : _shortHash(sentDynamicPart),
       'static_hash': structuredPrompt == null
           ? _shortHash(systemPrompt ?? '')
           : _shortHash(
@@ -554,9 +564,10 @@ class OpenRouterService implements ApiAdapter {
       //    「Sticky routing is not used when you specify a manual provider order」，
       //    provider.order 會把 sticky routing 整個蓋掉，導致 cache 永遠命不中。
       if (enableCache) 'session_id': _sessionId,
-      // OpenRouter automatic caching：和 block-level explicit breakpoints
-      // 使用同一個 1h TTL，並作為最後可緩存區塊的自動斷點。
-      if (enableCache) 'cache_control': Map<String, String>.from(cacheControl),
+      // 不送 top-level automatic cache_control。它會把自動斷點推到最後一個
+      // cacheable block，越過上面刻意設在「最新 user 前」的 rolling
+      // breakpoint；1h 寫入又是高倍率，會造成每輪大額重寫。
+      // static/profile 與 rolling history 已各有明確 block-level 斷點。
     };
   }
 
@@ -655,6 +666,9 @@ class OpenRouterService implements ApiAdapter {
       'latest_user_chars': requestDiagnostics['latest_user_chars'],
       'latest_user_hash': requestDiagnostics['latest_user_hash'],
       'latest_user_preview': requestDiagnostics['latest_user_preview'],
+      'dynamic_snapshot_active': requestDiagnostics['dynamic_snapshot_active'],
+      'dynamic_live_hash': requestDiagnostics['dynamic_live_hash'],
+      'dynamic_sent_hash': requestDiagnostics['dynamic_sent_hash'],
     });
     return stats;
   }

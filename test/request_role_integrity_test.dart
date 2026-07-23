@@ -101,6 +101,53 @@ void main() {
     }
   });
 
+  test(
+    'Claude adapters use cache-stable system without changing user',
+    () async {
+      final prompt = StructuredPrompt(
+        staticPart: 'STATIC EXACT',
+        dynamicPart: 'LIVE RUNTIME',
+        cacheStableDynamicPart: 'WINDOW RUNTIME',
+      );
+      SharedPreferences.setMockInitialValues(<String, Object>{
+        'enable_prompt_caching': true,
+      });
+
+      final compatible =
+          await OpenAICompatibleService(
+            apiKey: 'test',
+            baseUrl: 'https://example.com/v1',
+          ).debugBuildBodyForTesting(
+            messages: _sourceMessages,
+            model: 'claude-sonnet-4',
+            structuredPrompt: prompt,
+          );
+      final compatibleSystems = (compatible['messages'] as List)
+          .cast<Map>()
+          .where((message) => message['role'] == 'system')
+          .toList();
+      expect(_textContent(compatibleSystems.last['content']), 'WINDOW RUNTIME');
+      expect(
+        _textContent(_latestUser(compatible['messages'] as List)['content']),
+        'actual human message',
+      );
+
+      final bedrock =
+          await BedrockService(
+            accessKeyId: 'test',
+            secretAccessKey: 'test',
+          ).debugBuildBodyForTesting(
+            messages: _sourceMessages,
+            structuredPrompt: prompt,
+          );
+      expect((bedrock['system'] as List).last['text'], 'WINDOW RUNTIME');
+      expect(
+        _textContent(_latestUser(bedrock['messages'] as List)['content']),
+        'actual human message',
+      );
+    },
+  );
+
   test('DeepSeek and Qwen use system messages for runtime context', () {
     final deepSeekBody = DeepSeekService(apiKey: 'test')
         .debugBuildBodyForTesting(

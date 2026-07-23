@@ -109,9 +109,9 @@ class _DeveloperDiagnosticsScreenState
                         padding: const EdgeInsets.only(top: 10),
                         child: Text(
                           L.pick(
-                            en: 'Reading:\n⚠️ Fingerprint changed = static-prefix drift (segments listed below the row)\nUnchanged but ⚡0 = expired TTL or route drift\nGray ⚙ rows are internal requests (naming/summary), excluded from comparison',
+                            en: 'Reading:\n⚠️ Fingerprint changed = static-prefix drift (segments listed below the row)\n🧯 Context cache stalled = 3 consecutive long prompts only read the fixed prefix\nUnchanged but ⚡0 = expired TTL or route drift\nGray ⚙ rows are internal requests (naming/summary), excluded from comparison',
                             zhTW:
-                                '判讀：\n⚠️ 指紋變 = 靜態前綴漂移（行下方會列出具體變更段）\n指紋沒變但 ⚡0 = TTL 過期或路由漂移\n灰色 ⚙ 行 = 命名/摘要等內部請求，已排除在比較外',
+                                '判讀：\n⚠️ 指紋變 = 靜態前綴漂移（行下方會列出具體變更段）\n🧯 上下文快取停滯 = 長提示連續 3 次只讀到固定前綴\n指紋沒變但 ⚡0 = TTL 過期或路由漂移\n灰色 ⚙ 行 = 命名/摘要等內部請求，已排除在比較外',
                           ),
                           style: YanciTheme.bodySmall.copyWith(
                             fontSize: 11,
@@ -211,6 +211,12 @@ class _DeveloperDiagnosticsScreenState
                         .toString();
                     final generationId = (e['generation_id'] ?? '').toString();
                     final latestUserFocused = e['latest_user_focus'] == true;
+                    final contextCacheStalled =
+                        e['context_cache_stalled'] == true;
+                    final contextStallCount =
+                        e['context_stall_count'] as int? ?? 0;
+                    final dynamicSnapshotActive =
+                        e['dynamic_snapshot_active'] == true;
                     var ttlNote = '';
                     if (sentTtl.isNotEmpty ||
                         upstreamTtl.isNotEmpty ||
@@ -254,13 +260,20 @@ class _DeveloperDiagnosticsScreenState
                     if (latestUserFocused) {
                       requestTailNote += '\n    ↳ Claude 本輪聚焦標記：已送出';
                     }
+                    if (dynamicSnapshotActive) {
+                      requestTailNote += '\n    ↳ runtime system：窗口固定快照';
+                    }
+                    if (contextCacheStalled) {
+                      requestTailNote +=
+                          '\n    🧯 上下文快取疑似停滯（連續 $contextStallCount 次）';
+                    }
                     if (generationId.isNotEmpty) {
                       requestTailNote += '\n    response $generationId';
                     }
                     return Padding(
                       padding: const EdgeInsets.symmetric(vertical: 4),
                       child: Text(
-                        '${e['at']}  指紋 $hashShort${drifted ? '  ⚠️變了' : ''}\n'
+                        '${e['at']}  指紋 $hashShort${drifted ? '  ⚠️變了' : ''}${contextCacheStalled ? '  🧯停滯' : ''}\n'
                         '    入 ${_fmtT(e['prompt_t'])}t · ⚡讀 ${_fmtT(e['read'])} · 📦寫 ${_fmtT(e['write'])}\n'
                         '    靜態 ${_fmtT(e['static_t'])} · 動態 ${_fmtT(e['dynamic_t'])}'
                         '$ttlNote'
@@ -270,7 +283,7 @@ class _DeveloperDiagnosticsScreenState
                           fontSize: 12.5,
                           height: 1.35,
                           fontFeatures: const [FontFeature.tabularFigures()],
-                          color: drifted
+                          color: drifted || contextCacheStalled
                               ? Colors.redAccent
                               : (read > 0
                                     ? YanciTheme.textPrimary

@@ -341,10 +341,11 @@ class OpenAICompatibleService implements ApiAdapter {
     );
     final shouldCache = cacheControl != null && enableCache;
 
-    // ═══ system 只放靜態部分，動態移到最新 user ═══
+    // ═══ system 分層；user 永遠只保留真實消息 ═══
     final staticPrompt = structuredPrompt?.staticPart ?? systemPrompt ?? '';
     final profilePrompt = structuredPrompt?.profilePart ?? '';
-    final dynamicPrompt = structuredPrompt?.dynamicPart ?? '';
+    final dynamicPrompt =
+        structuredPrompt?.dynamicForCache(enabled: shouldCache) ?? '';
     if (staticPrompt.isNotEmpty) {
       if (shouldCache) {
         allMessages.add({

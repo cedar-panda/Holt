@@ -154,6 +154,8 @@ class _ChatScreenState extends State<ChatScreen> {
   int? _coinSnapshotUser;
   String? _windowSummaryId;
   String? _cacheWindowSummaryStaticSnapshot;
+  String? _claudeCacheDynamicSnapshot;
+  String? _claudeCacheDynamicSnapshotKey;
   String? _promptLocaleSnapshot;
   OverlayEntry? _modelHintOverlay;
   bool _manualSummarySelecting = false;
@@ -557,6 +559,39 @@ class _ChatScreenState extends State<ChatScreen> {
       zhTW:
           '【時間】${now.year}年${now.month}月${now.day}日 週${weekdays[now.weekday - 1]} ${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}',
     );
+  }
+
+  /// Claude 的 cache hierarchy 是 tools → system → messages。若 system 內的
+  /// 時間／檢索記憶每輪變動，後面的整段對話歷史就無法命中。
+  ///
+  /// 現有 OpenRouter、OpenAI-compatible 與 Bedrock 路徑沒有足夠把握能穩定
+  /// 透傳「歷史中段 system」，所以採保守策略：cache on 時把 runtime system
+  /// 固定在本聊天窗口；cache off 或非 Claude 照常使用本輪即時內容。
+  /// user message 完全不參與這個快照。
+  Future<String?> _cacheStableDynamicPart({
+    required String provider,
+    required String model,
+    required String liveDynamicPart,
+  }) async {
+    final cacheEnabled = await MemorySettings.getEnablePromptCaching();
+    final isClaudeCache = TokenEstimator.isClaudePromptCacheModel(
+      provider: provider,
+      model: model,
+    );
+    if (!cacheEnabled || !isClaudeCache) {
+      _claudeCacheDynamicSnapshot = null;
+      _claudeCacheDynamicSnapshotKey = null;
+      return null;
+    }
+
+    final key =
+        '${widget.conversationId}|${provider.toLowerCase()}|'
+        '${model.toLowerCase()}|${L.locale}';
+    if (_claudeCacheDynamicSnapshotKey != key) {
+      _claudeCacheDynamicSnapshotKey = key;
+      _claudeCacheDynamicSnapshot = liveDynamicPart;
+    }
+    return _claudeCacheDynamicSnapshot ?? liveDynamicPart;
   }
 
   /// 消費本輪 `<buy>` 結果：送 user 成功 → 系統訊息落庫並即時上屏；
@@ -2711,10 +2746,16 @@ class _ChatScreenState extends State<ChatScreen> {
       );
     }
 
+    final liveDynamicPart = dynamicParts.join('\n\n');
     final structured = StructuredPrompt(
       staticPart: staticBundle.staticPart,
       profilePart: staticBundle.profilePart,
-      dynamicPart: dynamicParts.join('\n\n'),
+      dynamicPart: liveDynamicPart,
+      cacheStableDynamicPart: await _cacheStableDynamicPart(
+        provider: providerName,
+        model: model,
+        liveDynamicPart: liveDynamicPart,
+      ),
     );
 
     if (mounted) {
@@ -3652,10 +3693,16 @@ class _ChatScreenState extends State<ChatScreen> {
       );
     }
 
+    final liveDynamicPart = dynamicParts.join('\n\n');
     final structured = StructuredPrompt(
       staticPart: staticBundle.staticPart,
       profilePart: staticBundle.profilePart,
-      dynamicPart: dynamicParts.join('\n\n'),
+      dynamicPart: liveDynamicPart,
+      cacheStableDynamicPart: await _cacheStableDynamicPart(
+        provider: imgProviderName,
+        model: model,
+        liveDynamicPart: liveDynamicPart,
+      ),
     );
 
     if (mounted) {

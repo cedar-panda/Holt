@@ -109,6 +109,8 @@ class KeepAliveService {
       'keepalive_cached_profile_prompt';
   static const String _keyCachedDynamicPrompt =
       'keepalive_cached_dynamic_prompt';
+  static const String _keyCachedStableDynamicPrompt =
+      'keepalive_cached_stable_dynamic_prompt';
   static const String _keyCachedModel = 'keepalive_cached_model';
   static const String _keyCachedProvider = 'keepalive_cached_provider';
   static const String _keyLastRequestAt = 'keepalive_last_request_at';
@@ -249,11 +251,13 @@ class KeepAliveService {
     final staticPrompt = prefs.getString(_keyCachedStaticPrompt);
     final profilePrompt = prefs.getString(_keyCachedProfilePrompt);
     final dynamicPrompt = prefs.getString(_keyCachedDynamicPrompt);
+    final stableDynamicPrompt = prefs.getString(_keyCachedStableDynamicPrompt);
     if (staticPrompt != null || dynamicPrompt != null) {
       svc._cachedStructuredPrompt = StructuredPrompt(
         staticPart: staticPrompt ?? '',
         profilePart: profilePrompt,
         dynamicPart: dynamicPrompt ?? '',
+        cacheStableDynamicPart: stableDynamicPrompt,
       );
     }
     svc._cachedModel = prefs.getString(_keyCachedModel);
@@ -468,11 +472,13 @@ class KeepAliveService {
     final staticPrompt = prefs.getString(_keyCachedStaticPrompt);
     final profilePrompt = prefs.getString(_keyCachedProfilePrompt);
     final dynamicPrompt = prefs.getString(_keyCachedDynamicPrompt);
+    final stableDynamicPrompt = prefs.getString(_keyCachedStableDynamicPrompt);
     if (staticPrompt != null || dynamicPrompt != null) {
       _cachedStructuredPrompt = StructuredPrompt(
         staticPart: staticPrompt ?? '',
         profilePart: profilePrompt,
         dynamicPart: dynamicPrompt ?? '',
+        cacheStableDynamicPart: stableDynamicPrompt,
       );
     }
     _cachedModel = prefs.getString(_keyCachedModel);
@@ -825,6 +831,7 @@ class KeepAliveService {
       await prefs.remove(_keyCachedStaticPrompt);
       await prefs.remove(_keyCachedProfilePrompt);
       await prefs.remove(_keyCachedDynamicPrompt);
+      await prefs.remove(_keyCachedStableDynamicPrompt);
     } else {
       await prefs.setString(
         _keyCachedStaticPrompt,
@@ -842,6 +849,12 @@ class KeepAliveService {
         _keyCachedDynamicPrompt,
         structuredPrompt.dynamicPart,
       );
+      final stableDynamic = structuredPrompt.cacheStableDynamicPart;
+      if (stableDynamic == null) {
+        await prefs.remove(_keyCachedStableDynamicPrompt);
+      } else {
+        await prefs.setString(_keyCachedStableDynamicPrompt, stableDynamic);
+      }
     }
 
     if (_cachedModel == null || _cachedModel!.isEmpty) {

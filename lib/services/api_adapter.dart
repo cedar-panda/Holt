@@ -1,16 +1,26 @@
 /// 結構化 System Prompt（支持 prompt caching）
 /// static → 人設卡內容（不變，可緩存）
-/// dynamic → 記憶注入 + 時間 + 表情包（每次變，但仍屬 system context）
+/// dynamic → 記憶注入 + 時間 + 表情包（仍屬 system context）
+///
+/// Claude 的快取層級是 tools → system → messages。若 system 每輪改變，
+/// 後面的歷史快取會整段失效；因此開啟 Claude cache 時，聊天窗口會另外提供
+/// [cacheStableDynamicPart]。它只在該窗口生命週期內固定，不會混入 user。
 class StructuredPrompt {
   final String staticPart;
   final String? profilePart;
   final String dynamicPart;
+  final String? cacheStableDynamicPart;
 
   StructuredPrompt({
     required this.staticPart,
     this.profilePart,
     this.dynamicPart = '',
+    this.cacheStableDynamicPart,
   });
+
+  /// Cache off 用即時 dynamic；Claude cache on 用窗口固定快照。
+  String dynamicForCache({required bool enabled}) =>
+      enabled ? (cacheStableDynamicPart ?? dynamicPart) : dynamicPart;
 
   /// 不支持 caching 的 provider 直接合成一個字串
   String get combined {
@@ -93,7 +103,7 @@ abstract class ApiAdapter {
 
 /// 共用：Anthropic 風格滾動緩存斷點（1 小時 TTL）
 /// 掛在「最新 user 之前的最後一條消息」的最後一個 block 上，
-/// 緩存邊界停在純歷史上，含 dynamic 的最新消息為未緩存增量。
+/// 緩存邊界停在純歷史上，最新 user 永遠不帶 cache_control。
 class CacheBreakpoint {
   static void applyRolling(
     List<Map<String, dynamic>> allMessages, {
@@ -107,7 +117,7 @@ class CacheBreakpoint {
     if (limit < minIndex) limit = minIndex;
 
     // OpenRouter / Anthropic 的 prefix cache 最穩定邊界：
-    // 最新 user 會塞入每輪變動的 dynamic prompt，所以只標它前一條。
+    // 最新 user 是本輪增量，所以只標它前一條。
     if (limit <= minIndex) return;
     final idx = limit - 1;
 
