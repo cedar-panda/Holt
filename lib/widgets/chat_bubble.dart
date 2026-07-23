@@ -1177,6 +1177,7 @@ class _ChatBubbleState extends State<ChatBubble>
   Widget _buildMemoryLog(String log) {
     return _buildToolLog(
       log,
+      containerKey: const ValueKey('memory-log-container'),
       label: L.pick(en: 'Memory', zhTW: '記憶'),
       icon: Icons.auto_awesome_outlined,
       expanded: _memLogExpanded,
@@ -1188,6 +1189,7 @@ class _ChatBubbleState extends State<ChatBubble>
   Widget _buildEmotionLog(String log) {
     return _buildToolLog(
       log,
+      containerKey: const ValueKey('emotion-log-container'),
       label: L.pick(en: 'Emotion', zhTW: '情緒'),
       icon: Icons.favorite_border_rounded,
       expanded: _emoLogExpanded,
@@ -1197,6 +1199,7 @@ class _ChatBubbleState extends State<ChatBubble>
 
   Widget _buildToolLog(
     String log, {
+    required Key containerKey,
     required String label,
     required IconData icon,
     required bool expanded,
@@ -1208,76 +1211,29 @@ class _ChatBubbleState extends State<ChatBubble>
     // 過濾掉空行
     final validLines = bodyLines.where((l) => l.trim().isNotEmpty).toList();
     if (validLines.isEmpty) return const SizedBox.shrink();
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 6),
-      child: GestureDetector(
-        onTap: onTap,
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-          decoration: BoxDecoration(
-            color: YanciTheme.accent.withValues(alpha: 0.05),
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(
-              color: YanciTheme.accent.withValues(alpha: 0.12),
-              width: 0.5,
+    final bodyColor = YanciTheme.textOnBubble.withValues(alpha: 0.55);
+    return _buildDisclosureBlock(
+      containerKey: containerKey,
+      label: '$label${done ? ' · Done' : ''}',
+      icon: icon,
+      expanded: expanded,
+      onTap: onTap,
+      body: <Widget>[
+        ...validLines.map(
+          (line) => Padding(
+            padding: const EdgeInsets.only(bottom: 2),
+            child: Text(
+              line,
+              style: TextStyle(fontSize: 11, color: bodyColor, height: 1.5),
             ),
           ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Icon(
-                    icon,
-                    size: 11,
-                    color: YanciTheme.accent.withValues(alpha: 0.7),
-                  ),
-                  const SizedBox(width: 5),
-                  Text(
-                    '$label${done ? ' · Done' : ''}',
-                    style: TextStyle(
-                      fontSize: 10.5,
-                      fontWeight: FontWeight.w500,
-                      color: YanciTheme.accent.withValues(alpha: 0.75),
-                    ),
-                  ),
-                  const Spacer(),
-                  Icon(
-                    expanded ? Icons.expand_less : Icons.expand_more,
-                    size: 13,
-                    color: YanciTheme.textSecondary.withValues(alpha: 0.4),
-                  ),
-                ],
-              ),
-              if (expanded) ...[
-                const SizedBox(height: 6),
-                ...validLines.map(
-                  (l) => Padding(
-                    padding: const EdgeInsets.only(bottom: 2),
-                    child: Text(
-                      l,
-                      style: TextStyle(
-                        fontSize: 10,
-                        height: 1.35,
-                        color: YanciTheme.textSecondary.withValues(alpha: 0.75),
-                      ),
-                    ),
-                  ),
-                ),
-                if (done)
-                  Text(
-                    'Done ✓',
-                    style: TextStyle(
-                      fontSize: 10,
-                      fontWeight: FontWeight.w500,
-                      color: YanciTheme.accent.withValues(alpha: 0.7),
-                    ),
-                  ),
-              ],
-            ],
-          ),
         ),
-      ),
+        if (done)
+          Text(
+            'Done ✓',
+            style: TextStyle(fontSize: 11, color: bodyColor, height: 1.5),
+          ),
+      ],
     );
   }
 
@@ -1288,41 +1244,29 @@ class _ChatBubbleState extends State<ChatBubble>
         .replaceFirst('情緒座標:', '')
         .replaceFirst('情緒座標：', '')
         .trim();
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 6),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-        decoration: BoxDecoration(
-          color: YanciTheme.accent.withValues(alpha: 0.04),
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(
-            color: YanciTheme.accent.withValues(alpha: 0.08),
-            width: 0.5,
-          ),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              Icons.favorite_border_rounded,
-              size: 10,
-              color: YanciTheme.accent.withValues(alpha: 0.5),
-            ),
-            const SizedBox(width: 4),
-            Flexible(
-              child: Text(
-                coord,
-                style: TextStyle(
-                  fontSize: 10,
-                  color: YanciTheme.textSecondary.withValues(alpha: 0.5),
-                  fontFamily: YanciTheme.fontFamily,
-                ),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
+    final labelColor = YanciTheme.textOnBubble.withValues(alpha: 0.45);
+    return Container(
+      key: const ValueKey('emotion-coordinate-container'),
+      margin: const EdgeInsets.only(bottom: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.favorite_border_rounded, size: 12, color: labelColor),
+          const SizedBox(width: 4),
+          Flexible(
+            child: Text(
+              coord,
+              style: TextStyle(
+                fontSize: 10,
+                color: labelColor,
+                fontFamily: YanciTheme.fontFamily,
               ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
@@ -1405,52 +1349,70 @@ class _ChatBubbleState extends State<ChatBubble>
   }
 
   Widget _buildThinking(String thinking) {
-    // 思考鏈顏色：比氣泡文字淺一點，跟主題走
     final thinkColor = YanciTheme.textOnBubble.withValues(alpha: 0.55);
-    final thinkLabelColor = YanciTheme.textOnBubble.withValues(alpha: 0.45);
     final expanded = widget.thinkingExpandedOverride ?? _thinkingExpanded;
-    return GestureDetector(
+    return _buildDisclosureBlock(
+      containerKey: const ValueKey('thinking-chain-container'),
+      label: L.get('chat_thinking'),
+      icon: Icons.bubble_chart_outlined,
+      expanded: expanded,
       onTap: widget.thinkingExpandedOverride == null
           ? () => setState(() => _thinkingExpanded = !_thinkingExpanded)
           : null,
-      child: Container(
-        key: const ValueKey('thinking-chain-container'),
-        margin: const EdgeInsets.only(bottom: 4),
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(
-                  Icons.bubble_chart_outlined,
-                  size: 12,
-                  color: thinkLabelColor,
-                ),
-                const SizedBox(width: 4),
-                Text(
-                  L.get('chat_thinking'),
-                  style: TextStyle(fontSize: 10, color: thinkLabelColor),
-                ),
-                const SizedBox(width: 4),
-                Icon(
-                  expanded
-                      ? Icons.expand_less_rounded
-                      : Icons.expand_more_rounded,
-                  size: 14,
-                  color: thinkLabelColor,
-                ),
-              ],
-            ),
-            if (expanded) ...[
-              const SizedBox(height: 6),
-              Text(
-                thinking,
-                style: TextStyle(fontSize: 11, color: thinkColor, height: 1.5),
+      body: <Widget>[
+        Text(
+          thinking,
+          style: TextStyle(fontSize: 11, color: thinkColor, height: 1.5),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildDisclosureBlock({
+    required Key containerKey,
+    required String label,
+    required IconData icon,
+    required bool expanded,
+    required VoidCallback? onTap,
+    required List<Widget> body,
+  }) {
+    final labelColor = YanciTheme.textOnBubble.withValues(alpha: 0.45);
+    return Semantics(
+      button: onTap != null,
+      expanded: expanded,
+      label: label,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: onTap,
+        child: Container(
+          key: containerKey,
+          margin: const EdgeInsets.only(bottom: 4),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(icon, size: 12, color: labelColor),
+                  const SizedBox(width: 4),
+                  Text(
+                    label,
+                    style: TextStyle(fontSize: 10, color: labelColor),
+                  ),
+                  const SizedBox(width: 4),
+                  Icon(
+                    expanded
+                        ? Icons.expand_less_rounded
+                        : Icons.expand_more_rounded,
+                    size: 14,
+                    color: labelColor,
+                  ),
+                ],
               ),
+              if (expanded) ...[const SizedBox(height: 6), ...body],
             ],
-          ],
+          ),
         ),
       ),
     );

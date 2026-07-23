@@ -49,6 +49,91 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets(
+    'memory and emotion disclosures match the thinking visual treatment',
+    (tester) async {
+      SharedPreferences.setMockInitialValues(<String, Object>{});
+      await L.setLocale('zh_TW');
+
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: Scaffold(
+            body: ChatBubble(
+              text: '<think>正在整理想法</think>正常回覆',
+              isUser: false,
+              captureMode: true,
+              memoryLog:
+                  '讀取相關記憶\n'
+                  '📍 情緒打點：安心\n'
+                  '情緒座標: (0.3, -0.2)\n'
+                  'Done',
+            ),
+          ),
+        ),
+      );
+
+      const disclosureKeys = <ValueKey<String>>[
+        ValueKey('thinking-chain-container'),
+        ValueKey('memory-log-container'),
+        ValueKey('emotion-log-container'),
+        ValueKey('emotion-coordinate-container'),
+      ];
+      for (final key in disclosureKeys) {
+        final container = tester.widget<Container>(find.byKey(key));
+        expect(container.color, isNull, reason: '$key should stay transparent');
+        expect(
+          container.decoration,
+          isNull,
+          reason: '$key should not draw a border or surface',
+        );
+      }
+
+      Color? disclosureIconColor(ValueKey<String> key, IconData icon) {
+        return tester
+            .widget<Icon>(
+              find.descendant(of: find.byKey(key), matching: find.byIcon(icon)),
+            )
+            .color;
+      }
+
+      final thinkingColor = disclosureIconColor(
+        const ValueKey('thinking-chain-container'),
+        Icons.bubble_chart_outlined,
+      );
+      expect(
+        disclosureIconColor(
+          const ValueKey('memory-log-container'),
+          Icons.auto_awesome_outlined,
+        ),
+        thinkingColor,
+      );
+      expect(
+        disclosureIconColor(
+          const ValueKey('emotion-log-container'),
+          Icons.favorite_border_rounded,
+        ),
+        thinkingColor,
+      );
+      expect(
+        disclosureIconColor(
+          const ValueKey('emotion-coordinate-container'),
+          Icons.favorite_border_rounded,
+        ),
+        thinkingColor,
+      );
+
+      expect(find.text('讀取相關記憶'), findsNothing);
+      expect(find.text('📍 情緒打點：安心'), findsNothing);
+      await tester.tap(find.byKey(const ValueKey('memory-log-container')));
+      await tester.tap(find.byKey(const ValueKey('emotion-log-container')));
+      await tester.pump();
+      expect(find.text('讀取相關記憶'), findsOneWidget);
+      expect(find.text('📍 情緒打點：安心'), findsOneWidget);
+      expect(find.text('Done ✓'), findsNWidgets(2));
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets('capture mode paints bubble content without waiting for ticker', (
     tester,
   ) async {
