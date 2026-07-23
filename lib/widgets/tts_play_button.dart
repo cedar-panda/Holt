@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
 import 'orbit_loading_indicator.dart';
 import '../services/tts_service.dart';
+import 'bubble_action_glyph.dart';
 
 /// 氣泡下方 TTS 播放按鈕
 ///
@@ -140,10 +141,11 @@ class _TtsPlayButtonState extends State<TtsPlayButton>
 
   /// 靜態：聲波圖標；播放時切換成真正跳動的三條音波。
   Widget _buildIdleIcon() {
-    return Icon(
-      Icons.graphic_eq_rounded,
-      size: widget.size,
-      color: YanciTheme.textSecondary.withValues(alpha: 0.45),
+    return Center(
+      child: BubbleActionGlyph(
+        type: BubbleActionGlyphType.soundWave,
+        color: YanciTheme.textSecondary.withValues(alpha: 0.45),
+      ),
     );
   }
 

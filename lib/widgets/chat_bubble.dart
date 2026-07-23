@@ -20,6 +20,7 @@ import 'scratch_card.dart';
 import 'transfer_card.dart';
 import 'tts_play_button.dart';
 import 'sticker_preview_quality.dart';
+import 'bubble_action_glyph.dart';
 
 /// 聊天氣泡 — 思考鏈 + markdown + 表情包圖片 + 長按菜單
 class ChatBubble extends StatefulWidget {
@@ -494,12 +495,9 @@ class _ChatBubbleState extends State<ChatBubble>
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            SizedBox(
-              width: 16,
-              height: 16,
-              child: CustomPaint(
-                painter: _SquareCopyPainter(color: YanciTheme.textSecondary),
-              ),
+            BubbleActionGlyph(
+              type: BubbleActionGlyphType.copy,
+              color: YanciTheme.textSecondary,
             ),
             const SizedBox(width: 8),
             Text(
@@ -1271,7 +1269,7 @@ class _ChatBubbleState extends State<ChatBubble>
     );
   }
 
-  /// 方形複製圖標（兩個重疊的正方形線框，跟 Claude 一樣）
+  /// 方形複製圖標（兩個重疊的細線正方形）
   /// 緩存命中閃電顏色：避開主題色，綠色色弱友好
   Color _cacheHitColor() {
     final hue = HSLColor.fromColor(YanciTheme.accent).hue;
@@ -1287,22 +1285,19 @@ class _ChatBubbleState extends State<ChatBubble>
     final c = color ?? YanciTheme.textSecondary.withValues(alpha: 0.4);
     return _buildActionIconSlot(
       key: const ValueKey('bubble-action-copy'),
-      child: SizedBox.square(
-        dimension: 15,
-        child: CustomPaint(painter: _SquareCopyPainter(color: c)),
-      ),
+      child: BubbleActionGlyph(type: BubbleActionGlyphType.copy, color: c),
     );
   }
 
-  /// 書籤收藏圖標，點擊後以實心書籤表示已收藏。
+  /// 書籤收藏圖標；收藏後保留細輪廓，以淡填色表示狀態。
   Widget _buildBookmarkIcon({Color? color}) {
     final c = color ?? YanciTheme.textSecondary.withValues(alpha: 0.4);
     return _buildActionIconSlot(
       key: const ValueKey('bubble-action-bookmark'),
-      child: Icon(
-        _isSaved ? Icons.bookmark_rounded : Icons.bookmark_border_rounded,
-        size: 20,
+      child: BubbleActionGlyph(
+        type: BubbleActionGlyphType.bookmark,
         color: c,
+        selected: _isSaved,
       ),
     );
   }
@@ -1648,52 +1643,4 @@ class _TypingIndicatorState extends State<_TypingIndicator>
       ),
     );
   }
-}
-
-/// 方角複製圖標繪製器：兩個重疊的正方形線框
-class _SquareCopyPainter extends CustomPainter {
-  final Color color;
-  const _SquareCopyPainter({required this.color});
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = color
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.35
-      ..strokeCap = StrokeCap.round
-      ..strokeJoin = StrokeJoin.round;
-
-    final s = size.width;
-    // B 方案：保留不到 1px 的微圓角，視覺方正但不生硬。
-    final boxSize = s * 0.72;
-    final gap = s * 0.20;
-    final origin = (s - boxSize - gap) / 2;
-    final r = Radius.circular(s * 0.055);
-
-    final backRect = RRect.fromRectAndRadius(
-      Rect.fromLTWH(origin, origin, boxSize, boxSize),
-      r,
-    );
-    final frontRect = RRect.fromRectAndRadius(
-      Rect.fromLTWH(origin + gap, origin + gap, boxSize, boxSize),
-      r,
-    );
-
-    // 用裁剪只畫後方方形不被前方覆蓋的部分（不依賴背景色）
-    canvas.save();
-    final clip = Path()
-      ..addRect(Rect.fromLTWH(-1, -1, s + 2, s + 2))
-      ..addRRect(frontRect)
-      ..fillType = PathFillType.evenOdd;
-    canvas.clipPath(clip);
-    canvas.drawRRect(backRect, paint);
-    canvas.restore();
-
-    // 前方方形完整繪製
-    canvas.drawRRect(frontRect, paint);
-  }
-
-  @override
-  bool shouldRepaint(covariant _SquareCopyPainter old) => old.color != color;
 }

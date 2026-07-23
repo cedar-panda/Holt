@@ -4,6 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:project_yanci/services/locale_strings.dart';
 import 'package:project_yanci/widgets/chat_bubble.dart';
+import 'package:project_yanci/widgets/bubble_action_glyph.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -184,9 +185,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('bubble actions use bookmark and sound-wave idle icons', (
-    tester,
-  ) async {
+  testWidgets('bubble actions use thin aligned action glyphs', (tester) async {
     SharedPreferences.setMockInitialValues(<String, Object>{});
     await L.setLocale('zh_TW');
 
@@ -203,8 +202,20 @@ void main() {
       ),
     );
 
-    expect(find.byIcon(Icons.bookmark_border_rounded), findsOneWidget);
-    expect(find.byIcon(Icons.graphic_eq_rounded), findsOneWidget);
+    final glyphs = tester
+        .widgetList<BubbleActionGlyph>(find.byType(BubbleActionGlyph))
+        .toList();
+    expect(glyphs, hasLength(3));
+    expect(
+      glyphs.map((glyph) => glyph.type).toSet(),
+      BubbleActionGlyphType.values.toSet(),
+    );
+    expect(BubbleActionGlyph.strokeWidth, 1);
+    expect(
+      BubbleActionGlyph.strokeWidth,
+      lessThan(1.35),
+      reason: 'action icons should stay as light as the Thinking treatment',
+    );
     expect(find.byIcon(Icons.star_outline_rounded), findsNothing);
     expect(find.byIcon(Icons.play_circle_outline), findsNothing);
 

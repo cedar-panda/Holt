@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:project_yanci/services/tts_service.dart';
+import 'package:project_yanci/widgets/bubble_action_glyph.dart';
 import 'package:project_yanci/widgets/orbit_loading_indicator.dart';
 import 'package:project_yanci/widgets/tts_play_button.dart';
 
@@ -34,7 +35,11 @@ void main() {
       ),
     );
 
-    expect(find.byIcon(Icons.graphic_eq_rounded), findsOneWidget);
+    final idleGlyph = tester.widget<BubbleActionGlyph>(
+      find.byType(BubbleActionGlyph),
+    );
+    expect(idleGlyph.type, BubbleActionGlyphType.soundWave);
+    expect(BubbleActionGlyph.strokeWidth, 1);
 
     TtsService.playingMessageId.value = 'message-1';
     TtsService.stateNotifier.value = TtsState.connecting;
@@ -46,7 +51,7 @@ void main() {
       connectingPainters.any((widget) => widget.painter is OrbitPainter),
       isTrue,
     );
-    expect(find.byIcon(Icons.graphic_eq_rounded), findsNothing);
+    expect(find.byType(BubbleActionGlyph), findsNothing);
 
     TtsService.stateNotifier.value = TtsState.playing;
     await tester.pump();
@@ -57,6 +62,6 @@ void main() {
       ),
       findsNWidgets(3),
     );
-    expect(find.byIcon(Icons.graphic_eq_rounded), findsNothing);
+    expect(find.byType(BubbleActionGlyph), findsNothing);
   });
 }
