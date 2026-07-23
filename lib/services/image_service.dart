@@ -146,43 +146,98 @@ class ImageService {
   }
 
   /// 將圖片轉為 base64 data URL（送 API 用）
-  /// 不做二次壓縮——image_picker 選圖時已壓過
+  ///
+  /// image_picker 在 Android 上可能把不含透明通道的 PNG 重新編碼成
+  /// JPEG，卻保留原本的 .png 檔名。因此 MIME 必須依檔案內容判斷，
+  /// 不能相信副檔名，否則上游會以 media type 不相符拒絕整個請求。
   /// 長邊上限：Anthropic 視覺最優尺寸，超過只是白燒 token
   static const int _kMaxSide = 1568;
 
-  /// 體積閾值：小於它且不知尺寸的圖直接放行，省一次解碼
+  /// 體積閾值：已知格式且小於它的圖直接放行，省一次完整解碼
   static const int _kSkipBytes = 600 * 1024;
+
+  static bool _hasSignature(
+    List<int> bytes,
+    List<int> signature, {
+    int offset = 0,
+  }) {
+    if (bytes.length < offset + signature.length) return false;
+    for (var i = 0; i < signature.length; i++) {
+      if (bytes[offset + i] != signature[i]) return false;
+    }
+    return true;
+  }
+
+  static String? _detectMimeType(List<int> bytes) {
+    if (_hasSignature(bytes, const [0xff, 0xd8, 0xff])) {
+      return 'image/jpeg';
+    }
+    if (_hasSignature(bytes, const [
+      0x89,
+      0x50,
+      0x4e,
+      0x47,
+      0x0d,
+      0x0a,
+      0x1a,
+      0x0a,
+    ])) {
+      return 'image/png';
+    }
+    if (_hasSignature(bytes, const [0x47, 0x49, 0x46, 0x38, 0x37, 0x61]) ||
+        _hasSignature(bytes, const [0x47, 0x49, 0x46, 0x38, 0x39, 0x61])) {
+      return 'image/gif';
+    }
+    if (_hasSignature(bytes, const [0x52, 0x49, 0x46, 0x46]) &&
+        _hasSignature(bytes, const [0x57, 0x45, 0x42, 0x50], offset: 8)) {
+      return 'image/webp';
+    }
+    return null;
+  }
 
   static Future<String?> toBase64DataUrl(String imagePath) async {
     final file = File(imagePath);
     if (!await file.exists()) return null;
 
     var bytes = await file.readAsBytes();
+    var mime = _detectMimeType(bytes);
 
     // ═══ 壓縮：原圖整張 base64 會概率性撞 provider 體積上限
     // （手機原相機照片動輒 4~12MB，base64 再膨脹 1.33x）═══
-    if (bytes.length > _kSkipBytes) {
+    // 不明格式也走一次正規化：能解碼就轉成明確的 PNG/JPEG，
+    // 不能解碼則在本地阻止錯誤 payload，避免重試時反覆燒請求。
+    if (bytes.length > _kSkipBytes || mime == null) {
+      img.Image? decoded;
       try {
-        final decoded = img.decodeImage(bytes);
-        if (decoded != null) {
-          var im = decoded;
-          final maxSide = im.width > im.height ? im.width : im.height;
-          if (maxSide > _kMaxSide) {
-            im = im.width >= im.height
-                ? img.copyResize(im, width: _kMaxSide)
-                : img.copyResize(im, height: _kMaxSide);
-          }
-          bytes = img.encodeJpg(im, quality: 82);
-          return 'data:image/jpeg;base64,${base64Encode(bytes)}';
-        }
+        decoded = img.decodeImage(bytes);
       } catch (_) {
-        // 解碼失敗就按原樣發，至少不擋路
+        decoded = null;
+      }
+      if (decoded == null) {
+        throw const FormatException('無法辨識圖片內容，請將圖片另存為 PNG、JPEG、GIF 或 WebP 後重試');
+      }
+
+      var normalized = decoded;
+      final maxSide = normalized.width > normalized.height
+          ? normalized.width
+          : normalized.height;
+      if (maxSide > _kMaxSide) {
+        normalized = normalized.width >= normalized.height
+            ? img.copyResize(normalized, width: _kMaxSide)
+            : img.copyResize(normalized, height: _kMaxSide);
+      }
+
+      // 真正的 PNG 保留 PNG；其他格式有透明通道時也轉 PNG，
+      // 沒透明通道則以 JPEG 控制上傳體積。
+      if (mime == 'image/png' || normalized.hasAlpha) {
+        bytes = img.encodePng(normalized);
+        mime = 'image/png';
+      } else {
+        bytes = img.encodeJpg(normalized, quality: 82);
+        mime = 'image/jpeg';
       }
     }
 
-    final b64 = base64Encode(bytes);
-    final ext = p.extension(imagePath).toLowerCase();
-    final mime = ext == '.png' ? 'image/png' : 'image/jpeg';
-    return 'data:$mime;base64,$b64';
+    return 'data:$mime;base64,${base64Encode(bytes)}';
   }
 }

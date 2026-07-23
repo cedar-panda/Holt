@@ -6,6 +6,7 @@ import 'package:project_yanci/services/aws_bedrock_service.dart';
 import 'package:project_yanci/services/deepseek_service.dart';
 import 'package:project_yanci/services/gemini_service.dart';
 import 'package:project_yanci/services/openai_compatible_service.dart';
+import 'package:project_yanci/services/openrouter_service.dart';
 import 'package:project_yanci/services/qwen_service.dart';
 
 const _sourceMessages = <Map<String, String>>[
@@ -70,6 +71,45 @@ void main() {
         expect(
           _textContent(_latestUser(messages)['content']),
           'actual human message',
+        );
+      }
+    },
+  );
+
+  test(
+    'OpenRouter keeps image and caption in the latest user message',
+    () async {
+      for (final cacheEnabled in <bool>[false, true]) {
+        SharedPreferences.setMockInitialValues(<String, Object>{
+          'enable_prompt_caching': cacheEnabled,
+        });
+        final body = await OpenRouterService(apiKey: 'test')
+            .debugBuildBodyForTesting(
+              messages: const [
+                {
+                  'role': 'user',
+                  'content': 'look at this image',
+                  'image_data_url': 'data:image/png;base64,YWJj',
+                },
+              ],
+              model: 'anthropic/claude-sonnet-4',
+              structuredPrompt: _structuredPrompt,
+            );
+
+        final latestUser = _latestUser(body['messages'] as List);
+        final blocks = latestUser['content'] as List;
+
+        expect(latestUser['role'], 'user');
+        expect(blocks, hasLength(2));
+        expect((blocks.first as Map)['type'], 'image_url');
+        expect(
+          ((blocks.first as Map)['image_url'] as Map)['url'],
+          'data:image/png;base64,YWJj',
+        );
+        expect((blocks.last as Map)['text'], 'look at this image');
+        expect(
+          blocks.cast<Map>().any((block) => block.containsKey('cache_control')),
+          isFalse,
         );
       }
     },
