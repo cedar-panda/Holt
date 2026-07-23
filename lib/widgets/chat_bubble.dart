@@ -1285,7 +1285,11 @@ class _ChatBubbleState extends State<ChatBubble>
     final c = color ?? YanciTheme.textSecondary.withValues(alpha: 0.4);
     return _buildActionIconSlot(
       key: const ValueKey('bubble-action-copy'),
-      child: BubbleActionGlyph(type: BubbleActionGlyphType.copy, color: c),
+      child: BubbleActionGlyph(
+        type: BubbleActionGlyphType.copy,
+        color: c,
+        size: 13.5,
+      ),
     );
   }
 

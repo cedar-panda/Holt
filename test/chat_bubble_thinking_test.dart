@@ -210,6 +210,11 @@ void main() {
       glyphs.map((glyph) => glyph.type).toSet(),
       BubbleActionGlyphType.values.toSet(),
     );
+    final copyGlyph = glyphs.singleWhere(
+      (glyph) => glyph.type == BubbleActionGlyphType.copy,
+    );
+    expect(copyGlyph.size, 13.5);
+    expect(copyGlyph.size, lessThan(BubbleActionGlyph.defaultSize));
     expect(BubbleActionGlyph.strokeWidth, 1);
     expect(
       BubbleActionGlyph.strokeWidth,
