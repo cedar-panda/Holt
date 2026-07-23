@@ -376,17 +376,21 @@ Summarize the following chat excerpt. It uses exactly two speaker labels:
 - [$userName] user
 - [$charName] character
 
-Preserve:
-1. Important events and decisions.
-2. Emotional changes, relationship state, preferences, and boundaries between $userName and $charName.
-3. Promises, unfinished matters, and threads that can be continued next time.
+Organize the useful content into these Markdown sections, omitting empty ones:
+**1. Important events and decisions**
+**2. Relationship and emotional changes**
+**3. Ongoing states, preferences, and boundaries**
+**4. Promises and open threads**
+
+Under each section, write compact entries as:
+* **Topic:** fact
 
 If the source contains adult, explicit, violent, or sensitive content:
 - Do not repeat it verbatim or describe specific body or procedural details.
 - Describe only the general meaning in abstract, neutral terms, such as intimate interaction, conflict, comfort, or testing boundaries.
 - Preserve emotions, consent, boundaries, consequences, and relationship changes that matter to future conversation.
 
-Write concise bullet points in English.
+Write concise Markdown in English.
 
 Chat excerpt:
 $excerpt
@@ -401,17 +405,21 @@ $excerpt
 - [\u{E000}] 使用者
 - [\u{E001}] 角色
 
-請保留：
-1. 重要事件與決定。
-2. \u{E000} 與 \u{E001} 的情緒變化、關係狀態、偏好、界線。
-3. 承諾、未完成事項、下次可以接續的線索。
+請把有用內容整理到以下 Markdown 區塊，沒有內容的區塊省略：
+**1. 重要事件與決定**
+**2. 關係與情緒變化**
+**3. 持續狀態、偏好與界線**
+**4. 承諾與待續事項**
+
+每個區塊使用精簡條目：
+* **主題：** 事實
 
 如果原文包含限制級、露骨、暴力或敏感內容：
 - 不要逐字重述，不要描寫具體身體細節或操作細節。
 - 只用抽象、概括、中性的方式描述「發生了親密互動 / 衝突 / 安撫 / 試探界線」等大意。
 - 保留對後續對話有用的情緒、同意、界線、後果與關係變化。
 
-請使用\u{E002}，輸出精簡條列。
+請使用\u{E002}，輸出精簡 Markdown。
 
 聊天摘錄：
 \u{E003}

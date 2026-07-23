@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter_markdown/flutter_markdown.dart';
 import '../theme/app_theme.dart';
 import '../memory/database.dart';
 import '../services/context_compressor.dart';
@@ -21,6 +22,7 @@ class MemorySummaryTab extends StatefulWidget {
   static String formatForReading(String raw) {
     final source = raw.replaceAll('\r\n', '\n').trim();
     if (source.isEmpty) return '';
+    if (containsMarkdown(source)) return source;
 
     final result = <String>[];
     for (final rawBlock in source.split(RegExp(r'\n+'))) {
@@ -62,6 +64,15 @@ class MemorySummaryTab extends StatefulWidget {
       if (paragraph.isNotEmpty) result.add(paragraph);
     }
     return result.join('\n\n');
+  }
+
+  /// Markdown 摘要保留原始換行與標記，避免自動分段拆壞標題或條列。
+  static bool containsMarkdown(String source) {
+    return RegExp(
+      r'(^|\n)\s{0,3}(?:#{1,6}\s+|[-+*]\s+|>\s+|\d+[.)]\s+)|'
+      r'\*\*[^*\n]+\*\*|__[^_\n]+__|`[^`\n]+`|'
+      r'\[[^\]\n]+\]\([^)]+\)',
+    ).hasMatch(source);
   }
 
   @override
@@ -332,11 +343,15 @@ class _MemorySummaryTabState extends State<MemorySummaryTab>
                     child: SingleChildScrollView(
                       controller: scrollController,
                       padding: const EdgeInsets.fromLTRB(22, 20, 22, 36),
-                      child: SelectableText(
-                        readable,
-                        style: YanciTheme.bodyText.copyWith(
+                      child: MarkdownBody(
+                        key: const ValueKey('summary-markdown-reader'),
+                        data: readable,
+                        selectable: true,
+                        softLineBreak: true,
+                        styleSheet: _summaryMarkdownStyle(
                           fontSize: 14,
-                          height: 1.75,
+                          lineHeight: 1.75,
+                          spacious: true,
                         ),
                       ),
                     ),
@@ -419,7 +434,8 @@ class _MemorySummaryTabState extends State<MemorySummaryTab>
     final windowId = (summary['source_window_id'] as String? ?? '').trim();
     final isExpanded = _expandedSummaryId == id;
     final isEditing = _editingSummaryId == id;
-    final needsFullReader = content.characters.length > 120;
+    final needsFullReader =
+        content.characters.length > 120 || '\n'.allMatches(content).length >= 4;
 
     // Date label
     final date = DateTime.tryParse(createdAt);
@@ -504,13 +520,11 @@ class _MemorySummaryTabState extends State<MemorySummaryTab>
                     )
                   : SizedBox(
                       width: double.infinity,
-                      child: Text(
+                      child: _buildSummaryMarkdown(
                         content,
-                        maxLines: isExpanded ? (needsFullReader ? 7 : null) : 3,
-                        overflow: isExpanded && !needsFullReader
-                            ? TextOverflow.visible
-                            : TextOverflow.ellipsis,
-                        style: YanciTheme.bodyText.copyWith(fontSize: 13),
+                        maxHeight: isExpanded && needsFullReader
+                            ? 164
+                            : (!isExpanded ? 68 : null),
                       ),
                     ),
             ),
@@ -596,6 +610,96 @@ class _MemorySummaryTabState extends State<MemorySummaryTab>
             ),
           ],
         ],
+      ),
+    );
+  }
+
+  Widget _buildSummaryMarkdown(String content, {double? maxHeight}) {
+    final body = MarkdownBody(
+      key: const ValueKey('summary-markdown-preview'),
+      data: MemorySummaryTab.formatForReading(content),
+      selectable: false,
+      softLineBreak: true,
+      styleSheet: _summaryMarkdownStyle(
+        fontSize: 13,
+        lineHeight: 1.55,
+        spacious: false,
+      ),
+    );
+    if (maxHeight == null) return body;
+
+    // Markdown 無 maxLines；固定高度裁切維持摘要卡密度，全文由閱讀器承接。
+    return ClipRect(
+      child: SizedBox(
+        height: maxHeight,
+        child: OverflowBox(
+          alignment: Alignment.topLeft,
+          minHeight: 0,
+          maxHeight: double.infinity,
+          child: body,
+        ),
+      ),
+    );
+  }
+
+  MarkdownStyleSheet _summaryMarkdownStyle({
+    required double fontSize,
+    required double lineHeight,
+    required bool spacious,
+  }) {
+    final body = YanciTheme.bodyText.copyWith(
+      fontSize: fontSize,
+      height: lineHeight,
+    );
+    final heading = YanciTheme.bodyText.copyWith(
+      fontSize: fontSize + (spacious ? 1.5 : 0.5),
+      height: lineHeight,
+      fontWeight: FontWeight.w600,
+      color: YanciTheme.textPrimary,
+    );
+    return MarkdownStyleSheet(
+      p: body,
+      strong: body.copyWith(
+        fontWeight: FontWeight.w600,
+        color: YanciTheme.textPrimary,
+      ),
+      em: body.copyWith(fontStyle: FontStyle.italic),
+      h1: heading,
+      h2: heading,
+      h3: heading,
+      h4: heading,
+      h5: heading,
+      h6: heading,
+      listBullet: body.copyWith(color: YanciTheme.accent),
+      blockSpacing: spacious ? 13 : 7,
+      listIndent: spacious ? 22 : 18,
+      code: body.copyWith(
+        fontFamily: 'monospace',
+        fontSize: fontSize - 1,
+        color: YanciTheme.accent,
+        backgroundColor: YanciTheme.accent.withValues(alpha: 0.06),
+      ),
+      blockquote: body.copyWith(color: YanciTheme.textSecondary),
+      blockquotePadding: const EdgeInsets.only(left: 12, top: 3, bottom: 3),
+      blockquoteDecoration: BoxDecoration(
+        border: Border(
+          left: BorderSide(
+            color: YanciTheme.accent.withValues(alpha: 0.35),
+            width: 2,
+          ),
+        ),
+      ),
+      codeblockPadding: const EdgeInsets.all(10),
+      codeblockDecoration: BoxDecoration(
+        color: YanciTheme.accent.withValues(alpha: 0.05),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      horizontalRuleDecoration: BoxDecoration(
+        border: Border(
+          top: BorderSide(
+            color: YanciTheme.textSecondary.withValues(alpha: 0.12),
+          ),
+        ),
       ),
     );
   }

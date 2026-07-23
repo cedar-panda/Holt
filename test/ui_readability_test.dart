@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:project_yanci/services/context_compressor.dart';
 import 'package:project_yanci/theme/theme_presets.dart';
 import 'package:project_yanci/widgets/memory_summary_tab.dart';
 
@@ -22,5 +23,26 @@ void main() {
 
     expect(formatted, contains('\n\n'));
     expect(formatted.replaceAll('\n', ''), source);
+  });
+
+  test('markdown summary keeps its headings and bullet layout intact', () {
+    const source =
+        '**1. 重要事件與決定**\n'
+        '* **約會：** 兩人決定週末看電影\n\n'
+        '**2. 關係與情緒變化**\n'
+        '* **和解：** 兩人已經說開';
+
+    expect(MemorySummaryTab.containsMarkdown(source), isTrue);
+    expect(MemorySummaryTab.formatForReading(source), source);
+  });
+
+  test('automatic summary prompt requests the comfortable markdown format', () {
+    final zh = ContextCompressor.compressionPromptForTesting();
+    final en = ContextCompressor.compressionPromptForTesting(english: true);
+
+    expect(zh, contains('**1. 重要事件與決定**'));
+    expect(zh, contains('* **主題：** 事實'));
+    expect(en, contains('**1. Important events and decisions**'));
+    expect(en, contains('* **Topic:** fact'));
   });
 }

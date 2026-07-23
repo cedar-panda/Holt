@@ -55,7 +55,10 @@ summary：將對話內容壓縮成簡潔摘要。
 - 用第三人稱，簡潔客觀
 - 輸出 180～450 tokens（中文約 180～450 字）
 - summary 欄位只放摘要正文，不要前綴說明
-如果有前次摘要：其中的內容原樣保留措辭，只做刪減與追加，不要改寫換說法。
+- 使用精簡 Markdown，按實際內容選 2～4 個區塊，沒有內容的區塊省略
+- 區塊標題使用「**1. 重要事件與決定**」格式；內容使用「* **主題：** 事實」格式
+- 區塊從「重要事件與決定、關係與情緒變化、持續狀態與偏好、承諾與待續事項」中選擇
+如果有前次摘要：保留其中的事實與原詞，將新增內容併入相應區塊；可統一 Markdown 排版，不改寫事實。
 
 timeline：只從【新對話內容】提取屬於角色本人或雙方關係、對後續有持續回憶價值的候選。event 是已完成的角色事件或雙方共同事件；state 是目前仍持續的狀態，key 使用髮型、美甲、鬍子、住所、工作、寵物、健康、關係狀態、生理週期之一；狀態開始或結束本身使用 event。subject 使用 character；雙方共同事件或關係狀態使用 relationship。每項須能確定 YYYY-MM-DD，source_message_ids 全部來自新對話，evidence 是來源原文片段，value 保留其核心用詞。occurred_on 表示原文直接描述的事件或狀態日期；「第 N 天」照原文保留，由本地計算開始日。同一項合併，按 occurred_on 從早到晚排列。
 
@@ -75,12 +78,19 @@ summary: Compress the conversation into a concise summary.
 - Use third person, concise and objective
 - Output 180-450 tokens
 - Put only the summary body in the summary field, with no prefix
-If a previous summary is provided, keep its wording as-is and only trim or append; do not rephrase it.
+- Use compact Markdown with 2-4 non-empty sections
+- Format section titles as "**1. Important events and decisions**" and entries as "* **Topic:** fact"
+- Choose sections from important events and decisions, relationship and emotional changes, ongoing states and preferences, and promises and open threads
+If a previous summary is provided, preserve its facts and original wording, merge new material into the matching sections, and only normalize the Markdown layout.
 
 timeline: Extract only lasting candidates belonging to the character or the shared relationship from 【New Conversation】. An event is a completed character event or shared event. A state is a condition that is still ongoing, whose key is hairstyle, nails, beard, residence, work, pet, health, relationship status, or menstrual cycle; use event for the start or end of a state itself. Use subject=character, or subject=relationship for shared events and relationship status. Every item must resolve to YYYY-MM-DD, cite only new source_message_ids, quote exact source text as evidence, and retain its core wording in value. occurred_on is the date directly described by the source; preserve "day N" wording so the app can derive its start date. Merge one item and order occurred_on oldest to newest.
 
 Output valid JSON only: {"summary":"text","timeline":[{"type":"event","subject":"relationship","source_message_ids":[1],"occurred_on":"YYYY-MM-DD","date_basis":"message_time|relative|explicit","value":"third-person event","evidence":"exact quote"},{"type":"state","subject":"character","source_message_ids":[2],"occurred_on":"YYYY-MM-DD","date_basis":"message_time|relative|explicit","key":"health","value":"third-person state","evidence":"exact quote"}]}. Use an empty timeline array when none qualify.
 ''';
+
+  @visibleForTesting
+  static String compressionPromptForTesting({bool english = false}) =>
+      english ? _compressPromptEn : _compressPromptZh;
 
   /// 簡中輸出強制指令：僅 zh_CN 語系附加；zh_TW / en 返回空字串。
   /// 壓縮請求使用獨立 adapter 調用，不進聊天緩存條目，因此調整摘要
