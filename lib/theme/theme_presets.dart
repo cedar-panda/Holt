@@ -117,8 +117,8 @@ const dawnPreset = ThemePreset(
   glassInputBg: Color(0xB3FFFFFF),
   navBarBg: Color(0xE6F8F4F2),
   navInactive: Color(0xFF908898),
-  starColor: Color(0xBBE8E0F0),
-  starGlow: Color(0x35D8D0E0),
+  starColor: Color(0x66E8E0F0),
+  starGlow: Color(0x1CD8D0E0),
 );
 
 // ─── 2. 深夜書房（暗色默認）───
@@ -149,8 +149,8 @@ const midnightPreset = ThemePreset(
   glassInputBg: Color(0xB3252228),
   navBarBg: Color(0xE6201E22),
   navInactive: Color(0xFF706767),
-  starColor: Color(0xDDEEDDCC),
-  starGlow: Color(0x60EEDDCC),
+  starColor: Color(0x66EEDDCC),
+  starGlow: Color(0x1CEEDDCC),
 );
 
 // ─── 3. 墨竹 ───
@@ -179,8 +179,8 @@ const bambooPreset = ThemePreset(
   glassInputBg: Color(0xB0202820),
   navBarBg: Color(0xE61A2420),
   navInactive: Color(0xFF5F7155),
-  starColor: Color(0xAAC0D8B0),
-  starGlow: Color(0x40C0D8B0),
+  starColor: Color(0x66C0D8B0),
+  starGlow: Color(0x1CC0D8B0),
 );
 
 // ─── 4. 象牙白 ───
@@ -239,8 +239,8 @@ const mistPreset = ThemePreset(
   glassInputBg: Color(0xB0282030),
   navBarBg: Color(0xE6252030),
   navInactive: Color(0xFF736888),
-  starColor: Color(0xBBD0C0E8),
-  starGlow: Color(0x50D0C0E8),
+  starColor: Color(0x66D0C0E8),
+  starGlow: Color(0x1CD0C0E8),
 );
 
 /// 根據 ID 查找預設
@@ -275,8 +275,8 @@ const bloomPreset = ThemePreset(
   glassInputBg: Color(0xB5FFFFFF),
   navBarBg: Color(0xE6F8F0F8),
   navInactive: Color(0xFF978297),
-  starColor: Color(0xBBE8D0E0),
-  starGlow: Color(0x35E0C8D8),
+  starColor: Color(0x66E8D0E0),
+  starGlow: Color(0x1CE0C8D8),
 );
 
 // ─── 9. 冬夜 ───
@@ -305,8 +305,8 @@ const icedPreset = ThemePreset(
   glassInputBg: Color(0xB0181C24),
   navBarBg: Color(0xE6141820),
   navInactive: Color(0xFF5C667A),
-  starColor: Color(0xCC90C0E8),
-  starGlow: Color(0x4080B0D8),
+  starColor: Color(0x6690C0E8),
+  starGlow: Color(0x1C80B0D8),
 );
 
 // ─── 11. 夜燈 ───
@@ -335,8 +335,8 @@ const nightlampPreset = ThemePreset(
   glassInputBg: Color(0xB0221D2B),
   navBarBg: Color(0xE61A1721),
   navInactive: Color(0xFF7A7390),
-  starColor: Color(0xCCF2C96D),
-  starGlow: Color(0x40F2C96D),
+  starColor: Color(0x66F2C96D),
+  starGlow: Color(0x1CF2C96D),
 );
 
 // ─── 12. 微醺 ───
@@ -365,8 +365,8 @@ const tipsyPreset = ThemePreset(
   glassInputBg: Color(0xB02A1D20),
   navBarBg: Color(0xE6261A1E),
   navInactive: Color(0xFF87716F),
-  starColor: Color(0xBBF0C0B0),
-  starGlow: Color(0x40F0C0B0),
+  starColor: Color(0x66F0C0B0),
+  starGlow: Color(0x1CF0C0B0),
 );
 
 // ─── 13. 初雪 ───
@@ -395,8 +395,8 @@ const snowPreset = ThemePreset(
   glassInputBg: Color(0xC0FFFFFF),
   navBarBg: Color(0xE8F2F0F4),
   navInactive: Color(0xFF808690),
-  starColor: Color(0xBBF0EEF4),
-  starGlow: Color(0x30E8E6F0),
+  starColor: Color(0x66F0EEF4),
+  starGlow: Color(0x1CE8E6F0),
 );
 
 // ─── 14. 卡布奇諾 ───
@@ -425,8 +425,8 @@ const lattePreset = ThemePreset(
   glassInputBg: Color(0xB0FFF8F0),
   navBarBg: Color(0xE6F5EFE8),
   navInactive: Color(0xFF988E86),
-  starColor: Color(0x80E8DCD0),
-  starGlow: Color(0x20E0D4C8),
+  starColor: Color(0x66E8DCD0),
+  starGlow: Color(0x1CE0D4C8),
 );
 
 // ─── 10. 玫瑰露 ───
@@ -455,8 +455,8 @@ const pinkPreset = ThemePreset(
   glassInputBg: Color(0xB8FFFFFF),
   navBarBg: Color(0xE8FDF8F8),
   navInactive: Color(0xFF9C8890),
-  starColor: Color(0x90F0D8E0),
-  starGlow: Color(0x28E8D0D8),
+  starColor: Color(0x66F0D8E0),
+  starGlow: Color(0x1CE8D0D8),
 );
 
 // ─── 薄荷氣泡 ───
@@ -485,8 +485,8 @@ const sodaPreset = ThemePreset(
   glassInputBg: Color(0xBAFFFFFF),
   navBarBg: Color(0xE8F2FAF8),
   navInactive: Color(0xFF788E8A),
-  starColor: Color(0x90D8F0E8),
-  starGlow: Color(0x28C8E8E0),
+  starColor: Color(0x66D8F0E8),
+  starGlow: Color(0x1CC8E8E0),
 );
 
 // ─── 霓虹雨 ───
@@ -515,6 +515,6 @@ const neonPreset = ThemePreset(
   glassInputBg: Color(0xB0151226),
   navBarBg: Color(0xE60E0C18),
   navInactive: Color(0xFF6A6390),
-  starColor: Color(0xCC00E5D4),
-  starGlow: Color(0x50FF3E8E),
+  starColor: Color(0x6600E5D4),
+  starGlow: Color(0x1CFF3E8E),
 );

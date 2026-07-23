@@ -2,6 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:project_yanci/services/context_compressor.dart';
 import 'package:project_yanci/theme/theme_presets.dart';
 import 'package:project_yanci/widgets/memory_summary_tab.dart';
+import 'package:project_yanci/widgets/neural_field.dart';
 
 void main() {
   test('ivory keeps a very light warm background and restrained particles', () {
@@ -10,6 +11,26 @@ void main() {
     }
     expect(ivoryPreset.starColor.a, lessThan(0.5));
     expect(ivoryPreset.starGlow.a, lessThan(0.2));
+  });
+
+  test('every preset uses the same restrained particle alpha as ivory', () {
+    for (final preset in presets) {
+      expect(
+        preset.starColor.a,
+        closeTo(ivoryPreset.starColor.a, 0.0001),
+        reason: '${preset.id} particle alpha drifted',
+      );
+      expect(
+        preset.starGlow.a,
+        closeTo(ivoryPreset.starGlow.a, 0.0001),
+        reason: '${preset.id} glow alpha drifted',
+      );
+    }
+    expect(NeuralFieldWidget.particleColorMix, 0.72);
+    expect(NeuralFieldWidget.particleGlowMix, 0.74);
+    expect(NeuralFieldWidget.particleOpacityBoost, 1.12);
+    expect(NeuralFieldWidget.connectionStrength, 0.32);
+    expect(NeuralFieldWidget.connectionMaxOpacity, 0.38);
   });
 
   test('long summary reader adds paragraphs without changing its words', () {
