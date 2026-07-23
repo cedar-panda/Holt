@@ -24,6 +24,21 @@ class OpenAICompatibleService implements ApiAdapter {
     this.modelPrefixToStrip = '',
   });
 
+  Future<Map<String, dynamic>> debugBuildBodyForTesting({
+    required List<Map<String, String>> messages,
+    required String model,
+    String? systemPrompt,
+    StructuredPrompt? structuredPrompt,
+  }) {
+    return _buildBody(
+      messages,
+      model,
+      systemPrompt,
+      structuredPrompt: structuredPrompt,
+      stream: false,
+    );
+  }
+
   /// 優先讀取 New API / One API 公開的模型定價清單；不支援時再退回
   /// OpenAI 標準的 /models。公開定價清單不需要 API Key。
   static Future<List<ModelInfo>> fetchModels({
@@ -349,6 +364,9 @@ class OpenAICompatibleService implements ApiAdapter {
     if (profilePrompt.isNotEmpty) {
       allMessages.add({'role': 'system', 'content': profilePrompt});
     }
+    if (dynamicPrompt.isNotEmpty) {
+      allMessages.add({'role': 'system', 'content': dynamicPrompt});
+    }
 
     // 對話歷史
     for (final m in messages) {
@@ -393,21 +411,6 @@ class OpenAICompatibleService implements ApiAdapter {
             : allMessages.length,
         cacheControl: cacheControl,
       );
-    }
-
-    // ═══ dynamic 注入最新 user（保持前綴穩定）═══
-    if (dynamicPrompt.isNotEmpty) {
-      if (latestUserIndex >= 0) {
-        final existing = allMessages[latestUserIndex]['content'];
-        if (existing is List) {
-          existing.insert(0, {'type': 'text', 'text': dynamicPrompt});
-        } else if (existing is String) {
-          allMessages[latestUserIndex] = {
-            'role': 'user',
-            'content': '$dynamicPrompt\n\n$existing',
-          };
-        }
-      }
     }
 
     return {

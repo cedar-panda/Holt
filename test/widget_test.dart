@@ -168,10 +168,20 @@ void main() {
       final system = messages.first as Map<String, dynamic>;
       final systemBlocks = system['content'] as List;
       expect(system['role'], 'system');
-      expect(systemBlocks.length, 2);
+      expect(systemBlocks.length, 3);
+      expect((systemBlocks[1] as Map<String, dynamic>)['cache_control'], const {
+        'type': 'ephemeral',
+        'ttl': '1h',
+      });
+      final focusedDynamic =
+          (systemBlocks.last as Map<String, dynamic>)['text'] as String;
+      expect(focusedDynamic, contains('fresh dynamic'));
+      expect(focusedDynamic, contains('answer this first'));
       expect(
-        (systemBlocks.last as Map<String, dynamic>)['cache_control'],
-        const {'type': 'ephemeral', 'ttl': '1h'},
+        (systemBlocks.last as Map<String, dynamic>).containsKey(
+          'cache_control',
+        ),
+        isFalse,
       );
 
       final previousAssistant = messages[2] as Map<String, dynamic>;
@@ -183,16 +193,13 @@ void main() {
 
       final latestUser = messages[3] as Map<String, dynamic>;
       final latestUserBlocks = latestUser['content'] as List;
-      final focusedDynamic =
-          (latestUserBlocks.first as Map<String, dynamic>)['text'] as String;
-      expect(focusedDynamic, contains('fresh dynamic'));
-      expect(focusedDynamic, contains('answer this first'));
+      expect(latestUserBlocks, hasLength(1));
       expect(
-        (latestUserBlocks.last as Map<String, dynamic>)['text'],
+        (latestUserBlocks.single as Map<String, dynamic>)['text'],
         'latest user',
       );
       expect(
-        (latestUserBlocks.last as Map<String, dynamic>).containsKey(
+        (latestUserBlocks.single as Map<String, dynamic>).containsKey(
           'cache_control',
         ),
         isFalse,
@@ -216,7 +223,7 @@ void main() {
     },
   );
 
-  test('OpenRouter cache disabled sends plain string content only', () async {
+  test('OpenRouter cache disabled keeps runtime context out of user', () async {
     SharedPreferences.setMockInitialValues({'enable_prompt_caching': false});
     CacheSession.conversationId = 'conv-test';
     OpenRouterService.resetCacheStats();
@@ -239,42 +246,48 @@ void main() {
     final messages = body['messages'] as List;
     expect((messages[0] as Map<String, dynamic>)['content'], 'static rules');
     expect((messages[1] as Map<String, dynamic>)['content'], 'stable profile');
+    expect((messages[2] as Map<String, dynamic>)['role'], 'system');
+    expect(
+      (messages[2] as Map<String, dynamic>)['content'],
+      contains('fresh dynamic'),
+    );
+    expect(
+      (messages[2] as Map<String, dynamic>)['content'],
+      contains('answer this first'),
+    );
 
-    final latestUser = messages[2] as Map<String, dynamic>;
-    expect(latestUser['content'], contains('fresh dynamic'));
-    expect(latestUser['content'], contains('answer this first'));
-    expect(latestUser['content'], endsWith('latest user'));
+    final latestUser = messages[3] as Map<String, dynamic>;
+    expect(latestUser['role'], 'user');
+    expect(latestUser['content'], 'latest user');
     expect(OpenRouterService.lastCacheDiagnostics['enable_cache'], isFalse);
     expect(OpenRouterService.lastCacheDiagnostics['latest_user_focus'], isTrue);
   });
 
-  test(
-    'OpenRouter non-Claude models keep the original dynamic layout',
-    () async {
-      SharedPreferences.setMockInitialValues({'enable_prompt_caching': false});
-      OpenRouterService.resetCacheStats();
+  test('OpenRouter non-Claude models keep runtime context in system', () async {
+    SharedPreferences.setMockInitialValues({'enable_prompt_caching': false});
+    OpenRouterService.resetCacheStats();
 
-      final service = OpenRouterService(apiKey: 'test');
-      final body = await service.debugBuildBodyForTesting(
-        model: 'google/gemini-2.5-flash',
-        structuredPrompt: StructuredPrompt(
-          staticPart: 'static rules',
-          dynamicPart: 'fresh dynamic',
-        ),
-        messages: const [
-          {'role': 'user', 'content': 'latest user'},
-        ],
-      );
+    final service = OpenRouterService(apiKey: 'test');
+    final body = await service.debugBuildBodyForTesting(
+      model: 'google/gemini-2.5-flash',
+      structuredPrompt: StructuredPrompt(
+        staticPart: 'static rules',
+        dynamicPart: 'fresh dynamic',
+      ),
+      messages: const [
+        {'role': 'user', 'content': 'latest user'},
+      ],
+    );
 
-      final messages = body['messages'] as List;
-      final latestUser = messages.last as Map<String, dynamic>;
-      expect(latestUser['content'], 'fresh dynamic\n\nlatest user');
-      expect(
-        OpenRouterService.lastCacheDiagnostics['latest_user_focus'],
-        isFalse,
-      );
-    },
-  );
+    final messages = body['messages'] as List;
+    final latestUser = messages.last as Map<String, dynamic>;
+    expect(latestUser['content'], 'latest user');
+    expect((messages[1] as Map<String, dynamic>)['content'], 'fresh dynamic');
+    expect(
+      OpenRouterService.lastCacheDiagnostics['latest_user_focus'],
+      isFalse,
+    );
+  });
 
   test(
     'OpenRouter does not add focus markers without dynamic context',

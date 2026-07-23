@@ -33,11 +33,11 @@ void main() {
     );
 
     expect(body['model'], ThinkingMachinesService.defaultModel);
-    expect(body['system'], 'Character\n\nProfile');
+    expect(body['system'], 'Character\n\nProfile\n\nMemory');
     expect(body['thinking'], <String, dynamic>{'type': 'disabled'});
     expect(body.containsKey('output_config'), isFalse);
     final messages = body['messages'] as List;
-    expect(messages.single['content'], 'Memory\n\nHello');
+    expect(messages.single['content'], 'Hello');
   });
 
   test('uses Inkling native effort when thinking is enabled', () async {

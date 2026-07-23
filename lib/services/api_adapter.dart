@@ -1,6 +1,6 @@
 /// 結構化 System Prompt（支持 prompt caching）
 /// static → 人設卡內容（不變，可緩存）
-/// dynamic → 記憶注入 + 時間 + 表情包（每次變）
+/// dynamic → 記憶注入 + 時間 + 表情包（每次變，但仍屬 system context）
 class StructuredPrompt {
   final String staticPart;
   final String? profilePart;
@@ -67,6 +67,9 @@ class ApiUsage {
 
 /// API 統一接口
 abstract class ApiAdapter {
+  /// [messages] 中 role=user 的正文是用戶原文。Adapter 不得把記憶、時間、
+  /// Thinking 或其他系統內容拼入其中；這些內容只能來自 systemPrompt /
+  /// structuredPrompt。
   Future<String> sendMessage({
     required List<Map<String, String>> messages,
     required String model,

@@ -33,6 +33,18 @@ class BedrockService implements ApiAdapter {
     this.streamIdleTimeout = BedrockEventStream.defaultIdleTimeout,
   });
 
+  Future<Map<String, dynamic>> debugBuildBodyForTesting({
+    required List<Map<String, String>> messages,
+    String? systemPrompt,
+    StructuredPrompt? structuredPrompt,
+  }) {
+    return _buildBody(
+      messages,
+      systemPrompt,
+      structuredPrompt: structuredPrompt,
+    );
+  }
+
   String get _endpoint =>
       'https://$_service.$region.amazonaws.com/model/$modelId/invoke';
 
@@ -200,19 +212,6 @@ class BedrockService implements ApiAdapter {
       );
     }
 
-    // ═══ dynamic 注入最新 user ═══
-    // 舊版把 dynamic 放在 system 尾部 → system 每輪都變，
-    // 後面所有消息的前綴跟著變，歷史永遠緩存不到。
-    // 移到最新 user 消息，system 保持純靜態。
-    if (structuredPrompt != null && structuredPrompt.dynamicPart.isNotEmpty) {
-      if (latestUserIndex >= 0) {
-        (allMessages[latestUserIndex]['content'] as List).insert(0, {
-          'type': 'text',
-          'text': structuredPrompt.dynamicPart,
-        });
-      }
-    }
-
     final body = <String, dynamic>{
       'anthropic_version': 'bedrock-2023-05-31',
       'max_tokens': 4096,
@@ -227,7 +226,14 @@ class BedrockService implements ApiAdapter {
       if (enableCache) {
         systemBlock['cache_control'] = Map<String, String>.from(cacheControl);
       }
-      body['system'] = <Map<String, dynamic>>[systemBlock];
+      body['system'] = <Map<String, dynamic>>[
+        systemBlock,
+        if (structuredPrompt.dynamicPart.isNotEmpty)
+          <String, dynamic>{
+            'type': 'text',
+            'text': structuredPrompt.dynamicPart,
+          },
+      ];
     } else if (systemPrompt != null && systemPrompt.isNotEmpty) {
       body['system'] = systemPrompt;
     }

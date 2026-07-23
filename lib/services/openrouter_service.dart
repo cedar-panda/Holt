@@ -362,8 +362,8 @@ class OpenRouterService implements ApiAdapter {
       final staticText = structuredPrompt.staticPart;
       final profileText = structuredPrompt.profilePart ?? '';
       if (enableCache) {
-        // Anthropic 模型 + cache on：system 只放靜態內容，最後一個
-        // static/profile block 掛 cache_control，讓整段 static prefix 可緩存。
+        // Anthropic 模型 + cache on：static/profile 原文與 breakpoint 保持
+        // 不變；dynamic 作為 breakpoint 後的 system block，絕不污染 user。
         final contentBlocks = <Map<String, dynamic>>[
           if (staticText.isNotEmpty) {'type': 'text', 'text': staticText},
           if (profileText.isNotEmpty) {'type': 'text', 'text': profileText},
@@ -372,15 +372,23 @@ class OpenRouterService implements ApiAdapter {
           contentBlocks.last['cache_control'] = Map<String, String>.from(
             cacheControl,
           );
+        }
+        if (sentDynamicPart.isNotEmpty) {
+          contentBlocks.add({'type': 'text', 'text': sentDynamicPart});
+        }
+        if (contentBlocks.isNotEmpty) {
           allMessages.add({'role': 'system', 'content': contentBlocks});
         }
       } else {
-        // Cache off 時依指南保持 plain string，不送 blocks/cache_control/session_id。
+        // Cache off：dynamic 可每輪改變，但仍屬 system；user 只放原文。
         if (staticText.isNotEmpty) {
           allMessages.add({'role': 'system', 'content': staticText});
         }
         if (profileText.isNotEmpty) {
           allMessages.add({'role': 'system', 'content': profileText});
+        }
+        if (sentDynamicPart.isNotEmpty) {
+          allMessages.add({'role': 'system', 'content': sentDynamicPart});
         }
       }
     } else {
@@ -396,9 +404,9 @@ class OpenRouterService implements ApiAdapter {
           'content': structuredPrompt.profilePart!,
         });
       }
-      // dynamic 不放 system——非 Anthropic 模型（DeepSeek/GLM/Gemini/Qwen…）
-      // 的上游隱式前綴緩存同樣吃前綴一致性：dynamic 若作為 system 擋在
-      // 歷史前面，每輪一變全部歷史 miss。統一走「注入最新 user」（見下）。
+      if (sentDynamicPart.isNotEmpty) {
+        allMessages.add({'role': 'system', 'content': sentDynamicPart});
+      }
     }
 
     // 加入對話歷史
@@ -448,26 +456,6 @@ class OpenRouterService implements ApiAdapter {
             : allMessages.length,
         cacheControl: cacheControl,
       );
-    }
-
-    // ═══ dynamic 注入最新 user 消息（保持前綴不變；所有模型統一）═══
-    if (sentDynamicPart.isNotEmpty) {
-      // 找最後一條 user 消息，把 dynamic 前綴加進去
-      if (latestUserIndex >= 0) {
-        final existing = allMessages[latestUserIndex]['content'];
-        final dynamicPrefix = sentDynamicPart;
-
-        if (existing is List) {
-          // content blocks 格式 → 在最前面插入 dynamic block
-          existing.insert(0, {'type': 'text', 'text': dynamicPrefix});
-        } else if (existing is String) {
-          // 純字串格式 → 前綴拼接
-          allMessages[latestUserIndex] = {
-            'role': 'user',
-            'content': '$dynamicPrefix\n\n$existing',
-          };
-        }
-      }
     }
 
     final rollingBreakpointIndex = _latestNonSystemCacheControlIndex(

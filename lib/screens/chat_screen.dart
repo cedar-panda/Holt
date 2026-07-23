@@ -2701,6 +2701,15 @@ class _ChatScreenState extends State<ChatScreen> {
     );
     if (replyStyle.isNotEmpty) dynamicParts.add(replyStyle);
 
+    // 系統生成的蛛網通知屬於本輪 runtime context，不能追加到用戶原文。
+    if (isSpiderWebEnabled &&
+        Retriever.triggeredCountFor(widget.conversationId) >= 3) {
+      dynamicParts.add(
+        '[系統底層神經元通知：偵測到多重關鍵字碰撞，請評估是否觸發 '
+        '<memo_link> 標籤將相關記憶串聯。]',
+      );
+    }
+
     final structured = StructuredPrompt(
       staticPart: staticBundle.staticPart,
       profilePart: staticBundle.profilePart,
@@ -2728,15 +2737,6 @@ class _ChatScreenState extends State<ChatScreen> {
             (m) => {'role': m.isUser ? 'user' : 'assistant', 'content': m.text},
           )
           .toList();
-
-      // ═══ 系統底層神經元通知 (動態注入潛意識) ═══
-      if (isSpiderWebEnabled &&
-          Retriever.triggeredCountFor(widget.conversationId) >= 3 &&
-          history.isNotEmpty &&
-          history.last['role'] == 'user') {
-        history.last['content'] =
-            '${history.last['content']}\n\n[系統底層神經元通知：偵測到多重關鍵字碰撞，請評估是否觸發 <memo_link> 標籤將相關記憶串聯。]';
-      }
 
       // ═══ B4 滯後截斷（保護前綴緩存）═══
       final keepFrom = await _hysteresisKeepFrom(

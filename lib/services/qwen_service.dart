@@ -17,6 +17,21 @@ class QwenService implements ApiAdapter {
 
   QwenService({required this.apiKey});
 
+  Map<String, dynamic> debugBuildBodyForTesting({
+    required List<Map<String, String>> messages,
+    required String model,
+    String? systemPrompt,
+    StructuredPrompt? structuredPrompt,
+  }) {
+    return _buildBody(
+      messages,
+      model,
+      systemPrompt,
+      structuredPrompt: structuredPrompt,
+      stream: false,
+    );
+  }
+
   @override
   Future<String> sendMessage({
     required List<Map<String, String>> messages,
@@ -148,9 +163,7 @@ class QwenService implements ApiAdapter {
   }) {
     final allMessages = <Map<String, dynamic>>[];
 
-    // Qwen 隱式前綴緩存（1024 token 起自動）：system 只放靜態，
-    // dynamic 注入最新 user——舊版 combined 全拼 system，每輪變
-    // 導致整條前綴（含全部歷史）永遠命不中。
+    // User turn 僅保留用戶原文；runtime context 使用獨立 system message。
     final staticPrompt = structuredPrompt?.staticPart ?? systemPrompt ?? '';
     final profilePrompt = structuredPrompt?.profilePart ?? '';
     final dynamicPrompt = structuredPrompt?.dynamicPart ?? '';
@@ -160,30 +173,15 @@ class QwenService implements ApiAdapter {
     if (profilePrompt.isNotEmpty) {
       allMessages.add({'role': 'system', 'content': profilePrompt});
     }
+    if (dynamicPrompt.isNotEmpty) {
+      allMessages.add({'role': 'system', 'content': dynamicPrompt});
+    }
 
     for (final m in messages) {
       allMessages.add({
         'role': m['role'] ?? 'user',
         'content': m['content'] ?? '',
       });
-    }
-
-    if (dynamicPrompt.isNotEmpty) {
-      var injected = false;
-      for (int i = allMessages.length - 1; i >= 0; i--) {
-        if (allMessages[i]['role'] == 'user') {
-          final existing = allMessages[i]['content']?.toString() ?? '';
-          allMessages[i] = {
-            'role': 'user',
-            'content': '$dynamicPrompt\n\n$existing',
-          };
-          injected = true;
-          break;
-        }
-      }
-      if (!injected) {
-        allMessages.add({'role': 'user', 'content': dynamicPrompt});
-      }
     }
 
     // model 如果帶前綴就去掉

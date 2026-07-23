@@ -22,6 +22,21 @@ class DeepSeekService implements ApiAdapter {
 
   DeepSeekService({required this.apiKey});
 
+  Map<String, dynamic> debugBuildBodyForTesting({
+    required List<Map<String, String>> messages,
+    required String model,
+    String? systemPrompt,
+    StructuredPrompt? structuredPrompt,
+  }) {
+    return _buildBody(
+      messages,
+      model,
+      systemPrompt,
+      structuredPrompt: structuredPrompt,
+      stream: false,
+    );
+  }
+
   @override
   Future<String> sendMessage({
     required List<Map<String, String>> messages,
@@ -161,7 +176,7 @@ class DeepSeekService implements ApiAdapter {
   }) {
     final allMessages = <Map<String, dynamic>>[];
 
-    // DeepSeek 自動緩存重複前綴：system 只放靜態，dynamic 注入最新 user。
+    // User turn 僅保留用戶原文；runtime context 使用獨立 system message。
     final staticPrompt = structuredPrompt?.staticPart ?? systemPrompt ?? '';
     final profilePrompt = structuredPrompt?.profilePart ?? '';
     final dynamicPrompt = structuredPrompt?.dynamicPart ?? '';
@@ -172,30 +187,15 @@ class DeepSeekService implements ApiAdapter {
     if (profilePrompt.isNotEmpty) {
       allMessages.add({'role': 'system', 'content': profilePrompt});
     }
+    if (dynamicPrompt.isNotEmpty) {
+      allMessages.add({'role': 'system', 'content': dynamicPrompt});
+    }
 
     for (final m in messages) {
       allMessages.add({
         'role': m['role'] ?? 'user',
         'content': m['content'] ?? '',
       });
-    }
-
-    if (dynamicPrompt.isNotEmpty) {
-      var injected = false;
-      for (int i = allMessages.length - 1; i >= 0; i--) {
-        if (allMessages[i]['role'] == 'user') {
-          final existing = allMessages[i]['content']?.toString() ?? '';
-          allMessages[i] = {
-            'role': 'user',
-            'content': '$dynamicPrompt\n\n$existing',
-          };
-          injected = true;
-          break;
-        }
-      }
-      if (!injected) {
-        allMessages.add({'role': 'user', 'content': dynamicPrompt});
-      }
     }
 
     return {

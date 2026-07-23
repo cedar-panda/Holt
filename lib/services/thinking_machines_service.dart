@@ -344,6 +344,9 @@ class ThinkingMachinesService implements ApiAdapter {
     final dynamicPrompt = structuredPrompt?.dynamicPart ?? '';
     if (staticPrompt.trim().isNotEmpty) systemParts.add(staticPrompt.trim());
     if (profilePrompt.trim().isNotEmpty) systemParts.add(profilePrompt.trim());
+    if (dynamicPrompt.trim().isNotEmpty) {
+      systemParts.add(dynamicPrompt.trim());
+    }
 
     final apiMessages = <Map<String, dynamic>>[];
     for (final message in messages) {
@@ -372,33 +375,6 @@ class ThinkingMachinesService implements ApiAdapter {
           'role': normalizedRole,
           'content': content,
         });
-      }
-    }
-
-    if (dynamicPrompt.trim().isNotEmpty) {
-      var latestUser = -1;
-      for (var i = apiMessages.length - 1; i >= 0; i--) {
-        if (apiMessages[i]['role'] == 'user') {
-          latestUser = i;
-          break;
-        }
-      }
-      if (latestUser < 0) {
-        apiMessages.add(<String, dynamic>{
-          'role': 'user',
-          'content': dynamicPrompt.trim(),
-        });
-      } else {
-        final existing = apiMessages[latestUser]['content'];
-        if (existing is List) {
-          existing.insert(0, <String, dynamic>{
-            'type': 'text',
-            'text': dynamicPrompt.trim(),
-          });
-        } else {
-          apiMessages[latestUser]['content'] =
-              '${dynamicPrompt.trim()}\n\n${existing ?? ''}';
-        }
       }
     }
 
