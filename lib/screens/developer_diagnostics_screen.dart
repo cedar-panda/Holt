@@ -147,14 +147,9 @@ class _DeveloperDiagnosticsScreenState
                       );
                     }
 
-                    // entries[0] 最新；跟「上一條非內部主請求」比（內部插隊不誤報）
-                    Map<String, Object?>? prevMain;
-                    for (var j = i + 1; j < entries.length; j++) {
-                      if (entries[j]['internal'] != true) {
-                        prevMain = entries[j];
-                        break;
-                      }
-                    }
+                    // 只跟相同 session + model 的上一筆主請求比較。
+                    // 不同聊天窗口的摘要本來就不同，跨窗比較會製造假漂移。
+                    final prevMain = CacheDebugLog.previousComparableMain(i);
                     final prev = (prevMain?['hash'] ?? '').toString();
                     final drifted =
                         prevMain != null && prev.isNotEmpty && prev != hash;

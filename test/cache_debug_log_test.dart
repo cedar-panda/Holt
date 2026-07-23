@@ -50,4 +50,51 @@ void main() {
     expect(CacheDebugLog.entries.first['context_stall_count'], 0);
     expect(CacheDebugLog.entries.first['context_cache_stalled'], isFalse);
   });
+
+  test('fingerprint comparison skips other sessions and internal requests', () {
+    CacheDebugLog.add(<String, Object?>{
+      'session_id': 'conv-a',
+      'model': 'claude-sonnet-4',
+      'hash': 'older-a',
+      'internal': false,
+    });
+    CacheDebugLog.add(<String, Object?>{
+      'session_id': '',
+      'model': 'claude-sonnet-4',
+      'hash': 'internal',
+      'internal': true,
+    });
+    CacheDebugLog.add(<String, Object?>{
+      'session_id': 'conv-b',
+      'model': 'claude-sonnet-4',
+      'hash': 'other-window',
+      'internal': false,
+    });
+    CacheDebugLog.add(<String, Object?>{
+      'session_id': 'conv-a',
+      'model': 'claude-sonnet-4',
+      'hash': 'latest-a',
+      'internal': false,
+    });
+
+    final previous = CacheDebugLog.previousComparableMain(0);
+    expect(previous?['hash'], 'older-a');
+  });
+
+  test('fingerprint comparison does not cross model namespaces', () {
+    CacheDebugLog.add(<String, Object?>{
+      'session_id': 'conv-a',
+      'model': 'claude-opus-4',
+      'hash': 'other-model',
+      'internal': false,
+    });
+    CacheDebugLog.add(<String, Object?>{
+      'session_id': 'conv-a',
+      'model': 'claude-sonnet-4',
+      'hash': 'current-model',
+      'internal': false,
+    });
+
+    expect(CacheDebugLog.previousComparableMain(0), isNull);
+  });
 }
