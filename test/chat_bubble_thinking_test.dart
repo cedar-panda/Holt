@@ -72,6 +72,33 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('capture mode can force thinking open without toggling it', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    await L.setLocale('zh_TW');
+
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: ChatBubble(
+            text: '<think>截圖中的完整思考</think>正常回覆',
+            isUser: false,
+            captureMode: true,
+            thinkingExpandedOverride: true,
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('截圖中的完整思考'), findsOneWidget);
+    expect(find.byIcon(Icons.expand_less_rounded), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('thinking-chain-container')));
+    await tester.pump();
+    expect(find.text('截圖中的完整思考'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('bubble actions use bookmark and sound-wave idle icons', (
     tester,
   ) async {

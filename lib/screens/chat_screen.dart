@@ -48,6 +48,7 @@ import '../services/transfer_service.dart';
 import '../widgets/scratch_card.dart';
 import '../widgets/shop_backpack_sheets.dart';
 import '../widgets/sticker_preview_quality.dart';
+import '../widgets/long_screenshot_options_sheet.dart';
 import 'call_screen.dart';
 import 'manual_summary_clean_screen.dart';
 import '../services/call_audio_pipeline.dart';
@@ -5844,33 +5845,50 @@ class _ChatScreenState extends State<ChatScreen> {
       return;
     }
 
-    final renderFrom = _renderFrom.clamp(0, _messages.length);
-    final visibleMessages = <Message>[
-      ..._olderMessages,
-      ..._messages.sublist(renderFrom),
-    ];
-    if (visibleMessages.isEmpty) {
-      _showLongScreenshotSnack(
-        L.pick(en: 'There is no chat to capture yet.', zhTW: '目前沒有可截取的對話。'),
-      );
-      return;
-    }
-
-    // The normal window is 50 messages. If the user has manually expanded
-    // older history, keep the export predictable by taking the latest 50.
-    const maxMessages = 50;
-    final omitted = visibleMessages.length > maxMessages
-        ? visibleMessages.length - maxMessages
-        : 0;
-    final captureMessages = omitted > 0
-        ? visibleMessages.sublist(omitted)
-        : visibleMessages;
-
     setState(() => _isCapturingLongScreenshot = true);
     try {
+      // 直接讀取整個窗口，範圍選擇不受目前 UI 是否已載入更早消息限制。
+      final allMessages = await DatabaseHelper.getMessages(
+        widget.conversationId,
+      );
+      if (!mounted) return;
+      if (allMessages.isEmpty) {
+        _showLongScreenshotSnack(
+          L.pick(en: 'There is no chat to capture yet.', zhTW: '目前沒有可截取的對話。'),
+        );
+        return;
+      }
+
+      final options = await showLongScreenshotOptionsSheet(
+        context: context,
+        messages: allMessages
+            .map(
+              (message) => LongScreenshotMessageOption(
+                speaker: message.isUser
+                    ? L.pick(en: 'You', zhTW: '你')
+                    : (_characterName.isEmpty
+                          ? L.pick(en: 'Character', zhTW: '角色')
+                          : _characterName),
+                preview: _longScreenshotPreview(message),
+                time: _longScreenshotOptionTime(message.createdAt),
+              ),
+            )
+            .toList(growable: false),
+        maxSelectionCount: 50,
+      );
+      if (!mounted || options == null) return;
+
+      final captureMessages = allMessages.sublist(
+        options.startIndex,
+        options.endIndex + 1,
+      );
+      await _loadLongScreenshotCardData(captureMessages);
       await _precacheLongScreenshotImages(captureMessages);
       if (!mounted) return;
-      final items = _buildLongScreenshotItems(captureMessages);
+      final items = _buildLongScreenshotItems(
+        captureMessages,
+        expandThinking: options.expandThinking,
+      );
       final result = await ChatLongScreenshotService.captureAndSave(
         context: context,
         items: items,
@@ -5879,27 +5897,13 @@ class _ChatScreenState extends State<ChatScreen> {
       );
       if (!mounted) return;
       HapticFeedback.lightImpact();
-      final text = omitted > 0
-          ? L.pick(
-              en: 'Saved the latest $maxMessages messages to Gallery.',
-              zhTW: '對話較長，已將最近 $maxMessages 條保存到相簿。',
-            )
-          : L.pick(en: 'Long screenshot saved to Gallery.', zhTW: '長截圖已保存到相簿。');
-      ScaffoldMessenger.of(context).hideCurrentSnackBar();
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(text),
-          action: SnackBarAction(
-            label: L.pick(en: 'Share', zhTW: '分享'),
-            textColor: Colors.white,
-            onPressed: () => unawaited(_shareLongScreenshot(result.path)),
-          ),
-          backgroundColor: YanciTheme.accent,
-          behavior: SnackBarBehavior.floating,
-          duration: const Duration(seconds: 4),
-          margin: const EdgeInsets.only(bottom: 80, left: 16, right: 16),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+      _showNonBlockingModelHint(
+        L.pick(
+          en: '${options.messageCount} messages saved to Gallery.',
+          zhTW: '已將 ${options.messageCount} 條消息保存到相簿。',
         ),
+        actionLabel: L.pick(en: 'Share', zhTW: '分享'),
+        onAction: () => unawaited(_shareLongScreenshot(result.path)),
       );
     } catch (error) {
       if (!mounted) return;
@@ -5909,6 +5913,57 @@ class _ChatScreenState extends State<ChatScreen> {
       );
     } finally {
       if (mounted) setState(() => _isCapturingLongScreenshot = false);
+    }
+  }
+
+  String _longScreenshotOptionTime(DateTime time) {
+    final month = time.month.toString().padLeft(2, '0');
+    final day = time.day.toString().padLeft(2, '0');
+    final hour = time.hour.toString().padLeft(2, '0');
+    final minute = time.minute.toString().padLeft(2, '0');
+    return '$month/$day $hour:$minute';
+  }
+
+  String _longScreenshotPreview(Message message) {
+    final call = _callDividerRe.firstMatch(message.text.trim());
+    if (call != null) {
+      return switch (call.group(1)) {
+        'ended' => L.pick(en: 'Call ended', zhTW: '通話已結束'),
+        'signal_lost' => L.pick(en: 'Call dropped', zhTW: '通話中斷'),
+        'declined' => L.pick(en: 'Call declined', zhTW: '已拒絕來電'),
+        'declined_by_you' => L.pick(en: 'Declined by them', zhTW: '對方已拒絕'),
+        _ => L.pick(en: 'Missed call', zhTW: '未接來電'),
+      };
+    }
+
+    var preview = MarriageService.stripHiddenCertMetadata(message.text)
+        .replaceAll(RegExp(r'<think(?:ing)?>([\s\S]*?)</think(?:ing)?>'), '')
+        .replaceAll(RegExp(r'\[[^\]\n]+:[^\]\n]*\]'), '')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+    if (preview.isEmpty && message.imagePath != null) {
+      preview = L.pick(en: 'Image', zhTW: '圖片');
+    }
+    if (preview.isEmpty) preview = L.pick(en: 'Message', zhTW: '消息');
+    final runes = preview.runes.toList(growable: false);
+    return runes.length <= 48
+        ? preview
+        : '${String.fromCharCodes(runes.take(48))}…';
+  }
+
+  Future<void> _loadLongScreenshotCardData(List<Message> messages) async {
+    for (final message in messages) {
+      final id = message.id;
+      if (id == null) continue;
+      final key = 'msg_$id';
+      if (!_scratchDataMap.containsKey(key)) {
+        final scratch = await ScratchService.getData(key);
+        if (scratch != null) _scratchDataMap[key] = scratch;
+      }
+      if (!_transferDataMap.containsKey(key)) {
+        final transfer = await TransferService.getData(key);
+        if (transfer != null) _transferDataMap[key] = transfer;
+      }
     }
   }
 
@@ -5941,7 +5996,10 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
-  List<Widget> _buildLongScreenshotItems(List<Message> messages) {
+  List<Widget> _buildLongScreenshotItems(
+    List<Message> messages, {
+    required bool expandThinking,
+  }) {
     final charReplyAfter = List<bool>.filled(messages.length, false);
     var seenCharReply = false;
     for (var i = messages.length - 1; i >= 0; i--) {
@@ -6007,6 +6065,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   : null,
               imagePath: partIndex == 0 ? message.imagePath : null,
               messageKey: 'longshot_${message.id}_$partIndex',
+              expandThinking: expandThinking,
             ),
           );
         }
@@ -6026,6 +6085,7 @@ class _ChatScreenState extends State<ChatScreen> {
           giftName: giftMatch?.group(1)?.trim(),
           giftAccepted: giftMatch != null && charReplyAfter[i],
           includeCards: true,
+          expandThinking: expandThinking,
         ),
       );
     }
@@ -6041,6 +6101,7 @@ class _ChatScreenState extends State<ChatScreen> {
     String? giftName,
     bool giftAccepted = false,
     bool includeCards = false,
+    required bool expandThinking,
   }) {
     final hasMarriageCert =
         (message.isUser && _marriageCertTagRe.hasMatch(message.text)) ||
@@ -6062,6 +6123,7 @@ class _ChatScreenState extends State<ChatScreen> {
       cacheHit: false,
       incomplete: message.isIncomplete,
       captureMode: true,
+      thinkingExpandedOverride: expandThinking,
       memoryLog: '',
       scratchData: includeCards ? _scratchDataMap[persistedMessageKey] : null,
       transferData: includeCards ? _transferDataMap[persistedMessageKey] : null,
@@ -6389,12 +6451,23 @@ class _ChatScreenState extends State<ChatScreen> {
     return name;
   }
 
-  void _showNonBlockingModelHint(String message) {
+  void _showNonBlockingModelHint(
+    String message, {
+    String? actionLabel,
+    VoidCallback? onAction,
+  }) {
     _modelHintOverlay?.remove();
     _modelHintOverlay = null;
 
     final overlay = Overlay.of(context);
-    final entry = OverlayEntry(
+    late final OverlayEntry entry;
+    void dismiss() {
+      if (_modelHintOverlay != entry) return;
+      _modelHintOverlay?.remove();
+      _modelHintOverlay = null;
+    }
+
+    entry = OverlayEntry(
       builder: (ctx) {
         final top = MediaQuery.of(ctx).padding.top + 12;
         return Positioned(
@@ -6402,6 +6475,7 @@ class _ChatScreenState extends State<ChatScreen> {
           left: 16,
           right: 16,
           child: IgnorePointer(
+            ignoring: onAction == null,
             child: Material(
               color: Colors.transparent,
               child: Center(
@@ -6428,13 +6502,35 @@ class _ChatScreenState extends State<ChatScreen> {
                       ),
                     ],
                   ),
-                  child: Text(
-                    message,
-                    textAlign: TextAlign.center,
-                    style: YanciTheme.bodySmall.copyWith(
-                      fontSize: 12,
-                      color: YanciTheme.textPrimary,
-                    ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Flexible(
+                        child: Text(
+                          message,
+                          textAlign: TextAlign.center,
+                          style: YanciTheme.bodySmall.copyWith(
+                            fontSize: 12,
+                            color: YanciTheme.textPrimary,
+                          ),
+                        ),
+                      ),
+                      if (onAction != null && actionLabel != null) ...[
+                        const SizedBox(width: 8),
+                        TextButton(
+                          onPressed: () {
+                            dismiss();
+                            onAction();
+                          },
+                          style: TextButton.styleFrom(
+                            foregroundColor: YanciTheme.accent,
+                            minimumSize: const Size(48, 44),
+                            padding: const EdgeInsets.symmetric(horizontal: 8),
+                          ),
+                          child: Text(actionLabel),
+                        ),
+                      ],
+                    ],
                   ),
                 ),
               ),
@@ -6447,10 +6543,7 @@ class _ChatScreenState extends State<ChatScreen> {
     overlay.insert(entry);
     _modelHintOverlay = entry;
     Future.delayed(const Duration(milliseconds: 2600), () {
-      if (_modelHintOverlay == entry) {
-        _modelHintOverlay?.remove();
-        _modelHintOverlay = null;
-      }
+      dismiss();
     });
   }
 

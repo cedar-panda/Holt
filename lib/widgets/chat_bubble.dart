@@ -43,6 +43,7 @@ class ChatBubble extends StatefulWidget {
   final bool selected;
   final VoidCallback? onSelectionToggle;
   final bool captureMode;
+  final bool? thinkingExpandedOverride;
 
   /// 記憶過程日誌（注入/寫入/刪除/合併，Done 收尾），空則不顯示
   final String memoryLog;
@@ -88,6 +89,7 @@ class ChatBubble extends StatefulWidget {
     this.selected = false,
     this.onSelectionToggle,
     this.captureMode = false,
+    this.thinkingExpandedOverride,
     this.memoryLog = '',
     this.scratchData,
     this.transferData,
@@ -1406,8 +1408,11 @@ class _ChatBubbleState extends State<ChatBubble>
     // 思考鏈顏色：比氣泡文字淺一點，跟主題走
     final thinkColor = YanciTheme.textOnBubble.withValues(alpha: 0.55);
     final thinkLabelColor = YanciTheme.textOnBubble.withValues(alpha: 0.45);
+    final expanded = widget.thinkingExpandedOverride ?? _thinkingExpanded;
     return GestureDetector(
-      onTap: () => setState(() => _thinkingExpanded = !_thinkingExpanded),
+      onTap: widget.thinkingExpandedOverride == null
+          ? () => setState(() => _thinkingExpanded = !_thinkingExpanded)
+          : null,
       child: Container(
         key: const ValueKey('thinking-chain-container'),
         margin: const EdgeInsets.only(bottom: 4),
@@ -1430,7 +1435,7 @@ class _ChatBubbleState extends State<ChatBubble>
                 ),
                 const SizedBox(width: 4),
                 Icon(
-                  _thinkingExpanded
+                  expanded
                       ? Icons.expand_less_rounded
                       : Icons.expand_more_rounded,
                   size: 14,
@@ -1438,7 +1443,7 @@ class _ChatBubbleState extends State<ChatBubble>
                 ),
               ],
             ),
-            if (_thinkingExpanded) ...[
+            if (expanded) ...[
               const SizedBox(height: 6),
               Text(
                 thinking,
