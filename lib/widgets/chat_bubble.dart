@@ -989,16 +989,15 @@ class _ChatBubbleState extends State<ChatBubble>
                                             GestureDetector(
                                               onTap: () =>
                                                   _speakText(widget.text),
-                                              child: SizedBox(
-                                                width: 22,
-                                                height: 22,
-                                                child: Center(
-                                                  child: TtsPlayButton(
-                                                    messageId: widget.messageId,
-                                                    onTap: () =>
-                                                        _speakText(widget.text),
-                                                    size: 18,
-                                                  ),
+                                              child: _buildActionIconSlot(
+                                                key: const ValueKey(
+                                                  'bubble-action-tts',
+                                                ),
+                                                child: TtsPlayButton(
+                                                  messageId: widget.messageId,
+                                                  onTap: () =>
+                                                      _speakText(widget.text),
+                                                  size: 18,
                                                 ),
                                               ),
                                             ),
@@ -1340,15 +1339,11 @@ class _ChatBubbleState extends State<ChatBubble>
 
   Widget _buildCopyIcon({Color? color}) {
     final c = color ?? YanciTheme.textSecondary.withValues(alpha: 0.4);
-    return SizedBox(
-      width: 22,
-      height: 22,
-      child: Center(
-        child: SizedBox(
-          width: 15,
-          height: 15,
-          child: CustomPaint(painter: _SquareCopyPainter(color: c)),
-        ),
+    return _buildActionIconSlot(
+      key: const ValueKey('bubble-action-copy'),
+      child: SizedBox.square(
+        dimension: 15,
+        child: CustomPaint(painter: _SquareCopyPainter(color: c)),
       ),
     );
   }
@@ -1356,16 +1351,21 @@ class _ChatBubbleState extends State<ChatBubble>
   /// 書籤收藏圖標，點擊後以實心書籤表示已收藏。
   Widget _buildBookmarkIcon({Color? color}) {
     final c = color ?? YanciTheme.textSecondary.withValues(alpha: 0.4);
-    return SizedBox(
-      width: 22,
-      height: 22,
-      child: Center(
-        child: Icon(
-          _isSaved ? Icons.bookmark_rounded : Icons.bookmark_border_rounded,
-          size: 20,
-          color: c,
-        ),
+    return _buildActionIconSlot(
+      key: const ValueKey('bubble-action-bookmark'),
+      child: Icon(
+        _isSaved ? Icons.bookmark_rounded : Icons.bookmark_border_rounded,
+        size: 20,
+        color: c,
       ),
+    );
+  }
+
+  Widget _buildActionIconSlot({required Key key, required Widget child}) {
+    return SizedBox.square(
+      key: key,
+      dimension: 22,
+      child: Center(child: child),
     );
   }
 
@@ -1701,14 +1701,15 @@ class _SquareCopyPainter extends CustomPainter {
     // B 方案：保留不到 1px 的微圓角，視覺方正但不生硬。
     final boxSize = s * 0.72;
     final gap = s * 0.20;
+    final origin = (s - boxSize - gap) / 2;
     final r = Radius.circular(s * 0.055);
 
     final backRect = RRect.fromRectAndRadius(
-      Rect.fromLTWH(0, 0, boxSize, boxSize),
+      Rect.fromLTWH(origin, origin, boxSize, boxSize),
       r,
     );
     final frontRect = RRect.fromRectAndRadius(
-      Rect.fromLTWH(gap, gap, boxSize, boxSize),
+      Rect.fromLTWH(origin + gap, origin + gap, boxSize, boxSize),
       r,
     );
 

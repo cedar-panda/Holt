@@ -95,6 +95,21 @@ void main() {
     expect(find.byIcon(Icons.graphic_eq_rounded), findsOneWidget);
     expect(find.byIcon(Icons.star_outline_rounded), findsNothing);
     expect(find.byIcon(Icons.play_circle_outline), findsNothing);
+
+    final copySlot = find.byKey(const ValueKey('bubble-action-copy'));
+    final bookmarkSlot = find.byKey(const ValueKey('bubble-action-bookmark'));
+    final ttsSlot = find.byKey(const ValueKey('bubble-action-tts'));
+    expect(tester.getSize(copySlot), const Size.square(22));
+    expect(tester.getSize(bookmarkSlot), const Size.square(22));
+    expect(tester.getSize(ttsSlot), const Size.square(22));
+    expect(
+      tester.getCenter(copySlot).dy,
+      closeTo(tester.getCenter(bookmarkSlot).dy, 0.01),
+    );
+    expect(
+      tester.getCenter(bookmarkSlot).dy,
+      closeTo(tester.getCenter(ttsSlot).dy, 0.01),
+    );
     expect(tester.takeException(), isNull);
   });
 }
