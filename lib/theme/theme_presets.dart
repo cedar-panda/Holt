@@ -190,10 +190,10 @@ const ivoryPreset = ThemePreset(
   name: '象牙白',
   subtitle: '窗外透進來的一點天色',
   isDark: false,
-  bg1: Color(0xFFF5F3EE),
-  bg2: Color(0xFFF2F0EA),
-  bg3: Color(0xFFEFEDE6),
-  bg4: Color(0xFFF7F5F0),
+  bg1: Color(0xFFFAF9F6),
+  bg2: Color(0xFFF8F7F3),
+  bg3: Color(0xFFF6F4EF),
+  bg4: Color(0xFFFCFBF8),
   aiBubble: Color(0xFFFBFAF7),
   userBubble: Color(0xFFCBD7EA),
   aiBubbleBorder: Color(0x388B9DB5),
@@ -209,8 +209,8 @@ const ivoryPreset = ThemePreset(
   glassInputBg: Color(0xB8FFFFFF),
   navBarBg: Color(0xE8FDFCFA),
   navInactive: Color(0xFF878F9A),
-  starColor: Color(0x80D8DDE8),
-  starGlow: Color(0x28D8DDE8),
+  starColor: Color(0x66E6EAF0),
+  starGlow: Color(0x1CEEF1F5),
 );
 
 // ─── 6. 霧紫 ───

@@ -350,6 +350,123 @@ void main() {
     },
   );
 
+  test('period end clears the live state and creates a dated event', () async {
+    final activeMessage = Message(
+      id: 91,
+      conversationId: 'conv-a',
+      characterId: 'char-a',
+      text: '你今天是生理期第三天。',
+      isUser: true,
+      createdAt: DateTime(2026, 7, 20, 20),
+    );
+    expect(
+      await CharacterTimelineService.storeSummaryCandidates(
+        characterId: 'char-a',
+        sourceMessages: [activeMessage],
+        candidates: const [
+          TimelineEventCandidate(
+            type: 'state',
+            subject: 'character',
+            sourceMessageIds: [91],
+            occurredOn: '2026-07-20',
+            dateBasis: 'relative',
+            key: '生理週期',
+            value: '晏辭處於生理期第三天',
+            evidence: '你今天是生理期第三天',
+          ),
+        ],
+      ),
+      2,
+    );
+    expect(await CharacterTimelineService.getStates('char-a'), hasLength(1));
+
+    final endedMessage = Message(
+      id: 92,
+      conversationId: 'conv-a',
+      characterId: 'char-a',
+      text: '晏辭說，生理期已於昨天（2026-07-22）結束。',
+      isUser: false,
+      createdAt: DateTime(2026, 7, 23, 18, 50),
+    );
+    expect(
+      await CharacterTimelineService.storeSummaryCandidates(
+        characterId: 'char-a',
+        sourceMessages: [endedMessage],
+        candidates: const [
+          TimelineEventCandidate(
+            type: 'event',
+            subject: 'character',
+            sourceMessageIds: [92],
+            occurredOn: '2026-07-22',
+            dateBasis: 'explicit',
+            value: '生理期結束',
+            evidence: '生理期已於昨天（2026-07-22）結束',
+          ),
+        ],
+      ),
+      2,
+    );
+
+    expect(await CharacterTimelineService.getStates('char-a'), isEmpty);
+    final events = await CharacterTimelineService.getEvents(
+      'char-a',
+      ascending: true,
+    );
+    expect(events.map((event) => event['value']), ['生理期開始（推算）', '生理期結束']);
+    expect(events.last['created_at'].toString(), startsWith('2026-07-22'));
+    expect(jsonDecode(events.last['source_message_ids'] as String), [92]);
+  });
+
+  test('period end questions and ongoing statements are not stored', () async {
+    final messages = [
+      Message(
+        id: 93,
+        conversationId: 'conv-a',
+        characterId: 'char-a',
+        text: '生理期還沒結束。',
+        isUser: false,
+        createdAt: DateTime(2026, 7, 23, 19),
+      ),
+      Message(
+        id: 94,
+        conversationId: 'conv-a',
+        characterId: 'char-a',
+        text: '生理期結束了嗎？',
+        isUser: true,
+        createdAt: DateTime(2026, 7, 23, 19, 1),
+      ),
+    ];
+
+    expect(
+      await CharacterTimelineService.storeSummaryCandidates(
+        characterId: 'char-a',
+        sourceMessages: messages,
+        candidates: const [
+          TimelineEventCandidate(
+            type: 'event',
+            subject: 'character',
+            sourceMessageIds: [93],
+            occurredOn: '2026-07-23',
+            dateBasis: 'message_time',
+            value: '生理期結束',
+            evidence: '生理期還沒結束',
+          ),
+          TimelineEventCandidate(
+            type: 'event',
+            subject: 'character',
+            sourceMessageIds: [94],
+            occurredOn: '2026-07-23',
+            dateBasis: 'message_time',
+            value: '生理期結束',
+            evidence: '生理期結束了嗎？',
+          ),
+        ],
+      ),
+      0,
+    );
+    expect(await CharacterTimelineService.getEvents('char-a'), isEmpty);
+  });
+
   test('ISO week group uses the week-year at New Year boundaries', () {
     expect(isoWeekGroup(DateTime(2025, 12, 29)), '2026-W01');
     expect(isoWeekGroup(DateTime(2021, 1, 1)), '2020-W53');

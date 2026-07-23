@@ -57,7 +57,7 @@ summary：將對話內容壓縮成簡潔摘要。
 - summary 欄位只放摘要正文，不要前綴說明
 如果有前次摘要：其中的內容原樣保留措辭，只做刪減與追加，不要改寫換說法。
 
-timeline：只從【新對話內容】提取屬於角色本人或雙方關係、對後續有持續回憶價值的候選。event 是已完成的角色事件或雙方共同事件；state 是已生效的持續狀態，key 使用髮型、美甲、鬍子、住所、工作、寵物、健康、關係狀態、生理週期之一。subject 使用 character；雙方共同事件或關係狀態使用 relationship。每項須能確定 YYYY-MM-DD，source_message_ids 全部來自新對話，evidence 是來源原文片段，value 保留其核心用詞。occurred_on 表示原文直接描述的事件或狀態日期；「第 N 天」照原文保留，由本地計算開始日。同一項合併，按 occurred_on 從早到晚排列。
+timeline：只從【新對話內容】提取屬於角色本人或雙方關係、對後續有持續回憶價值的候選。event 是已完成的角色事件或雙方共同事件；state 是目前仍持續的狀態，key 使用髮型、美甲、鬍子、住所、工作、寵物、健康、關係狀態、生理週期之一；狀態開始或結束本身使用 event。subject 使用 character；雙方共同事件或關係狀態使用 relationship。每項須能確定 YYYY-MM-DD，source_message_ids 全部來自新對話，evidence 是來源原文片段，value 保留其核心用詞。occurred_on 表示原文直接描述的事件或狀態日期；「第 N 天」照原文保留，由本地計算開始日。同一項合併，按 occurred_on 從早到晚排列。
 
 只輸出合法 JSON：{"summary":"文字","timeline":[{"type":"event","subject":"relationship","source_message_ids":[1],"occurred_on":"YYYY-MM-DD","date_basis":"message_time|relative|explicit","value":"第三人稱事件","evidence":"原文"},{"type":"state","subject":"character","source_message_ids":[2],"occurred_on":"YYYY-MM-DD","date_basis":"message_time|relative|explicit","key":"健康","value":"第三人稱狀態","evidence":"原文"}]}。無候選時 timeline 為空陣列。
 ''';
@@ -77,7 +77,7 @@ summary: Compress the conversation into a concise summary.
 - Put only the summary body in the summary field, with no prefix
 If a previous summary is provided, keep its wording as-is and only trim or append; do not rephrase it.
 
-timeline: Extract only lasting candidates belonging to the character or the shared relationship from 【New Conversation】. An event is a completed character event or shared event. A state is an effective ongoing state whose key is hairstyle, nails, beard, residence, work, pet, health, relationship status, or menstrual cycle. Use subject=character, or subject=relationship for shared events and relationship status. Every item must resolve to YYYY-MM-DD, cite only new source_message_ids, quote exact source text as evidence, and retain its core wording in value. occurred_on is the date directly described by the source; preserve "day N" wording so the app can derive its start date. Merge one item and order occurred_on oldest to newest.
+timeline: Extract only lasting candidates belonging to the character or the shared relationship from 【New Conversation】. An event is a completed character event or shared event. A state is a condition that is still ongoing, whose key is hairstyle, nails, beard, residence, work, pet, health, relationship status, or menstrual cycle; use event for the start or end of a state itself. Use subject=character, or subject=relationship for shared events and relationship status. Every item must resolve to YYYY-MM-DD, cite only new source_message_ids, quote exact source text as evidence, and retain its core wording in value. occurred_on is the date directly described by the source; preserve "day N" wording so the app can derive its start date. Merge one item and order occurred_on oldest to newest.
 
 Output valid JSON only: {"summary":"text","timeline":[{"type":"event","subject":"relationship","source_message_ids":[1],"occurred_on":"YYYY-MM-DD","date_basis":"message_time|relative|explicit","value":"third-person event","evidence":"exact quote"},{"type":"state","subject":"character","source_message_ids":[2],"occurred_on":"YYYY-MM-DD","date_basis":"message_time|relative|explicit","key":"health","value":"third-person state","evidence":"exact quote"}]}. Use an empty timeline array when none qualify.
 ''';
@@ -853,65 +853,81 @@ Rules:
     if (fence != null) text = fence.group(1)!.trim();
     if (text.isEmpty) return const _DecodedCompression('', []);
 
+    dynamic decoded;
     try {
-      final decoded = jsonDecode(text);
-      if (decoded is Map) {
-        final rawSummary = decoded['summary'];
-        final summary = rawSummary is String ? rawSummary.trim() : '';
-        final timeline = <TimelineEventCandidate>[];
-        final rawTimeline = decoded['timeline'];
-        if (rawTimeline is List) {
-          for (final raw in rawTimeline) {
-            if (raw is! Map) continue;
-            final type = raw['type']?.toString().trim() ?? '';
-            final subject = raw['subject']?.toString().trim() ?? '';
-            if (!const {'event', 'state'}.contains(type) ||
-                !const {'character', 'relationship'}.contains(subject)) {
-              continue;
-            }
-            final rawIds = raw['source_message_ids'];
-            if (rawIds is! List) continue;
-            final ids =
-                rawIds
-                    .map((id) => id is num ? id.toInt() : null)
-                    .whereType<int>()
-                    .where((id) => id > 0)
-                    .toSet()
-                    .toList()
-                  ..sort();
-            if (ids.isEmpty) continue;
-            final occurredOn = raw['occurred_on'];
-            final dateBasis = raw['date_basis'];
-            final value = raw['value'];
-            final evidence = raw['evidence'];
-            final rawKey = raw['key'];
-            if (occurredOn is! String ||
-                dateBasis is! String ||
-                value is! String ||
-                evidence is! String ||
-                (type == 'state' && rawKey is! String)) {
-              continue;
-            }
-            timeline.add(
-              TimelineEventCandidate(
-                type: type,
-                subject: subject,
-                sourceMessageIds: ids,
-                occurredOn: occurredOn,
-                dateBasis: dateBasis,
-                key: type == 'state' ? (rawKey as String) : null,
-                value: value,
-                evidence: evidence,
-              ),
-            );
-          }
-        }
-        return _DecodedCompression(summary, timeline);
-      }
+      decoded = jsonDecode(text);
     } on FormatException {
-      // A weak/local model may wrap or slightly damage its JSON. Recover only
-      // the summary string when it is independently decodable; timeline data
-      // is never guessed from malformed output.
+      // Some otherwise capable models add a one-line preface or suffix around
+      // the requested JSON. Recover the complete balanced object, but never
+      // invent a partial timeline from damaged JSON.
+      final jsonObject = _firstBalancedJsonObject(text);
+      if (jsonObject != null) {
+        try {
+          decoded = jsonDecode(jsonObject);
+        } on FormatException {
+          decoded = null;
+        }
+      }
+    }
+
+    if (decoded is Map) {
+      final rawSummary = decoded['summary'];
+      final summary = rawSummary is String ? rawSummary.trim() : '';
+      final timeline = <TimelineEventCandidate>[];
+      final rawTimeline = decoded['timeline'];
+      if (rawTimeline is List) {
+        for (final raw in rawTimeline) {
+          if (raw is! Map) continue;
+          final type = raw['type']?.toString().trim() ?? '';
+          final subject = raw['subject']?.toString().trim() ?? '';
+          if (!const {'event', 'state'}.contains(type) ||
+              !const {'character', 'relationship'}.contains(subject)) {
+            continue;
+          }
+          final rawIds = raw['source_message_ids'];
+          if (rawIds is! List) continue;
+          final ids =
+              rawIds
+                  .map(
+                    (id) => switch (id) {
+                      num value => value.toInt(),
+                      String value => int.tryParse(value.trim()),
+                      _ => null,
+                    },
+                  )
+                  .whereType<int>()
+                  .where((id) => id > 0)
+                  .toSet()
+                  .toList()
+                ..sort();
+          if (ids.isEmpty) continue;
+          final occurredOn = raw['occurred_on'];
+          final dateBasis = raw['date_basis'];
+          final value = raw['value'];
+          final evidence = raw['evidence'];
+          final rawKey = raw['key'];
+          if (occurredOn is! String ||
+              dateBasis is! String ||
+              value is! String ||
+              evidence is! String ||
+              (type == 'state' && rawKey is! String)) {
+            continue;
+          }
+          timeline.add(
+            TimelineEventCandidate(
+              type: type,
+              subject: subject,
+              sourceMessageIds: ids,
+              occurredOn: occurredOn,
+              dateBasis: dateBasis,
+              key: type == 'state' ? (rawKey as String) : null,
+              value: value,
+              evidence: evidence,
+            ),
+          );
+        }
+      }
+      return _DecodedCompression(summary, timeline);
     }
 
     final summaryField = RegExp(
@@ -932,6 +948,36 @@ Rules:
       return _DecodedCompression(text, const []);
     }
     return const _DecodedCompression('', []);
+  }
+
+  static String? _firstBalancedJsonObject(String text) {
+    final start = text.indexOf('{');
+    if (start < 0) return null;
+    var depth = 0;
+    var inString = false;
+    var escaped = false;
+    for (var index = start; index < text.length; index++) {
+      final unit = text.codeUnitAt(index);
+      if (inString) {
+        if (escaped) {
+          escaped = false;
+        } else if (unit == 0x5C) {
+          escaped = true;
+        } else if (unit == 0x22) {
+          inString = false;
+        }
+        continue;
+      }
+      if (unit == 0x22) {
+        inString = true;
+      } else if (unit == 0x7B) {
+        depth++;
+      } else if (unit == 0x7D) {
+        depth--;
+        if (depth == 0) return text.substring(start, index + 1);
+      }
+    }
+    return null;
   }
 
   @visibleForTesting

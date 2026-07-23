@@ -17,6 +17,53 @@ class MemorySummaryTab extends StatefulWidget {
     this.onSummaryModified,
   });
 
+  /// 只改閱讀排版，不改資料庫中的摘要原文，也不影響之後注入模型的內容。
+  static String formatForReading(String raw) {
+    final source = raw.replaceAll('\r\n', '\n').trim();
+    if (source.isEmpty) return '';
+
+    final result = <String>[];
+    for (final rawBlock in source.split(RegExp(r'\n+'))) {
+      final block = rawBlock.trim();
+      if (block.isEmpty) continue;
+      if (block.characters.length <= 90 ||
+          (block.startsWith('【') && block.endsWith('】'))) {
+        result.add(block);
+        continue;
+      }
+
+      final sentences = <String>[];
+      final sentence = StringBuffer();
+      for (final character in block.characters) {
+        sentence.write(character);
+        if ('。！？!?'.contains(character)) {
+          final value = sentence.toString().trim();
+          if (value.isNotEmpty) sentences.add(value);
+          sentence.clear();
+        }
+      }
+      final tail = sentence.toString().trim();
+      if (tail.isNotEmpty) sentences.add(tail);
+      if (sentences.length <= 1) {
+        result.add(block);
+        continue;
+      }
+
+      var paragraph = '';
+      for (final item in sentences) {
+        final candidate = '$paragraph$item';
+        if (paragraph.isNotEmpty && candidate.characters.length > 90) {
+          result.add(paragraph);
+          paragraph = item;
+        } else {
+          paragraph = candidate;
+        }
+      }
+      if (paragraph.isNotEmpty) result.add(paragraph);
+    }
+    return result.join('\n\n');
+  }
+
   @override
   State<MemorySummaryTab> createState() => _MemorySummaryTabState();
 }
@@ -200,6 +247,109 @@ class _MemorySummaryTabState extends State<MemorySummaryTab>
     _loadData();
   }
 
+  Future<void> _showFullSummary({
+    required String content,
+    required String dateLabel,
+    required String windowId,
+  }) {
+    final readable = MemorySummaryTab.formatForReading(content);
+    return showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) {
+        return DraggableScrollableSheet(
+          expand: false,
+          initialChildSize: 0.74,
+          minChildSize: 0.48,
+          maxChildSize: 0.94,
+          builder: (_, scrollController) {
+            return Container(
+              decoration: BoxDecoration(
+                color: YanciTheme.surfacePanel,
+                borderRadius: const BorderRadius.vertical(
+                  top: Radius.circular(YanciTheme.radiusLg),
+                ),
+              ),
+              child: Column(
+                children: [
+                  const SizedBox(height: 10),
+                  Container(
+                    width: 38,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: YanciTheme.textSecondary.withValues(alpha: 0.2),
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 10, 8, 6),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                L.pick(en: 'Full summary', zhTW: '摘要全文'),
+                                style: YanciTheme.headingMedium.copyWith(
+                                  fontSize: 17,
+                                ),
+                              ),
+                              if (dateLabel.isNotEmpty || windowId.isNotEmpty)
+                                Text(
+                                  [
+                                    if (dateLabel.isNotEmpty) dateLabel,
+                                    if (windowId.isNotEmpty) '#$windowId',
+                                  ].join(' · '),
+                                  style: TextStyle(
+                                    fontSize: 10,
+                                    color: YanciTheme.textSecondary.withValues(
+                                      alpha: 0.45,
+                                    ),
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ),
+                        IconButton(
+                          tooltip: L.pick(en: 'Close', zhTW: '關閉'),
+                          onPressed: () => Navigator.pop(sheetContext),
+                          icon: Icon(
+                            Icons.close_rounded,
+                            color: YanciTheme.textSecondary,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Divider(
+                    height: 1,
+                    color: YanciTheme.textSecondary.withValues(alpha: 0.08),
+                  ),
+                  Expanded(
+                    child: SingleChildScrollView(
+                      controller: scrollController,
+                      padding: const EdgeInsets.fromLTRB(22, 20, 22, 36),
+                      child: SelectableText(
+                        readable,
+                        style: YanciTheme.bodyText.copyWith(
+                          fontSize: 14,
+                          height: 1.75,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
   // ═══ Build ═══
 
   @override
@@ -269,6 +419,7 @@ class _MemorySummaryTabState extends State<MemorySummaryTab>
     final windowId = (summary['source_window_id'] as String? ?? '').trim();
     final isExpanded = _expandedSummaryId == id;
     final isEditing = _editingSummaryId == id;
+    final needsFullReader = content.characters.length > 120;
 
     // Date label
     final date = DateTime.tryParse(createdAt);
@@ -355,8 +506,8 @@ class _MemorySummaryTabState extends State<MemorySummaryTab>
                       width: double.infinity,
                       child: Text(
                         content,
-                        maxLines: isExpanded ? null : 3,
-                        overflow: isExpanded
+                        maxLines: isExpanded ? (needsFullReader ? 7 : null) : 3,
+                        overflow: isExpanded && !needsFullReader
                             ? TextOverflow.visible
                             : TextOverflow.ellipsis,
                         style: YanciTheme.bodyText.copyWith(fontSize: 13),
@@ -367,6 +518,26 @@ class _MemorySummaryTabState extends State<MemorySummaryTab>
 
           // Action bar (visible when expanded)
           if (isExpanded) ...[
+            if (!isEditing && needsFullReader)
+              Align(
+                alignment: Alignment.centerRight,
+                child: TextButton.icon(
+                  key: const ValueKey('summary-full-reader-button'),
+                  onPressed: () => _showFullSummary(
+                    content: content,
+                    dateLabel: dateStr,
+                    windowId: windowId,
+                  ),
+                  icon: const Icon(Icons.menu_book_outlined, size: 15),
+                  label: Text(L.pick(en: 'Read all', zhTW: '閱讀全文')),
+                  style: TextButton.styleFrom(
+                    foregroundColor: YanciTheme.accent.withValues(alpha: 0.8),
+                    minimumSize: const Size(44, 44),
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    textStyle: const TextStyle(fontSize: 11),
+                  ),
+                ),
+              ),
             const SizedBox(height: 10),
             Row(
               children: [

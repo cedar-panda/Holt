@@ -57,6 +57,20 @@ void main() {
     expect(timeline.single.key, '生理週期');
   });
 
+  test('wrapped JSON and numeric string ids keep timeline candidates', () {
+    final decoded = ContextCompressor.decodeCompressionResponseForTesting('''
+以下是結果：
+{"summary":"晏辭的生理期已結束。","timeline":[{"type":"event","subject":"character","source_message_ids":["21"],"occurred_on":"2026-07-22","date_basis":"explicit","value":"生理期結束","evidence":"生理期已於2026-07-22結束"}]}
+以上。
+''');
+
+    expect(decoded['summary'], '晏辭的生理期已結束。');
+    final timeline = decoded['timeline']! as List<TimelineEventCandidate>;
+    expect(timeline, hasLength(1));
+    expect(timeline.single.sourceMessageIds, [21]);
+    expect(timeline.single.value, '生理期結束');
+  });
+
   test('timeline candidate without an owner is not accepted', () {
     final decoded = ContextCompressor.decodeCompressionResponseForTesting('''
 {"summary":"保留摘要。","timeline":[{"type":"event","source_message_ids":[1],"occurred_on":"2026-07-18","date_basis":"message_time","value":"稱呼大小姐","evidence":"我稱呼她為大小姐"}]}

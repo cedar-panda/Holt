@@ -65,6 +65,7 @@ class _NeuralFieldWidgetState extends State<NeuralFieldWidget>
           nodes: _nodes,
           seconds: seconds,
           isDark: YanciTheme.isDark,
+          isIvory: YanciTheme.presetId == 'ivory',
           color: YanciTheme.starColor,
           glowColor: YanciTheme.starGlow,
           accent: YanciTheme.accent,
@@ -93,6 +94,7 @@ class _NeuralPainter extends CustomPainter {
   final List<_Node> nodes;
   final double seconds; // 連續秒數，不循環
   final bool isDark;
+  final bool isIvory;
   final Color color;
   final Color glowColor;
   final Color accent;
@@ -101,6 +103,7 @@ class _NeuralPainter extends CustomPainter {
     required this.nodes,
     required this.seconds,
     required this.isDark,
+    required this.isIvory,
     required this.color,
     required this.glowColor,
     required this.accent,
@@ -113,13 +116,20 @@ class _NeuralPainter extends CustomPainter {
     final t = seconds / 20 * 2 * pi;
     const connectDist = 0.20;
 
-    // 淺色主題：用 accent 色混合，提高對比度
+    // 淺色主題：用 accent 色混合，提高對比度。象牙白刻意保留更大量的
+    // 淡粒子色，避免暖白大面積上出現偏髒的灰藍節點。
     // 暗色主題：用原本的 starColor
-    final nodeColor = isDark ? color : Color.lerp(accent, color, 0.3)!;
-    final haloColor = isDark ? glowColor : Color.lerp(accent, glowColor, 0.25)!;
+    final lightColorMix = isIvory ? 0.72 : 0.3;
+    final lightGlowMix = isIvory ? 0.74 : 0.25;
+    final nodeColor = isDark
+        ? color
+        : Color.lerp(accent, color, lightColorMix)!;
+    final haloColor = isDark
+        ? glowColor
+        : Color.lerp(accent, glowColor, lightGlowMix)!;
 
     // 淺色主題整體不透明度加成
-    final opBoost = isDark ? 1.0 : 1.6;
+    final opBoost = isDark ? 1.0 : (isIvory ? 1.12 : 1.6);
 
     // 計算當前位置
     final positions = <Offset>[];
@@ -151,10 +161,11 @@ class _NeuralPainter extends CustomPainter {
         final dist = sqrt(dx * dx + dy * dy);
         if (dist < connectDist) {
           final fade = 1.0 - dist / connectDist;
-          final lineOp =
-              fade * (isDark ? 0.35 : 0.45) * (opacities[i] + opacities[j]);
+          final lineStrength = isDark ? 0.35 : (isIvory ? 0.32 : 0.45);
+          final lineMax = isDark ? 0.5 : (isIvory ? 0.38 : 0.55);
+          final lineOp = fade * lineStrength * (opacities[i] + opacities[j]);
           linePaint.color = nodeColor.withValues(
-            alpha: lineOp.clamp(0.0, isDark ? 0.5 : 0.55),
+            alpha: lineOp.clamp(0.0, lineMax),
           );
           canvas.drawLine(positions[i], positions[j], linePaint);
         }
@@ -190,5 +201,10 @@ class _NeuralPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _NeuralPainter old) =>
-      old.seconds != seconds || old.isDark != isDark || old.color != color;
+      old.seconds != seconds ||
+      old.isDark != isDark ||
+      old.isIvory != isIvory ||
+      old.color != color ||
+      old.glowColor != glowColor ||
+      old.accent != accent;
 }

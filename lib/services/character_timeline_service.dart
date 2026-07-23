@@ -123,6 +123,13 @@ class CharacterTimelineService {
     return db.transaction<int>((txn) async {
       int inserted = 0;
       for (final entry in validated) {
+        if (entry.clearStateKey != null) {
+          inserted += await txn.delete(
+            'character_timeline',
+            where: "character_id = ? AND type = 'state' AND key = ?",
+            whereArgs: [characterId, entry.clearStateKey],
+          );
+        }
         if (entry.type == 'state') {
           if (await _storeValidatedState(txn, characterId, entry)) inserted++;
           if (entry.derivedEventAt != null &&
@@ -179,9 +186,13 @@ class CharacterTimelineService {
       return null;
     }
 
+    final normalizedEvidence = _normalizeEvidence(evidence);
     final evidenceMessages = ids
         .map((id) => sourceById[id]!)
-        .where((message) => message.text.contains(evidence))
+        .where(
+          (message) =>
+              _normalizeEvidence(message.text).contains(normalizedEvidence),
+        )
         .toList();
     if (evidenceMessages.isEmpty) return null;
     if (_isLowValueAddressAction(evidence) ||
@@ -193,6 +204,7 @@ class CharacterTimelineService {
     final evidenceDay = _menstrualDayFromText(evidence);
     final menstrualDay =
         evidenceDay ?? (_hasMenstrualStartCue(evidence) ? 1 : null);
+    final menstrualEnded = _hasMenstrualEndCue(evidence);
     final valueMenstrualDay = _menstrualDayFromText(value);
     if (valueMenstrualDay != null && valueMenstrualDay != menstrualDay) {
       return null;
@@ -203,7 +215,9 @@ class CharacterTimelineService {
         : null;
     if (menstrualDay != null) stateKey = '生理週期';
     if (normalizedType == 'state' && stateKey == null) return null;
-    if (stateKey == '生理週期' && menstrualDay == null) return null;
+    if (stateKey == '生理週期' && menstrualDay == null && !menstrualEnded) {
+      return null;
+    }
     if (normalizedType == 'state') {
       final relationshipState = stateKey == '關係狀態';
       if (relationshipState != (candidate.subject == 'relationship')) {
@@ -219,7 +233,7 @@ class CharacterTimelineService {
     }
     final evidenceBasis = _dateBasisFromEvidence(evidence);
     final basis = evidenceBasis ?? modelBasis;
-    if (_hasNonOccurrenceCue(evidence, basis) ||
+    if ((!menstrualEnded && _hasNonOccurrenceCue(evidence, basis)) ||
         !_valueGroundedInEvidence(value, evidence)) {
       return null;
     }
@@ -282,6 +296,9 @@ class CharacterTimelineService {
           )
         : DateTime(occurredDate.year, occurredDate.month, occurredDate.day, 12);
     var normalizedValue = value;
+    var storedType = normalizedType;
+    var storedKey = stateKey;
+    String? clearStateKey;
     DateTime? derivedEventAt;
     String? derivedEventValue;
     if (menstrualDay != null) {
@@ -306,16 +323,24 @@ class CharacterTimelineService {
       normalizedValue = '生理期第$observedDay天（推算；開始於${_dateOnly(startAt)}）';
       derivedEventAt = startAt;
       derivedEventValue = '生理期開始（推算）';
+    } else if (menstrualEnded) {
+      // 結束是一個有日期的歷史事件，不是會永久留在 prompt 裡的當前
+      // 狀態；同時移除先前的「第 N 天」快照。
+      storedType = 'event';
+      storedKey = null;
+      clearStateKey = '生理週期';
+      normalizedValue = '生理期結束';
     }
 
     return _ValidatedTimelineEntry(
-      type: normalizedType,
-      key: stateKey,
+      type: storedType,
+      key: storedKey,
       sourceMessageIds: ids,
       occurredAt: occurredAt,
       observedAt: latestSourceDate,
       value: normalizedValue,
       evidence: evidence,
+      clearStateKey: clearStateKey,
       derivedEventAt: derivedEventAt,
       derivedEventValue: derivedEventValue,
     );
@@ -592,6 +617,66 @@ class CharacterTimelineService {
     ];
     return cues.any(normalized.contains);
   }
+
+  static bool _hasMenstrualEndCue(String text) {
+    final normalized = text.toLowerCase();
+    const unresolvedCues = [
+      '還沒結束',
+      '还没结束',
+      '尚未結束',
+      '尚未结束',
+      '沒有結束',
+      '没有结束',
+      '沒結束',
+      '没结束',
+      '快結束',
+      '快结束',
+      '要結束',
+      '要结束',
+      '是否結束',
+      '是否结束',
+      '結束了嗎',
+      '结束了吗',
+      'not over',
+      'has not ended',
+      "hasn't ended",
+      'not finished',
+      'about to end',
+    ];
+    if (unresolvedCues.any(normalized.contains) ||
+        normalized.endsWith('?') ||
+        normalized.endsWith('？')) {
+      return false;
+    }
+    const periodTerms = [
+      '生理期',
+      '經期',
+      '经期',
+      '月經',
+      '月经',
+      'period',
+      'menstrual',
+      'menstruation',
+    ];
+    const endTerms = [
+      '結束',
+      '结束',
+      '完了',
+      '已完',
+      '沒了',
+      '没了',
+      '停了',
+      'ended',
+      'finished',
+      'is over',
+      'was over',
+    ];
+    return periodTerms.any(normalized.contains) &&
+        endTerms.any(normalized.contains);
+  }
+
+  static String _normalizeEvidence(String text) =>
+      text.toLowerCase().replaceAll(RegExp(r'[\s“”‘’「」『』]'), '').trim();
 
   static int? _parseDayNumber(String raw) {
     final digits = int.tryParse(raw);
@@ -1244,6 +1329,7 @@ class _ValidatedTimelineEntry {
   final DateTime observedAt;
   final String value;
   final String evidence;
+  final String? clearStateKey;
   final DateTime? derivedEventAt;
   final String? derivedEventValue;
 
@@ -1255,6 +1341,7 @@ class _ValidatedTimelineEntry {
     required this.observedAt,
     required this.value,
     required this.evidence,
+    required this.clearStateKey,
     required this.derivedEventAt,
     required this.derivedEventValue,
   });
