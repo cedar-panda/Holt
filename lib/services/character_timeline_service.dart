@@ -195,32 +195,54 @@ class CharacterTimelineService {
         )
         .toList();
     if (evidenceMessages.isEmpty) return null;
+    final hasDeclarativeMenstrualEvidence = evidenceMessages.any(
+      (message) => !_isMenstrualQuestion(message.text),
+    );
+    final evidenceDay = hasDeclarativeMenstrualEvidence
+        ? _menstrualDayFromText(evidence)
+        : null;
+    final menstrualDay =
+        evidenceDay ??
+        (hasDeclarativeMenstrualEvidence && _hasMenstrualStartCue(evidence)
+            ? 1
+            : null);
+    final menstrualEnded =
+        hasDeclarativeMenstrualEvidence && _hasMenstrualEndCue(evidence);
+    final menstrualActive =
+        hasDeclarativeMenstrualEvidence && _hasCurrentMenstrualCue(evidence);
+    // 生理週期有明確、可驗證的角色主體；模型偶爾誤標 relationship 時，
+    // 不應在證據驗證前把正確候選丟掉。
+    final normalizedSubject =
+        menstrualDay != null || menstrualEnded || menstrualActive
+        ? 'character'
+        : candidate.subject;
     if (_isLowValueAddressAction(evidence) ||
-        (candidate.subject == 'relationship' &&
+        (normalizedSubject == 'relationship' &&
             !_hasRelationshipGrounding(evidence))) {
       return null;
     }
 
-    final evidenceDay = _menstrualDayFromText(evidence);
-    final menstrualDay =
-        evidenceDay ?? (_hasMenstrualStartCue(evidence) ? 1 : null);
-    final menstrualEnded = _hasMenstrualEndCue(evidence);
     final valueMenstrualDay = _menstrualDayFromText(value);
     if (valueMenstrualDay != null && valueMenstrualDay != menstrualDay) {
       return null;
     }
-    final normalizedType = menstrualDay == null ? candidate.type : 'state';
+    final normalizedType = menstrualDay != null || menstrualActive
+        ? 'state'
+        : candidate.type;
     var stateKey = normalizedType == 'state'
         ? _canonicalStateKey(candidate.key ?? '')
         : null;
-    if (menstrualDay != null) stateKey = '生理週期';
+    if (menstrualDay != null || menstrualActive) stateKey = '生理週期';
     if (normalizedType == 'state' && stateKey == null) return null;
-    if (stateKey == '生理週期' && menstrualDay == null && !menstrualEnded) {
+    if (stateKey == '生理週期' &&
+        menstrualDay == null &&
+        !menstrualEnded &&
+        !menstrualActive) {
       return null;
     }
     if (normalizedType == 'state') {
       final relationshipState = stateKey == '關係狀態';
-      if (relationshipState != (candidate.subject == 'relationship')) {
+      if (relationshipState != (normalizedSubject == 'relationship')) {
         return null;
       }
     }
@@ -323,6 +345,8 @@ class CharacterTimelineService {
       normalizedValue = '生理期第$observedDay天（推算；開始於${_dateOnly(startAt)}）';
       derivedEventAt = startAt;
       derivedEventValue = '生理期開始（推算）';
+    } else if (menstrualActive) {
+      normalizedValue = '生理期中（紀錄於${_dateOnly(occurredAt)}）';
     } else if (menstrualEnded) {
       // 結束是一個有日期的歷史事件，不是會永久留在 prompt 裡的當前
       // 狀態；同時移除先前的「第 N 天」快照。
@@ -673,6 +697,34 @@ class CharacterTimelineService {
     ];
     return periodTerms.any(normalized.contains) &&
         endTerms.any(normalized.contains);
+  }
+
+  static bool _hasCurrentMenstrualCue(String text) {
+    final normalized = text.toLowerCase();
+    if (_hasMenstrualEndCue(normalized) || _isMenstrualQuestion(normalized)) {
+      return false;
+    }
+    final periodTerm = RegExp(
+      r'生理期|生理週期|生理周期|經期|经期|月經|月经|'
+      r'\bperiod\b|\bmenstrual\b|\bmenstruation\b',
+      caseSensitive: false,
+    );
+    if (!periodTerm.hasMatch(normalized)) return false;
+    return RegExp(
+      r'今天.{0,8}(?:還是|还是|仍是|仍在|還在|还在|正在)?\s*(?:生理期|生理週期|生理周期|經期|经期|月經|月经)|'
+      r'(?:還是|还是|仍是|仍在|還在|还在|正在).{0,8}(?:生理期|生理週期|生理周期|經期|经期|月經|月经)|'
+      r'\b(?:still|currently)\s+(?:on\s+)?(?:her\s+|your\s+)?period\b',
+      caseSensitive: false,
+    ).hasMatch(normalized);
+  }
+
+  static bool _isMenstrualQuestion(String text) {
+    final normalized = text.toLowerCase();
+    return RegExp(
+      r'(?:生理期|生理週期|生理周期|經期|经期|月經|月经|period|menstrual|menstruation)'
+      r'[^。.!！?？]{0,18}(?:嗎|吗|嘛|是否|是不是|[?？])',
+      caseSensitive: false,
+    ).hasMatch(normalized);
   }
 
   static String _normalizeEvidence(String text) =>

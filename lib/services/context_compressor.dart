@@ -45,7 +45,7 @@ class ContextCompressor {
   static const String _compressPromptZh = '''
 整合【前次摘要】與帶有消息 ID、本地時間及發言者的【新對話內容】。
 
-summary：將對話內容壓縮成簡潔摘要。
+summary：輸出「前情提要」與「本次摘要」兩部分。
 - 只記錄對話中明確發生的事：說過的話、做過的決定、發生的事件
 - 禁止推測動機、補充因果、解讀言外之意；對話裡沒有的一個字都不要寫
 - 不確定的細節寧可省略，不要寫成模糊斷言
@@ -55,12 +55,17 @@ summary：將對話內容壓縮成簡潔摘要。
 - 用第三人稱，簡潔客觀
 - 輸出 180～450 tokens（中文約 180～450 字）
 - summary 欄位只放摘要正文，不要前綴說明
+- 使用以下 Markdown 結構：
+  ## 前情提要
+  將【前次摘要】壓縮為 60～120 字；沒有前次摘要時，概括本批對話開始時的情境
+  ## 本次摘要
+  只整理【新對話內容】
 - 使用精簡 Markdown，按實際內容選 2～4 個區塊，沒有內容的區塊省略
 - 區塊標題使用「**1. 重要事件與決定**」格式；內容使用「* **主題：** 事實」格式
 - 區塊從「重要事件與決定、關係與情緒變化、持續狀態與偏好、承諾與待續事項」中選擇
-如果有前次摘要：保留其中的事實與原詞，將新增內容併入相應區塊；可統一 Markdown 排版，不改寫事實。
 
 timeline：只從【新對話內容】提取屬於角色本人或雙方關係、對後續有持續回憶價值的候選。event 是已完成的角色事件或雙方共同事件；state 是目前仍持續的狀態，key 使用髮型、美甲、鬍子、住所、工作、寵物、健康、關係狀態、生理週期之一；狀態開始或結束本身使用 event。subject 使用 character；雙方共同事件或關係狀態使用 relationship。每項須能確定 YYYY-MM-DD，source_message_ids 全部來自新對話，evidence 是來源原文片段，value 保留其核心用詞。occurred_on 表示原文直接描述的事件或狀態日期；「第 N 天」照原文保留，由本地計算開始日。同一項合併，按 occurred_on 從早到晚排列。
+新對話明確說出角色「生理期第 N 天／開始／結束／今天仍在生理期」時必須輸出 character 候選：第 N 天或當下仍在生理期使用 state、key=生理週期；開始或結束使用 event；evidence 逐字取自來源消息。
 
 只輸出合法 JSON：{"summary":"文字","timeline":[{"type":"event","subject":"relationship","source_message_ids":[1],"occurred_on":"YYYY-MM-DD","date_basis":"message_time|relative|explicit","value":"第三人稱事件","evidence":"原文"},{"type":"state","subject":"character","source_message_ids":[2],"occurred_on":"YYYY-MM-DD","date_basis":"message_time|relative|explicit","key":"健康","value":"第三人稱狀態","evidence":"原文"}]}。無候選時 timeline 為空陣列。
 ''';
@@ -68,7 +73,7 @@ timeline：只從【新對話內容】提取屬於角色本人或雙方關係、
   static const String _compressPromptEn = '''
 Combine 【Previous Summary】 with 【New Conversation】, whose messages include ids, local timestamps, and speaker roles.
 
-summary: Compress the conversation into a concise summary.
+summary: Output two parts, Prior Context and This Update.
 - Record only what explicitly happened: things said, decisions made, events that occurred
 - Never infer motives, add causality, or read between the lines; write nothing absent from the conversation
 - When a detail is uncertain, omit it rather than writing a vague claim
@@ -78,12 +83,17 @@ summary: Compress the conversation into a concise summary.
 - Use third person, concise and objective
 - Output 180-450 tokens
 - Put only the summary body in the summary field, with no prefix
+- Use this Markdown structure:
+  ## Prior Context
+  Compress 【Previous Summary】 into 40-90 words; when absent, recap the situation at the start of this batch
+  ## This Update
+  Cover only 【New Conversation】
 - Use compact Markdown with 2-4 non-empty sections
 - Format section titles as "**1. Important events and decisions**" and entries as "* **Topic:** fact"
 - Choose sections from important events and decisions, relationship and emotional changes, ongoing states and preferences, and promises and open threads
-If a previous summary is provided, preserve its facts and original wording, merge new material into the matching sections, and only normalize the Markdown layout.
 
 timeline: Extract only lasting candidates belonging to the character or the shared relationship from 【New Conversation】. An event is a completed character event or shared event. A state is a condition that is still ongoing, whose key is hairstyle, nails, beard, residence, work, pet, health, relationship status, or menstrual cycle; use event for the start or end of a state itself. Use subject=character, or subject=relationship for shared events and relationship status. Every item must resolve to YYYY-MM-DD, cite only new source_message_ids, quote exact source text as evidence, and retain its core wording in value. occurred_on is the date directly described by the source; preserve "day N" wording so the app can derive its start date. Merge one item and order occurred_on oldest to newest.
+When new conversation explicitly states that the character's period is on day N, started, ended, or is still active today, a character candidate is required. Day N or an active current period uses type=state and key=menstrual cycle; start/end uses type=event; evidence is an exact source substring.
 
 Output valid JSON only: {"summary":"text","timeline":[{"type":"event","subject":"relationship","source_message_ids":[1],"occurred_on":"YYYY-MM-DD","date_basis":"message_time|relative|explicit","value":"third-person event","evidence":"exact quote"},{"type":"state","subject":"character","source_message_ids":[2],"occurred_on":"YYYY-MM-DD","date_basis":"message_time|relative|explicit","key":"health","value":"third-person state","evidence":"exact quote"}]}. Use an empty timeline array when none qualify.
 ''';
@@ -91,6 +101,9 @@ Output valid JSON only: {"summary":"text","timeline":[{"type":"event","subject":
   @visibleForTesting
   static String compressionPromptForTesting({bool english = false}) =>
       english ? _compressPromptEn : _compressPromptZh;
+
+  static String get currentCompressionPrompt =>
+      L.locale == 'en' ? _compressPromptEn : _zhPrompt(_compressPromptZh);
 
   /// 簡中輸出強制指令：僅 zh_CN 語系附加；zh_TW / en 返回空字串。
   /// 壓縮請求使用獨立 adapter 調用，不進聊天緩存條目，因此調整摘要
@@ -247,9 +260,13 @@ Rules:
       systemPrompt: prompt,
       userMessage: userContent.toString(),
     );
-    final decoded = _decodeCompressionResponse(response);
+    final decoded = decodeSummaryEnvelope(response);
     final summaryText = decoded.summary;
     if (summaryText.isEmpty) return 0;
+    final timelineCandidates = await recoverMissingMenstrualCandidates(
+      messages: messages,
+      candidates: decoded.timeline,
+    );
 
     final summaryTokens = TokenEstimator.estimate(summaryText);
     final sourceConversationId = conversationId;
@@ -263,7 +280,7 @@ Rules:
     // 欄位有問題，也只會丟棄候選，不會污染已生成的摘要。
     await CharacterTimelineService.storeSummaryCandidates(
       characterId: characterId,
-      candidates: decoded.timeline,
+      candidates: timelineCandidates,
       sourceMessages: messages,
     );
 
@@ -723,7 +740,7 @@ Rules:
     final lines = source.split('\n');
     final segments = <_SummarySegment>[];
     final headingRe = RegExp(
-      r'^\s*(?:[#>*\-]+\s*)?(前情摘要|最新摘要|Previous Summary|Latest Summary|Prior Summary|Recent Summary)\s*[:：]?\s*$',
+      r'^\s*(?:[#>*\-]+\s*)?(前情提要|本次摘要|前情摘要|最新摘要|Prior Context|This Update|Previous Summary|Latest Summary|Prior Summary|Recent Summary)\s*[:：]?\s*$',
       caseSensitive: false,
     );
 
@@ -857,11 +874,11 @@ Rules:
     return out;
   }
 
-  static _DecodedCompression _decodeCompressionResponse(String response) {
+  static SummaryEnvelope decodeSummaryEnvelope(String response) {
     var text = response.trim();
     final fence = RegExp(r'^```(?:json)?\s*([\s\S]*?)\s*```$').firstMatch(text);
     if (fence != null) text = fence.group(1)!.trim();
-    if (text.isEmpty) return const _DecodedCompression('', []);
+    if (text.isEmpty) return const SummaryEnvelope('', []);
 
     dynamic decoded;
     try {
@@ -937,7 +954,7 @@ Rules:
           );
         }
       }
-      return _DecodedCompression(summary, timeline);
+      return SummaryEnvelope(summary, timeline);
     }
 
     final summaryField = RegExp(
@@ -946,18 +963,18 @@ Rules:
     if (summaryField != null) {
       try {
         final summary = jsonDecode(summaryField.group(1)!) as String;
-        return _DecodedCompression(summary.trim(), const []);
+        return SummaryEnvelope(summary.trim(), const []);
       } on FormatException {
-        return const _DecodedCompression('', []);
+        return const SummaryEnvelope('', []);
       }
     }
     if (!text.startsWith('{') && !text.startsWith('[')) {
       // Backward-compatible plain summary response. This keeps summaries
       // working with models that ignore the new JSON envelope, while safely
       // dropping timeline candidates.
-      return _DecodedCompression(text, const []);
+      return SummaryEnvelope(text, const []);
     }
-    return const _DecodedCompression('', []);
+    return const SummaryEnvelope('', []);
   }
 
   static String? _firstBalancedJsonObject(String text) {
@@ -994,8 +1011,107 @@ Rules:
   static Map<String, Object> decodeCompressionResponseForTesting(
     String response,
   ) {
-    final decoded = _decodeCompressionResponse(response);
+    final decoded = decodeSummaryEnvelope(response);
     return {'summary': decoded.summary, 'timeline': decoded.timeline};
+  }
+
+  /// 正常摘要偶爾會漏掉明確的生理週期候選。只有來源消息含有「第 N 天、
+  /// 開始、結束、今天仍在」這類明確線索且首輪沒回候選時，才用同一摘要
+  /// 模型做一次小型補提取；結果仍交由 CharacterTimelineService 驗證，
+  /// 不直接落庫。
+  static Future<List<TimelineEventCandidate>>
+  recoverMissingMenstrualCandidates({
+    required List<Message> messages,
+    required List<TimelineEventCandidate> candidates,
+  }) async {
+    final relevant = messages
+        .where((message) => _hasExplicitMenstrualCue(message.text))
+        .toList();
+    if (relevant.isEmpty ||
+        candidates.any(
+          (candidate) =>
+              _hasMenstrualTerm(candidate.key ?? '') ||
+              _hasMenstrualTerm(candidate.evidence),
+        )) {
+      return candidates;
+    }
+
+    try {
+      final response = await _callModel(
+        systemPrompt: L.pick(
+          en: '''
+Extract menstrual timeline candidates explicitly stated in the supplied messages. Day N or a period explicitly still active today is type=state, subject=character, key=menstrual cycle. A stated start or end is type=event, subject=character. Use the message's local date to resolve occurred_on and quote an exact source substring as evidence.
+Output valid JSON only: {"summary":"","timeline":[{"type":"state","subject":"character","source_message_ids":[1],"occurred_on":"YYYY-MM-DD","date_basis":"message_time|relative|explicit","key":"menstrual cycle","value":"period day N","evidence":"exact quote"}]}. Use an empty timeline array when there is no explicit candidate.
+''',
+          zhTW: '''
+從消息中提取明確說出的角色生理週期候選。生理期第 N 天或明確說今天仍在生理期，使用 type=state、subject=character、key=生理週期；明確開始或結束使用 type=event、subject=character。以消息本地日期換算 occurred_on，evidence 逐字引用來源片段。
+只輸出合法 JSON：{"summary":"","timeline":[{"type":"state","subject":"character","source_message_ids":[1],"occurred_on":"YYYY-MM-DD","date_basis":"message_time|relative|explicit","key":"生理週期","value":"生理期第N天","evidence":"原文"}]}。沒有明確候選時 timeline 為空陣列。
+''',
+        ),
+        userMessage: relevant.map(_formatSourceMessage).join('\n\n'),
+      );
+      final recovered = decodeSummaryEnvelope(response).timeline;
+      if (recovered.isEmpty) return candidates;
+
+      final merged = <TimelineEventCandidate>[...candidates];
+      final seen = candidates.map(_timelineCandidateIdentity).toSet();
+      for (final candidate in recovered) {
+        if (seen.add(_timelineCandidateIdentity(candidate))) {
+          merged.add(candidate);
+        }
+      }
+      return merged;
+    } catch (_) {
+      // 補提取只是保險，不得讓已成功生成的摘要因第二次模型請求失敗。
+      return candidates;
+    }
+  }
+
+  @visibleForTesting
+  static bool needsMenstrualRecoveryForTesting({
+    required List<Message> messages,
+    required List<TimelineEventCandidate> candidates,
+  }) {
+    return messages.any((message) => _hasExplicitMenstrualCue(message.text)) &&
+        !candidates.any(
+          (candidate) =>
+              _hasMenstrualTerm(candidate.key ?? '') ||
+              _hasMenstrualTerm(candidate.evidence),
+        );
+  }
+
+  static String _timelineCandidateIdentity(TimelineEventCandidate candidate) =>
+      '${candidate.type}|${candidate.subject}|${candidate.occurredOn}|'
+      '${candidate.key ?? ''}|${candidate.value}|'
+      '${candidate.sourceMessageIds.join(',')}';
+
+  static bool _hasMenstrualTerm(String text) => RegExp(
+    r'生理期|生理週期|生理周期|經期|经期|月經|月经|'
+    r'\bperiod\b|\bmenstrual\b|\bmenstruation\b',
+    caseSensitive: false,
+  ).hasMatch(text);
+
+  static bool _hasExplicitMenstrualCue(String text) {
+    final normalized = text.toLowerCase();
+    if (!_hasMenstrualTerm(normalized)) return false;
+    if (RegExp(
+      r'(?:生理期|生理週期|生理周期|經期|经期|月經|月经|period|menstrual|menstruation)'
+      r'[^。.!！?？]{0,18}(?:嗎|吗|嘛|是否|是不是|[?？])',
+      caseSensitive: false,
+    ).hasMatch(normalized)) {
+      return false;
+    }
+    return RegExp(
+      r'第?\s*[0-9一二三四五六七八九十兩两]+\s*天|'
+      r'開始|开始|來了|来了|來生理期|来生理期|'
+      r'結束|结束|完了|已完|沒了|没了|停了|'
+      r'今天.{0,8}(?:還是|还是|仍是|仍在|還在|还在|正在)?\s*(?:生理期|生理週期|生理周期|經期|经期|月經|月经)|'
+      r'(?:還是|还是|仍是|仍在|還在|还在|正在).{0,8}(?:生理期|生理週期|生理周期|經期|经期|月經|月经)|'
+      r'\bday\s*\d{1,2}\b|\bstarted\b|\bbegan\b|'
+      r'\bended\b|\bfinished\b|\bis over\b|'
+      r'\b(?:still|currently)\s+(?:on\s+)?(?:her\s+|your\s+)?period\b',
+      caseSensitive: false,
+    ).hasMatch(normalized);
   }
 
   static String _mergeKeywordText(String existing, String added) {
@@ -1136,11 +1252,11 @@ class _SummaryIdentity {
   }
 }
 
-class _DecodedCompression {
+class SummaryEnvelope {
   final String summary;
   final List<TimelineEventCandidate> timeline;
 
-  const _DecodedCompression(this.summary, this.timeline);
+  const SummaryEnvelope(this.summary, this.timeline);
 }
 
 class _SummarySegment {

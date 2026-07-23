@@ -2,6 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:project_yanci/models/message.dart';
 import 'package:project_yanci/services/character_timeline_service.dart';
 import 'package:project_yanci/services/context_compressor.dart';
+import 'package:project_yanci/services/manual_summary_service.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -96,5 +97,83 @@ void main() {
 
     expect(decoded['summary'], '這是一段舊模型格式的純文字摘要。');
     expect(decoded['timeline'], isEmpty);
+  });
+
+  test(
+    'manual summary source keeps real ids, local dates and speaker roles',
+    () {
+      final excerpt = ManualSummaryService.buildDatedExcerpt([
+        message(31, '你今天還是生理期。'),
+        message(32, '嗯，還有一點不舒服。'),
+      ]);
+
+      expect(
+        excerpt,
+        contains('[msg:31 | local_time:2026-07-18 20:31 | speaker:user]'),
+      );
+      expect(
+        excerpt,
+        contains('[msg:32 | local_time:2026-07-18 20:32 | speaker:char]'),
+      );
+      expect(excerpt, contains('你今天還是生理期。'));
+    },
+  );
+
+  test(
+    'explicit period status requests recovery when first result omitted it',
+    () {
+      expect(
+        ContextCompressor.needsMenstrualRecoveryForTesting(
+          messages: [message(41, '你昨天是生理期第二天。')],
+          candidates: const [],
+        ),
+        isTrue,
+      );
+      expect(
+        ContextCompressor.needsMenstrualRecoveryForTesting(
+          messages: [message(43, '你今天還是生理期。')],
+          candidates: const [],
+        ),
+        isTrue,
+      );
+    },
+  );
+
+  test('period discussion alone does not request timeline recovery', () {
+    expect(
+      ContextCompressor.needsMenstrualRecoveryForTesting(
+        messages: [message(51, '生理期通常會持續幾天？')],
+        candidates: const [],
+      ),
+      isFalse,
+    );
+    expect(
+      ContextCompressor.needsMenstrualRecoveryForTesting(
+        messages: [message(53, '你今天還是生理期嗎？')],
+        candidates: const [],
+      ),
+      isFalse,
+    );
+  });
+
+  test('existing menstrual candidate suppresses the recovery request', () {
+    expect(
+      ContextCompressor.needsMenstrualRecoveryForTesting(
+        messages: [message(61, '你今天還是生理期。')],
+        candidates: const [
+          TimelineEventCandidate(
+            type: 'state',
+            subject: 'character',
+            sourceMessageIds: [61],
+            occurredOn: '2026-07-18',
+            dateBasis: 'message_time',
+            key: '生理週期',
+            value: '生理期中',
+            evidence: '你今天還是生理期',
+          ),
+        ],
+      ),
+      isFalse,
+    );
   });
 }

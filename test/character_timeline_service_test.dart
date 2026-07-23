@@ -286,6 +286,78 @@ void main() {
   );
 
   test(
+    'current period evidence survives a wrong relationship subject',
+    () async {
+      final messages = <Message>[
+        Message(
+          id: 72,
+          conversationId: 'conv-a',
+          characterId: 'char-a',
+          text: '你今天還是生理期，先好好休息。',
+          isUser: true,
+          createdAt: DateTime(2026, 7, 18, 21, 15),
+        ),
+      ];
+
+      final changed = await CharacterTimelineService.storeSummaryCandidates(
+        characterId: 'char-a',
+        sourceMessages: messages,
+        candidates: const [
+          TimelineEventCandidate(
+            type: 'state',
+            subject: 'relationship',
+            sourceMessageIds: [72],
+            occurredOn: '2026-07-18',
+            dateBasis: 'message_time',
+            key: '生理週期',
+            value: '晏辭仍在生理期',
+            evidence: '你今天還是生理期',
+          ),
+        ],
+      );
+
+      expect(changed, 1);
+      final states = await CharacterTimelineService.getStates('char-a');
+      expect(states, hasLength(1));
+      expect(states.single['key'], '生理週期');
+      expect(states.single['value'], '生理期中（紀錄於2026-07-18）');
+      expect(await CharacterTimelineService.getEvents('char-a'), isEmpty);
+    },
+  );
+
+  test('a period question is never stored as a current state', () async {
+    final changed = await CharacterTimelineService.storeSummaryCandidates(
+      characterId: 'char-a',
+      sourceMessages: [
+        Message(
+          id: 73,
+          conversationId: 'conv-a',
+          characterId: 'char-a',
+          text: '你今天還是生理期嗎？',
+          isUser: true,
+          createdAt: DateTime(2026, 7, 18, 21, 20),
+        ),
+      ],
+      candidates: const [
+        TimelineEventCandidate(
+          type: 'state',
+          subject: 'character',
+          sourceMessageIds: [73],
+          occurredOn: '2026-07-18',
+          dateBasis: 'message_time',
+          key: '生理週期',
+          value: '晏辭仍在生理期',
+          // 模型即使漏引問號，本地仍會檢查完整來源消息。
+          evidence: '你今天還是生理期',
+        ),
+      ],
+    );
+
+    expect(changed, 0);
+    expect(await CharacterTimelineService.getStates('char-a'), isEmpty);
+  });
+
+  test(
     'an older window cannot roll a newer character state backwards',
     () async {
       final newer = Message(

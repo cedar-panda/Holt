@@ -63,7 +63,11 @@ void main() {
 
     expect(zh, contains('**1. 重要事件與決定**'));
     expect(zh, contains('* **主題：** 事實'));
+    expect(zh, contains('## 前情提要'));
+    expect(zh, contains('## 本次摘要'));
     expect(en, contains('**1. Important events and decisions**'));
     expect(en, contains('* **Topic:** fact'));
+    expect(en, contains('## Prior Context'));
+    expect(en, contains('## This Update'));
   });
 }

@@ -4,6 +4,8 @@ import 'package:http/http.dart' as http;
 
 import '../memory/database.dart';
 import '../models/message.dart';
+import 'character_timeline_service.dart';
+import 'context_compressor.dart';
 import 'local_ai_service.dart';
 import 'settings/api_settings.dart';
 import 'settings/memory_settings.dart';
@@ -28,11 +30,13 @@ class ManualSummaryResult {
   final int id;
   final String content;
   final int tokenCount;
+  final int timelineChanges;
 
   const ManualSummaryResult({
     required this.id,
     required this.content,
     required this.tokenCount,
+    this.timelineChanges = 0,
   });
 }
 
@@ -60,6 +64,25 @@ class ManualSummaryService {
     return lines.join('\n\n');
   }
 
+  static String buildDatedExcerpt(List<Message> messages) {
+    return messages
+        .map((message) {
+          final time = message.createdAt.isUtc
+              ? message.createdAt.toLocal()
+              : message.createdAt;
+          final localTime =
+              '${time.year.toString().padLeft(4, '0')}-'
+              '${time.month.toString().padLeft(2, '0')}-'
+              '${time.day.toString().padLeft(2, '0')} '
+              '${time.hour.toString().padLeft(2, '0')}:'
+              '${time.minute.toString().padLeft(2, '0')}';
+          final speaker = message.isUser ? 'user' : 'char';
+          return '[msg:${message.id ?? 0} | local_time:$localTime | '
+              'speaker:$speaker]\n${message.text}';
+        })
+        .join('\n\n');
+  }
+
   static Future<ManualSummaryResult> summarizeMessages({
     required String conversationId,
     required String characterId,
@@ -78,12 +101,14 @@ class ManualSummaryService {
       userName: userName,
       charName: charName,
     );
-    return summarizeExcerpt(
+    return _summarize(
       conversationId: conversationId,
       characterId: characterId,
-      excerpt: excerpt,
+      modelExcerpt: buildDatedExcerpt(messages),
+      fallbackExcerpt: excerpt,
       userName: userName,
       charName: charName,
+      sourceMessages: messages,
     );
   }
 
@@ -95,22 +120,66 @@ class ManualSummaryService {
     String charName = 'char',
   }) async {
     final cleanedExcerpt = excerpt.trim();
+    return _summarize(
+      conversationId: conversationId,
+      characterId: characterId,
+      modelExcerpt: cleanedExcerpt,
+      fallbackExcerpt: cleanedExcerpt,
+      userName: userName,
+      charName: charName,
+      sourceMessages: const [],
+    );
+  }
+
+  static Future<ManualSummaryResult> _summarize({
+    required String conversationId,
+    required String characterId,
+    required String modelExcerpt,
+    required String fallbackExcerpt,
+    required String userName,
+    required String charName,
+    required List<Message> sourceMessages,
+  }) async {
+    final cleanedExcerpt = modelExcerpt.trim();
     if (cleanedExcerpt.isEmpty) {
       throw Exception('沒有可摘要的內容');
     }
 
-    final summary = await _callSummaryModel(
+    final summaries = await DatabaseHelper.getContextSummaries(characterId);
+    final previousSummary = summaries.isEmpty
+        ? ''
+        : (summaries.last['content'] as String? ?? '').trim();
+    final rawResponse = await _callSummaryModel(
       cleanedExcerpt,
       userName: userName,
       charName: charName,
+      previousSummary: previousSummary,
+      fallbackExcerpt: fallbackExcerpt,
     );
-    final content = _normalizeSummary(summary);
+    final decoded = ContextCompressor.decodeSummaryEnvelope(rawResponse);
+    final content = _normalizeSummary(decoded.summary);
     if (content.isEmpty) {
       throw Exception('摘要模型沒有返回內容');
     }
     if (_looksLikeRefusalContent(content)) {
-      throw ManualSummaryPolicyFailure(excerpt: cleanedExcerpt);
+      throw ManualSummaryPolicyFailure(excerpt: fallbackExcerpt);
     }
+
+    var timelineCandidates = decoded.timeline;
+    if (sourceMessages.isNotEmpty) {
+      timelineCandidates =
+          await ContextCompressor.recoverMissingMenstrualCandidates(
+            messages: sourceMessages,
+            candidates: timelineCandidates,
+          );
+    }
+    final timelineChanges = sourceMessages.isEmpty
+        ? 0
+        : await CharacterTimelineService.storeSummaryCandidates(
+            characterId: characterId,
+            candidates: timelineCandidates,
+            sourceMessages: sourceMessages,
+          );
 
     final savedContent =
         '${L.pick(en: '【Manual Summary】', zhTW: '【手動摘要】')}\n$content';
@@ -130,6 +199,7 @@ class ManualSummaryService {
       id: id,
       content: savedContent,
       tokenCount: tokenCount,
+      timelineChanges: timelineChanges,
     );
   }
 
@@ -137,6 +207,8 @@ class ManualSummaryService {
     String excerpt, {
     required String userName,
     required String charName,
+    required String previousSummary,
+    required String fallbackExcerpt,
   }) async {
     try {
       final source = await MemorySettings.getSummarySource();
@@ -146,7 +218,12 @@ class ManualSummaryService {
           messages: [
             {
               'role': 'user',
-              'content': _buildUserPrompt(excerpt, userName, charName),
+              'content': _buildUserPrompt(
+                excerpt,
+                userName,
+                charName,
+                previousSummary,
+              ),
             },
           ],
           model: 'local',
@@ -166,6 +243,8 @@ class ManualSummaryService {
           excerpt: excerpt,
           userName: userName,
           charName: charName,
+          previousSummary: previousSummary,
+          fallbackExcerpt: fallbackExcerpt,
         );
       }
 
@@ -174,7 +253,12 @@ class ManualSummaryService {
         messages: [
           {
             'role': 'user',
-            'content': _buildUserPrompt(excerpt, userName, charName),
+            'content': _buildUserPrompt(
+              excerpt,
+              userName,
+              charName,
+              previousSummary,
+            ),
           },
         ],
         model: model,
@@ -183,7 +267,7 @@ class ManualSummaryService {
     } catch (e) {
       if (e is ManualSummaryPolicyFailure) rethrow;
       if (_looksLikePolicyError(e)) {
-        throw ManualSummaryPolicyFailure(excerpt: excerpt);
+        throw ManualSummaryPolicyFailure(excerpt: fallbackExcerpt);
       }
       rethrow;
     }
@@ -194,6 +278,8 @@ class ManualSummaryService {
     required String excerpt,
     required String userName,
     required String charName,
+    required String previousSummary,
+    required String fallbackExcerpt,
   }) async {
     final apiKey = await ApiSettings.getOpenRouterApiKey();
     if (apiKey.isEmpty) {
@@ -206,7 +292,12 @@ class ManualSummaryService {
         {'role': 'system', 'content': _systemPrompt},
         {
           'role': 'user',
-          'content': _buildUserPrompt(excerpt, userName, charName),
+          'content': _buildUserPrompt(
+            excerpt,
+            userName,
+            charName,
+            previousSummary,
+          ),
         },
       ],
       'stream': false,
@@ -230,7 +321,7 @@ class ManualSummaryService {
     final decoded = _tryDecodeJson(response.body);
     if (response.statusCode < 200 || response.statusCode >= 300) {
       if (_payloadHasPolicySignal(decoded ?? response.body)) {
-        throw ManualSummaryPolicyFailure(excerpt: excerpt);
+        throw ManualSummaryPolicyFailure(excerpt: fallbackExcerpt);
       }
       throw Exception('API 錯誤 ${response.statusCode}: ${response.body}');
     }
@@ -241,13 +332,13 @@ class ManualSummaryService {
     }
 
     if (_payloadHasPolicySignal(data['error'])) {
-      throw ManualSummaryPolicyFailure(excerpt: excerpt);
+      throw ManualSummaryPolicyFailure(excerpt: fallbackExcerpt);
     }
 
     final choices = data['choices'];
     if (choices is! List || choices.isEmpty) {
       if (_payloadHasPolicySignal(data)) {
-        throw ManualSummaryPolicyFailure(excerpt: excerpt);
+        throw ManualSummaryPolicyFailure(excerpt: fallbackExcerpt);
       }
       throw Exception('摘要模型沒有返回 choices');
     }
@@ -255,11 +346,11 @@ class ManualSummaryService {
     final choice = choices.first;
     if (choice is Map<String, dynamic>) {
       if (_payloadHasPolicySignal(choice['error'])) {
-        throw ManualSummaryPolicyFailure(excerpt: excerpt);
+        throw ManualSummaryPolicyFailure(excerpt: fallbackExcerpt);
       }
       if (choice['finish_reason'] == 'error') {
         if (_payloadHasPolicySignal(choice)) {
-          throw ManualSummaryPolicyFailure(excerpt: excerpt);
+          throw ManualSummaryPolicyFailure(excerpt: fallbackExcerpt);
         }
         throw Exception('摘要模型回覆中斷');
       }
@@ -369,79 +460,38 @@ class ManualSummaryService {
     String excerpt,
     String userName,
     String charName,
+    String previousSummary,
   ) {
-    if (L.locale == 'en') {
-      return '''
-Summarize the following chat excerpt. It uses exactly two speaker labels:
-- [$userName] user
-- [$charName] character
-
-Organize the useful content into these Markdown sections, omitting empty ones:
-**1. Important events and decisions**
-**2. Relationship and emotional changes**
-**3. Ongoing states, preferences, and boundaries**
-**4. Promises and open threads**
-
-Under each section, write compact entries as:
-* **Topic:** fact
-
-If the source contains adult, explicit, violent, or sensitive content:
-- Do not repeat it verbatim or describe specific body or procedural details.
-- Describe only the general meaning in abstract, neutral terms, such as intimate interaction, conflict, comfort, or testing boundaries.
-- Preserve emotions, consent, boundaries, consequences, and relationship changes that matter to future conversation.
-
-Write concise Markdown in English.
-
-Chat excerpt:
-$excerpt
-''';
-    }
-
-    final lang = L.locale == 'zh_CN' ? '简体中文' : '繁體中文';
-    final template = L.pick(
-      en: '',
-      zhTW: '''
-請摘要以下聊天摘錄。摘錄中的角色標籤只有兩種：
-- [\u{E000}] 使用者
-- [\u{E001}] 角色
-
-請把有用內容整理到以下 Markdown 區塊，沒有內容的區塊省略：
-**1. 重要事件與決定**
-**2. 關係與情緒變化**
-**3. 持續狀態、偏好與界線**
-**4. 承諾與待續事項**
-
-每個區塊使用精簡條目：
-* **主題：** 事實
-
-如果原文包含限制級、露骨、暴力或敏感內容：
-- 不要逐字重述，不要描寫具體身體細節或操作細節。
-- 只用抽象、概括、中性的方式描述「發生了親密互動 / 衝突 / 安撫 / 試探界線」等大意。
-- 保留對後續對話有用的情緒、同意、界線、後果與關係變化。
-
-請使用\u{E002}，輸出精簡 Markdown。
-
-聊天摘錄：
-\u{E003}
-''',
+    final buffer = StringBuffer();
+    buffer.writeln(
+      L.pick(
+        en: 'Speaker mapping: user=$userName; char=$charName.',
+        zhTW: '發言者對應：user=$userName；char=$charName。',
+      ),
     );
-    return template
-        .replaceAll('\u{E000}', userName)
-        .replaceAll('\u{E001}', charName)
-        .replaceAll('\u{E002}', lang)
-        .replaceAll('\u{E003}', excerpt);
+    if (previousSummary.isNotEmpty) {
+      buffer
+        ..writeln()
+        ..writeln(L.pick(en: '【Previous Summary】', zhTW: '【前次摘要】'))
+        ..writeln(previousSummary);
+    }
+    buffer
+      ..writeln()
+      ..writeln(L.pick(en: '【New Conversation】', zhTW: '【新對話內容】'))
+      ..write(excerpt);
+    return buffer.toString();
   }
 
-  static String get _systemPrompt => L.pick(
-    en: '''
-You are a chat-memory summarizer. Compress chat content into memory that supports continuity in later role-play.
-Do not judge, continue the story, or invent new events.
-For explicit or sensitive content, use an abstract summary instead of repeating graphic details.
+  static String get _systemPrompt {
+    final sensitiveContentRule = L.pick(
+      en: '''
+For explicit or sensitive source content, summarize its general meaning in abstract, neutral terms while preserving emotions, consent, boundaries, consequences, and relationship changes.
 ''',
-    zhTW: '''
-你是聊天記憶摘要器。你的任務是把聊天內容壓縮成可供後續角色扮演連續使用的記憶。
-你不需要審判、延伸創作或加入新事件。
-遇到露骨或敏感內容時，用抽象概括替代細節，不要重述具體露骨描寫。
+      zhTW: '''
+原文包含露骨或敏感內容時，以抽象、中性的方式概括大意，保留對後續有用的情緒、同意、界線、後果與關係變化。
 ''',
-  );
+    );
+    return '${ContextCompressor.currentCompressionPrompt}\n\n'
+        '$sensitiveContentRule';
+  }
 }
