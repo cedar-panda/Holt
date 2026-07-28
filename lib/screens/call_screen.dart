@@ -7,8 +7,10 @@ import '../services/locale_strings.dart';
 import '../services/settings_manager.dart';
 import '../services/tts_service.dart';
 import '../services/api_adapter.dart';
+import '../services/token_estimator.dart';
 import '../services/token_tracker.dart';
 import '../services/call_audio_pipeline.dart';
+import '../services/call_prompt_composer.dart';
 import '../services/cache_stats_helper.dart';
 import '../memory/retriever.dart';
 import '../memory/database.dart';
@@ -105,6 +107,8 @@ class _CallScreenState extends State<CallScreen>
   bool _bootstrapReady = false;
   bool _bootstrapFailed = false;
   bool _sendingUserTurn = false;
+  String? _claudeCacheDynamicSnapshot;
+  String? _claudeCacheDynamicSnapshotKey;
 
   // 來電
   final RingtonePlayer _ringtone = RingtonePlayer();
@@ -115,8 +119,6 @@ class _CallScreenState extends State<CallScreen>
   Timer? _poorSignalFinishTimer;
   late final AnimationController _acceptPulse;
   bool _accepted = false; // 接聽動畫觸發
-
-  bool _firstIncomingTurn = false;
 
   // ── STT 停頓推斷標點 ──
   // 系統 STT（SpeechRecognizer）不回傳標點，插件也沒暴露格式化開關。
@@ -225,10 +227,7 @@ class _CallScreenState extends State<CallScreen>
       if (!_popped) HapticFeedback.lightImpact();
     });
     // 隱藏對話回合：決定接聽或掛斷
-    await _generateTurn(
-      hiddenNote:
-          '【通話】你打電話給對方。如果你不想接（例如你在忙、生氣、或是現在不想講話），請回覆 <decline_call/> 拒絕接聽。如果願意接聽，請直接說話（這將是你接起電話的第一句話）。',
-    );
+    await _generateTurn(hiddenUserEvent: '（撥打電話給你）');
   }
 
   void _declineUserCall() {
@@ -280,15 +279,15 @@ class _CallScreenState extends State<CallScreen>
       _statusText = _idleHint();
     });
     _startCallTimer();
-    _firstIncomingTurn = true;
 
     // 開場白：標籤裡帶了就直接說，沒帶就讓她自己開口
     final opening = widget.openingLine.trim();
     if (opening.isNotEmpty) {
+      _appendCallHistory('user', '（接聽電話）');
       await _speakDirect(opening);
       if (_micMode == 'auto' && mounted) _startAutoListen();
     } else {
-      await _generateTurn(userText: null, hiddenNote: '【通話】對方接了你打的電話。你先開口。');
+      await _generateTurn(userText: null, hiddenUserEvent: '（接聽電話）');
     }
   }
 
@@ -627,7 +626,10 @@ class _CallScreenState extends State<CallScreen>
     }
   }
 
-  Future<void> _generateTurn({String? userText, String? hiddenNote}) async {
+  Future<void> _generateTurn({
+    String? userText,
+    String? hiddenUserEvent,
+  }) async {
     if (!mounted || _popped || !_bootstrapReady) return;
     final serial = ++_turnSerial;
     setState(() {
@@ -640,6 +642,9 @@ class _CallScreenState extends State<CallScreen>
 
     if (userText != null) {
       _appendCallHistory('user', userText);
+    }
+    if (hiddenUserEvent != null && hiddenUserEvent.trim().isNotEmpty) {
+      _appendCallHistory('user', hiddenUserEvent.trim());
     }
 
     SentenceTtsPipeline? turnPipeline;
@@ -690,12 +695,6 @@ class _CallScreenState extends State<CallScreen>
       final elModel = await TtsSettings.getTtsElevenlabsModel();
       final v3 = ttsProvider == 'elevenlabs' && elModel == 'eleven_v3';
 
-      final structured = StructuredPrompt(
-        staticPart: staticPrompt,
-        profilePart: profilePrompt,
-        dynamicPart: dynamicParts.join('\n\n'),
-      );
-
       // ── 流水線就緒 ──
       final pipeline = SentenceTtsPipeline(
         characterId: _characterId,
@@ -741,36 +740,24 @@ class _CallScreenState extends State<CallScreen>
       pipeline.amplitude.level.addListener(levelSync);
 
       // ── LLM 流式 → 過濾 → 切句餵 TTS ──
-      // 空歷史保護：部分 provider 不接受空 messages
-      final outgoing = List<Map<String, String>>.from(_callHistory);
-      if (outgoing.isEmpty) {
-        outgoing.add({'role': 'user', 'content': '（電話接通了）'});
-      }
-
       final now = DateTime.now();
-      final weekdays = ['一', '二', '三', '四', '五', '六', '日'];
-      final callInstructions = <String>[
-        '【系統提示】',
-        '現在時間：${now.year}年${now.month}月${now.day}日 週${weekdays[now.weekday - 1]} ${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}',
-        '模式：語音通話中 — 口語化、簡短自然，像講電話。一句一句說，不要一大段。不要 markdown、不要動作描述或旁白，只說出口的話。',
-        if (v3)
-          '標記：可在句前加 [laughing], [sigh] 等英文標記控制語氣。'
-        else
-          '注意：不要輸出任何方括號標記（如 [sigh]）。',
-        '通話結束：如果你不想聊了（例如去忙、或是生氣），請回覆 <hangup/> 主動掛斷。',
-        ?hiddenNote,
-        if (_firstIncomingTurn && hiddenNote == null) '（你主動打的電話，對方接了）',
-      ].join('\n');
-
-      if (outgoing.isNotEmpty && outgoing.last['role'] == 'user') {
-        outgoing[outgoing.length - 1] = {
-          'role': 'user',
-          'content': '${outgoing.last['content']}\n\n$callInstructions',
-        };
-      } else {
-        outgoing.add({'role': 'user', 'content': callInstructions});
-      }
-      _firstIncomingTurn = false;
+      final turnPayload = CallPromptComposer.compose(
+        history: _callHistory,
+        dynamicParts: dynamicParts,
+        now: now,
+        allowAudioTags: v3,
+      );
+      final outgoing = turnPayload.messages;
+      final structured = StructuredPrompt(
+        staticPart: staticPrompt,
+        profilePart: profilePrompt,
+        dynamicPart: turnPayload.dynamicPart,
+        cacheStableDynamicPart: await _cacheStableDynamicPart(
+          provider: providerName,
+          model: model,
+          liveDynamicPart: turnPayload.dynamicPart,
+        ),
+      );
 
       if (!mounted || _popped || serial != _turnSerial) return;
       final rawBuf = StringBuffer();
@@ -921,6 +908,35 @@ class _CallScreenState extends State<CallScreen>
       }
       pipeline?.dispose();
     }
+  }
+
+  /// Claude 的 prompt cache 依序是 tools → system → messages。
+  /// 通話 runtime system 和文字聊天不同，因此模式切換時歷史 cache 必須
+  /// 重建一次；通話期間固定這份快照，避免時間／情緒每輪變動再次打斷。
+  Future<String?> _cacheStableDynamicPart({
+    required String provider,
+    required String model,
+    required String liveDynamicPart,
+  }) async {
+    final cacheEnabled = await MemorySettings.getEnablePromptCaching();
+    final isClaudeCache = TokenEstimator.isClaudePromptCacheModel(
+      provider: provider,
+      model: model,
+    );
+    if (!cacheEnabled || !isClaudeCache) {
+      _claudeCacheDynamicSnapshot = null;
+      _claudeCacheDynamicSnapshotKey = null;
+      return null;
+    }
+
+    final key =
+        '${widget.conversationId}|${provider.toLowerCase()}|'
+        '${model.toLowerCase()}|${L.locale}|call';
+    if (_claudeCacheDynamicSnapshotKey != key) {
+      _claudeCacheDynamicSnapshotKey = key;
+      _claudeCacheDynamicSnapshot = liveDynamicPart;
+    }
+    return _claudeCacheDynamicSnapshot ?? liveDynamicPart;
   }
 
   /// 直接說一段話（來電開場白）
