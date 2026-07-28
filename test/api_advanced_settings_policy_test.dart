@@ -5,7 +5,18 @@ import 'package:project_yanci/services/settings/memory_settings.dart';
 import 'package:project_yanci/widgets/api_advanced_settings.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'helpers/secure_storage_test_mock.dart';
+
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+  late SecureStorageTestMock secureStorage;
+
+  setUp(() {
+    secureStorage = SecureStorageTestMock()..install();
+  });
+
+  tearDown(() => secureStorage.uninstall());
+
   testWidgets('active Inkling with a key cannot re-enable prompt cache', (
     tester,
   ) async {

@@ -1,27 +1,22 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:project_yanci/screens/api_settings_screen.dart';
 import 'package:project_yanci/screens/tool_model_screen.dart';
 
+import 'helpers/secure_storage_test_mock.dart';
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
-  const secureStorageChannel = MethodChannel(
-    'plugins.it_nomads.com/flutter_secure_storage',
-  );
+  late SecureStorageTestMock secureStorage;
 
-  setUp(() async {
+  setUp(() {
     SharedPreferences.setMockInitialValues({});
-    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-        .setMockMethodCallHandler(secureStorageChannel, (_) async => null);
+    secureStorage = SecureStorageTestMock()..install();
   });
 
-  tearDown(() async {
-    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-        .setMockMethodCallHandler(secureStorageChannel, null);
-  });
+  tearDown(() => secureStorage.uninstall());
 
   testWidgets('API settings owns the default window summary model', (
     tester,
