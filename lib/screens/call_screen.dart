@@ -85,6 +85,7 @@ class _CallScreenState extends State<CallScreen>
   bool _speechAvailable = false;
   bool _popped = false;
   bool _endingForPoorSignal = false;
+  String? _ttsConfigurationError;
   ApiAdapter? _activeAdapter;
 
   final List<Map<String, String>> _callHistory = [];
@@ -225,8 +226,12 @@ class _CallScreenState extends State<CallScreen>
     if (overflow > 0) _callHistory.removeRange(0, overflow);
   }
 
-  String _idleHint() =>
-      _micMode == 'auto' ? L.get('call_auto_hint') : L.get('call_hold');
+  String _idleHint() {
+    if (_ttsConfigurationError != null) {
+      return L.pick(en: 'Voice output is not configured', zhTW: '尚未設定語音輸出');
+    }
+    return _micMode == 'auto' ? L.get('call_auto_hint') : L.get('call_hold');
+  }
 
   // ═══════════════ 來電與撥號 ═══════════════
 
@@ -748,6 +753,32 @@ class _CallScreenState extends State<CallScreen>
             identical(_pipeline, pipeline)) {
           _handlePoorSignal();
         }
+      };
+      pipeline.onConfigurationFailure = (reason) {
+        if (!mounted ||
+            _popped ||
+            serial != _turnSerial ||
+            !identical(_pipeline, pipeline)) {
+          return;
+        }
+        final firstFailure = _ttsConfigurationError == null;
+        setState(() {
+          _ttsConfigurationError = reason;
+          _statusText = _idleHint();
+          if (firstFailure) {
+            _chatLog.add(
+              _CallMessage(
+                text: L.pick(
+                  en: '⚠ Voice output needs attention: $reason',
+                  zhTW: '⚠ 語音輸出需要設定：$reason',
+                ),
+                isUser: false,
+                isError: true,
+              ),
+            );
+          }
+        });
+        _scrollLogToBottom();
       };
       // 播放振幅 → 聲波
       void levelSync() {

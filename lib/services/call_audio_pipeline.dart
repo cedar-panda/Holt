@@ -7,6 +7,7 @@ import 'package:flutter/services.dart' show rootBundle;
 import 'package:flutter_soloud/flutter_soloud.dart';
 import 'package:http/http.dart' as http;
 import '../memory/database.dart';
+import 'call_tts_failure_policy.dart';
 import 'settings_manager.dart';
 import 'tts_service.dart';
 
@@ -196,6 +197,9 @@ class SentenceTtsPipeline {
   bool _firstAudioFired = false;
   VoidCallback? onAudioFailure;
   bool _audioFailureFired = false;
+  ValueChanged<String>? onConfigurationFailure;
+  bool _configurationFailureFired = false;
+  String? _configurationFailure;
 
   // 掛斷容錯：單次 TTS 失敗只跳句，連續 ≥2 次（或整輪一聲沒出）
   // 才通報 onAudioFailure。之前一次失敗就掛斷，網路抖一下電話就沒了。
@@ -223,6 +227,8 @@ class SentenceTtsPipeline {
     _cancelled = false;
     _firstAudioFired = false;
     _audioFailureFired = false;
+    _configurationFailureFired = false;
+    _configurationFailure = null;
     _consecutiveFailures = 0;
     _anyAudioOk = false;
     _audioBySentence.clear();
@@ -341,7 +347,12 @@ class SentenceTtsPipeline {
     } catch (e) {
       debugPrint('通話 TTS 第 $idx 句失敗: $e');
       _audioBySentence[idx] = null; // 失敗跳過，不卡整條流水線
-      _recordFailure();
+      if (e is CallTtsConfigurationException) {
+        _configurationFailure ??= e.message;
+        _notifyConfigurationFailure();
+      } else {
+        _recordFailure();
+      }
     }
   }
 
@@ -357,12 +368,24 @@ class SentenceTtsPipeline {
     onAudioFailure?.call();
   }
 
+  void _notifyConfigurationFailure() {
+    if (_cancelled || _configurationFailureFired) return;
+    final reason = _configurationFailure;
+    if (reason == null) return;
+    _configurationFailureFired = true;
+    onConfigurationFailure?.call(reason);
+  }
+
   Future<Uint8List> _elevenGenerate(
     String text, {
     String previousText = '',
   }) async {
-    if (_elKey.isEmpty) throw Exception('ElevenLabs API Key 未設定');
-    if (_elVoiceId.isEmpty) throw Exception('ElevenLabs Voice ID 未設定');
+    if (_elKey.isEmpty) {
+      throw const CallTtsConfigurationException('ElevenLabs API Key 未設定');
+    }
+    if (_elVoiceId.isEmpty) {
+      throw const CallTtsConfigurationException('ElevenLabs Voice ID 未設定');
+    }
     final resp = await http
         .post(
           Uri.parse(
@@ -390,13 +413,20 @@ class SentenceTtsPipeline {
     if (resp.statusCode != 200) {
       // 帶上 body——ElevenLabs 的 400 會在 body 裡寫明真正原因，
       // 別只丟個裸狀態碼，下次還得猜。
+      if (CallTtsFailurePolicy.isConfigurationStatus(resp.statusCode)) {
+        throw CallTtsConfigurationException(
+          'ElevenLabs ${resp.statusCode}: ${resp.body}',
+        );
+      }
       throw Exception('ElevenLabs ${resp.statusCode}: ${resp.body}');
     }
     return resp.bodyBytes;
   }
 
   Future<Uint8List> _openaiGenerate(String text) async {
-    if (_oaKey.isEmpty) throw Exception('OpenAI TTS API Key 未設定');
+    if (_oaKey.isEmpty) {
+      throw const CallTtsConfigurationException('OpenAI TTS API Key 未設定');
+    }
     final resp = await http
         .post(
           Uri.parse('https://api.openai.com/v1/audio/speech'),
@@ -413,6 +443,9 @@ class SentenceTtsPipeline {
         )
         .timeout(const Duration(seconds: 30));
     if (resp.statusCode != 200) {
+      if (CallTtsFailurePolicy.isConfigurationStatus(resp.statusCode)) {
+        throw CallTtsConfigurationException('OpenAI TTS ${resp.statusCode}');
+      }
       throw Exception('OpenAI TTS ${resp.statusCode}');
     }
     return resp.bodyBytes;
@@ -525,7 +558,10 @@ class SentenceTtsPipeline {
     }
     await _allDone?.future;
     // 有內容卻整輪一聲沒播出來 = 真信號差（單句失敗跳過不算）
-    if (!_cancelled && _totalSentences > 0 && !_anyAudioOk) {
+    if (!_cancelled &&
+        _configurationFailure == null &&
+        _totalSentences > 0 &&
+        !_anyAudioOk) {
       _notifyAudioFailure();
     }
     await _saveToLibrary();
