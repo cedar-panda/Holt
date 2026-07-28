@@ -17,6 +17,7 @@ import '../widgets/atom_thinking.dart';
 import '../services/api_adapter.dart';
 import '../services/settings_manager.dart';
 import '../services/token_estimator.dart';
+import '../services/prompt_cache_channels.dart';
 import '../services/model_cost_policy.dart';
 import '../services/memory_actions.dart';
 import '../services/image_gen_service.dart';
@@ -154,8 +155,7 @@ class _ChatScreenState extends State<ChatScreen> {
   int? _coinSnapshotUser;
   String? _windowSummaryId;
   String? _cacheWindowSummaryStaticSnapshot;
-  String? _claudeCacheDynamicSnapshot;
-  String? _claudeCacheDynamicSnapshotKey;
+  final PromptCacheChannels _promptCacheChannels = PromptCacheChannels();
   String? _promptLocaleSnapshot;
   OverlayEntry? _modelHintOverlay;
   bool _manualSummarySelecting = false;
@@ -218,6 +218,9 @@ class _ChatScreenState extends State<ChatScreen> {
   static final _callDividerRe = RegExp(
     r'^\[call_event:(ended|signal_lost|declined|declined_by_you|missed)'
     r'(?:\s+(\d{2}:\d{2}))?\]',
+  );
+  static final _callActionRe = RegExp(
+    r'^\[call_action:(dial_to_character|accept_character_call)\]$',
   );
 
   /// 消息尾送禮標記（卡片跟隨氣泡顯示）
@@ -578,20 +581,16 @@ class _ChatScreenState extends State<ChatScreen> {
       provider: provider,
       model: model,
     );
-    if (!cacheEnabled || !isClaudeCache) {
-      _claudeCacheDynamicSnapshot = null;
-      _claudeCacheDynamicSnapshotKey = null;
-      return null;
-    }
-
-    final key =
-        '${widget.conversationId}|${provider.toLowerCase()}|'
-        '${model.toLowerCase()}|${L.locale}';
-    if (_claudeCacheDynamicSnapshotKey != key) {
-      _claudeCacheDynamicSnapshotKey = key;
-      _claudeCacheDynamicSnapshot = liveDynamicPart;
-    }
-    return _claudeCacheDynamicSnapshot ?? liveDynamicPart;
+    return _promptCacheChannels.stableDynamic(
+      cacheEnabled: cacheEnabled,
+      isClaudeCache: isClaudeCache,
+      conversationId: widget.conversationId,
+      provider: provider,
+      model: model,
+      locale: L.locale,
+      channel: PromptCacheChannel.text,
+      liveDynamicPart: liveDynamicPart,
+    );
   }
 
   /// 消費本輪 `<buy>` 結果：送 user 成功 → 系統訊息落庫並即時上屏；
@@ -2756,6 +2755,7 @@ class _ChatScreenState extends State<ChatScreen> {
         model: model,
         liveDynamicPart: liveDynamicPart,
       ),
+      cacheChannel: PromptCacheChannel.text,
     );
 
     if (mounted) {
@@ -3703,6 +3703,7 @@ class _ChatScreenState extends State<ChatScreen> {
         model: model,
         liveDynamicPart: liveDynamicPart,
       ),
+      cacheChannel: PromptCacheChannel.text,
     );
 
     if (mounted) {
@@ -4894,6 +4895,10 @@ class _ChatScreenState extends State<ChatScreen> {
     for (var srcIdx = 0; srcIdx < renderSource.length; srcIdx++) {
       final (msg, i) = renderSource[srcIdx];
 
+      // 通話操作是模型可見的 user action，入庫以維持跨模式 append-only
+      // cache prefix；純協議標記不在聊天 UI 顯示。
+      if (_callActionRe.hasMatch(msg.text.trim())) continue;
+
       // ═══ 通話結束/中斷 → 居中分割線（declined/missed 維持隱藏）═══
       final callMatch = _callDividerRe.firstMatch(msg.text.trim());
       if (callMatch != null) {
@@ -5733,6 +5738,30 @@ class _ChatScreenState extends State<ChatScreen> {
 
   // ═══════════════ 通話 ═══════════════
 
+  /// 通話從文字窗口目前的有效錨點接續，不能重新切成「最近 N 則」。
+  /// 兩種 mode 的 system 不同，但 messages 必須維持同一條 append-only
+  /// 歷史，OpenRouter 才能保留 text/call 兩份 prefix cache。
+  List<Map<String, String>> _callInitialHistory() {
+    final nonEmpty = _messages
+        .where((message) => message.text.trim().isNotEmpty)
+        .toList(growable: false);
+    if (nonEmpty.isEmpty) return <Map<String, String>>[];
+
+    var start = _contextKeepFrom.clamp(0, nonEmpty.length - 1);
+    while (start < nonEmpty.length - 1 && !nonEmpty[start].isUser) {
+      start++;
+    }
+    return nonEmpty
+        .skip(start)
+        .map(
+          (message) => <String, String>{
+            'role': message.isUser ? 'user' : 'assistant',
+            'content': message.text,
+          },
+        )
+        .toList(growable: false);
+  }
+
   /// 打開通話界面（outgoing = 用戶主動；incoming = 模型 `<call>` 發起）
   Future<void> _openCall({
     bool incoming = false,
@@ -5795,6 +5824,8 @@ class _ChatScreenState extends State<ChatScreen> {
           cacheStaticSnapshot: _cacheWindowSummaryStaticSnapshot,
           staticPart: callStaticPart,
           profilePart: callProfilePart,
+          initialHistory: _callInitialHistory(),
+          cacheChannels: _promptCacheChannels,
         ),
       ),
     );

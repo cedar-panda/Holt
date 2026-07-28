@@ -147,7 +147,7 @@ class _DeveloperDiagnosticsScreenState
                       );
                     }
 
-                    // 只跟相同 session + model 的上一筆主請求比較。
+                    // 只跟相同 session + model + channel 的上一筆主請求比較。
                     // 不同聊天窗口的摘要本來就不同，跨窗比較會製造假漂移。
                     final prevMain = CacheDebugLog.previousComparableMain(i);
                     final prev = (prevMain?['hash'] ?? '').toString();
@@ -212,6 +212,13 @@ class _DeveloperDiagnosticsScreenState
                         e['context_stall_count'] as int? ?? 0;
                     final dynamicSnapshotActive =
                         e['dynamic_snapshot_active'] == true;
+                    final cacheChannel = (e['cache_channel'] ?? 'text')
+                        .toString();
+                    final resumeIndices =
+                        (e['channel_resume_indices'] as List?)
+                            ?.whereType<int>()
+                            .toList() ??
+                        const <int>[];
                     var ttlNote = '';
                     if (sentTtl.isNotEmpty ||
                         upstreamTtl.isNotEmpty ||
@@ -257,6 +264,10 @@ class _DeveloperDiagnosticsScreenState
                     }
                     if (dynamicSnapshotActive) {
                       requestTailNote += '\n    ↳ runtime system：窗口固定快照';
+                    }
+                    requestTailNote += '\n    ↳ cache channel：$cacheChannel';
+                    if (resumeIndices.isNotEmpty) {
+                      requestTailNote += ' · resume ${resumeIndices.join(',')}';
                     }
                     if (contextCacheStalled) {
                       requestTailNote +=

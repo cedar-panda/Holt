@@ -19,8 +19,14 @@ void main() {
     expect(payload.messages.single['content'], isNot(contains('<hangup/>')));
     expect(payload.dynamicPart, contains('【系統提示】'));
     expect(payload.dynamicPart, contains('<hangup/>'));
-    expect(payload.dynamicPart, contains('「（撥打電話給你）」表示對方正在打給你'));
-    expect(payload.dynamicPart, contains('「（接聽電話）」表示對方已接聽'));
+    expect(
+      payload.dynamicPart,
+      contains(CallPromptComposer.dialToCharacterAction),
+    );
+    expect(
+      payload.dynamicPart,
+      contains(CallPromptComposer.acceptCharacterCallAction),
+    );
   });
 
   test('uses a user action only when the message history is empty', () {

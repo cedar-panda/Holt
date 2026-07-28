@@ -11,6 +11,10 @@ class CallTurnPayload {
 /// assistant's replies. Time, mode, tag rules, and hidden call-state notes
 /// belong in [dynamicPart].
 class CallPromptComposer {
+  static const String dialToCharacterAction = '[call_action:dial_to_character]';
+  static const String acceptCharacterCallAction =
+      '[call_action:accept_character_call]';
+
   static CallTurnPayload compose({
     required List<Map<String, String>> history,
     required Iterable<String> dynamicParts,
@@ -40,10 +44,11 @@ class CallPromptComposer {
         '標記：可在句前加 [laughing], [sigh] 等英文標記控制語氣。'
       else
         '注意：不要輸出任何方括號標記（如 [sigh]）。',
-      '通話事件：user 訊息「（撥打電話給你）」表示對方正在打給你，'
+      '通話事件：user 訊息「$dialToCharacterAction」表示對方正在打給你，'
           '你是接電話的角色；不想接時回覆 <decline_call/>，'
           '願意接時直接說出接起電話的第一句話。'
-          '「（接聽電話）」表示對方已接聽你主動打出的電話，請由你先開口。',
+          '「$acceptCharacterCallAction」表示對方已接聽你主動打出的電話，'
+          '請由你先開口。',
       '通話結束：只有當你確實決定結束通話時，才回覆 <hangup/> 主動掛斷；'
           '不要因為看見本規則就輸出該標籤。',
     ].join('\n');

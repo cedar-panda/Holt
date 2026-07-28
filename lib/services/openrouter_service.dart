@@ -25,10 +25,16 @@ class OpenRouterService implements ApiAdapter {
   /// 最近一次 API 回覆的 caching 統計（用於測試/debug）
   static Map<String, int> lastCacheStats = {};
   static Map<String, Object?> lastCacheDiagnostics = {};
+  static final Map<String, List<_CacheChannelCheckpoint>>
+  _cacheChannelCheckpoints = <String, List<_CacheChannelCheckpoint>>{};
 
   static void resetCacheStats() {
     lastCacheStats = {};
     lastCacheDiagnostics = {};
+  }
+
+  static void resetCacheChannelCheckpointsForTesting() {
+    _cacheChannelCheckpoints.clear();
   }
 
   static String get _sessionId {
@@ -448,6 +454,23 @@ class OpenRouterService implements ApiAdapter {
     }
 
     // ═══ 滾動 breakpoint（共用助手，1h TTL）═══
+    final cacheChannel = structuredPrompt?.cacheChannel ?? 'text';
+    final historyStartIndex = _firstHistoryIndex(allMessages);
+    final checkpointKey = _cacheChannelCheckpointKey(
+      model: model,
+      channel: cacheChannel,
+    );
+    final resumeSourceIndices = enableCache
+        ? _resumeSourceIndices(checkpointKey, messages)
+        : const <int>[];
+    for (final sourceIndex in resumeSourceIndices) {
+      CacheBreakpoint.applyAt(
+        allMessages,
+        historyStartIndex + sourceIndex,
+        cacheControl: cacheControl,
+      );
+    }
+
     final latestUserIndex = CacheBreakpoint.latestUserIndex(allMessages);
     if (enableCache) {
       CacheBreakpoint.applyRolling(
@@ -458,6 +481,7 @@ class OpenRouterService implements ApiAdapter {
             : allMessages.length,
         cacheControl: cacheControl,
       );
+      _rememberCurrentCheckpoint(checkpointKey, messages);
     }
 
     final rollingBreakpointIndex = _latestNonSystemCacheControlIndex(
@@ -481,6 +505,8 @@ class OpenRouterService implements ApiAdapter {
       'use_structured': useStructured,
       'enable_cache': enableCache,
       'session_id': enableCache ? _sessionId : null,
+      'cache_channel': cacheChannel,
+      'channel_resume_indices': resumeSourceIndices,
       'cache_control': cacheControl,
       'static_tokens': structuredPrompt == null
           ? TokenEstimator.estimate(systemPrompt ?? '')
@@ -579,6 +605,74 @@ class OpenRouterService implements ApiAdapter {
     return i;
   }
 
+  String _cacheChannelCheckpointKey({
+    required String model,
+    required String channel,
+  }) {
+    return '${apiKey.hashCode}|$_sessionId|'
+        '${model.trim().toLowerCase()}|${channel.trim()}';
+  }
+
+  static List<int> _resumeSourceIndices(
+    String key,
+    List<Map<String, String>> messages,
+  ) {
+    final checkpoints = _cacheChannelCheckpoints[key];
+    if (checkpoints == null || checkpoints.isEmpty || messages.isEmpty) {
+      return const <int>[];
+    }
+
+    final resolved = <int>{};
+    for (final checkpoint in checkpoints) {
+      final direct = checkpoint.sourceIndex;
+      if (direct >= 0 &&
+          direct < messages.length &&
+          checkpoint.matches(messages[direct])) {
+        resolved.add(direct);
+        continue;
+      }
+      for (var i = messages.length - 1; i >= 0; i--) {
+        if (checkpoint.matches(messages[i])) {
+          resolved.add(i);
+          break;
+        }
+      }
+    }
+    final sorted = resolved.toList()..sort();
+    return sorted;
+  }
+
+  static void _rememberCurrentCheckpoint(
+    String key,
+    List<Map<String, String>> messages,
+  ) {
+    var latestUser = -1;
+    for (var i = messages.length - 1; i >= 0; i--) {
+      if (messages[i]['role'] == 'user') {
+        latestUser = i;
+        break;
+      }
+    }
+    final checkpointIndex = latestUser > 0
+        ? latestUser - 1
+        : (messages.isNotEmpty ? messages.length - 1 : -1);
+    if (checkpointIndex < 0) return;
+
+    final next = _CacheChannelCheckpoint.fromMessage(
+      checkpointIndex,
+      messages[checkpointIndex],
+    );
+    final checkpoints = _cacheChannelCheckpoints.putIfAbsent(
+      key,
+      () => <_CacheChannelCheckpoint>[],
+    );
+    checkpoints.removeWhere((checkpoint) => checkpoint.sameIdentity(next));
+    checkpoints.add(next);
+    if (checkpoints.length > 2) {
+      checkpoints.removeRange(0, checkpoints.length - 2);
+    }
+  }
+
   int _latestNonSystemCacheControlIndex(List<Map<String, dynamic>> messages) {
     for (int i = messages.length - 1; i >= 0; i--) {
       if (messages[i]['role'] == 'system') continue;
@@ -651,6 +745,9 @@ class OpenRouterService implements ApiAdapter {
       'internal': requestDiagnostics['is_structured'] != true,
       'segs': requestDiagnostics['static_segs'] ?? const <String>[],
       'session_id': requestDiagnostics['session_id'],
+      'cache_channel': requestDiagnostics['cache_channel'],
+      'channel_resume_indices':
+          requestDiagnostics['channel_resume_indices'] ?? const <int>[],
       'model': requestDiagnostics['model'],
       'sent_ttl': (requestDiagnostics['cache_control'] as Map?)?['ttl'],
       'upstream_ttl': requestDiagnostics['upstream_ttl'],
@@ -726,6 +823,45 @@ class OpenRouterService implements ApiAdapter {
       }
     }
     return null;
+  }
+}
+
+class _CacheChannelCheckpoint {
+  final int sourceIndex;
+  final String role;
+  final String content;
+  final String imageDataUrl;
+
+  const _CacheChannelCheckpoint({
+    required this.sourceIndex,
+    required this.role,
+    required this.content,
+    required this.imageDataUrl,
+  });
+
+  factory _CacheChannelCheckpoint.fromMessage(
+    int sourceIndex,
+    Map<String, String> message,
+  ) {
+    return _CacheChannelCheckpoint(
+      sourceIndex: sourceIndex,
+      role: message['role'] ?? 'user',
+      content: message['content'] ?? '',
+      imageDataUrl: message['image_data_url'] ?? '',
+    );
+  }
+
+  bool matches(Map<String, String> message) {
+    return role == (message['role'] ?? 'user') &&
+        content == (message['content'] ?? '') &&
+        imageDataUrl == (message['image_data_url'] ?? '');
+  }
+
+  bool sameIdentity(_CacheChannelCheckpoint other) {
+    return sourceIndex == other.sourceIndex &&
+        role == other.role &&
+        content == other.content &&
+        imageDataUrl == other.imageDataUrl;
   }
 }
 

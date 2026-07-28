@@ -2,7 +2,7 @@
 ///
 /// 每輪 OpenRouter 請求記一條指紋，開發者診斷頁「Cache Debug」讀取。
 /// 判讀方法：
-/// · 同 session + model 的 static_hash 跟上一輪不同 → 靜態前綴漂移
+/// · 同 session + model + channel 的 static_hash 跟上一輪不同 → 靜態前綴漂移
 /// · hash 沒變但 read=0、write 全量 → TTL 過期（隔太久）或路由漂移
 /// · static_t 為 0 的行 → 摘要壓縮等內部工具請求，不是聊天主請求
 class CacheDebugLog {
@@ -15,6 +15,7 @@ class CacheDebugLog {
     final isMainRequest = enriched['internal'] != true;
     final sessionId = (enriched['session_id'] ?? '').toString();
     final model = (enriched['model'] ?? '').toString();
+    final channel = (enriched['cache_channel'] ?? 'text').toString();
     if (isMainRequest && sessionId.isNotEmpty && model.isNotEmpty) {
       final staticTokens = enriched['static_t'] as int? ?? 0;
       final dynamicTokens = enriched['dynamic_t'] as int? ?? 0;
@@ -26,7 +27,7 @@ class CacheDebugLog {
       final looksStalled =
           historyBeyondPrefix >= 1024 &&
           readTokens <= stablePrefixTokens + tolerance;
-      final key = '$sessionId|$model';
+      final key = '$sessionId|$model|$channel';
       final nextCount = looksStalled ? (_contextStallCounts[key] ?? 0) + 1 : 0;
       _contextStallCounts[key] = nextCount;
       enriched['context_stall_count'] = nextCount;
@@ -49,6 +50,7 @@ class CacheDebugLog {
 
     final sessionId = (current['session_id'] ?? '').toString();
     final model = (current['model'] ?? '').toString();
+    final channel = (current['cache_channel'] ?? 'text').toString();
     if (sessionId.isEmpty || model.isEmpty) return null;
 
     for (var i = currentIndex + 1; i < entries.length; i++) {
@@ -56,6 +58,9 @@ class CacheDebugLog {
       if (candidate['internal'] == true) continue;
       if ((candidate['session_id'] ?? '').toString() != sessionId) continue;
       if ((candidate['model'] ?? '').toString() != model) continue;
+      if ((candidate['cache_channel'] ?? 'text').toString() != channel) {
+        continue;
+      }
       return candidate;
     }
     return null;

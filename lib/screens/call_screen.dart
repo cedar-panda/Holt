@@ -11,6 +11,7 @@ import '../services/token_estimator.dart';
 import '../services/token_tracker.dart';
 import '../services/call_audio_pipeline.dart';
 import '../services/call_prompt_composer.dart';
+import '../services/prompt_cache_channels.dart';
 import '../services/cache_stats_helper.dart';
 import '../memory/retriever.dart';
 import '../memory/database.dart';
@@ -47,6 +48,8 @@ class CallScreen extends StatefulWidget {
   /// 聊天已建好的緩存；沒傳則退回通話自拼的舊前綴。
   final String? staticPart;
   final String? profilePart;
+  final List<Map<String, String>> initialHistory;
+  final PromptCacheChannels? cacheChannels;
 
   const CallScreen({
     super.key,
@@ -57,6 +60,8 @@ class CallScreen extends StatefulWidget {
     this.cacheStaticSnapshot,
     this.staticPart,
     this.profilePart,
+    this.initialHistory = const <Map<String, String>>[],
+    this.cacheChannels,
   });
 
   @override
@@ -84,7 +89,7 @@ class _CallScreenState extends State<CallScreen>
 
   final List<Map<String, String>> _callHistory = [];
   final List<_CallMessage> _chatLog = [];
-  static const int _maxCallHistoryEntries = 40;
+  static const int _maxCallHistoryEntries = 500;
   bool _logExpanded = true;
   final ScrollController _logScroll = ScrollController();
   final TokenTracker _tokenTracker = TokenTracker();
@@ -107,8 +112,7 @@ class _CallScreenState extends State<CallScreen>
   bool _bootstrapReady = false;
   bool _bootstrapFailed = false;
   bool _sendingUserTurn = false;
-  String? _claudeCacheDynamicSnapshot;
-  String? _claudeCacheDynamicSnapshotKey;
+  late final PromptCacheChannels _promptCacheChannels;
 
   // 來電
   final RingtonePlayer _ringtone = RingtonePlayer();
@@ -138,6 +142,7 @@ class _CallScreenState extends State<CallScreen>
   void initState() {
     super.initState();
     _phase = widget.incoming ? _CallPhase.ringing : _CallPhase.dialing;
+    _promptCacheChannels = widget.cacheChannels ?? PromptCacheChannels();
     _statusText = widget.incoming
         ? L.get('call_incoming')
         : (L.pick(en: 'Dialing…', zhTW: '正在撥號'));
@@ -171,10 +176,16 @@ class _CallScreenState extends State<CallScreen>
         _micMode = micMode;
       });
 
-      // 最近聊天做上下文——通話中她記得剛剛聊了什麼
-      final recent = await CallContextLoader.recentHistory(
-        widget.conversationId,
-      );
+      // 優先沿用文字窗口的有效錨點歷史，讓 text/call 兩條 cache 都建立在
+      // 同一條 append-only messages 上。獨立開啟 CallScreen 才走 DB 保底。
+      final recent = widget.initialHistory.isNotEmpty
+          ? widget.initialHistory
+                .map((message) => Map<String, String>.from(message))
+                .toList(growable: false)
+          : await CallContextLoader.recentHistory(
+              widget.conversationId,
+              limit: _maxCallHistoryEntries,
+            );
       if (!mounted || _popped) return;
       _callHistory.addAll(recent);
       _trimCallHistory();
@@ -227,7 +238,9 @@ class _CallScreenState extends State<CallScreen>
       if (!_popped) HapticFeedback.lightImpact();
     });
     // 隱藏對話回合：決定接聽或掛斷
-    await _generateTurn(hiddenUserEvent: '（撥打電話給你）');
+    await _generateTurn(
+      hiddenUserEvent: CallPromptComposer.dialToCharacterAction,
+    );
   }
 
   void _declineUserCall() {
@@ -283,11 +296,17 @@ class _CallScreenState extends State<CallScreen>
     // 開場白：標籤裡帶了就直接說，沒帶就讓她自己開口
     final opening = widget.openingLine.trim();
     if (opening.isNotEmpty) {
-      _appendCallHistory('user', '（接聽電話）');
+      await _recordHiddenUserEvent(
+        CallPromptComposer.acceptCharacterCallAction,
+      );
+      if (!mounted || _popped) return;
       await _speakDirect(opening);
       if (_micMode == 'auto' && mounted) _startAutoListen();
     } else {
-      await _generateTurn(userText: null, hiddenUserEvent: '（接聽電話）');
+      await _generateTurn(
+        userText: null,
+        hiddenUserEvent: CallPromptComposer.acceptCharacterCallAction,
+      );
     }
   }
 
@@ -644,7 +663,8 @@ class _CallScreenState extends State<CallScreen>
       _appendCallHistory('user', userText);
     }
     if (hiddenUserEvent != null && hiddenUserEvent.trim().isNotEmpty) {
-      _appendCallHistory('user', hiddenUserEvent.trim());
+      await _recordHiddenUserEvent(hiddenUserEvent);
+      if (!mounted || _popped || serial != _turnSerial) return;
     }
 
     SentenceTtsPipeline? turnPipeline;
@@ -757,6 +777,7 @@ class _CallScreenState extends State<CallScreen>
           model: model,
           liveDynamicPart: turnPayload.dynamicPart,
         ),
+        cacheChannel: PromptCacheChannel.call,
       );
 
       if (!mounted || _popped || serial != _turnSerial) return;
@@ -910,9 +931,23 @@ class _CallScreenState extends State<CallScreen>
     }
   }
 
+  Future<void> _recordHiddenUserEvent(String event) async {
+    final normalized = event.trim();
+    if (normalized.isEmpty) return;
+    _appendCallHistory('user', normalized);
+    await DatabaseHelper.insertMessage(
+      Message(
+        conversationId: widget.conversationId,
+        characterId: _characterId,
+        text: normalized,
+        isUser: true,
+      ),
+    );
+  }
+
   /// Claude 的 prompt cache 依序是 tools → system → messages。
-  /// 通話 runtime system 和文字聊天不同，因此模式切換時歷史 cache 必須
-  /// 重建一次；通話期間固定這份快照，避免時間／情緒每輪變動再次打斷。
+  /// 通話 runtime system 和文字聊天不同，因此各自保存一份穩定快照；
+  /// 跨模式時由 OpenRouter adapter 補回該通道的歷史 breakpoint。
   Future<String?> _cacheStableDynamicPart({
     required String provider,
     required String model,
@@ -923,20 +958,16 @@ class _CallScreenState extends State<CallScreen>
       provider: provider,
       model: model,
     );
-    if (!cacheEnabled || !isClaudeCache) {
-      _claudeCacheDynamicSnapshot = null;
-      _claudeCacheDynamicSnapshotKey = null;
-      return null;
-    }
-
-    final key =
-        '${widget.conversationId}|${provider.toLowerCase()}|'
-        '${model.toLowerCase()}|${L.locale}|call';
-    if (_claudeCacheDynamicSnapshotKey != key) {
-      _claudeCacheDynamicSnapshotKey = key;
-      _claudeCacheDynamicSnapshot = liveDynamicPart;
-    }
-    return _claudeCacheDynamicSnapshot ?? liveDynamicPart;
+    return _promptCacheChannels.stableDynamic(
+      cacheEnabled: cacheEnabled,
+      isClaudeCache: isClaudeCache,
+      conversationId: widget.conversationId,
+      provider: provider,
+      model: model,
+      locale: L.locale,
+      channel: PromptCacheChannel.call,
+      liveDynamicPart: liveDynamicPart,
+    );
   }
 
   /// 直接說一段話（來電開場白）

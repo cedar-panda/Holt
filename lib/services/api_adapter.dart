@@ -10,12 +10,14 @@ class StructuredPrompt {
   final String? profilePart;
   final String dynamicPart;
   final String? cacheStableDynamicPart;
+  final String cacheChannel;
 
   StructuredPrompt({
     required this.staticPart,
     this.profilePart,
     this.dynamicPart = '',
     this.cacheStableDynamicPart,
+    this.cacheChannel = 'text',
   });
 
   /// Cache off 用即時 dynamic；Claude cache on 用窗口固定快照。
@@ -105,6 +107,20 @@ abstract class ApiAdapter {
 /// 掛在「最新 user 之前的最後一條消息」的最後一個 block 上，
 /// 緩存邊界停在純歷史上，最新 user 永遠不帶 cache_control。
 class CacheBreakpoint {
+  static void applyAt(
+    List<Map<String, dynamic>> allMessages,
+    int index, {
+    Map<String, String>? cacheControl,
+  }) {
+    if (index < 0 || index >= allMessages.length) return;
+    final blocks = toBlocks(allMessages[index]['content']);
+    if (blocks.isEmpty) return;
+    blocks.last['cache_control'] = Map<String, String>.from(
+      cacheControl ?? const {'type': 'ephemeral'},
+    );
+    allMessages[index]['content'] = blocks;
+  }
+
   static void applyRolling(
     List<Map<String, dynamic>> allMessages, {
     int minIndex = 1,
@@ -121,14 +137,7 @@ class CacheBreakpoint {
     if (limit <= minIndex) return;
     final idx = limit - 1;
 
-    final content = allMessages[idx]['content'];
-
-    // 無論原本是 List 還是 String，都統一轉為 blocks 格式
-    final blocks = toBlocks(content);
-    if (blocks.isNotEmpty) {
-      blocks.last['cache_control'] = Map<String, String>.from(control);
-    }
-    allMessages[idx]['content'] = blocks;
+    applyAt(allMessages, idx, cacheControl: control);
   }
 
   static int latestUserIndex(List<Map<String, dynamic>> messages) {

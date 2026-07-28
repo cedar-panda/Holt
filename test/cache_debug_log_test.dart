@@ -97,4 +97,23 @@ void main() {
 
     expect(CacheDebugLog.previousComparableMain(0), isNull);
   });
+
+  test('fingerprint comparison does not cross text and call channels', () {
+    CacheDebugLog.add(<String, Object?>{
+      'session_id': 'conv-a',
+      'model': 'claude-sonnet-4',
+      'cache_channel': 'text',
+      'hash': 'text-older',
+      'internal': false,
+    });
+    CacheDebugLog.add(<String, Object?>{
+      'session_id': 'conv-a',
+      'model': 'claude-sonnet-4',
+      'cache_channel': 'call',
+      'hash': 'call-latest',
+      'internal': false,
+    });
+
+    expect(CacheDebugLog.previousComparableMain(0), isNull);
+  });
 }

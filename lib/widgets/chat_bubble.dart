@@ -579,6 +579,7 @@ class _ChatBubbleState extends State<ChatBubble>
         // 語音標籤（v3 audio tags 含中文變體）永不顯示——它們只給 TTS
         .replaceAll(TtsService.audioTagRe, '')
         .replaceAll(RegExp(r'\[call_event:[^\]]*\]'), '') // 通話事件隱藏
+        .replaceAll(RegExp(r'\[call_action:[^\]]*\]'), '') // 通話操作隱藏
         .replaceAll(RegExp(r'\[transfer:\d+\]'), '') // 轉帳標記隱藏（卡片顯示）
         .replaceAll(RegExp(r'\[gift:[^\]\n]{1,40}\]'), '') // 送禮標記隱藏
         .replaceAll(RegExp(r'\[scratch_gift:\w+\]'), '') // 刮刮卡禮物標記隱藏
