@@ -260,7 +260,7 @@ class _MemoryScreenState extends State<MemoryScreen>
                 decoration: InputDecoration(
                   labelText: L.pick(
                     en: 'Category',
-                    zhTW: '類別（情緒/關係/偏好/約定/習慣/重要事件）',
+                    zhTW: '類別（長期情緒/關係/偏好/約定/習慣/重要事件）',
                   ),
                   labelStyle: YanciTheme.bodySmall,
                 ),

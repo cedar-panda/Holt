@@ -47,6 +47,7 @@ class InputBar extends StatefulWidget {
   final bool isSendBlocked;
   final VoidCallback? onStopGeneration;
   final TextEditingController? externalController;
+  final String? hintText;
 
   const InputBar({
     super.key,
@@ -70,6 +71,7 @@ class InputBar extends StatefulWidget {
     this.isSendBlocked = false,
     this.onStopGeneration,
     this.externalController,
+    this.hintText,
   });
 
   @override
@@ -509,7 +511,8 @@ class _InputBarState extends State<InputBar> with TickerProviderStateMixin {
                               minLines: 1,
                               style: YanciTheme.bodyText,
                               decoration: InputDecoration(
-                                hintText: L.get('input_hint'),
+                                hintText:
+                                    widget.hintText ?? L.get('input_hint'),
                                 hintStyle: YanciTheme.bodyText.copyWith(
                                   color: YanciTheme.textSecondary.withValues(
                                     alpha: 0.4,

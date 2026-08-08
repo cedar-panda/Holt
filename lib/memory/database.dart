@@ -18,7 +18,7 @@ class DatabaseHelper {
   static Future<Database>? _dbInitFuture;
   static Future<Database> Function() _databaseInitializer = _initDatabase;
   static const String _dbName = 'yanci.db';
-  static const int _dbVersion = 40;
+  static const int _dbVersion = 41;
   static final Random _windowIdRandom = Random.secure();
 
   static Future<Database> get database async {
@@ -159,6 +159,10 @@ class DatabaseHelper {
         draw_style TEXT DEFAULT '',
         is_spider_web_enabled INTEGER DEFAULT 0,
         bio_clock TEXT DEFAULT '',
+        whisper_user_text TEXT DEFAULT '',
+        whisper_model_text TEXT DEFAULT '',
+        whisper_source TEXT DEFAULT 'default',
+        whisper_model_override INTEGER DEFAULT 1,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
       )
@@ -752,6 +756,34 @@ class DatabaseHelper {
     }
     if (oldVersion < 40) {
       await _migrateToV40(db);
+    }
+    if (oldVersion < 41) {
+      if (await _tableExists(db, 'characters')) {
+        await _safeAddColumn(
+          db,
+          'characters',
+          'whisper_user_text',
+          "TEXT DEFAULT ''",
+        );
+        await _safeAddColumn(
+          db,
+          'characters',
+          'whisper_model_text',
+          "TEXT DEFAULT ''",
+        );
+        await _safeAddColumn(
+          db,
+          'characters',
+          'whisper_source',
+          "TEXT DEFAULT 'default'",
+        );
+        await _safeAddColumn(
+          db,
+          'characters',
+          'whisper_model_override',
+          'INTEGER DEFAULT 1',
+        );
+      }
     }
 
     // Rebuild shared indexes only after every versioned column migration has
@@ -1795,6 +1827,27 @@ class DatabaseHelper {
       where: 'id = ?',
       whereArgs: [id],
     );
+  }
+
+  /// Runtime whisper updates must not reorder the character list by touching
+  /// updated_at. Card edits continue to use [updateCharacter].
+  static Future<void> updateCharacterWhisper(
+    String id, {
+    String? userText,
+    String? modelText,
+    String? source,
+    bool? modelOverrideEnabled,
+  }) async {
+    final updates = <String, Object?>{};
+    if (userText != null) updates['whisper_user_text'] = userText;
+    if (modelText != null) updates['whisper_model_text'] = modelText;
+    if (source != null) updates['whisper_source'] = source;
+    if (modelOverrideEnabled != null) {
+      updates['whisper_model_override'] = modelOverrideEnabled ? 1 : 0;
+    }
+    if (updates.isEmpty) return;
+    final db = await database;
+    await db.update('characters', updates, where: 'id = ?', whereArgs: [id]);
   }
 
   /// Builds a partial character update without allowing identity/creation

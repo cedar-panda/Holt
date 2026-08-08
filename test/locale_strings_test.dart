@@ -1,7 +1,10 @@
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:project_yanci/screens/settings_screen.dart';
 import 'package:project_yanci/services/locale_strings.dart';
+import 'package:project_yanci/theme/app_theme.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -26,5 +29,27 @@ void main() {
   test('explicit Simplified Chinese text takes precedence', () async {
     await L.setLocale('zh_CN');
     expect(L.pick(en: 'Done', zhTW: '完成', zhCN: '搞定'), '搞定');
+  });
+
+  testWidgets('language selection refreshes settings immediately', (
+    tester,
+  ) async {
+    await L.setLocale('en');
+    YanciTheme.setPreset('dawn');
+
+    await tester.pumpWidget(
+      MaterialApp(theme: YanciTheme.themeData, home: const SettingsScreen()),
+    );
+    expect(find.text('Settings'), findsOneWidget);
+    expect(find.text('Preferences'), findsOneWidget);
+
+    await tester.tap(find.text('English'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('繁體中文').last);
+    await tester.pumpAndSettle();
+
+    expect(L.localeNotifier.value, 'zh_TW');
+    expect(find.text('設定'), findsOneWidget);
+    expect(find.text('介面與語言'), findsOneWidget);
   });
 }

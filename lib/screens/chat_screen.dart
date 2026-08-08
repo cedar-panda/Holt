@@ -38,6 +38,7 @@ import '../services/tool_prompts.dart';
 import '../services/x_post_service.dart';
 import '../services/x_post_settings.dart';
 import '../services/character_timeline_service.dart';
+import '../services/whisper_service.dart';
 import '../memory/spider_web_core.dart';
 import '../services/spider_web_service.dart';
 import '../services/local_model_service.dart';
@@ -145,6 +146,7 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _shouldAutoName = false;
   String _conversationTitle = '';
   String _characterName = '';
+  String _composerHint = '';
   String? _pendingImagePath;
   StickerInfo? _pendingSticker;
   String? _pendingScratchGiftWho;
@@ -198,13 +200,13 @@ class _ChatScreenState extends State<ChatScreen> {
     caseSensitive: false,
   );
   static final _completedTagRe = RegExp(
-    r'<(emo|emo_resolve|memo|memo_del|memo_merge|memo_update|memo_link|force_recall|persona_note|draw|clock|clock_keep|clock_update|clock_del|life_fix|home|search_chat|call|scratch|transfer|transfer_accept|transfer_decline|x_post|pack_star)\b[^>]*>'
+    r'<(emo|emo_resolve|memo|memo_del|memo_merge|memo_update|memo_link|force_recall|persona_note|draw|clock|clock_keep|clock_update|clock_del|life_fix|home|whisper|search_chat|call|scratch|transfer|transfer_accept|transfer_decline|x_post|pack_star)\b[^>]*>'
     r'[\s\S]*?'
     r'</\1>',
     multiLine: true,
   );
   static final _openTagRe = RegExp(
-    r'<(emo|emo_resolve|memo|memo_del|memo_merge|memo_update|memo_link|force_recall|persona_note|draw|clock|clock_keep|clock_update|clock_del|life_fix|home|search_chat|call|scratch|transfer|transfer_accept|transfer_decline|buy|x_post|shop_view|pack_star|sign_marriage|propose_marriage)\b[\s\S]*$',
+    r'<(emo|emo_resolve|memo|memo_del|memo_merge|memo_update|memo_link|force_recall|persona_note|draw|clock|clock_keep|clock_update|clock_del|life_fix|home|whisper|search_chat|call|scratch|transfer|transfer_accept|transfer_decline|buy|x_post|shop_view|pack_star|sign_marriage|propose_marriage)\b[\s\S]*$',
   );
 
   static final _scratchTagRe = RegExp(
@@ -641,6 +643,7 @@ class _ChatScreenState extends State<ChatScreen> {
     required bool emotionEnabled,
     required bool bioclockEnabled,
     required bool imagegenEnabled,
+    required bool whisperModelOverrideEnabled,
     required String providerName,
     required String staticWindowSummary,
   }) async {
@@ -735,6 +738,9 @@ class _ChatScreenState extends State<ChatScreen> {
       toolSections.add(ToolPrompts.shop());
     }
     toolSections.add(ToolPrompts.homeNote());
+    if (whisperModelOverrideEnabled) {
+      toolSections.add(ToolPrompts.whisper());
+    }
     toolSections.add(ToolPrompts.scratchCard());
     toolSections.add(ToolPrompts.transfer());
     toolSections.add(ToolPrompts.voiceCall());
@@ -887,6 +893,7 @@ class _ChatScreenState extends State<ChatScreen> {
     }
     _characterName = char['name'] as String? ?? '';
     _charAvatarPath = char['avatar_path'] as String?;
+    _composerHint = CharacterWhisperState.fromCharacter(char).displayText;
 
     // 背景執行：蛛網封存引擎 (清理30天未觸發的孤島記憶)
     if ((char['is_spider_web_enabled'] as int? ?? 0) == 1) {
@@ -2708,6 +2715,8 @@ class _ChatScreenState extends State<ChatScreen> {
       emotionEnabled: emotionEnabled,
       bioclockEnabled: bioclockEnabled,
       imagegenEnabled: imagegenEnabled,
+      whisperModelOverrideEnabled:
+          (charData?['whisper_model_override'] as int? ?? 1) == 1,
       providerName: providerName,
       staticWindowSummary: await staticWindowSummaryF,
     );
@@ -3084,6 +3093,15 @@ class _ChatScreenState extends State<ChatScreen> {
         processedText = processedText
             .replaceAll(RegExp(r'<home>[\s\S]*?</home>'), '')
             .trim();
+      }
+      // ═══ 悄悄話：關閉覆蓋時仍剝標籤，但不接受模型寫入 ═══
+      final whisperResult = await WhisperService.processReply(
+        processedText,
+        characterId: _activeCharacterId,
+      );
+      processedText = whisperResult.text;
+      if (whisperResult.updated && mounted) {
+        setState(() => _composerHint = whisperResult.state.displayText);
       }
       // ═══ 刮刮樂：<scratch> 標籤處理 ═══
       ScratchData? pendingScratch;
@@ -3773,6 +3791,8 @@ class _ChatScreenState extends State<ChatScreen> {
       emotionEnabled: emotionEnabled,
       bioclockEnabled: imgBioclockEnabled,
       imagegenEnabled: imgImagegenEnabled,
+      whisperModelOverrideEnabled:
+          (charDataImg?['whisper_model_override'] as int? ?? 1) == 1,
       providerName: imgProviderName,
       staticWindowSummary: await _buildStaticWindowSummaryPrompt(
         _activeCharacterId,
@@ -4139,6 +4159,15 @@ class _ChatScreenState extends State<ChatScreen> {
         processedText = processedText
             .replaceAll(RegExp(r'<home>[\s\S]*?</home>'), '')
             .trim();
+      }
+      // ═══ 悄悄話（圖片路徑）═══
+      final whisperResult = await WhisperService.processReply(
+        processedText,
+        characterId: _activeCharacterId,
+      );
+      processedText = whisperResult.text;
+      if (whisperResult.updated && mounted) {
+        setState(() => _composerHint = whisperResult.state.displayText);
       }
       // 圖片路徑無 two-pass：<shop_view/> 僅剝離（下條文字消息她可再逛）
       processedText = processedText.replaceAll(_shopViewTagRe, '').trim();
@@ -4970,6 +4999,9 @@ class _ChatScreenState extends State<ChatScreen> {
                           opacity: _isChatReady ? 1 : 0.45,
                           child: InputBar(
                             externalController: _inputController,
+                            hintText: _composerHint.isEmpty
+                                ? null
+                                : _composerHint,
                             onSend: (text) => _onSendMessage(
                               text,
                               clearComposerOnAccept: true,
@@ -6083,6 +6115,8 @@ class _ChatScreenState extends State<ChatScreen> {
         emotionEnabled: emotionEnabled,
         bioclockEnabled: bioclockEnabled,
         imagegenEnabled: imagegenEnabled,
+        whisperModelOverrideEnabled:
+            (charData?['whisper_model_override'] as int? ?? 1) == 1,
         providerName: providerName,
         staticWindowSummary: staticWindowSummary,
       );
@@ -7109,30 +7143,46 @@ class _ChatScreenState extends State<ChatScreen> {
       final convId = conversationId ?? widget.conversationId;
       final adapter = await ApiSettings.buildAdapter();
       final model = await ApiSettings.getModel();
+      final char = await DatabaseHelper.getCharacter(_activeCharacterId);
+      final characterName = (char?['name'] as String? ?? _characterName).trim();
+      final relationship = (char?['relationship'] as String? ?? '').trim();
+      final characterProfile = truncateGraphemes(
+        (char?['description'] as String? ?? '').trim(),
+        500,
+      );
+      final userName = (await UserSettings.getUserName()).trim();
+      final dialogueUser = truncateGraphemes(userText.trim(), 160);
+      final dialogueCharacter = truncateGraphemes(aiText.trim(), 160);
 
       final response = await adapter.sendMessage(
         messages: [
           {
             'role': 'user',
             'content':
-                '${L.pick(en: 'User: ', zhTW: '用戶：')}$userText\n${L.pick(en: 'Character: ', zhTW: '角色：')}${aiText.length > 100 ? aiText.substring(0, 100) : aiText}',
+                '${L.pick(en: 'Character name: ', zhTW: '角色姓名：')}$characterName\n'
+                '${L.pick(en: 'Other person: ', zhTW: '對方姓名：')}$userName\n'
+                '${L.pick(en: 'Relationship: ', zhTW: '兩人關係：')}$relationship\n'
+                '${L.pick(en: 'Character profile: ', zhTW: '角色設定：')}$characterProfile\n\n'
+                '${L.pick(en: 'Other person: ', zhTW: '對方：')}$dialogueUser\n'
+                '${L.pick(en: 'Character: ', zhTW: '角色：')}$dialogueCharacter',
           },
         ],
         model: model,
         systemPrompt: L.pick(
-          en: 'Summarize the topic of this conversation as a short 3–8 word title. Output only the title, with no punctuation, quotation marks, or explanation.',
-          zhTW: '用6-10個字總結這段對話的主題，作為對話標題。只輸出標題文字，不加標點、引號或解釋。',
+          en: 'Name this conversation in the character\'s own voice. Reflect their tone, how they address the other person, and their relationship; make it feel like a title the character would naturally choose, not a neutral category label. Keep it to 2–8 words. Output only the title, without wrapping quotes or explanation.',
+          zhTW:
+              '用角色本人的語氣替這段對話取名。參照角色的說話方式、對對方的稱呼與兩人關係，像角色自己自然取出的名字，不要寫成中性的分類標籤，也不必每次都硬塞對方姓名。控制在 4～12 字；只輸出標題，不加外層引號或解釋。',
         ),
       );
 
-      final title = response.trim().replaceAll(
-        RegExp(
-          r'[「」""'
-          '".]',
-        ),
+      var title = response.trim().split('\n').first.trim();
+      title = title.replaceFirst(
+        RegExp(r'^(?:標題|标题|title)\s*[:：]\s*', caseSensitive: false),
         '',
       );
-      if (title.isNotEmpty && title.length <= 20) {
+      title = title.replaceAll(RegExp(r'''^[「」『』“”"']+|[「」『』“”"']+$'''), '');
+      title = truncateGraphemes(title.trim(), 20);
+      if (title.isNotEmpty) {
         await DatabaseHelper.updateConversation(convId, title: title);
         if (!mounted) return;
         setState(() => _conversationTitle = title);

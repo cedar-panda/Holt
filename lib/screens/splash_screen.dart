@@ -1,6 +1,9 @@
 import 'dart:math';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import '../services/locale_strings.dart';
 import '../theme/app_theme.dart';
+import '../services/settings_manager.dart';
 
 /// 開屏動畫
 /// 海獺落下 → Holt 逐字淡入 → 星光散開 → 推進主頁
@@ -35,6 +38,10 @@ class _SplashScreenState extends State<SplashScreen>
   // 星光粒子
   final List<_StarParticle> _particles = [];
   bool _navigationStarted = false;
+  bool _showLanguagePicker = false;
+  bool _choosingLanguage = false;
+  bool _reduceMotion = false;
+  String? _selectedLocale;
 
   @override
   void initState() {
@@ -118,9 +125,19 @@ class _SplashScreenState extends State<SplashScreen>
 
   Future<void> _startSequence() async {
     if (_navigationStarted) return;
-    if (MediaQuery.disableAnimationsOf(context)) {
-      _navigationStarted = true;
-      Navigator.of(context).pushReplacementNamed('/home');
+    final shouldChooseLanguage =
+        await UserSettings.shouldShowFirstLaunchLanguage();
+    if (!mounted) return;
+    _reduceMotion = MediaQuery.disableAnimationsOf(context);
+
+    if (_reduceMotion) {
+      _logoCtrl.value = 1;
+      _textCtrl.value = 1;
+      if (shouldChooseLanguage) {
+        setState(() => _showLanguagePicker = true);
+      } else {
+        await _navigateAfterSplash();
+      }
       return;
     }
     await Future.delayed(const Duration(milliseconds: 200));
@@ -138,6 +155,11 @@ class _SplashScreenState extends State<SplashScreen>
 
     // 星光散開
     _starCtrl.forward();
+    if (shouldChooseLanguage) {
+      await Future.delayed(const Duration(milliseconds: 320));
+      if (mounted) setState(() => _showLanguagePicker = true);
+      return;
+    }
     await Future.delayed(const Duration(milliseconds: 1200));
     if (!mounted) return;
 
@@ -149,10 +171,53 @@ class _SplashScreenState extends State<SplashScreen>
     _exitCtrl.forward();
     await Future.delayed(const Duration(milliseconds: 500));
 
-    // 跳轉主頁
-    if (mounted) {
+    if (mounted) await _navigateAfterSplash();
+  }
+
+  Future<void> _navigateAfterSplash() async {
+    if (_navigationStarted) return;
+    _navigationStarted = true;
+    final shouldSetUp = await UserSettings.shouldShowInitialSetup();
+    if (!mounted) return;
+    Navigator.of(
+      context,
+    ).pushReplacementNamed(shouldSetUp ? '/initial_setup' : '/home');
+  }
+
+  Future<void> _selectLanguage(String locale) async {
+    if (_choosingLanguage || _navigationStarted) return;
+    HapticFeedback.selectionClick();
+    setState(() {
+      _choosingLanguage = true;
+      _selectedLocale = locale;
+    });
+
+    try {
+      await L.setLocale(locale);
+      await UserSettings.completeFirstLaunchLanguage();
+      if (!mounted) return;
       _navigationStarted = true;
-      Navigator.of(context).pushReplacementNamed('/home');
+      if (!_reduceMotion) {
+        await _exitCtrl.forward(from: 0);
+        if (!mounted) return;
+      }
+      Navigator.of(context).pushReplacementNamed('/initial_setup');
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _choosingLanguage = false;
+        _selectedLocale = null;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            L.pick(
+              en: 'Could not save the language. Please try again.',
+              zhTW: '無法保存語言，請再試一次。',
+            ),
+          ),
+        ),
+      );
     }
   }
 
@@ -243,6 +308,7 @@ class _SplashScreenState extends State<SplashScreen>
                                   opacity: _logoOpacity,
                                   child: Image.asset(
                                     'assets/images/holt_logo.png',
+                                    semanticLabel: 'Holt',
                                     width: 180,
                                     height: 180,
                                     fit: BoxFit.contain,
@@ -268,6 +334,27 @@ class _SplashScreenState extends State<SplashScreen>
                           size: 10,
                           color: YanciTheme.accent.withValues(alpha: 0.5),
                         ),
+                      ),
+                      AnimatedSwitcher(
+                        duration: _reduceMotion
+                            ? Duration.zero
+                            : const Duration(milliseconds: 320),
+                        switchInCurve: Curves.easeOutCubic,
+                        transitionBuilder: (child, animation) => FadeTransition(
+                          opacity: animation,
+                          child: SizeTransition(
+                            sizeFactor: animation,
+                            alignment: Alignment.topCenter,
+                            child: child,
+                          ),
+                        ),
+                        child: _showLanguagePicker
+                            ? Padding(
+                                key: const ValueKey('first-language-picker'),
+                                padding: const EdgeInsets.only(top: 30),
+                                child: _buildLanguagePicker(),
+                              )
+                            : const SizedBox.shrink(),
                       ),
                     ],
                   ),
@@ -304,6 +391,85 @@ class _SplashScreenState extends State<SplashScreen>
           ),
         );
       }),
+    );
+  }
+
+  Widget _buildLanguagePicker() {
+    return Semantics(
+      label: 'Language · 語言',
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 310),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _languageButton('zh_TW', '繁體中文'),
+            const SizedBox(height: 10),
+            _languageButton('zh_CN', '简体中文'),
+            const SizedBox(height: 10),
+            _languageButton('en', 'English'),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _languageButton(String locale, String label) {
+    final selected = _selectedLocale == locale;
+    return Semantics(
+      button: true,
+      label: '$label，Language',
+      child: SizedBox(
+        width: double.infinity,
+        height: 54,
+        child: OutlinedButton(
+          key: ValueKey('first-language-$locale'),
+          onPressed: _choosingLanguage ? null : () => _selectLanguage(locale),
+          style: OutlinedButton.styleFrom(
+            foregroundColor: YanciTheme.textPrimary,
+            backgroundColor: YanciTheme.glassInputBg.withValues(alpha: 0.72),
+            disabledForegroundColor: YanciTheme.textSecondary,
+            side: BorderSide(
+              color: selected
+                  ? YanciTheme.accent
+                  : YanciTheme.glassBorder.withValues(alpha: 0.8),
+              width: selected ? 1.2 : 0.7,
+            ),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(YanciTheme.radiusMd),
+            ),
+          ),
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              Center(
+                child: Text(
+                  label,
+                  style: YanciTheme.bodyText.copyWith(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+              Align(
+                alignment: Alignment.centerRight,
+                child: selected && _choosingLanguage
+                    ? SizedBox.square(
+                        dimension: 18,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 1.8,
+                          color: YanciTheme.accent,
+                        ),
+                      )
+                    : Icon(
+                        Icons.arrow_forward_rounded,
+                        size: 18,
+                        color: YanciTheme.textSecondary,
+                      ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

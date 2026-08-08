@@ -25,6 +25,8 @@ class StaticTokenEstimator {
     final isSpiderWeb = (char?['is_spider_web_enabled'] as int? ?? 0) == 1;
     final charName = await UserSettings.getCharacterName();
     final nickname = await UserSettings.getUserName();
+    final whisperModelOverride =
+        (char?['whisper_model_override'] as int? ?? 1) == 1;
 
     final parts = <String>[];
 
@@ -82,6 +84,7 @@ class StaticTokenEstimator {
     }
     if (await ShopService.isEnabled()) tools.add(ToolPrompts.shop());
     tools.add(ToolPrompts.homeNote());
+    if (whisperModelOverride) tools.add(ToolPrompts.whisper());
     tools.add(ToolPrompts.scratchCard());
     tools.add(ToolPrompts.transfer());
     tools.add(ToolPrompts.voiceCall());

@@ -19,6 +19,7 @@ import 'services/character_timeline_service.dart';
 import 'services/model_cost_policy.dart';
 import 'memory/emotion_coordinates.dart';
 import 'screens/splash_screen.dart';
+import 'screens/initial_setup_screen.dart';
 import 'screens/home_screen.dart';
 import 'screens/chat_screen.dart';
 import 'screens/api_settings_screen.dart';
@@ -264,9 +265,9 @@ class _YanciAppState extends State<YanciApp> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
-    return ValueListenableBuilder<int>(
-      valueListenable: themeNotifier,
-      builder: (_, _, _) => MaterialApp(
+    return ListenableBuilder(
+      listenable: Listenable.merge([themeNotifier, L.localeNotifier]),
+      builder: (_, _) => MaterialApp(
         title: 'Holt',
         debugShowCheckedModeBanner: false,
         navigatorKey: rootNavigatorKey,
@@ -296,6 +297,7 @@ class _YanciAppState extends State<YanciApp> with WidgetsBindingObserver {
         initialRoute: '/',
         routes: {
           '/': (context) => const SplashScreen(),
+          '/initial_setup': (context) => const InitialSetupScreen(),
           '/settings': (context) => const SettingsScreen(),
           '/home': (context) => const HomeScreen(),
           '/api_settings': (context) => const ApiSettingsScreen(),

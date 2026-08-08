@@ -69,7 +69,13 @@ class Retriever {
 
   static String _displayCategory(String canonical) {
     return switch (canonical.trim().toLowerCase()) {
-      '情緒' || '情绪' || 'emotion' => L.pick(en: 'Emotion', zhTW: '情緒'),
+      '長期情緒' ||
+      '长期情绪' ||
+      '情緒' ||
+      '情绪' ||
+      'long-term emotion' ||
+      'long term emotion' ||
+      'emotion' => L.pick(en: 'Long-term Emotion', zhTW: '長期情緒'),
       '偏好' => L.pick(en: 'Preference', zhTW: '偏好'),
       '約定' || '约定' || 'promise' => L.pick(en: 'Promise', zhTW: '約定'),
       '重要事件' ||

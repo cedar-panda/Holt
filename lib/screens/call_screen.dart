@@ -594,7 +594,7 @@ class _CallScreenState extends State<CallScreen>
 
   // 通話內部標籤剝離（流式安全）
   static final _completedTagRe = RegExp(
-    r'<(emo|emo_resolve|memo|memo_del|memo_merge|memo_update|persona_note|draw|clock|clock_keep|clock_update|clock_del|life_fix|home|think|thinking|search_chat|call|tool_calls?)\b[^>]*>'
+    r'<(emo|emo_resolve|memo|memo_del|memo_merge|memo_update|persona_note|draw|clock|clock_keep|clock_update|clock_del|life_fix|home|whisper|think|thinking|search_chat|call|tool_calls?)\b[^>]*>'
     r'[\s\S]*?'
     r'</\1>',
     multiLine: true,

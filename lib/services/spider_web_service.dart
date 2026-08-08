@@ -19,7 +19,8 @@ class SpiderWebService {
     if (L.locale == 'en') {
       return '''■ Memory Toolbox
   <memo>[Category] Content @trigger1,trigger2</memo>
-  Categories: Emotion | Preference | Promise | Important Event | Self-Disclosure
+  Categories: Long-term Emotion | Preference | Promise | Important Event | Self-Disclosure
+  Long-term Emotion only records content where "this feeling will still matter in the future." Do not use it for passing reactions from the current turn.
   Write in third person: use your character name and "$name". Example: "$name kissed $charName yesterday".
   Self-Disclosure: Facts about who the user IS that they voluntarily share — identity, background, values, life experiences. NOT preferences (those change) or promises (those can be broken). This category has ultra-slow decay.
   Preference: Only record truly meaningful preferences.
@@ -65,7 +66,8 @@ class SpiderWebService {
       zhTW:
           '''■ 蛛網記憶系統（核心工具箱）
   <memo>[類別] 內容 @觸發詞1,觸發詞2</memo>
-  類別：情緒｜偏好｜約定｜重要事件｜自我揭露
+  類別：長期情緒｜偏好｜約定｜重要事件｜自我揭露
+  長期情緒只記錄「這種感受在未來仍然重要」的內容。當輪的短暫反應不要寫成長期情緒。
   建議用第三人稱記錄，例如「$name昨天親了$charName」。
   自我揭露：對方主動告訴你的身份、經歷、價值觀等。此類別會陪伴你們很久。
   偏好：只記真正有意義的偏好。

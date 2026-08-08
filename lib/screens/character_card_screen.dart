@@ -17,6 +17,7 @@ import '../services/settings_manager.dart';
 import '../services/token_estimator.dart';
 import '../services/sticker_service.dart';
 import '../services/spider_web_state_service.dart';
+import '../services/whisper_service.dart';
 import '../widgets/emotion_panel.dart';
 import '../utils/latest_request_gate.dart';
 
@@ -42,6 +43,7 @@ class _CharacterCardScreenState extends State<CharacterCardScreen> {
   final _drawAnchorUserCtrl = TextEditingController();
   final _drawAnchorCharCtrl = TextEditingController();
   final _drawStyleCtrl = TextEditingController();
+  final _whisperController = TextEditingController();
 
   // ═══ Token 計數（緩存門檻提示）═══
   int _descTokens = 0;
@@ -54,6 +56,9 @@ class _CharacterCardScreenState extends State<CharacterCardScreen> {
   bool _showExtras = false;
   bool _isEditing = false;
   bool _isSaving = false;
+  bool _whisperModelOverride = true;
+  bool _whisperResetRequested = false;
+  CharacterWhisperState? _loadedWhisperState;
   final LatestRequestGate _loadGate = LatestRequestGate();
   final LatestRequestGate _tokenGate = LatestRequestGate();
 
@@ -94,6 +99,15 @@ class _CharacterCardScreenState extends State<CharacterCardScreen> {
       _drawAnchorUserCtrl.text = char['draw_anchor_user'] ?? '';
       _drawAnchorCharCtrl.text = char['draw_anchor_char'] ?? '';
       _drawStyleCtrl.text = char['draw_style'] ?? '';
+      _loadedWhisperState = CharacterWhisperState.fromCharacter(char);
+      _whisperController.text = _loadedWhisperState!.displayText;
+      _whisperModelOverride = _loadedWhisperState!.modelOverrideEnabled;
+      _showExtras =
+          _raceController.text.isNotEmpty ||
+          _skillController.text.isNotEmpty ||
+          _ageController.text.isNotEmpty ||
+          _heightController.text.isNotEmpty ||
+          _ttsVoiceId.isNotEmpty;
     }
     setState(() => _isLoading = false);
   }
@@ -110,8 +124,12 @@ class _CharacterCardScreenState extends State<CharacterCardScreen> {
     _drawAnchorUserCtrl.clear();
     _drawAnchorCharCtrl.clear();
     _drawStyleCtrl.clear();
+    _whisperController.clear();
     _avatarPath = null;
     _ttsVoiceId = '';
+    _whisperModelOverride = true;
+    _whisperResetRequested = false;
+    _loadedWhisperState = null;
     _showExtras = false;
   }
 
@@ -211,6 +229,7 @@ class _CharacterCardScreenState extends State<CharacterCardScreen> {
     _drawAnchorUserCtrl.dispose();
     _drawAnchorCharCtrl.dispose();
     _drawStyleCtrl.dispose();
+    _whisperController.dispose();
     _relationController.dispose();
     super.dispose();
   }
@@ -587,6 +606,10 @@ class _CharacterCardScreenState extends State<CharacterCardScreen> {
                               const SizedBox(height: YanciTheme.spacingSm),
                               _buildVoiceIdField(),
                             ],
+                            const SizedBox(height: YanciTheme.spacingMd),
+
+                            // ═══ 相處細節：輸入框悄悄話 ═══
+                            _buildWhisperSection(),
                             const SizedBox(height: YanciTheme.spacingMd),
 
                             // ═══ 畫畫角色錨點 ═══
@@ -1054,6 +1077,137 @@ class _CharacterCardScreenState extends State<CharacterCardScreen> {
     );
   }
 
+  Widget _buildWhisperSection() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.06),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: Colors.white.withValues(alpha: 0.1),
+          width: 0.5,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            L.pick(en: 'Together details', zhTW: '相處細節'),
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w500,
+              color: YanciTheme.textSecondary,
+              fontFamily: YanciTheme.fontFamily,
+            ),
+          ),
+          const SizedBox(height: 12),
+          Text(
+            L.pick(en: 'Whisper', zhTW: '悄悄話'),
+            style: YanciTheme.bodyText.copyWith(fontSize: 13),
+          ),
+          const SizedBox(height: 3),
+          Text(
+            L.pick(en: 'The line they see while typing.', zhTW: '對方輸入時看到的那句話。'),
+            style: YanciTheme.bodySmall.copyWith(
+              fontSize: 11,
+              color: YanciTheme.textSecondary.withValues(alpha: 0.55),
+            ),
+          ),
+          const SizedBox(height: 8),
+          TextField(
+            controller: _whisperController,
+            maxLength: WhisperService.maxLength,
+            maxLengthEnforcement: MaxLengthEnforcement.enforced,
+            style: YanciTheme.bodyText.copyWith(fontSize: 14),
+            onChanged: (_) => _whisperResetRequested = false,
+            decoration: InputDecoration(
+              hintText: L.get('input_hint'),
+              counterStyle: YanciTheme.bodySmall.copyWith(
+                fontSize: 10,
+                color: YanciTheme.textSecondary.withValues(alpha: 0.4),
+              ),
+              filled: true,
+              fillColor: YanciTheme.glassInputBg,
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 12,
+                vertical: 10,
+              ),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+                borderSide: BorderSide(color: YanciTheme.glassBorder),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+                borderSide: BorderSide(color: YanciTheme.glassBorder),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+                borderSide: BorderSide(
+                  color: YanciTheme.accent.withValues(alpha: 0.55),
+                ),
+              ),
+            ),
+          ),
+          Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      L.pick(en: 'Allow TA to overwrite', zhTW: '允許 TA 覆蓋'),
+                      style: YanciTheme.bodyText.copyWith(fontSize: 13),
+                    ),
+                    Text(
+                      _whisperModelOverride
+                          ? L.pick(
+                              en: 'TA may change it naturally.',
+                              zhTW: 'TA 可以自然地換掉這句話。',
+                            )
+                          : L.pick(
+                              en: 'The whisper tool is not sent to the model.',
+                              zhTW: '不向模型發送悄悄話工具。',
+                            ),
+                      style: YanciTheme.bodySmall.copyWith(
+                        fontSize: 10.5,
+                        color: YanciTheme.textSecondary.withValues(alpha: 0.5),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Switch.adaptive(
+                value: _whisperModelOverride,
+                activeTrackColor: YanciTheme.accent.withValues(alpha: 0.55),
+                onChanged: (value) {
+                  setState(() => _whisperModelOverride = value);
+                },
+              ),
+            ],
+          ),
+          Align(
+            alignment: Alignment.centerRight,
+            child: TextButton(
+              onPressed: () {
+                setState(() {
+                  _whisperController.clear();
+                  _whisperResetRequested = true;
+                });
+              },
+              child: Text(
+                L.pick(en: 'Restore default', zhTW: '恢復預設'),
+                style: YanciTheme.bodySmall.copyWith(
+                  color: YanciTheme.textSecondary.withValues(alpha: 0.65),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _save() async {
     if (_isSaving) return;
     final name = _nameController.text.trim();
@@ -1088,7 +1242,25 @@ class _CharacterCardScreenState extends State<CharacterCardScreen> {
       'draw_anchor_user': _drawAnchorUserCtrl.text.trim(),
       'draw_anchor_char': _drawAnchorCharCtrl.text.trim(),
       'draw_style': _drawStyleCtrl.text.trim(),
+      'whisper_model_override': _whisperModelOverride ? 1 : 0,
     };
+    final loadedWhisper = _loadedWhisperState;
+    final whisperText = WhisperService.sanitize(_whisperController.text);
+    if (_whisperResetRequested) {
+      editableData.addAll({
+        'whisper_user_text': '',
+        'whisper_model_text': '',
+        'whisper_source': 'default',
+      });
+    } else if (loadedWhisper == null ||
+        whisperText != loadedWhisper.displayText) {
+      editableData['whisper_user_text'] = whisperText;
+      editableData['whisper_source'] = whisperText.isNotEmpty
+          ? 'user'
+          : (loadedWhisper?.modelText.isNotEmpty ?? false)
+          ? 'model'
+          : 'default';
+    }
 
     try {
       if (_isEditing) {

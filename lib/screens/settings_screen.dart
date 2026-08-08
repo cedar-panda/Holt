@@ -6,7 +6,7 @@ import '../theme/app_theme.dart';
 import '../services/locale_strings.dart';
 import '../services/settings_manager.dart';
 import '../widgets/gradient_background.dart';
-import '../main.dart'; // for changeFont, changeFontScale, previewFontScale, themeNotifier
+import '../main.dart'; // for changeFont, changeFontScale, previewFontScale
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -106,7 +106,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             borderRadius: BorderRadius.circular(YanciTheme.radiusMd),
             border: Border.all(color: YanciTheme.glassBorder, width: 0.5),
           ),
-          child: child,
+          child: Material(type: MaterialType.transparency, child: child),
         ),
       ),
     );
@@ -250,7 +250,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             L.localeNames.keys.toList(),
                             (v) async {
                               await L.setLocale(v);
-                              themeNotifier.value++;
+                              if (mounted) setState(() {});
                             },
                             labels: L.localeNames,
                           ),

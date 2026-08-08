@@ -31,9 +31,18 @@ void main() {
     () async {
       await DatabaseHelper.createSchemaForTesting(db);
 
-      expect(DatabaseHelper.schemaVersionForTesting, 40);
+      expect(DatabaseHelper.schemaVersionForTesting, 41);
       expect(await _columnNames(db, 'messages'), contains('status'));
       expect(await _columnNames(db, 'characters'), contains('bio_clock'));
+      expect(
+        await _columnNames(db, 'characters'),
+        containsAll([
+          'whisper_user_text',
+          'whisper_model_text',
+          'whisper_source',
+          'whisper_model_override',
+        ]),
+      );
       expect(await _columnNames(db, 'sticky_notes'), contains('character_id'));
       expect(
         await _columnNames(db, 'conversations'),
@@ -123,6 +132,31 @@ void main() {
       );
     },
   );
+
+  test('v41 adds per-character whisper fields with safe defaults', () async {
+    await db.execute('''
+      CREATE TABLE characters (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )
+    ''');
+    await db.insert('characters', {
+      'id': 'legacy-char',
+      'name': 'Legacy',
+      'created_at': '2026-08-08T00:00:00.000',
+      'updated_at': '2026-08-08T00:00:00.000',
+    });
+
+    await DatabaseHelper.upgradeSchemaForTesting(db, 40);
+
+    final row = (await db.query('characters')).single;
+    expect(row['whisper_user_text'], '');
+    expect(row['whisper_model_text'], '');
+    expect(row['whisper_source'], 'default');
+    expect(row['whisper_model_override'], 1);
+  });
 
   test('v38 backfills the automatic summary message cursor', () async {
     await DatabaseHelper.createSchemaForTesting(db);

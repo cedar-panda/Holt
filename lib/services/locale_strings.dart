@@ -1,16 +1,23 @@
-import 'dart:ui';
-
+import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class L {
   static String _locale = 'en';
   static String get locale => _locale;
+  static final ValueNotifier<String> localeNotifier = ValueNotifier<String>(
+    _locale,
+  );
+
+  static void _applyLocale(String value) {
+    _locale = value;
+    if (localeNotifier.value != value) localeNotifier.value = value;
+  }
 
   static Future<void> load() async {
     final p = await SharedPreferences.getInstance();
     final saved = p.getString('app_locale');
     if (saved != null && localeNames.containsKey(saved)) {
-      _locale = saved;
+      _applyLocale(saved);
       return;
     }
 
@@ -18,16 +25,19 @@ class L {
     if (deviceLocale.languageCode.toLowerCase() == 'zh') {
       final region = deviceLocale.countryCode?.toUpperCase();
       final script = deviceLocale.scriptCode?.toLowerCase();
-      _locale = (region == 'CN' || region == 'SG' || script == 'hans')
-          ? 'zh_CN'
-          : 'zh_TW';
+      _applyLocale(
+        (region == 'CN' || region == 'SG' || script == 'hans')
+            ? 'zh_CN'
+            : 'zh_TW',
+      );
     } else {
-      _locale = 'en';
+      _applyLocale('en');
     }
   }
 
   static Future<void> setLocale(String v) async {
-    _locale = v;
+    if (!localeNames.containsKey(v)) return;
+    _applyLocale(v);
     final p = await SharedPreferences.getInstance();
     await p.setString('app_locale', v);
   }

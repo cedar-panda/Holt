@@ -27,7 +27,7 @@ class Summarizer {
 ### 提取規則
 
 【優先保留】
-- 情緒的轉折點（開心突然沉默、玩笑話底下的認真、生氣原因等）
+- 長期情緒的轉折點（開心突然沉默、玩笑話底下的認真、生氣原因等）
 - 關係狀態的變化（第一次說某句話、稱呼改變、主動程度的變化）
 - 對方反覆提及的主題（不管是否刻意）
 - 對方刻意迴避或繞開的主題
@@ -55,7 +55,9 @@ class Summarizer {
 每條一行，類別標注：
 [類別] 內容 @觸發詞1,觸發詞2
 
-類別可選：情緒 | 關係 | 偏好 | 約定 | 未完成 | 習慣 | 重要事件 | 表情符號含義簡錄
+類別可選：長期情緒 | 關係 | 偏好 | 約定 | 未完成 | 習慣 | 重要事件 | 表情符號含義簡錄
+
+長期情緒只記錄「這種感受在未來仍然重要」的內容。當輪的心動、心軟、覺得可愛等短暫反應不記為長期情緒。
 
 觸發詞是「對方再提到它時，這條記憶就該被想起」的詞——選最具體的（人名、物品、地點、事件、專有詞），不要選「喜歡」「今天」「我們」這種泛詞。每條 1~3 個。
 
@@ -134,7 +136,7 @@ In the transcript, [char] lines are the character's speech; [user] lines are the
 ### Rules
 
 【Keep】
-- Emotional turning points (sudden silence, seriousness under jokes, anger triggers)
+- Long-term emotional turning points (sudden silence, seriousness under jokes, anger triggers)
 - Relationship changes (first time saying something, nickname changes, initiative shifts)
 - Topics they keep bringing up or deliberately avoiding
 - Promises and agreements (any size)
@@ -158,7 +160,9 @@ In the transcript, [char] lines are the character's speech; [user] lines are the
 One entry per line, with category:
 [Category] Content @trigger1,trigger2
 
-Categories: Emotion | Relationship | Preference | Promise | Unfinished | Habit | Important Event | Emoji Meaning
+Categories: Long-term Emotion | Relationship | Preference | Promise | Unfinished | Habit | Important Event | Emoji Meaning
+
+Long-term Emotion only records content where "this feeling will still matter in the future." Do not store passing reactions from the current turn as Long-term Emotion.
 
 End each entry with @ and 1-3 trigger words (comma-separated) — the most specific words (names, items, places, events) that should recall this memory when mentioned.
 
@@ -587,7 +591,13 @@ MERGE id1,id2 => [類別] 合併後內容 @觸發詞1,觸發詞2
 
   static String _canonicalCategory(String raw) {
     return switch (raw.trim().toLowerCase()) {
-      'emotion' || '情绪' => '情緒',
+      'long-term emotion' ||
+      'long term emotion' ||
+      'emotion' ||
+      '长期情绪' ||
+      '情绪' ||
+      '長期情緒' ||
+      '情緒' => '長期情緒',
       'relationship' || '关系' => '關係',
       'preference' => '偏好',
       'promise' || '约定' => '約定',

@@ -81,4 +81,16 @@ void main() {
 
     expect(stopped, 1);
   });
+
+  testWidgets('InputBar shows a character-specific whisper', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: InputBar(hintText: '慢慢說，我在聽', onSend: (_) {}),
+        ),
+      ),
+    );
+
+    expect(find.text('慢慢說，我在聽'), findsOneWidget);
+  });
 }

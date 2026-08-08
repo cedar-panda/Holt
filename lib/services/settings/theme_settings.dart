@@ -66,6 +66,31 @@ class ThemeSettings {
     await p.setString(_keyShortcutDarkPreset, id);
   }
 
+  /// 同時保存日間、夜間快捷主題，以及目前啟用的其中一款。
+  ///
+  /// 首次設定使用這個入口，避免只改到當前主題、卻留下另一側快捷槽的狀態。
+  static Future<void> saveThemePair({
+    required String lightPresetId,
+    required String darkPresetId,
+    required String activePresetId,
+  }) async {
+    if (_validPresetForMode(lightPresetId, dark: false) == null) {
+      throw ArgumentError.value(lightPresetId, 'lightPresetId');
+    }
+    if (_validPresetForMode(darkPresetId, dark: true) == null) {
+      throw ArgumentError.value(darkPresetId, 'darkPresetId');
+    }
+    if (activePresetId != lightPresetId && activePresetId != darkPresetId) {
+      throw ArgumentError.value(activePresetId, 'activePresetId');
+    }
+
+    final p = await SharedPreferences.getInstance();
+    await p.setString(_keyShortcutLightPreset, lightPresetId);
+    await p.setString(_keyShortcutDarkPreset, darkPresetId);
+    await p.setString(_keyThemePreset, activePresetId);
+    await _syncDarkModeForPreset(p, activePresetId);
+  }
+
   static String? _validPresetForMode(String? id, {required bool dark}) {
     if (id == null || !presets.any((p) => p.id == id)) return null;
     final preset = findPreset(id);

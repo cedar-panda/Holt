@@ -16,6 +16,11 @@ class ToolPrompts {
     '■ 便箋\n  <home>一句短話（12字內）</home>\n  在首頁留一句話給對方，下次打開 app 就會看到。留給值得的時刻，不要頻繁使用。',
   );
 
+  static String whisper() => _pick(
+    '■ Whisper\n  <whisper>a short line (max 18 chars)</whisper>\n  The line they see while typing.',
+    '■ 悄悄話\n  <whisper>一句短話（18字內）</whisper>\n  對方輸入時看到的那句話。',
+  );
+
   static String scratchCard() => _pick(
     '■ Scratch Card\n  <scratch who="char"/>\n  Buy a scratch card (costs 30 coins from your balance). The card appears in chat and can be scratched to reveal a random prize.\n  Use sparingly — when the mood is playful, as a little surprise, or when they ask you to. Don\'t mention the tag itself.',
     '■ 刮刮卡\n  <scratch who="char"/>\n  買一張刮刮卡（從你的貝殼餘額扣 30）。卡片會出現在聊天中，刮開可以獲得隨機獎勵。\n  心情好的時候、想給對方一個小驚喜、或對方要求時使用。不要太頻繁。正文不要提標籤本身。',
