@@ -18,7 +18,7 @@ class DatabaseHelper {
   static Future<Database>? _dbInitFuture;
   static Future<Database> Function() _databaseInitializer = _initDatabase;
   static const String _dbName = 'yanci.db';
-  static const int _dbVersion = 38;
+  static const int _dbVersion = 40;
   static final Random _windowIdRandom = Random.secure();
 
   static Future<Database> get database async {
@@ -50,6 +50,7 @@ class DatabaseHelper {
       },
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
+      onOpen: _deduplicateAllStoredSelfNotes,
     );
   }
 
@@ -319,6 +320,12 @@ class DatabaseHelper {
         memory_id_1 INTEGER NOT NULL,
         memory_id_2 INTEGER NOT NULL,
         created_at TEXT NOT NULL,
+        relation_type TEXT NOT NULL DEFAULT 'related',
+        strength REAL NOT NULL DEFAULT 1.0,
+        status TEXT NOT NULL DEFAULT 'confirmed',
+        source TEXT NOT NULL DEFAULT 'legacy',
+        reason TEXT NOT NULL DEFAULT '',
+        updated_at TEXT NOT NULL DEFAULT '',
         CHECK(memory_id_1 < memory_id_2),
         UNIQUE(character_id, memory_id_1, memory_id_2)
       )
@@ -326,6 +333,12 @@ class DatabaseHelper {
     await db.execute(
       'CREATE INDEX IF NOT EXISTS idx_spider_web_char ON spider_web_links(character_id)',
     );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_spider_web_status '
+      'ON spider_web_links(character_id, status, relation_type)',
+    );
+
+    await _createPendingMemoryActionsTable(db);
 
     // 貝殼商店物品庫
     await db.execute('''
@@ -734,6 +747,12 @@ class DatabaseHelper {
     if (oldVersion < 38) {
       await _migrateToV38(db);
     }
+    if (oldVersion < 39) {
+      await _createPendingMemoryActionsTable(db);
+    }
+    if (oldVersion < 40) {
+      await _migrateToV40(db);
+    }
 
     // Rebuild shared indexes only after every versioned column migration has
     // completed. _migrateToV36 used to call this helper early; once v38 added
@@ -809,6 +828,89 @@ class DatabaseHelper {
         'ON character_timeline(character_id, source_message_id)',
       );
     }
+  }
+
+  static Future<void> _migrateToV40(Database db) async {
+    if (!await _tableExists(db, 'spider_web_links')) {
+      await _createMemoryTables(db);
+      return;
+    }
+    await _safeAddColumn(
+      db,
+      'spider_web_links',
+      'relation_type',
+      "TEXT NOT NULL DEFAULT 'related'",
+    );
+    await _safeAddColumn(
+      db,
+      'spider_web_links',
+      'strength',
+      'REAL NOT NULL DEFAULT 1.0',
+    );
+    await _safeAddColumn(
+      db,
+      'spider_web_links',
+      'status',
+      "TEXT NOT NULL DEFAULT 'confirmed'",
+    );
+    await _safeAddColumn(
+      db,
+      'spider_web_links',
+      'source',
+      "TEXT NOT NULL DEFAULT 'legacy'",
+    );
+    await _safeAddColumn(
+      db,
+      'spider_web_links',
+      'reason',
+      "TEXT NOT NULL DEFAULT ''",
+    );
+    await _safeAddColumn(
+      db,
+      'spider_web_links',
+      'updated_at',
+      "TEXT NOT NULL DEFAULT ''",
+    );
+    await db.rawUpdate(
+      "UPDATE spider_web_links SET updated_at = created_at "
+      "WHERE updated_at = ''",
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_spider_web_status '
+      'ON spider_web_links(character_id, status, relation_type)',
+    );
+  }
+
+  static Future<void> _createPendingMemoryActionsTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS pending_memory_actions (
+        id TEXT PRIMARY KEY,
+        character_id TEXT NOT NULL,
+        mode TEXT NOT NULL,
+        action TEXT NOT NULL,
+        source TEXT NOT NULL,
+        source_conversation_id TEXT,
+        source_message_id INTEGER,
+        target_ids_json TEXT NOT NULL DEFAULT '[]',
+        payload_json TEXT NOT NULL DEFAULT '{}',
+        base_versions_json TEXT NOT NULL DEFAULT '{}',
+        fingerprint TEXT NOT NULL UNIQUE,
+        status TEXT NOT NULL DEFAULT 'pending',
+        created_at TEXT NOT NULL,
+        seen_at TEXT,
+        resolved_at TEXT,
+        error TEXT NOT NULL DEFAULT '',
+        result_json TEXT NOT NULL DEFAULT '{}'
+      )
+    ''');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_pending_memory_character_status '
+      'ON pending_memory_actions(character_id, status, created_at DESC)',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_pending_memory_source_message '
+      'ON pending_memory_actions(source_conversation_id, source_message_id)',
+    );
   }
 
   static Future<void> _migrateToV37(Database db) async {
@@ -941,6 +1043,7 @@ class DatabaseHelper {
       'conversations',
       'memories',
       'spider_web_links',
+      'pending_memory_actions',
       'backpack_items',
       'archive',
       'sticky_notes',
@@ -1380,38 +1483,285 @@ class DatabaseHelper {
     return v == null ? null : DateTime.tryParse(v);
   }
 
-  /// 追加角色自我註記（最多保留 12 條，先進先出）
-  static Future<void> appendSelfNote(String characterId, String note) async {
+  /// 追加角色自我註記（最多保留 12 條，先進先出）。
+  ///
+  /// 完全相同或正規化後相似度 >= 90% 的條目只保留資訊較完整的一條。
+  /// 返回 false 表示 incoming 沒有為註記集合增加任何資訊；即使如此，
+  /// transaction 仍會順手清理舊資料中已經存在的重複條目。
+  static Future<bool> appendSelfNote(String characterId, String note) async {
     final db = await database;
-    final rows = await db.query(
-      'characters',
-      columns: ['self_notes'],
-      where: 'id = ?',
-      whereArgs: [characterId],
-    );
-    if (rows.isEmpty) return;
-    final existing = (rows.first['self_notes'] as String?) ?? '';
-    var lines = existing.isEmpty ? <String>[] : existing.split('\n');
-    lines.add('· $note');
-    if (lines.length > 12) lines = lines.sublist(lines.length - 12);
-    await db.update(
-      'characters',
-      {'self_notes': lines.join('\n')},
-      where: 'id = ?',
-      whereArgs: [characterId],
-    );
+    return db.transaction<bool>((txn) async {
+      final rows = await txn.query(
+        'characters',
+        columns: ['self_notes'],
+        where: 'id = ?',
+        whereArgs: [characterId],
+      );
+      if (rows.isEmpty) return false;
+      final existing = (rows.first['self_notes'] as String?) ?? '';
+      final result = _mergeSelfNotesDetailed(existing, note);
+      if (result.text != existing) {
+        await txn.update(
+          'characters',
+          {'self_notes': result.text},
+          where: 'id = ?',
+          whereArgs: [characterId],
+        );
+      }
+      return result.acceptedIncoming;
+    });
   }
+
+  @visibleForTesting
+  static String mergeSelfNotes(String existing, String incoming) =>
+      _mergeSelfNotesDetailed(existing, incoming).text;
+
+  static ({String text, bool acceptedIncoming}) _mergeSelfNotesDetailed(
+    String existing,
+    String incoming,
+  ) {
+    final cleanIncoming = _cleanSelfNote(incoming);
+    var lines = _deduplicateSelfNoteLines(_selfNoteLines(existing));
+    if (cleanIncoming.isEmpty) {
+      return (text: _formatSelfNotes(lines), acceptedIncoming: false);
+    }
+
+    for (var index = 0; index < lines.length; index++) {
+      final old = lines[index];
+      if (!_selfNotesOverlap(old, cleanIncoming)) continue;
+      // A strict superset may carry a useful qualifier. Replace in place so
+      // deduplication never changes note ordering or consumes another slot.
+      if (_selfNoteInformationScore(cleanIncoming) >
+          _selfNoteInformationScore(old)) {
+        lines[index] = cleanIncoming;
+        return (text: _formatSelfNotes(lines), acceptedIncoming: true);
+      }
+      return (text: _formatSelfNotes(lines), acceptedIncoming: false);
+    }
+
+    lines.add(cleanIncoming);
+    if (lines.length > 12) lines = lines.sublist(lines.length - 12);
+    return (text: _formatSelfNotes(lines), acceptedIncoming: true);
+  }
+
+  static List<String> _selfNoteLines(String value) => value
+      .split('\n')
+      .map(_cleanSelfNote)
+      .where((line) => line.isNotEmpty)
+      .toList(growable: false);
+
+  static String _formatSelfNotes(List<String> lines) =>
+      lines.map((line) => '· $line').join('\n');
+
+  /// Removes duplicates already present in storage while preserving the first
+  /// position of each group. A later, more informative variant replaces the
+  /// shorter wording in place, so cleanup never shuffles the character's
+  /// self-note chronology.
+  static List<String> _deduplicateSelfNoteLines(Iterable<String> source) {
+    final kept = <String>[];
+    for (final raw in source) {
+      final candidate = _cleanSelfNote(raw);
+      if (candidate.isEmpty) continue;
+      final matching = <int>[
+        for (var index = 0; index < kept.length; index++)
+          if (_selfNotesOverlap(kept[index], candidate)) index,
+      ];
+      if (matching.isEmpty) {
+        kept.add(candidate);
+        continue;
+      }
+
+      final first = matching.first;
+      var winner = kept[first];
+      if (_selfNoteInformationScore(candidate) >
+          _selfNoteInformationScore(winner)) {
+        winner = candidate;
+      }
+      for (final index in matching.skip(1)) {
+        final current = kept[index];
+        if (_selfNoteInformationScore(current) >
+            _selfNoteInformationScore(winner)) {
+          winner = current;
+        }
+      }
+      kept[first] = winner;
+      for (final index in matching.skip(1).toList().reversed) {
+        kept.removeAt(index);
+      }
+    }
+    return kept.length <= 12 ? kept : kept.sublist(kept.length - 12);
+  }
+
+  static String _cleanSelfNote(String value) =>
+      value.trim().replaceFirst(RegExp(r'^[·•*\-]+\s*'), '').trim();
+
+  static bool _selfNotesOverlap(String left, String right) {
+    final a = _normalizeSelfNote(left);
+    final b = _normalizeSelfNote(right);
+    if (a.isEmpty || b.isEmpty) return false;
+    if (a == b) return true;
+    if (_selfNotesConflict(a, b)) return false;
+    return _selfNoteSimilarity(a, b) >= 0.90;
+  }
+
+  static bool _selfNotesConflict(String left, String right) {
+    const polarityTerms = <String>[
+      '不再',
+      '不是',
+      '不會',
+      '不能',
+      '不要',
+      '沒有',
+      '没',
+      '不',
+      '無',
+      '无',
+      '拒絕',
+      '拒绝',
+      '取消',
+      '結束',
+      '结束',
+    ];
+    final leftPolarity = {
+      for (final term in polarityTerms)
+        if (left.contains(term)) term,
+    };
+    final rightPolarity = {
+      for (final term in polarityTerms)
+        if (right.contains(term)) term,
+    };
+    if (!setEquals(leftPolarity, rightPolarity)) return true;
+
+    Set<String> numbers(String value) => RegExp(
+      r'\d+(?:\.\d+)?',
+    ).allMatches(value).map((match) => match.group(0)!).toSet();
+    return !setEquals(numbers(left), numbers(right));
+  }
+
+  static double _selfNoteSimilarity(String left, String right) {
+    final maxLength = max(left.length, right.length);
+    if (maxLength == 0) return 1;
+    final editSimilarity = 1 - _levenshtein(left, right) / maxLength;
+
+    final shorter = left.length <= right.length ? left : right;
+    final longer = left.length <= right.length ? right : left;
+    final containmentSimilarity = longer.contains(shorter)
+        ? shorter.length / longer.length
+        : 0.0;
+
+    final aPairs = _selfNoteBigrams(left);
+    final bPairs = _selfNoteBigrams(right);
+    if (aPairs.isEmpty || bPairs.isEmpty) {
+      return max(editSimilarity, containmentSimilarity);
+    }
+    final intersection = aPairs.intersection(bPairs).length;
+    final diceSimilarity =
+        (2.0 * intersection) / (aPairs.length + bPairs.length);
+    return max(editSimilarity, max(containmentSimilarity, diceSimilarity));
+  }
+
+  static int _levenshtein(String left, String right) {
+    if (left == right) return 0;
+    if (left.isEmpty) return right.length;
+    if (right.isEmpty) return left.length;
+    var previous = List<int>.generate(right.length + 1, (index) => index);
+    for (var leftIndex = 1; leftIndex <= left.length; leftIndex++) {
+      final current = List<int>.filled(right.length + 1, 0);
+      current[0] = leftIndex;
+      for (var rightIndex = 1; rightIndex <= right.length; rightIndex++) {
+        final substitutionCost =
+            left.codeUnitAt(leftIndex - 1) == right.codeUnitAt(rightIndex - 1)
+            ? 0
+            : 1;
+        current[rightIndex] = min(
+          min(current[rightIndex - 1] + 1, previous[rightIndex] + 1),
+          previous[rightIndex - 1] + substitutionCost,
+        );
+      }
+      previous = current;
+    }
+    return previous[right.length];
+  }
+
+  static String _normalizeSelfNote(String value) {
+    final buffer = StringBuffer();
+    for (final rune in value.toLowerCase().runes) {
+      if (rune >= 0xff01 && rune <= 0xff5e) {
+        buffer.writeCharCode(rune - 0xfee0);
+      } else if (RegExp(
+        r'[a-z0-9\u3400-\u9fff]',
+      ).hasMatch(String.fromCharCode(rune))) {
+        buffer.writeCharCode(rune);
+      }
+    }
+    return buffer.toString();
+  }
+
+  static Set<String> _selfNoteBigrams(String value) {
+    if (value.length < 2) return {value};
+    return {
+      for (var index = 0; index < value.length - 1; index++)
+        value.substring(index, index + 2),
+    };
+  }
+
+  static int _selfNoteInformationScore(String value) =>
+      _normalizeSelfNote(value).length;
 
   static Future<String> getSelfNotes(String characterId) async {
     final db = await database;
+    return db.transaction<String>((txn) async {
+      final rows = await txn.query(
+        'characters',
+        columns: ['self_notes'],
+        where: 'id = ?',
+        whereArgs: [characterId],
+      );
+      if (rows.isEmpty) return '';
+      final stored = (rows.first['self_notes'] as String?) ?? '';
+      final cleaned = _formatSelfNotes(
+        _deduplicateSelfNoteLines(_selfNoteLines(stored)),
+      );
+      if (cleaned != stored) {
+        await txn.update(
+          'characters',
+          {'self_notes': cleaned},
+          where: 'id = ?',
+          whereArgs: [characterId],
+        );
+      }
+      return cleaned;
+    });
+  }
+
+  /// One-time/lifecycle cleanup for existing characters. This deliberately
+  /// touches only the authoritative character record; conversation-pinned
+  /// snapshots remain immutable so an old cache prefix is never rewritten.
+  static Future<void> _deduplicateAllStoredSelfNotes(Database db) async {
     final rows = await db.query(
       'characters',
-      columns: ['self_notes'],
-      where: 'id = ?',
-      whereArgs: [characterId],
+      columns: ['id', 'self_notes'],
+      where: "TRIM(COALESCE(self_notes, '')) <> ''",
     );
-    if (rows.isEmpty) return '';
-    return (rows.first['self_notes'] as String?) ?? '';
+    final batch = db.batch();
+    var changed = false;
+    for (final row in rows) {
+      final id = row['id']?.toString();
+      if (id == null || id.isEmpty) continue;
+      final stored = row['self_notes']?.toString() ?? '';
+      final cleaned = _formatSelfNotes(
+        _deduplicateSelfNoteLines(_selfNoteLines(stored)),
+      );
+      if (cleaned == stored) continue;
+      changed = true;
+      batch.update(
+        'characters',
+        {'self_notes': cleaned},
+        where: 'id = ?',
+        whereArgs: [id],
+      );
+    }
+    if (changed) await batch.commit(noResult: true);
   }
 
   static Future<void> clearSelfNotes(String characterId) async {
@@ -1595,6 +1945,11 @@ class DatabaseHelper {
       batch.delete('backpack_items', where: 'owner_id = ?', whereArgs: [id]);
       batch.delete('sticky_notes', where: 'character_id = ?', whereArgs: [id]);
       batch.delete('usage_logs', where: 'character_id = ?', whereArgs: [id]);
+      batch.delete(
+        'pending_memory_actions',
+        where: 'character_id = ?',
+        whereArgs: [id],
+      );
       batch.delete('memories', where: 'character_id = ?', whereArgs: [id]);
       batch.delete(
         'context_summaries',
@@ -2185,6 +2540,21 @@ class DatabaseHelper {
     return maps.map((m) => Memory.fromMap(m)).toList();
   }
 
+  /// 取得角色所有模式下的 active 記憶。蛛網分層必須從完整集合規劃，否則
+  /// 舊連線的另一端若在不同模式，畫面會誤以為邊不存在。
+  static Future<List<Memory>> getAllActiveMemories({
+    String characterId = 'default',
+  }) async {
+    final db = await database;
+    final maps = await db.query(
+      'memories',
+      where: 'status = ? AND character_id = ?',
+      whereArgs: ['active', characterId],
+      orderBy: 'created_at DESC',
+    );
+    return maps.map(Memory.fromMap).toList();
+  }
+
   static Future<List<Memory>> getPermanentMemories(
     String mode, {
     String characterId = 'default',
@@ -2217,6 +2587,30 @@ class DatabaseHelper {
       limit: limit,
     );
     return maps.map((m) => Memory.fromMap(m)).toList();
+  }
+
+  /// 跨模式搜尋內容、觸發詞與類別。
+  /// [limit] 為 null 時回傳全部結果；記憶整理搜尋不與對話召回上限綁定。
+  static Future<List<Memory>> searchMemoriesForCharacter(
+    String keyword, {
+    String characterId = 'default',
+    int? limit = 10,
+  }) async {
+    final normalized = keyword.trim();
+    if (normalized.isEmpty) return const [];
+    final db = await database;
+    final pattern = _likeContains(normalized);
+    final maps = await db.query(
+      'memories',
+      where:
+          "status = ? AND character_id = ? AND "
+          "(content LIKE ? ESCAPE '\\' OR triggers LIKE ? ESCAPE '\\' "
+          "OR category LIKE ? ESCAPE '\\')",
+      whereArgs: ['active', characterId, pattern, pattern, pattern],
+      orderBy: 'mention_count DESC, updated_at DESC',
+      limit: limit?.clamp(1, 500),
+    );
+    return maps.map(Memory.fromMap).toList();
   }
 
   /// 獲取低置信度待審記憶
@@ -2262,56 +2656,100 @@ class DatabaseHelper {
     final requestedCharacter = characterId.trim().isEmpty
         ? 'default'
         : characterId.trim();
+    return db.transaction(
+      (txn) => _archiveMemoryInTransaction(
+        txn,
+        memoryId,
+        reason,
+        requestedCharacter,
+      ),
+    );
+  }
+
+  /// Atomically moves every matching active memory into the dusty box.
+  /// Missing/stale ids are ignored, while all rows that are found commit as
+  /// one unit so a failed batch never leaves a half-deleted selection.
+  static Future<int> archiveMemories(
+    Iterable<int> memoryIds,
+    String reason, {
+    required String characterId,
+  }) async {
+    final ids = memoryIds.where((id) => id > 0).toSet().toList()..sort();
+    if (ids.isEmpty) return 0;
+    final db = await database;
+    final requestedCharacter = characterId.trim().isEmpty
+        ? 'default'
+        : characterId.trim();
     return db.transaction((txn) async {
-      final maps = await txn.query(
-        'memories',
-        where: 'id = ? AND character_id = ?',
-        whereArgs: [memoryId, requestedCharacter],
-        limit: 1,
-      );
-      if (maps.isEmpty) return false;
-
-      final mem = maps.first;
-      final actualCharacter = (mem['character_id'] as String? ?? 'default')
-          .trim();
-      final scopedCharacter = actualCharacter.isEmpty
-          ? 'default'
-          : actualCharacter;
-      final values = <String, Object?>{
-        'character_id': scopedCharacter,
-        'original_id': memoryId,
-        'original_table': 'memories',
-        'content_snapshot': jsonEncode(Map<String, dynamic>.from(mem)),
-        'archived_at': DateTime.now().toIso8601String(),
-        'reason': reason,
-      };
-
-      final existing = await txn.query(
-        'archive',
-        columns: ['id'],
-        where: 'original_table = ? AND original_id = ?',
-        whereArgs: ['memories', memoryId],
-        limit: 1,
-      );
-      if (existing.isEmpty) {
-        await txn.insert('archive', values);
-      } else {
-        await txn.update(
-          'archive',
-          values,
-          where: 'id = ?',
-          whereArgs: [existing.first['id']],
-        );
+      var archived = 0;
+      for (final id in ids) {
+        if (await _archiveMemoryInTransaction(
+          txn,
+          id,
+          reason,
+          requestedCharacter,
+        )) {
+          archived++;
+        }
       }
-
-      final changed = await txn.update(
-        'memories',
-        {'status': 'deleted'},
-        where: 'id = ? AND character_id = ?',
-        whereArgs: [memoryId, scopedCharacter],
-      );
-      return changed == 1;
+      return archived;
     });
+  }
+
+  static Future<bool> _archiveMemoryInTransaction(
+    Transaction txn,
+    int memoryId,
+    String reason,
+    String requestedCharacter,
+  ) async {
+    final maps = await txn.query(
+      'memories',
+      where: 'id = ? AND character_id = ? AND status = ?',
+      whereArgs: [memoryId, requestedCharacter, 'active'],
+      limit: 1,
+    );
+    if (maps.isEmpty) return false;
+
+    final mem = maps.first;
+    final actualCharacter = (mem['character_id'] as String? ?? 'default')
+        .trim();
+    final scopedCharacter = actualCharacter.isEmpty
+        ? 'default'
+        : actualCharacter;
+    final values = <String, Object?>{
+      'character_id': scopedCharacter,
+      'original_id': memoryId,
+      'original_table': 'memories',
+      'content_snapshot': jsonEncode(Map<String, dynamic>.from(mem)),
+      'archived_at': DateTime.now().toIso8601String(),
+      'reason': reason,
+    };
+
+    final existing = await txn.query(
+      'archive',
+      columns: ['id'],
+      where: 'original_table = ? AND original_id = ?',
+      whereArgs: ['memories', memoryId],
+      limit: 1,
+    );
+    if (existing.isEmpty) {
+      await txn.insert('archive', values);
+    } else {
+      await txn.update(
+        'archive',
+        values,
+        where: 'id = ?',
+        whereArgs: [existing.first['id']],
+      );
+    }
+
+    final changed = await txn.update(
+      'memories',
+      {'status': 'deleted'},
+      where: 'id = ? AND character_id = ? AND status = ?',
+      whereArgs: [memoryId, scopedCharacter, 'active'],
+    );
+    return changed == 1;
   }
 
   /// 升級低置信度記憶為中置信度
@@ -2485,58 +2923,127 @@ class DatabaseHelper {
     required String characterId,
   }) async {
     final db = await database;
+    return db.transaction(
+      (txn) => _restoreFromArchiveInTransaction(txn, archiveId, characterId),
+    );
+  }
+
+  static Future<int> restoreFromArchives(
+    Iterable<int> archiveIds, {
+    required String characterId,
+  }) async {
+    final ids = archiveIds.where((id) => id > 0).toSet().toList()..sort();
+    if (ids.isEmpty) return 0;
+    final db = await database;
     return db.transaction((txn) async {
-      final archiveRows = await txn.query(
-        'archive',
-        where: 'id = ? AND character_id = ? AND original_table = ?',
-        whereArgs: [archiveId, characterId, 'memories'],
-        limit: 1,
-      );
-      if (archiveRows.isEmpty) return false;
-      final archive = archiveRows.first;
-      final originalId = archive['original_id'] as int;
-
-      final existing = await txn.query(
-        'memories',
-        where: 'id = ?',
-        whereArgs: [originalId],
-        limit: 1,
-      );
-      if (existing.isNotEmpty) {
-        if (existing.first['character_id'] != characterId) return false;
-        final changed = await txn.update(
-          'memories',
-          {'status': 'active', 'updated_at': DateTime.now().toIso8601String()},
-          where: 'id = ? AND character_id = ?',
-          whereArgs: [originalId, characterId],
+      var restored = 0;
+      for (final archiveId in ids) {
+        final success = await _restoreFromArchiveInTransaction(
+          txn,
+          archiveId,
+          characterId,
         );
-        if (changed != 1) return false;
-      } else {
-        Map<String, dynamic> snapshot;
-        try {
-          final decoded = jsonDecode(archive['content_snapshot'] as String);
-          if (decoded is! Map) return false;
-          snapshot = Map<String, dynamic>.from(decoded);
-        } on FormatException {
-          return false;
-        } on TypeError {
-          return false;
-        }
-        // Preserve the original id so any surviving emotion/timeline/spider
-        // references remain attached to the restored memory.
-        snapshot['id'] = originalId;
-        snapshot['character_id'] = characterId;
-        snapshot['status'] = 'active';
-        snapshot['updated_at'] = DateTime.now().toIso8601String();
-        await txn.insert('memories', snapshot);
+        if (!success) throw StateError('archive entry changed during restore');
+        restored++;
       }
+      return restored;
+    });
+  }
 
-      await txn.delete(
-        'archive',
+  static Future<bool> _restoreFromArchiveInTransaction(
+    Transaction txn,
+    int archiveId,
+    String characterId,
+  ) async {
+    final archiveRows = await txn.query(
+      'archive',
+      where: 'id = ? AND character_id = ? AND original_table = ?',
+      whereArgs: [archiveId, characterId, 'memories'],
+      limit: 1,
+    );
+    if (archiveRows.isEmpty) return false;
+    final archive = archiveRows.first;
+    final originalId = archive['original_id'] as int;
+
+    final existing = await txn.query(
+      'memories',
+      where: 'id = ?',
+      whereArgs: [originalId],
+      limit: 1,
+    );
+    if (existing.isNotEmpty) {
+      if (existing.first['character_id'] != characterId) return false;
+      final changed = await txn.update(
+        'memories',
+        {'status': 'active', 'updated_at': DateTime.now().toIso8601String()},
         where: 'id = ? AND character_id = ?',
-        whereArgs: [archiveId, characterId],
+        whereArgs: [originalId, characterId],
       );
-      return true;
+      if (changed != 1) return false;
+    } else {
+      Map<String, dynamic> snapshot;
+      try {
+        final decoded = jsonDecode(archive['content_snapshot'] as String);
+        if (decoded is! Map) return false;
+        snapshot = Map<String, dynamic>.from(decoded);
+      } on FormatException {
+        return false;
+      } on TypeError {
+        return false;
+      }
+      // Preserve the original id so any surviving emotion/timeline/spider
+      // references remain attached to the restored memory.
+      snapshot['id'] = originalId;
+      snapshot['character_id'] = characterId;
+      snapshot['status'] = 'active';
+      snapshot['updated_at'] = DateTime.now().toIso8601String();
+      await txn.insert('memories', snapshot);
+    }
+
+    await txn.delete(
+      'archive',
+      where: 'id = ? AND character_id = ?',
+      whereArgs: [archiveId, characterId],
+    );
+    return true;
+  }
+
+  static Future<int> permanentlyDeleteArchives(
+    Iterable<int> archiveIds, {
+    required String characterId,
+  }) async {
+    final ids = archiveIds.where((id) => id > 0).toSet().toList()..sort();
+    if (ids.isEmpty) return 0;
+    final db = await database;
+    return db.transaction((txn) async {
+      var deleted = 0;
+      for (final archiveId in ids) {
+        final archiveRows = await txn.query(
+          'archive',
+          columns: ['original_id', 'original_table'],
+          where: 'id = ? AND character_id = ?',
+          whereArgs: [archiveId, characterId],
+          limit: 1,
+        );
+        if (archiveRows.isEmpty) {
+          throw StateError('archive entry changed during delete');
+        }
+        final archive = archiveRows.first;
+        if (archive['original_table'] == 'memories') {
+          await _hardDeleteMemoryInTransaction(
+            txn,
+            archive['original_id'] as int,
+            characterId,
+          );
+        }
+        await txn.delete(
+          'archive',
+          where: 'id = ? AND character_id = ?',
+          whereArgs: [archiveId, characterId],
+        );
+        deleted++;
+      }
+      return deleted;
     });
   }
 
@@ -3219,13 +3726,182 @@ class DatabaseHelper {
   }
 
   static Future<List<Map<String, dynamic>>> getSpiderWebLinks(
-    String characterId,
-  ) async {
+    String characterId, {
+    bool includeRejected = false,
+  }) async {
     final db = await database;
-    return await db.query(
-      'spider_web_links',
-      where: 'character_id = ?',
-      whereArgs: [characterId],
+    return db.rawQuery(
+      '''
+      SELECT link.*
+      FROM spider_web_links AS link
+      INNER JOIN memories AS first_memory
+        ON first_memory.id = link.memory_id_1
+       AND first_memory.character_id = link.character_id
+       AND first_memory.status = 'active'
+      INNER JOIN memories AS second_memory
+        ON second_memory.id = link.memory_id_2
+       AND second_memory.character_id = link.character_id
+       AND second_memory.status = 'active'
+      WHERE link.character_id = ?
+        ${includeRejected ? '' : "AND link.status != 'rejected'"}
+      ORDER BY link.status ASC, link.strength DESC, link.id ASC
+      ''',
+      [characterId],
     );
+  }
+
+  /// 建立一條經角色、active 狀態與自環檢查的蛛網連線。
+  static Future<bool> insertSpiderWebLink(
+    String characterId,
+    int firstMemoryId,
+    int secondMemoryId,
+  ) async {
+    return upsertSpiderWebRelation(
+      characterId,
+      firstMemoryId,
+      secondMemoryId,
+      relationType: 'related',
+      strength: 1,
+      status: 'confirmed',
+      source: 'model',
+      reason: '',
+    );
+  }
+
+  /// Inserts or updates one explainable relation without allowing a scanner
+  /// to overwrite a user's confirmed or rejected decision.
+  static Future<bool> upsertSpiderWebRelation(
+    String characterId,
+    int firstMemoryId,
+    int secondMemoryId, {
+    required String relationType,
+    required double strength,
+    required String status,
+    required String source,
+    required String reason,
+  }) async {
+    if (firstMemoryId == secondMemoryId) return false;
+    final db = await database;
+    final first = min(firstMemoryId, secondMemoryId);
+    final second = max(firstMemoryId, secondMemoryId);
+    final safeType =
+        const {
+          'related',
+          'same_event',
+          'temporal',
+          'duplicate_candidate',
+          'conflict_update',
+        }.contains(relationType)
+        ? relationType
+        : 'related';
+    final safeStatus =
+        const {'suggested', 'confirmed', 'rejected'}.contains(status)
+        ? status
+        : 'suggested';
+    final safeSource =
+        const {
+          'legacy',
+          'model',
+          'local_scan',
+          'user',
+          'merge_remap',
+        }.contains(source)
+        ? source
+        : 'local_scan';
+    final safeStrength = strength.clamp(0.0, 1.0);
+    final now = DateTime.now().toIso8601String();
+    return db.transaction((txn) async {
+      final valid = await txn.query(
+        'memories',
+        columns: ['id'],
+        where: 'id IN (?, ?) AND character_id = ? AND status = ?',
+        whereArgs: [first, second, characterId, 'active'],
+      );
+      if (valid.length != 2) return false;
+      final existing = await txn.query(
+        'spider_web_links',
+        where: 'character_id = ? AND memory_id_1 = ? AND memory_id_2 = ?',
+        whereArgs: [characterId, first, second],
+        limit: 1,
+      );
+      if (existing.isNotEmpty) {
+        final currentStatus =
+            existing.first['status']?.toString() ?? 'confirmed';
+        if (safeStatus == 'suggested' &&
+            (currentStatus == 'confirmed' || currentStatus == 'rejected')) {
+          return false;
+        }
+        final changed = await txn.update(
+          'spider_web_links',
+          <String, Object?>{
+            'relation_type': safeType,
+            'strength': safeStrength,
+            'status': safeStatus,
+            'source': safeSource,
+            'reason': reason.trim(),
+            'updated_at': now,
+          },
+          where: 'id = ?',
+          whereArgs: [existing.first['id']],
+        );
+        return changed == 1;
+      }
+      final inserted = await txn.insert('spider_web_links', <String, Object?>{
+        'character_id': characterId,
+        'memory_id_1': first,
+        'memory_id_2': second,
+        'created_at': now,
+        'relation_type': safeType,
+        'strength': safeStrength,
+        'status': safeStatus,
+        'source': safeSource,
+        'reason': reason.trim(),
+        'updated_at': now,
+      });
+      return inserted > 0;
+    });
+  }
+
+  static Future<bool> resolveSpiderWebRelation(
+    String characterId,
+    int relationId, {
+    required bool confirmed,
+  }) async {
+    final db = await database;
+    final changed = await db.update(
+      'spider_web_links',
+      <String, Object?>{
+        'status': confirmed ? 'confirmed' : 'rejected',
+        'source': 'user',
+        'updated_at': DateTime.now().toIso8601String(),
+      },
+      where: 'id = ? AND character_id = ?',
+      whereArgs: [relationId, characterId],
+    );
+    return changed == 1;
+  }
+
+  /// Removes one graph edge without touching either memory. Both endpoints
+  /// are normalized exactly like insertion, and character scope is mandatory.
+  static Future<bool> deleteSpiderWebLink(
+    String characterId,
+    int firstMemoryId,
+    int secondMemoryId,
+  ) async {
+    if (firstMemoryId == secondMemoryId) return false;
+    final db = await database;
+    final first = min(firstMemoryId, secondMemoryId);
+    final second = max(firstMemoryId, secondMemoryId);
+    final changed = await db.update(
+      'spider_web_links',
+      <String, Object?>{
+        'status': 'rejected',
+        'source': 'user',
+        'updated_at': DateTime.now().toIso8601String(),
+      },
+      where: 'character_id = ? AND memory_id_1 = ? AND memory_id_2 = ?',
+      whereArgs: [characterId, first, second],
+    );
+    return changed == 1;
   }
 }

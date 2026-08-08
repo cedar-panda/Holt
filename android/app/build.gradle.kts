@@ -21,6 +21,24 @@ val releaseKeystoreReady =
         (keystoreProperties["storeFile"] as String?)
             ?.let { file(it).exists() } == true
 
+// Optional side-by-side validation package. Normal debug/release builds keep
+// com.yanci.holt; CI or a local safety check may pass Gradle properties such as
+// -PholtApplicationIdSuffix=.staging -PholtApplicationLabel="Holt Staging".
+val holtApplicationIdSuffix = providers.gradleProperty("holtApplicationIdSuffix")
+    .orNull
+    ?.trim()
+    ?.takeIf { it.isNotEmpty() }
+val holtApplicationLabel = providers.gradleProperty("holtApplicationLabel")
+    .orNull
+    ?.trim()
+    ?.takeIf { it.isNotEmpty() }
+    ?: "Holt"
+if (holtApplicationIdSuffix != null &&
+    !Regex("^\\.[A-Za-z0-9_]+(?:\\.[A-Za-z0-9_]+)*$").matches(holtApplicationIdSuffix)
+) {
+    error("holtApplicationIdSuffix must start with '.' and contain package-safe segments")
+}
+
 android {
     namespace = "com.yanci.holt"
     compileSdk = flutter.compileSdkVersion
@@ -37,7 +55,8 @@ android {
 
     defaultConfig {
         // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId = "com.yanci.holt"
+        applicationId = "com.yanci.holt${holtApplicationIdSuffix ?: ""}"
+        manifestPlaceholders["holtApplicationLabel"] = holtApplicationLabel
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion

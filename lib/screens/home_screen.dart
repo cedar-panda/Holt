@@ -21,6 +21,7 @@ import '../memory/database.dart';
 import '../models/message.dart';
 import '../services/settings_manager.dart';
 import '../services/backup_service.dart';
+import '../services/device_file_saver.dart';
 import '../services/keep_alive_service.dart';
 import '../services/manual_summary_service.dart';
 import '../services/scratch_service.dart';
@@ -28,6 +29,8 @@ import '../widgets/orbit_loading_indicator.dart';
 import '../utils/latest_request_gate.dart';
 import 'ability_modules_screen.dart';
 import 'manual_summary_clean_screen.dart';
+
+enum _BackupExportMode { save, share }
 
 /// 主頁 — 角色輪盤 + 水晶球 + 底部導航
 class HomeScreen extends StatefulWidget {
@@ -67,6 +70,7 @@ class _HomeScreenState extends State<HomeScreen>
   Timer? _autoBackupTimer;
   DateTime? _lastLocalBackupAt;
   bool _autoBackupRunning = false;
+  bool _backupExportRunning = false;
   bool _namePromptOpen = false;
   bool _isStartingChat = false;
   bool _reduceMotion = false;
@@ -130,67 +134,69 @@ class _HomeScreenState extends State<HomeScreen>
   void _showNamePrompt() {
     if (_namePromptOpen) return;
     _namePromptOpen = true;
-    final ctrl = TextEditingController();
-    showDialog<void>(
-      context: context,
-      barrierDismissible: false,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: YanciTheme.isDark
-            ? const Color(0xFF252228)
-            : Colors.white,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: Text(L.get('first_time_title'), style: YanciTheme.headingMedium),
-        content: TextField(
-          controller: ctrl,
-          autofocus: true,
-          style: YanciTheme.bodyText,
-          decoration: InputDecoration(
-            hintText: L.get('first_time_hint'),
-            hintStyle: YanciTheme.bodySmall.copyWith(
-              color: YanciTheme.textSecondary.withValues(alpha: 0.4),
+    var enteredName = '';
+    showDialog<String>(
+          context: context,
+          barrierDismissible: false,
+          builder: (ctx) => AlertDialog(
+            backgroundColor: YanciTheme.isDark
+                ? const Color(0xFF252228)
+                : Colors.white,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(20),
             ),
-            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-            isDense: true,
-            contentPadding: const EdgeInsets.symmetric(
-              horizontal: 14,
-              vertical: 12,
+            title: Text(
+              L.get('first_time_title'),
+              style: YanciTheme.headingMedium,
             ),
+            content: TextField(
+              autofocus: true,
+              onChanged: (value) => enteredName = value,
+              style: YanciTheme.bodyText,
+              decoration: InputDecoration(
+                hintText: L.get('first_time_hint'),
+                hintStyle: YanciTheme.bodySmall.copyWith(
+                  color: YanciTheme.textSecondary.withValues(alpha: 0.4),
+                ),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                isDense: true,
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 12,
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, ''),
+                child: Text(
+                  L.get('first_time_skip'),
+                  style: TextStyle(color: YanciTheme.textSecondary),
+                ),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, enteredName.trim()),
+                child: Text(
+                  L.get('confirm_ok'),
+                  style: TextStyle(color: YanciTheme.accent),
+                ),
+              ),
+            ],
           ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () async {
-              await UserSettings.saveNamePromptCompleted(true);
-              if (ctx.mounted) Navigator.pop(ctx);
-            },
-            child: Text(
-              L.get('first_time_skip'),
-              style: TextStyle(color: YanciTheme.textSecondary),
-            ),
-          ),
-          TextButton(
-            onPressed: () async {
-              final name = ctrl.text.trim();
-              if (name.isNotEmpty) {
-                await UserSettings.saveUserName(name);
-              }
-              await UserSettings.saveNamePromptCompleted(true);
-              if (!ctx.mounted) return;
-              Navigator.pop(ctx);
-              if (!mounted) return;
-              _loadLatestNote();
-            },
-            child: Text(
-              L.get('confirm_ok'),
-              style: TextStyle(color: YanciTheme.accent),
-            ),
-          ),
-        ],
-      ),
-    ).whenComplete(() {
-      ctrl.dispose();
-      _namePromptOpen = false;
-    });
+        )
+        .then((name) async {
+          if (name == null) return;
+          if (name.isNotEmpty) {
+            await UserSettings.saveUserName(name);
+          }
+          await UserSettings.saveNamePromptCompleted(true);
+          if (mounted && name.isNotEmpty) {
+            unawaited(_loadLatestNote());
+          }
+        })
+        .whenComplete(() => _namePromptOpen = false);
   }
 
   @override
@@ -1165,7 +1171,7 @@ class _HomeScreenState extends State<HomeScreen>
       '/memory',
       arguments: {
         'characterId': conv?.characterId ?? _activeCharacterId,
-        'initialTab': 1,
+        'initialTab': 2,
       },
     );
   }
@@ -3000,14 +3006,25 @@ class _HomeScreenState extends State<HomeScreen>
     }
   }
 
-  Future<void> _handleExportBackup() async {
-    if (!mounted) return;
+  Future<void> _handleExportBackup(_BackupExportMode mode) async {
+    if (!mounted || _backupExportRunning) return;
+    _backupExportRunning = true;
+    String? artifactPath;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(L.get('backup_exporting')),
+        content: Row(
+          children: [
+            const OrbitLoadingIndicator(size: 16, color: Colors.white),
+            const SizedBox(width: 12),
+            Text(
+              L.get('backup_exporting'),
+              style: const TextStyle(color: Colors.white),
+            ),
+          ],
+        ),
         backgroundColor: YanciTheme.accent,
         behavior: SnackBarBehavior.floating,
-        duration: const Duration(seconds: 10),
+        duration: const Duration(minutes: 5),
         margin: const EdgeInsets.only(bottom: 80, left: 16, right: 16),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(YanciTheme.radiusSm),
@@ -3015,19 +3032,21 @@ class _HomeScreenState extends State<HomeScreen>
       ),
     );
     try {
-      final path = await BackupService.exportPortableBundle();
+      artifactPath = await BackupService.exportPortableBundle();
       if (!mounted) return;
       ScaffoldMessenger.of(context).hideCurrentSnackBar();
 
-      if (!await _saveExportedBackup(path)) return;
+      final completed = mode == _BackupExportMode.save
+          ? await _saveExportedBackup(artifactPath)
+          : await _shareExportedBackup(artifactPath);
+      if (!completed) return;
 
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            L.pick(
-              en: 'Backup saved. Pick the same file when importing.',
-              zhTW: '備份已保存。導入時選這份檔案即可。',
+            L.get(
+              mode == _BackupExportMode.save ? 'backup_saved' : 'backup_shared',
             ),
           ),
           backgroundColor: YanciTheme.accent,
@@ -3054,27 +3073,30 @@ class _HomeScreenState extends State<HomeScreen>
           ),
         ),
       );
+    } finally {
+      _backupExportRunning = false;
+      if (artifactPath != null) {
+        try {
+          await BackupService.discardExportArtifact(artifactPath);
+        } catch (error) {
+          debugPrint('Export artifact cleanup failed: $error');
+        }
+      }
     }
   }
 
   Future<bool> _saveExportedBackup(String path) async {
     final file = File(path);
-    final fileName = path.split('/').last;
+    final fileName = p.basename(path);
     final isMobile = Platform.isAndroid || Platform.isIOS;
-    final size = await file.length();
 
-    // Android/iOS 的 SAF 介面要求一次把 bytes 交給 plugin。大型媒體備份
-    // 這樣會造成記憶體尖峰，因此超過 32 MiB 改以檔案串流交給分享面板。
-    if (isMobile && size > 32 * 1024 * 1024) {
-      final result = await SharePlus.instance.share(
-        ShareParams(
-          files: <XFile>[XFile(path, mimeType: 'application/zip')],
-          fileNameOverrides: <String>[fileName],
-          title: L.pick(en: 'Save Holt backup', zhTW: '保存 Holt 備份'),
-          sharePositionOrigin: const Rect.fromLTWH(0, 0, 1, 1),
-        ),
+    if (Platform.isAndroid) {
+      final uri = await DeviceFileSaver.saveAndroidFile(
+        sourcePath: path,
+        suggestedName: fileName,
+        mimeType: 'application/zip',
       );
-      return result.status != ShareResultStatus.dismissed;
+      return uri != null;
     }
 
     final savedTo = await FilePicker.platform.saveFile(
@@ -3089,144 +3111,294 @@ class _HomeScreenState extends State<HomeScreen>
     return true;
   }
 
+  Future<bool> _shareExportedBackup(String path) async {
+    final fileName = p.basename(path);
+    final result = await SharePlus.instance.share(
+      ShareParams(
+        files: <XFile>[XFile(path, mimeType: 'application/zip')],
+        fileNameOverrides: <String>[fileName],
+        title: L.pick(en: 'Share Holt backup', zhTW: '分享 Holt 備份'),
+        sharePositionOrigin: const Rect.fromLTWH(0, 0, 1, 1),
+      ),
+    );
+    return result.status != ShareResultStatus.dismissed;
+  }
+
+  Future<void> _confirmDeleteLegacyExports(LegacyExportStats stats) async {
+    if (!mounted || stats.isEmpty) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(YanciTheme.radiusMd),
+        ),
+        backgroundColor: YanciTheme.isDark
+            ? const Color(0xFF1E1E2E)
+            : Colors.white,
+        title: Text(
+          L.get('backup_cleanup_confirm_title'),
+          style: TextStyle(
+            color: YanciTheme.textPrimary,
+            fontFamily: YanciTheme.fontFamily,
+          ),
+        ),
+        content: Text(
+          L.fmt('backup_cleanup_confirm_body', [
+            stats.fileCount,
+            _formatByteSize(stats.totalBytes),
+          ]),
+          style: TextStyle(
+            color: YanciTheme.textSecondary,
+            fontFamily: YanciTheme.fontFamily,
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: Text(
+              L.get('cancel'),
+              style: TextStyle(color: YanciTheme.textSecondary),
+            ),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: Text(
+              L.get('confirm_delete'),
+              style: TextStyle(color: Colors.red.shade400),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    try {
+      final removed = await BackupService.deleteLegacyExports();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            L.fmt('backup_cleanup_done', [
+              removed.fileCount,
+              _formatByteSize(removed.totalBytes),
+            ]),
+          ),
+          backgroundColor: YanciTheme.accent,
+          behavior: SnackBarBehavior.floating,
+          margin: const EdgeInsets.only(bottom: 80, left: 16, right: 16),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(YanciTheme.radiusSm),
+          ),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(L.fmt('backup_error', [error.toString()])),
+          backgroundColor: Colors.red.shade400,
+          behavior: SnackBarBehavior.floating,
+          margin: const EdgeInsets.only(bottom: 80, left: 16, right: 16),
+        ),
+      );
+    }
+  }
+
+  String _formatByteSize(int bytes) {
+    if (bytes < 1024) return '$bytes B';
+    final kib = bytes / 1024;
+    if (kib < 1024) return '${kib.toStringAsFixed(1)} KiB';
+    final mib = kib / 1024;
+    if (mib < 1024) return '${mib.toStringAsFixed(1)} MiB';
+    return '${(mib / 1024).toStringAsFixed(2)} GiB';
+  }
+
   Future<void> _showBackupSheet() async {
     await _refreshLastBackupTime();
+    if (!mounted) return;
+    final legacyStats = await BackupService.getLegacyExportStats();
     if (!mounted) return;
     showModalBottomSheet<void>(
       context: context,
       backgroundColor: Colors.transparent,
+      isScrollControlled: true,
       builder: (sheetContext) => SafeArea(
         top: false,
-        child: Container(
-          decoration: BoxDecoration(
-            color: YanciTheme.isDark
-                ? const Color(0xF0252228)
-                : Colors.white.withValues(alpha: 0.97),
-            borderRadius: const BorderRadius.vertical(
-              top: Radius.circular(YanciTheme.radiusLg),
-            ),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.sizeOf(sheetContext).height * 0.9,
           ),
-          padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Align(
-                alignment: Alignment.center,
-                child: Container(
-                  width: 40,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: YanciTheme.textSecondary.withValues(alpha: 0.3),
-                    borderRadius: BorderRadius.circular(2),
-                  ),
+          child: SingleChildScrollView(
+            child: Container(
+              decoration: BoxDecoration(
+                color: YanciTheme.isDark
+                    ? const Color(0xF0252228)
+                    : Colors.white.withValues(alpha: 0.97),
+                borderRadius: const BorderRadius.vertical(
+                  top: Radius.circular(YanciTheme.radiusLg),
                 ),
               ),
-              const SizedBox(height: 18),
-              Row(
+              padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Icon(
-                    Icons.backup_outlined,
-                    size: 20,
-                    color: YanciTheme.accent,
-                  ),
-                  const SizedBox(width: 10),
-                  Text(
-                    L.get('me_backup_title'),
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.w700,
-                      color: YanciTheme.textPrimary,
-                      fontFamily: YanciTheme.fontFamily,
+                  Align(
+                    alignment: Alignment.center,
+                    child: Container(
+                      width: 40,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: YanciTheme.textSecondary.withValues(alpha: 0.3),
+                        borderRadius: BorderRadius.circular(2),
+                      ),
                     ),
+                  ),
+                  const SizedBox(height: 18),
+                  Row(
+                    children: [
+                      Icon(
+                        Icons.backup_outlined,
+                        size: 20,
+                        color: YanciTheme.accent,
+                      ),
+                      const SizedBox(width: 10),
+                      Text(
+                        L.get('me_backup_title'),
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w700,
+                          color: YanciTheme.textPrimary,
+                          fontFamily: YanciTheme.fontFamily,
+                        ),
+                      ),
+                      const Spacer(),
+                      IconButton(
+                        onPressed: () {
+                          Navigator.pop(sheetContext);
+                          _handleExportBackup(_BackupExportMode.share);
+                        },
+                        tooltip: L.get('me_share_backup'),
+                        constraints: const BoxConstraints(
+                          minWidth: 44,
+                          minHeight: 44,
+                        ),
+                        icon: Icon(
+                          Icons.share_outlined,
+                          size: 20,
+                          color: YanciTheme.accent,
+                        ),
+                      ),
+                      if (!legacyStats.isEmpty) ...[
+                        const SizedBox(width: 4),
+                        IconButton(
+                          onPressed: () {
+                            Navigator.pop(sheetContext);
+                            _confirmDeleteLegacyExports(legacyStats);
+                          },
+                          tooltip:
+                              '${L.get('me_cleanup_exports')} · '
+                              '${L.fmt('me_cleanup_exports_sub', [legacyStats.fileCount, _formatByteSize(legacyStats.totalBytes)])}',
+                          constraints: const BoxConstraints(
+                            minWidth: 44,
+                            minHeight: 44,
+                          ),
+                          icon: Icon(
+                            Icons.cleaning_services_outlined,
+                            size: 20,
+                            color: Colors.red.shade400,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                  const SizedBox(height: 14),
+                  Container(
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: YanciTheme.accent.withValues(alpha: 0.08),
+                      borderRadius: BorderRadius.circular(YanciTheme.radiusMd),
+                      border: Border.all(
+                        color: YanciTheme.accent.withValues(alpha: 0.16),
+                        width: 0.5,
+                      ),
+                    ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Icon(
+                          Icons.autorenew_rounded,
+                          size: 20,
+                          color: YanciTheme.accent,
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                L.get('me_backup_auto_title'),
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600,
+                                  color: YanciTheme.textPrimary,
+                                  fontFamily: YanciTheme.fontFamily,
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                L.get('me_backup_auto_sub'),
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  height: 1.35,
+                                  color: YanciTheme.textSecondary.withValues(
+                                    alpha: 0.76,
+                                  ),
+                                  fontFamily: YanciTheme.fontFamily,
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              Text(
+                                L.fmt('me_backup_last', [
+                                  _formatBackupTime(_lastLocalBackupAt),
+                                ]),
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: YanciTheme.accent,
+                                  fontWeight: FontWeight.w600,
+                                  fontFamily: YanciTheme.fontFamily,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  _buildBackupSheetAction(
+                    icon: Icons.save_alt_rounded,
+                    title: L.get('me_export_json'),
+                    subtitle: L.get('me_export_json_sub'),
+                    onTap: () {
+                      Navigator.pop(sheetContext);
+                      _handleExportBackup(_BackupExportMode.save);
+                    },
+                  ),
+                  const SizedBox(height: 8),
+                  _buildBackupSheetAction(
+                    icon: Icons.file_download_outlined,
+                    title: L.get('me_import_json'),
+                    subtitle: L.get('me_import_json_sub'),
+                    warning: true,
+                    onTap: () {
+                      Navigator.pop(sheetContext);
+                      _handleImportBackup();
+                    },
                   ),
                 ],
               ),
-              const SizedBox(height: 14),
-              Container(
-                padding: const EdgeInsets.all(14),
-                decoration: BoxDecoration(
-                  color: YanciTheme.accent.withValues(alpha: 0.08),
-                  borderRadius: BorderRadius.circular(YanciTheme.radiusMd),
-                  border: Border.all(
-                    color: YanciTheme.accent.withValues(alpha: 0.16),
-                    width: 0.5,
-                  ),
-                ),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Icon(
-                      Icons.autorenew_rounded,
-                      size: 20,
-                      color: YanciTheme.accent,
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            L.get('me_backup_auto_title'),
-                            style: TextStyle(
-                              fontSize: 14,
-                              fontWeight: FontWeight.w600,
-                              color: YanciTheme.textPrimary,
-                              fontFamily: YanciTheme.fontFamily,
-                            ),
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            L.get('me_backup_auto_sub'),
-                            style: TextStyle(
-                              fontSize: 12,
-                              height: 1.35,
-                              color: YanciTheme.textSecondary.withValues(
-                                alpha: 0.76,
-                              ),
-                              fontFamily: YanciTheme.fontFamily,
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                          Text(
-                            L.fmt('me_backup_last', [
-                              _formatBackupTime(_lastLocalBackupAt),
-                            ]),
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: YanciTheme.accent,
-                              fontWeight: FontWeight.w600,
-                              fontFamily: YanciTheme.fontFamily,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 12),
-              _buildBackupSheetAction(
-                icon: Icons.file_upload_outlined,
-                title: L.get('me_export_json'),
-                subtitle: L.get('me_export_json_sub'),
-                onTap: () {
-                  Navigator.pop(sheetContext);
-                  _handleExportBackup();
-                },
-              ),
-              const SizedBox(height: 8),
-              _buildBackupSheetAction(
-                icon: Icons.file_download_outlined,
-                title: L.get('me_import_json'),
-                subtitle: L.get('me_import_json_sub'),
-                warning: true,
-                onTap: () {
-                  Navigator.pop(sheetContext);
-                  _handleImportBackup();
-                },
-              ),
-            ],
+            ),
           ),
         ),
       ),

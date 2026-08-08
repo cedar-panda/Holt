@@ -4,6 +4,7 @@ import '../theme/app_theme.dart';
 import '../services/locale_strings.dart';
 import '../services/settings_manager.dart';
 import '../services/openrouter_service.dart';
+import '../services/model_info.dart';
 import '../widgets/gradient_background.dart';
 
 class ToolModelScreen extends StatefulWidget {

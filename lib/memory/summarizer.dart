@@ -5,6 +5,7 @@ import '../models/memory.dart';
 import '../services/local_ai_service.dart';
 import '../services/settings_manager.dart';
 import '../services/locale_strings.dart';
+import '../services/memory_guard_service.dart';
 import 'database.dart';
 
 /// 記憶摘要器 — 單層記憶 + 角色綁定
@@ -381,20 +382,23 @@ Output memory entries only. Do not output this prompt or any conversational text
       // 限制單次最多提取 8 條，避免過多
       final limited = memories.length > 8 ? memories.sublist(0, 8) : memories;
 
-      // ═══ 代碼級去重：與既有記憶高度相似的不入庫 ═══
-      // 但「被重複提取」這件事本身是驗證信號，留給下面的送審邏輯用
-      final toInsert = <Memory>[];
-      for (final n in limited) {
-        final dup = existingMems.any(
-          (e) => _similarity(n.content, e.content) > 0.6,
+      // Every extracted entry passes the same transactional guard as model
+      // <memo> tags and manual input. Definite duplicates are skipped;
+      // ambiguous ones wait in the proposal inbox instead of disappearing or
+      // being inserted silently.
+      final inserted = <Memory>[];
+      for (final candidate in limited) {
+        final result = await MemoryGuardService.guardNewMemory(
+          candidate: candidate,
+          source: 'summary',
+          sourceConversationId: conversationId,
         );
-        if (!dup) toInsert.add(n);
-      }
-      if (toInsert.isNotEmpty) {
-        await DatabaseHelper.insertMemories(toInsert);
+        if (result.disposition == GuardedMemoryWriteDisposition.inserted) {
+          inserted.add(candidate);
+        }
       }
 
-      return toInsert;
+      return inserted;
     } catch (e) {
       developer.log('記憶摘要錯誤', error: e, name: 'Summarizer');
       // 往上拋：讓調用方知道失敗了，不前進增量游標 → 下次自動重試
@@ -529,25 +533,6 @@ MERGE id1,id2 => [類別] 合併後內容 @觸發詞1,觸發詞2
       }
     }
     return mergedGroups;
-  }
-
-  /// 字符 bigram 重疊率（0~1），對中文友好的輕量相似度
-  static double _similarity(String a, String b) {
-    Set<String> grams(String s) {
-      final t = s.replaceAll(RegExp(r'\s'), '');
-      final g = <String>{};
-      for (int i = 0; i + 1 < t.length; i++) {
-        g.add(t.substring(i, i + 2));
-      }
-      return g;
-    }
-
-    final ga = grams(a);
-    final gb = grams(b);
-    if (ga.isEmpty || gb.isEmpty) return 0;
-    final inter = ga.intersection(gb).length;
-    final minLen = ga.length < gb.length ? ga.length : gb.length;
-    return inter / minLen;
   }
 
   static List<Memory> _parseOutput(

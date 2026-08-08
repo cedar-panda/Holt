@@ -107,6 +107,11 @@ class KeepAliveService {
   static const String _keyCachedStaticPrompt = 'keepalive_cached_static_prompt';
   static const String _keyCachedProfilePrompt =
       'keepalive_cached_profile_prompt';
+  static const String _keyCachedWindowPrompt = 'keepalive_cached_window_prompt';
+  static const String _keyCachedControlPrompt =
+      'keepalive_cached_control_prompt';
+  static const String _keyCachedTurnPrompt = 'keepalive_cached_turn_prompt';
+  // Legacy keys are read once for migration, then removed on the next persist.
   static const String _keyCachedDynamicPrompt =
       'keepalive_cached_dynamic_prompt';
   static const String _keyCachedStableDynamicPrompt =
@@ -195,6 +200,10 @@ class KeepAliveService {
   /// WorkManager 後台任務入口（獨立 isolate，不共享主 isolate 內存）。
   /// 全部狀態從 SharedPreferences 重建；只在補針窗口內真的發請求。
   static Future<void> backgroundTick() async {
+    // StructuredPrompt 的穩定 control 前綴包含 App UI 語言。背景 isolate
+    // 不會執行 main() 的 locale 啟動步驟，必須先載入，否則一次保活就可能
+    // 把繁中前綴誤組成英文並刷新 cache。
+    await L.load();
     final prefs = await SharedPreferences.getInstance();
     final convId = prefs.getString(_keyActiveConvId);
     final charId = prefs.getString(_keyActiveCharId);
@@ -250,14 +259,14 @@ class KeepAliveService {
     svc._cachedMessages = _decodeMessages(prefs.getString(_keyCachedMessages));
     final staticPrompt = prefs.getString(_keyCachedStaticPrompt);
     final profilePrompt = prefs.getString(_keyCachedProfilePrompt);
-    final dynamicPrompt = prefs.getString(_keyCachedDynamicPrompt);
-    final stableDynamicPrompt = prefs.getString(_keyCachedStableDynamicPrompt);
-    if (staticPrompt != null || dynamicPrompt != null) {
+    final windowPrompt = prefs.getString(_keyCachedWindowPrompt);
+    final controlPrompt = prefs.getString(_keyCachedControlPrompt) ?? '';
+    if (staticPrompt != null || controlPrompt.isNotEmpty) {
       svc._cachedStructuredPrompt = StructuredPrompt(
         staticPart: staticPrompt ?? '',
         profilePart: profilePrompt,
-        dynamicPart: dynamicPrompt ?? '',
-        cacheStableDynamicPart: stableDynamicPrompt,
+        windowPart: windowPrompt ?? '',
+        controlPart: controlPrompt,
       );
     }
     svc._cachedModel = prefs.getString(_keyCachedModel);
@@ -401,7 +410,11 @@ class KeepAliveService {
     await prefs.remove(_keyCachedMessages);
     await prefs.remove(_keyCachedStaticPrompt);
     await prefs.remove(_keyCachedProfilePrompt);
+    await prefs.remove(_keyCachedWindowPrompt);
+    await prefs.remove(_keyCachedControlPrompt);
+    await prefs.remove(_keyCachedTurnPrompt);
     await prefs.remove(_keyCachedDynamicPrompt);
+    await prefs.remove(_keyCachedStableDynamicPrompt);
     await prefs.remove(_keyCachedModel);
     await prefs.remove(_keyCachedProvider);
     await prefs.remove(_keyLastRequestAt);
@@ -471,14 +484,14 @@ class KeepAliveService {
     _cachedMessages = _decodeMessages(prefs.getString(_keyCachedMessages));
     final staticPrompt = prefs.getString(_keyCachedStaticPrompt);
     final profilePrompt = prefs.getString(_keyCachedProfilePrompt);
-    final dynamicPrompt = prefs.getString(_keyCachedDynamicPrompt);
-    final stableDynamicPrompt = prefs.getString(_keyCachedStableDynamicPrompt);
-    if (staticPrompt != null || dynamicPrompt != null) {
+    final windowPrompt = prefs.getString(_keyCachedWindowPrompt);
+    final controlPrompt = prefs.getString(_keyCachedControlPrompt) ?? '';
+    if (staticPrompt != null || controlPrompt.isNotEmpty) {
       _cachedStructuredPrompt = StructuredPrompt(
         staticPart: staticPrompt ?? '',
         profilePart: profilePrompt,
-        dynamicPart: dynamicPrompt ?? '',
-        cacheStableDynamicPart: stableDynamicPrompt,
+        windowPart: windowPrompt ?? '',
+        controlPart: controlPrompt,
       );
     }
     _cachedModel = prefs.getString(_keyCachedModel);
@@ -652,7 +665,14 @@ class KeepAliveService {
         response = await adapter.sendMessage(
           messages: messages,
           model: model,
-          structuredPrompt: structuredPrompt,
+          structuredPrompt: StructuredPrompt(
+            staticPart: structuredPrompt.staticPart,
+            profilePart: structuredPrompt.profilePart,
+            windowPart: structuredPrompt.windowPart,
+            controlPart: structuredPrompt.controlPart,
+            liveStatePart: '',
+            cacheChannel: structuredPrompt.cacheChannel,
+          ),
         );
       } finally {
         if (identical(_activePingAdapter, adapter)) _activePingAdapter = null;
@@ -830,6 +850,9 @@ class KeepAliveService {
     if (structuredPrompt == null) {
       await prefs.remove(_keyCachedStaticPrompt);
       await prefs.remove(_keyCachedProfilePrompt);
+      await prefs.remove(_keyCachedWindowPrompt);
+      await prefs.remove(_keyCachedControlPrompt);
+      await prefs.remove(_keyCachedTurnPrompt);
       await prefs.remove(_keyCachedDynamicPrompt);
       await prefs.remove(_keyCachedStableDynamicPrompt);
     } else {
@@ -846,15 +869,17 @@ class KeepAliveService {
         await prefs.remove(_keyCachedProfilePrompt);
       }
       await prefs.setString(
-        _keyCachedDynamicPrompt,
-        structuredPrompt.dynamicPart,
+        _keyCachedWindowPrompt,
+        structuredPrompt.windowPart,
       );
-      final stableDynamic = structuredPrompt.cacheStableDynamicPart;
-      if (stableDynamic == null) {
-        await prefs.remove(_keyCachedStableDynamicPrompt);
-      } else {
-        await prefs.setString(_keyCachedStableDynamicPrompt, stableDynamic);
-      }
+      await prefs.setString(
+        _keyCachedControlPrompt,
+        structuredPrompt.controlPart,
+      );
+      // Live State 只屬於原始 request，不跨 isolate／重啟持久化。
+      await prefs.remove(_keyCachedTurnPrompt);
+      await prefs.remove(_keyCachedDynamicPrompt);
+      await prefs.remove(_keyCachedStableDynamicPrompt);
     }
 
     if (_cachedModel == null || _cachedModel!.isEmpty) {
@@ -960,8 +985,8 @@ class KeepAliveService {
     required String provider,
     required String model,
   }) {
-    final staticPart = prompt.staticPart.trim();
-    if (staticPart.isEmpty) return false;
+    final cacheableContext = prompt.cacheableParts.join('\n\n').trim();
+    if (cacheableContext.isEmpty) return false;
 
     // Gemini explicit cachedContents 只緩存 systemInstruction/staticPart；
     // 門檻不到時 GeminiService 會降級普通請求，所以保活也不該發。
@@ -970,7 +995,7 @@ class KeepAliveService {
         provider: provider,
         model: model,
       );
-      return TokenEstimator.estimate(staticPart) >= threshold;
+      return TokenEstimator.estimate(cacheableContext) >= threshold;
     }
 
     return true;

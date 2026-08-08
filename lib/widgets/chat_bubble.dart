@@ -45,6 +45,12 @@ class ChatBubble extends StatefulWidget {
   final VoidCallback? onSelectionToggle;
   final bool captureMode;
   final bool? thinkingExpandedOverride;
+  final bool includeThinkingDetails;
+  final bool includeMemoryDetails;
+  final bool includeEmotionDetails;
+  final int pendingMemoryActionCount;
+  final bool hasUnreadMemoryActions;
+  final VoidCallback? onMemoryReviewTap;
 
   /// 記憶過程日誌（注入/寫入/刪除/合併，Done 收尾），空則不顯示
   final String memoryLog;
@@ -91,6 +97,12 @@ class ChatBubble extends StatefulWidget {
     this.onSelectionToggle,
     this.captureMode = false,
     this.thinkingExpandedOverride,
+    this.includeThinkingDetails = true,
+    this.includeMemoryDetails = true,
+    this.includeEmotionDetails = true,
+    this.pendingMemoryActionCount = 0,
+    this.hasUnreadMemoryActions = false,
+    this.onMemoryReviewTap,
     this.memoryLog = '',
     this.scratchData,
     this.transferData,
@@ -109,7 +121,6 @@ class _ChatBubbleState extends State<ChatBubble>
     with SingleTickerProviderStateMixin {
   bool _thinkingExpanded = false;
   bool _memLogExpanded = false;
-  bool _emoLogExpanded = false;
   bool _isSaved = false;
   late AnimationController _entryCtrl;
 
@@ -641,6 +652,13 @@ class _ChatBubbleState extends State<ChatBubble>
       pureMemoryLog = memLines.join('\n');
       pureEmotionLog = emotionLines.join('\n');
     }
+    final visibleMemoryLog = widget.includeMemoryDetails ? pureMemoryLog : '';
+    final visibleEmotionLog = widget.includeEmotionDetails
+        ? pureEmotionLog
+        : '';
+    final visibleEmotionCoordinate = widget.includeEmotionDetails
+        ? emoLine
+        : '';
 
     final shouldShowScratch =
         widget.scratchData != null &&
@@ -652,12 +670,17 @@ class _ChatBubbleState extends State<ChatBubble>
 
     final shouldShowMarriageCert = widget.marriageCert != null;
 
+    final hasContextTree =
+        !widget.isUser &&
+        ((widget.includeThinkingDetails && thinking != null) ||
+            visibleMemoryLog.isNotEmpty ||
+            visibleEmotionLog.isNotEmpty ||
+            visibleEmotionCoordinate.isNotEmpty ||
+            widget.pendingMemoryActionCount > 0);
+
     final hasAnyContent =
         hasBubbleContent ||
-        (!widget.isUser && pureMemoryLog.isNotEmpty) ||
-        (!widget.isUser && pureEmotionLog.isNotEmpty) ||
-        (!widget.isUser && emoLine.isNotEmpty) ||
-        (thinking != null) ||
+        hasContextTree ||
         shouldShowScratch ||
         shouldShowTransfer ||
         shouldShowGift ||
@@ -724,14 +747,15 @@ class _ChatBubbleState extends State<ChatBubble>
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.stretch,
                               children: [
-                                if (!widget.isUser && pureMemoryLog.isNotEmpty)
-                                  _buildMemoryLog(pureMemoryLog),
-                                if (!widget.isUser && pureEmotionLog.isNotEmpty)
-                                  _buildEmotionLog(pureEmotionLog),
-                                // (V2: 生成狀態已移至輸入欄上方 banner，氣泡不再顯示)
-                                if (!widget.isUser && emoLine.isNotEmpty)
-                                  _buildEmoStatus(emoLine),
-                                if (thinking != null) _buildThinking(thinking),
+                                if (hasContextTree)
+                                  _buildContextTree(
+                                    thinking: widget.includeThinkingDetails
+                                        ? thinking
+                                        : null,
+                                    memoryLog: visibleMemoryLog,
+                                    emotionLog: visibleEmotionLog,
+                                    emotionCoordinate: visibleEmotionCoordinate,
+                                  ),
                                 if (hasBubbleContent)
                                   Builder(
                                     builder: (context) {
@@ -1171,28 +1195,123 @@ class _ChatBubbleState extends State<ChatBubble>
         trimmed.contains('消解 ');
   }
 
-  /// 記憶過程塊：折疊式，仿思考鏈
-  /// 收起顯示「記憶 · Done」，展開逐行顯示注入/寫入/刪除/合併過程
-  Widget _buildMemoryLog(String log) {
-    return _buildToolLog(
-      log,
-      containerKey: const ValueKey('memory-log-container'),
-      label: L.pick(en: 'Memory', zhTW: '記憶'),
-      icon: Icons.auto_awesome_outlined,
-      expanded: _memLogExpanded,
-      onTap: () => setState(() => _memLogExpanded = !_memLogExpanded),
+  Color _thinkingTreeLabelColor() =>
+      Color.lerp(YanciTheme.textSecondary, YanciTheme.textPrimary, 0.12)!;
+
+  Color _thinkingTreeBodyColor() =>
+      Color.lerp(YanciTheme.textSecondary, YanciTheme.textPrimary, 0.34)!;
+
+  Widget _buildThinkingMarkdown(String text, {Key? key}) {
+    final bodyColor = _thinkingTreeBodyColor();
+    final base = TextStyle(fontSize: 11, color: bodyColor, height: 1.55);
+    return MarkdownBody(
+      key: key,
+      data: text,
+      selectable: false,
+      softLineBreak: true,
+      styleSheet: MarkdownStyleSheet(
+        p: base,
+        strong: base.copyWith(fontWeight: FontWeight.w600),
+        em: base.copyWith(fontStyle: FontStyle.italic),
+        code: base.copyWith(
+          fontFamily: 'monospace',
+          color: YanciTheme.accent,
+          backgroundColor: YanciTheme.isDark
+              ? Colors.white.withValues(alpha: 0.06)
+              : Colors.black.withValues(alpha: 0.04),
+        ),
+        codeblockPadding: const EdgeInsets.all(8),
+        codeblockDecoration: BoxDecoration(
+          color: YanciTheme.isDark
+              ? Colors.white.withValues(alpha: 0.05)
+              : Colors.black.withValues(alpha: 0.03),
+          borderRadius: BorderRadius.circular(6),
+        ),
+        blockquote: base.copyWith(fontStyle: FontStyle.italic),
+        blockquotePadding: const EdgeInsets.only(left: 8, top: 2, bottom: 2),
+        blockquoteDecoration: BoxDecoration(
+          border: Border(
+            left: BorderSide(
+              color: YanciTheme.accent.withValues(alpha: 0.32),
+              width: 2,
+            ),
+          ),
+        ),
+        h1: base.copyWith(fontSize: 14, fontWeight: FontWeight.w600),
+        h2: base.copyWith(fontSize: 13, fontWeight: FontWeight.w600),
+        h3: base.copyWith(fontSize: 12, fontWeight: FontWeight.w600),
+        listBullet: base,
+        pPadding: const EdgeInsets.only(bottom: 2),
+      ),
     );
   }
 
-  /// 情緒打點過程塊：與記憶工具分開顯示。
-  Widget _buildEmotionLog(String log) {
+  Widget? _buildPendingMemoryActionBadge() {
+    final count = widget.pendingMemoryActionCount;
+    if (count <= 0) return null;
+    final badgeColor = widget.hasUnreadMemoryActions
+        ? const Color(0xFFD86B72)
+        : YanciTheme.textSecondary;
+    final label = L.pick(
+      en: '$count pending',
+      zhTW: '$count 待確認',
+      zhCN: '$count 待确认',
+    );
+    return Semantics(
+      button: widget.onMemoryReviewTap != null,
+      label: L.pick(
+        en: '$count pending memory proposals. Open review.',
+        zhTW: '$count 個記憶提案待確認，點擊開啟提案匣。',
+        zhCN: '$count 个记忆提案待确认，点击打开提案匣。',
+      ),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: widget.onMemoryReviewTap,
+        child: Container(
+          constraints: const BoxConstraints(minHeight: 24),
+          padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: badgeColor.withValues(alpha: 0.13),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: badgeColor.withValues(alpha: 0.28),
+              width: 0.6,
+            ),
+          ),
+          child: Text(
+            label,
+            style: TextStyle(
+              color: badgeColor,
+              fontSize: 9,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Thinking 資訊樹中的 Memory 分支；情緒與記憶同輪時收在這裡。
+  Widget _buildMemoryLog(
+    String log, {
+    String emotionLog = '',
+    String emotionCoordinate = '',
+  }) {
+    final forcedExpanded = widget.thinkingExpandedOverride == true;
     return _buildToolLog(
       log,
-      containerKey: const ValueKey('emotion-log-container'),
-      label: L.pick(en: 'Emotion', zhTW: '情緒'),
-      icon: Icons.favorite_border_rounded,
-      expanded: _emoLogExpanded,
-      onTap: () => setState(() => _emoLogExpanded = !_emoLogExpanded),
+      containerKey: const ValueKey('memory-log-container'),
+      label: 'Memory',
+      icon: Icons.auto_awesome_outlined,
+      expanded: forcedExpanded || _memLogExpanded,
+      onTap: forcedExpanded
+          ? null
+          : () => setState(() => _memLogExpanded = !_memLogExpanded),
+      headerTrailing: _buildPendingMemoryActionBadge(),
+      trailing: emotionLog.isNotEmpty || emotionCoordinate.isNotEmpty
+          ? _buildEmotionBranch(emotionLog, emotionCoordinate)
+          : null,
     );
   }
 
@@ -1202,7 +1321,9 @@ class _ChatBubbleState extends State<ChatBubble>
     required String label,
     required IconData icon,
     required bool expanded,
-    required VoidCallback onTap,
+    required VoidCallback? onTap,
+    Widget? headerTrailing,
+    Widget? trailing,
   }) {
     final lines = log.split('\n');
     final done = lines.isNotEmpty && lines.last.trim() == 'Done';
@@ -1210,61 +1331,535 @@ class _ChatBubbleState extends State<ChatBubble>
     // 過濾掉空行
     final validLines = bodyLines.where((l) => l.trim().isNotEmpty).toList();
     if (validLines.isEmpty) return const SizedBox.shrink();
-    final bodyColor = YanciTheme.textOnBubble.withValues(alpha: 0.55);
-    return _buildDisclosureBlock(
-      containerKey: containerKey,
-      label: '$label${done ? ' · Done' : ''}',
-      icon: icon,
+    final bodyColor = _thinkingTreeBodyColor();
+    final labelColor = _thinkingTreeLabelColor();
+    final reduceMotion = MediaQuery.disableAnimationsOf(context);
+    final duration = reduceMotion
+        ? Duration.zero
+        : const Duration(milliseconds: 160);
+    return Semantics(
+      button: onTap != null,
       expanded: expanded,
-      onTap: onTap,
-      body: <Widget>[
-        ...validLines.map(
-          (line) => Padding(
-            padding: const EdgeInsets.only(bottom: 2),
-            child: Text(
-              line,
-              style: TextStyle(fontSize: 11, color: bodyColor, height: 1.5),
-            ),
+      label: label,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: onTap,
+        child: Container(
+          key: containerKey,
+          constraints: const BoxConstraints(minHeight: 40),
+          padding: const EdgeInsets.symmetric(vertical: 6),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(icon, size: 13, color: labelColor),
+                  const SizedBox(width: 7),
+                  Text(
+                    label,
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: labelColor,
+                      fontFamily: YanciTheme.fontFamily,
+                    ),
+                  ),
+                  if (headerTrailing != null) ...[
+                    const SizedBox(width: 6),
+                    headerTrailing,
+                  ],
+                  const SizedBox(width: 3),
+                  AnimatedRotation(
+                    turns: expanded ? 0.25 : 0,
+                    duration: duration,
+                    curve: Curves.easeOutCubic,
+                    child: Icon(
+                      Icons.keyboard_arrow_right_rounded,
+                      size: 15,
+                      color: labelColor,
+                    ),
+                  ),
+                ],
+              ),
+              if (expanded)
+                Padding(
+                  padding: const EdgeInsets.only(left: 20, top: 4, bottom: 2),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _buildThinkingMarkdown(
+                        validLines.join('\n'),
+                        key: const ValueKey('memory-markdown-content'),
+                      ),
+                      if (done)
+                        Text(
+                          'Done ✓',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: bodyColor,
+                            height: 1.5,
+                          ),
+                        ),
+                      if (trailing != null) ...[
+                        const SizedBox(height: 4),
+                        trailing,
+                      ],
+                    ],
+                  ),
+                ),
+            ],
           ),
         ),
-        if (done)
-          Text(
-            'Done ✓',
-            style: TextStyle(fontSize: 11, color: bodyColor, height: 1.5),
-          ),
-      ],
+      ),
     );
   }
 
-  /// 情緒座標塊：獨立於記憶日誌（未來會全隱藏）
-  Widget _buildEmoStatus(String emoLine) {
-    // 擷取座標值，如「情緒座標: (0.3, -0.2)」→「(0.3, -0.2)」
+  /// 情緒是 Thinking 樹的常駐狀態，不再建立第三層折疊。
+  Widget _buildEmotionBranch(String log, String emoLine) {
+    final lines = log.split('\n');
+    final done = lines.isNotEmpty && lines.last.trim() == 'Done';
+    final bodyLines = done ? lines.sublist(0, lines.length - 1) : lines;
+    final validLines = bodyLines.where((l) => l.trim().isNotEmpty).toList();
     final coord = emoLine
         .replaceFirst('情緒座標:', '')
         .replaceFirst('情緒座標：', '')
         .trim();
-    final labelColor = YanciTheme.textOnBubble.withValues(alpha: 0.45);
-    return Container(
-      key: const ValueKey('emotion-coordinate-container'),
-      margin: const EdgeInsets.only(bottom: 4),
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(Icons.favorite_border_rounded, size: 12, color: labelColor),
-          const SizedBox(width: 4),
-          Flexible(
-            child: Text(
-              coord,
-              style: TextStyle(
-                fontSize: 10,
-                color: labelColor,
-                fontFamily: YanciTheme.fontFamily,
+    if (validLines.isEmpty && coord.isEmpty) return const SizedBox.shrink();
+
+    final labelColor = _thinkingTreeLabelColor();
+    final bodyColor = _thinkingTreeBodyColor();
+    const label = 'Mood';
+    return Semantics(
+      container: true,
+      label: [
+        label,
+        if (coord.isNotEmpty) coord,
+        ...validLines,
+        if (done) 'Done',
+      ].join(', '),
+      child: ExcludeSemantics(
+        child: Container(
+          key: const ValueKey('emotion-log-container'),
+          constraints: const BoxConstraints(minHeight: 40),
+          padding: const EdgeInsets.symmetric(vertical: 6),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    Icons.favorite_border_rounded,
+                    size: 13,
+                    color: labelColor,
+                  ),
+                  const SizedBox(width: 7),
+                  Text(
+                    label,
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: labelColor,
+                      fontFamily: YanciTheme.fontFamily,
+                    ),
+                  ),
+                  if (coord.isNotEmpty)
+                    Container(
+                      key: const ValueKey('emotion-coordinate-container'),
+                      padding: const EdgeInsets.only(left: 7),
+                      child: Text(
+                        coord,
+                        style: TextStyle(
+                          fontSize: 10,
+                          color: labelColor.withValues(alpha: 0.86),
+                          fontFamily: YanciTheme.fontFamily,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                ],
               ),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
+              if (validLines.isNotEmpty || done)
+                Padding(
+                  padding: const EdgeInsets.only(left: 20, top: 4, bottom: 2),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      ...validLines.map(
+                        (line) => Padding(
+                          padding: const EdgeInsets.only(bottom: 2),
+                          child: Text(
+                            line,
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: bodyColor,
+                              height: 1.5,
+                            ),
+                          ),
+                        ),
+                      ),
+                      if (done)
+                        Text(
+                          'Done ✓',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: bodyColor,
+                            height: 1.5,
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildContextTree({
+    required String? thinking,
+    required String memoryLog,
+    required String emotionLog,
+    required String emotionCoordinate,
+  }) {
+    if (thinking == null) {
+      if (memoryLog.isNotEmpty || widget.pendingMemoryActionCount > 0) {
+        return _buildStandaloneMemory(
+          memoryLog,
+          emotionLog: emotionLog,
+          emotionCoordinate: emotionCoordinate,
+        );
+      }
+      return _buildStandaloneEmotion(emotionLog, emotionCoordinate);
+    }
+
+    return _buildThinkingTree(
+      thinking: thinking,
+      memoryLog: memoryLog,
+      emotionLog: emotionLog,
+      emotionCoordinate: emotionCoordinate,
+    );
+  }
+
+  Widget _buildThinkingTree({
+    required String thinking,
+    required String memoryLog,
+    required String emotionLog,
+    required String emotionCoordinate,
+  }) {
+    final hasVisibleDetails =
+        thinking.isNotEmpty ||
+        memoryLog.isNotEmpty ||
+        emotionLog.isNotEmpty ||
+        emotionCoordinate.isNotEmpty;
+    final expanded = widget.thinkingExpandedOverride == true
+        ? hasVisibleDetails
+        : widget.thinkingExpandedOverride ?? _thinkingExpanded;
+    final labelColor = _thinkingTreeLabelColor();
+    final reduceMotion =
+        MediaQuery.disableAnimationsOf(context) || widget.captureMode;
+    final duration = reduceMotion
+        ? Duration.zero
+        : const Duration(milliseconds: 180);
+    final onTap = widget.thinkingExpandedOverride == null
+        ? () => setState(() => _thinkingExpanded = !_thinkingExpanded)
+        : null;
+    final label = L.get('chat_thinking_tree');
+
+    return Semantics(
+      container: true,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Semantics(
+            button: onTap != null,
+            expanded: expanded,
+            label: label,
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: onTap,
+              child: Container(
+                key: const ValueKey('thinking-chain-container'),
+                constraints: const BoxConstraints(minHeight: 44),
+                margin: const EdgeInsets.only(bottom: 2),
+                padding: const EdgeInsets.symmetric(horizontal: 10),
+                alignment: Alignment.centerLeft,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      label,
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: labelColor,
+                        fontFamily: YanciTheme.fontFamily,
+                      ),
+                    ),
+                    if (widget.pendingMemoryActionCount > 0) ...[
+                      const SizedBox(width: 6),
+                      _buildPendingMemoryActionBadge()!,
+                    ],
+                    const SizedBox(width: 4),
+                    AnimatedRotation(
+                      key: const ValueKey('thinking-tree-chevron'),
+                      turns: expanded ? 0.25 : 0,
+                      duration: duration,
+                      curve: Curves.easeOutCubic,
+                      child: Icon(
+                        Icons.keyboard_arrow_right_rounded,
+                        size: 16,
+                        color: labelColor,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             ),
           ),
+          if (expanded)
+            Container(
+              key: const ValueKey('thinking-tree-body'),
+              margin: const EdgeInsets.only(bottom: 4),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (memoryLog.isNotEmpty ||
+                      emotionLog.isNotEmpty ||
+                      emotionCoordinate.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(left: 26, right: 8),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          if (memoryLog.isNotEmpty)
+                            _buildMemoryLog(
+                              memoryLog,
+                              emotionLog: emotionLog,
+                              emotionCoordinate: emotionCoordinate,
+                            )
+                          else if (emotionLog.isNotEmpty ||
+                              emotionCoordinate.isNotEmpty)
+                            _buildEmotionBranch(emotionLog, emotionCoordinate),
+                        ],
+                      ),
+                    ),
+                  Padding(
+                    padding: const EdgeInsets.only(
+                      left: 10,
+                      top: 7,
+                      right: 8,
+                      bottom: 7,
+                    ),
+                    child: _buildThinkingMarkdown(
+                      thinking,
+                      key: const ValueKey('thinking-chain-content'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStandaloneMemory(
+    String log, {
+    required String emotionLog,
+    required String emotionCoordinate,
+  }) {
+    final lines = log.split('\n');
+    final done = lines.isNotEmpty && lines.last.trim() == 'Done';
+    final bodyLines = done ? lines.sublist(0, lines.length - 1) : lines;
+    final validLines = bodyLines
+        .where((line) => line.trim().isNotEmpty)
+        .toList();
+    final bodyColor = _thinkingTreeBodyColor();
+
+    return _buildStandaloneContextRoot(
+      label: 'Memory',
+      containerKey: const ValueKey('memory-root-container'),
+      bodyKey: const ValueKey('memory-root-body'),
+      icon: Icons.auto_awesome_outlined,
+      headerTrailing: _buildPendingMemoryActionBadge(),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (validLines.isNotEmpty)
+            _buildThinkingMarkdown(
+              validLines.join('\n'),
+              key: const ValueKey('memory-root-markdown-content'),
+            ),
+          if (done)
+            Text(
+              'Done ✓',
+              style: TextStyle(fontSize: 11, color: bodyColor, height: 1.5),
+            ),
+          if (validLines.isEmpty && widget.pendingMemoryActionCount > 0)
+            Text(
+              L.pick(
+                en: 'A memory change is waiting for your review.',
+                zhTW: '有記憶變更正在等待你確認。',
+              ),
+              style: TextStyle(fontSize: 11, color: bodyColor, height: 1.5),
+            ),
+          if (emotionLog.isNotEmpty || emotionCoordinate.isNotEmpty) ...[
+            const SizedBox(height: 4),
+            _buildEmotionBranch(emotionLog, emotionCoordinate),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStandaloneEmotion(String log, String emoLine) {
+    final lines = log.split('\n');
+    final done = lines.isNotEmpty && lines.last.trim() == 'Done';
+    final bodyLines = done ? lines.sublist(0, lines.length - 1) : lines;
+    final validLines = bodyLines
+        .where((line) => line.trim().isNotEmpty)
+        .toList();
+    final coord = emoLine
+        .replaceFirst('情緒座標:', '')
+        .replaceFirst('情緒座標：', '')
+        .trim();
+    final bodyColor = _thinkingTreeBodyColor();
+
+    return _buildStandaloneContextRoot(
+      label: 'Mood',
+      subtitle: coord,
+      containerKey: const ValueKey('emotion-root-container'),
+      bodyKey: const ValueKey('emotion-root-body'),
+      icon: Icons.favorite_border_rounded,
+      expandable: validLines.isNotEmpty || done,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          for (final line in validLines)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 2),
+              child: Text(
+                line,
+                style: TextStyle(fontSize: 11, color: bodyColor, height: 1.5),
+              ),
+            ),
+          if (done)
+            Text(
+              'Done ✓',
+              style: TextStyle(fontSize: 11, color: bodyColor, height: 1.5),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStandaloneContextRoot({
+    required String label,
+    required Key containerKey,
+    required Key bodyKey,
+    required IconData icon,
+    required Widget child,
+    String subtitle = '',
+    bool expandable = true,
+    Widget? headerTrailing,
+  }) {
+    final forcedExpanded = widget.thinkingExpandedOverride == true;
+    final expanded =
+        expandable &&
+        (forcedExpanded ||
+            (widget.thinkingExpandedOverride ?? _thinkingExpanded));
+    final canToggle =
+        expandable &&
+        !forcedExpanded &&
+        widget.thinkingExpandedOverride == null;
+    final labelColor = _thinkingTreeLabelColor();
+    final reduceMotion =
+        MediaQuery.disableAnimationsOf(context) || widget.captureMode;
+    final duration = reduceMotion
+        ? Duration.zero
+        : const Duration(milliseconds: 180);
+    final onTap = canToggle
+        ? () => setState(() => _thinkingExpanded = !_thinkingExpanded)
+        : null;
+    final semanticLabel = subtitle.isEmpty ? label : '$label, $subtitle';
+
+    return Semantics(
+      container: true,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Semantics(
+            button: onTap != null,
+            expanded: expandable ? expanded : null,
+            label: semanticLabel,
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: onTap,
+              child: Container(
+                key: containerKey,
+                constraints: const BoxConstraints(minHeight: 44),
+                margin: const EdgeInsets.only(bottom: 2),
+                padding: const EdgeInsets.symmetric(horizontal: 10),
+                alignment: Alignment.centerLeft,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(icon, size: 13, color: labelColor),
+                    const SizedBox(width: 7),
+                    Text(
+                      label,
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: labelColor,
+                        fontFamily: YanciTheme.fontFamily,
+                      ),
+                    ),
+                    if (subtitle.isNotEmpty)
+                      Flexible(
+                        child: Padding(
+                          padding: const EdgeInsets.only(left: 7),
+                          child: Text(
+                            subtitle,
+                            style: TextStyle(
+                              fontSize: 10,
+                              color: labelColor.withValues(alpha: 0.86),
+                              fontFamily: YanciTheme.fontFamily,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ),
+                    if (headerTrailing != null) ...[
+                      const SizedBox(width: 6),
+                      headerTrailing,
+                    ],
+                    if (expandable) ...[
+                      const SizedBox(width: 3),
+                      AnimatedRotation(
+                        turns: expanded ? 0.25 : 0,
+                        duration: duration,
+                        curve: Curves.easeOutCubic,
+                        child: Icon(
+                          Icons.keyboard_arrow_right_rounded,
+                          size: 16,
+                          color: labelColor,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+          ),
+          if (expanded)
+            Container(
+              key: bodyKey,
+              margin: const EdgeInsets.only(bottom: 4),
+              padding: const EdgeInsets.only(left: 30, right: 8, bottom: 4),
+              child: child,
+            ),
         ],
       ),
     );
@@ -1345,76 +1940,6 @@ class _ChatBubbleState extends State<ChatBubble>
               size: 20,
               color: YanciTheme.accent.withValues(alpha: 0.3),
             ),
-    );
-  }
-
-  Widget _buildThinking(String thinking) {
-    final thinkColor = YanciTheme.textOnBubble.withValues(alpha: 0.55);
-    final expanded = widget.thinkingExpandedOverride ?? _thinkingExpanded;
-    return _buildDisclosureBlock(
-      containerKey: const ValueKey('thinking-chain-container'),
-      label: L.get('chat_thinking'),
-      icon: Icons.bubble_chart_outlined,
-      expanded: expanded,
-      onTap: widget.thinkingExpandedOverride == null
-          ? () => setState(() => _thinkingExpanded = !_thinkingExpanded)
-          : null,
-      body: <Widget>[
-        Text(
-          thinking,
-          style: TextStyle(fontSize: 11, color: thinkColor, height: 1.5),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildDisclosureBlock({
-    required Key containerKey,
-    required String label,
-    required IconData icon,
-    required bool expanded,
-    required VoidCallback? onTap,
-    required List<Widget> body,
-  }) {
-    final labelColor = YanciTheme.textOnBubble.withValues(alpha: 0.45);
-    return Semantics(
-      button: onTap != null,
-      expanded: expanded,
-      label: label,
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: onTap,
-        child: Container(
-          key: containerKey,
-          margin: const EdgeInsets.only(bottom: 4),
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(icon, size: 12, color: labelColor),
-                  const SizedBox(width: 4),
-                  Text(
-                    label,
-                    style: TextStyle(fontSize: 10, color: labelColor),
-                  ),
-                  const SizedBox(width: 4),
-                  Icon(
-                    expanded
-                        ? Icons.expand_less_rounded
-                        : Icons.expand_more_rounded,
-                    size: 14,
-                    color: labelColor,
-                  ),
-                ],
-              ),
-              if (expanded) ...[const SizedBox(height: 6), ...body],
-            ],
-          ),
-        ),
-      ),
     );
   }
 }

@@ -7,6 +7,7 @@ import 'settings/memory_settings.dart';
 import 'sse_stream.dart';
 import 'stream_transport.dart';
 import 'token_estimator.dart';
+import 'system_context_debug.dart';
 
 /// Google Gemini API 直連
 /// Context caching 依模型有不同最低 token 門檻
@@ -224,20 +225,7 @@ class GeminiService implements ApiAdapter {
       model: model,
     );
 
-    // Gemini 明確禁止 cachedContent 與本輪 systemInstruction 同時使用。
-    // 有 runtime context 時優先保證 user turn 純淨，改走普通請求；
-    // static/profile 原文仍放在 systemInstruction 的前兩個 parts。
-    if (prompt.dynamicPart.trim().isNotEmpty) {
-      _activeCacheName = null;
-      _cachedStaticHash = null;
-      _cacheExpiry = null;
-      return publish(<String, int>{
-        'cache_status': 0,
-        'cache_threshold': minCacheTokens,
-      });
-    }
-
-    final hashStr = '${prompt.staticPart}\n\n${prompt.profilePart ?? ''}';
+    final hashStr = prompt.cacheableParts.join('\n\n');
     final staticHash = sha256.convert(utf8.encode(hashStr)).toString();
     final estimatedTokens = _estimateTokens(hashStr);
 
@@ -282,11 +270,10 @@ class GeminiService implements ApiAdapter {
       final cacheBody = {
         'model': 'models/$model',
         'systemInstruction': {
-          'parts': [
-            {'text': prompt.staticPart},
-            if (prompt.profilePart != null && prompt.profilePart!.isNotEmpty)
-              {'text': prompt.profilePart!},
-          ],
+          'parts': prompt.cacheableParts
+              .where((part) => part.isNotEmpty)
+              .map((part) => <String, String>{'text': part})
+              .toList(),
         },
         'ttl': '${_cacheTtl.inSeconds}s',
       };
@@ -349,27 +336,36 @@ class GeminiService implements ApiAdapter {
 
     final body = <String, dynamic>{'contents': contents};
 
-    final dynamicPrompt = structuredPrompt?.dynamicPart ?? '';
+    final liveState = structuredPrompt?.liveStatePart ?? '';
+    final attachedToModel = RuntimeContextSidecar.appendToGeminiPreviousModel(
+      contents,
+      liveState,
+    );
     final useCachedContent =
-        _activeCacheName != null && dynamicPrompt.trim().isEmpty;
+        _activeCacheName != null &&
+        (liveState.trim().isEmpty || attachedToModel);
+    var runtimeTransport = attachedToModel ? 'gemini_model_state' : '';
+    var runtimeFallback = '';
 
     if (useCachedContent) {
       // 使用緩存，system prompt 在緩存裡
       body['cachedContent'] = _activeCacheName;
     } else {
-      // 無緩存／有 runtime context：全部提示走 system instruction。
+      // 首輪沒有上一個 model turn 可承載 request-only Live State，只能回退
+      // systemInstruction。這時不用 cachedContent，避免 Gemini 禁止兩者並存。
       final parts = <Map<String, String>>[];
       if (structuredPrompt != null) {
-        parts.add({'text': structuredPrompt.staticPart});
-        if (structuredPrompt.profilePart != null &&
-            structuredPrompt.profilePart!.isNotEmpty) {
-          parts.add({'text': structuredPrompt.profilePart!});
-        }
-        if (dynamicPrompt.isNotEmpty) {
-          parts.add({'text': dynamicPrompt});
+        for (final part in structuredPrompt.cacheableParts) {
+          if (part.isNotEmpty) parts.add({'text': part});
         }
       } else if (systemPrompt != null && systemPrompt.isNotEmpty) {
         parts.add({'text': systemPrompt});
+      }
+
+      if (!attachedToModel &&
+          RuntimeContextSidecar.appendToGeminiSystemParts(parts, liveState)) {
+        runtimeTransport = 'gemini_system_instruction_fallback';
+        runtimeFallback = 'No previous model turn was available.';
       }
 
       if (parts.isNotEmpty) {
@@ -378,6 +374,31 @@ class GeminiService implements ApiAdapter {
     }
 
     body['generationConfig'] = {'maxOutputTokens': 4096};
+
+    if (structuredPrompt != null) {
+      SystemContextDebug.recordChatRequest(
+        provider: 'gemini',
+        model: modelId,
+        cacheChannel: structuredPrompt.cacheChannel,
+        sessionId: CacheSession.conversationId,
+        transport: runtimeTransport,
+        sourceMessages: messages,
+        requestMessages: contents,
+        stableContext: structuredPrompt.cacheableParts.join('\n\n'),
+        liveState: liveState,
+        cacheEnabled: useCachedContent,
+        cachePrefixPreserved: useCachedContent || liveState.trim().isEmpty,
+        fallbackReason: runtimeFallback,
+        topLevelRoles: body.containsKey('cachedContent')
+            ? const <String>['cachedContent']
+            : (body.containsKey('systemInstruction')
+                  ? const <String>['systemInstruction']
+                  : const <String>[]),
+        roleKey: 'role',
+        contentKey: 'parts',
+        expectTime: liveState.trim().isNotEmpty,
+      );
+    }
 
     return body;
   }

@@ -6,14 +6,17 @@ import 'package:flutter/scheduler.dart';
 
 import '../memory/spider_web_core.dart';
 import '../services/locale_strings.dart';
+import '../services/spider_web_state_service.dart';
 import '../theme/app_theme.dart';
 
 const double _canvasSize = 3200.0;
 const double _canvasCenter = _canvasSize / 2;
 const double _graphRadius = 1180.0;
+const double _minimumScreenNodeHitRadius = 24.0;
 
 class _Node {
   final Map<String, dynamic> data;
+  final int webIndex;
   double x;
   double y;
   double vx = 0;
@@ -25,6 +28,7 @@ class _Node {
 
   _Node({
     required this.data,
+    required this.webIndex,
     required this.x,
     required this.y,
     required this.clarity,
@@ -38,21 +42,134 @@ class _Node {
 class _Edge {
   final _Node source;
   final _Node target;
+  final Map<String, dynamic> data;
 
-  _Edge(this.source, this.target);
+  _Edge(this.source, this.target, this.data);
+}
+
+class _WebTransform {
+  final Offset center;
+  final double scale;
+
+  const _WebTransform(this.center, this.scale);
+}
+
+Offset _edgeWebCenter(_Edge edge, List<_WebTransform> webTransforms) {
+  final sourceIndex = edge.source.webIndex;
+  final targetIndex = edge.target.webIndex;
+  if (sourceIndex < 0 ||
+      targetIndex < 0 ||
+      sourceIndex >= webTransforms.length ||
+      targetIndex >= webTransforms.length) {
+    return Offset.zero;
+  }
+  if (sourceIndex == targetIndex) return webTransforms[sourceIndex].center;
+  return Offset.lerp(
+    webTransforms[sourceIndex].center,
+    webTransforms[targetIndex].center,
+    0.5,
+  )!;
+}
+
+Offset _edgeControlPoint(Offset start, Offset end, Offset webCenter) {
+  final midpoint = Offset.lerp(start, end, 0.5)!;
+  return Offset.lerp(midpoint, webCenter, 0.22)!;
 }
 
 class SpiderWebGraphView extends StatefulWidget {
   final List<Map<String, dynamic>> memories;
+  final List<List<Map<String, dynamic>>> memoryGroups;
+  final List<bool> smallWebGroups;
   final List<Map<String, dynamic>> links;
+  final Map<int, SpiderWebNodePosition> savedPositions;
+  final double viewportRightInset;
+  final int externalLinkCount;
   final void Function(Map<String, dynamic> memory) onNodeTapped;
+  final void Function(
+    Map<String, dynamic> link,
+    Map<String, dynamic> firstMemory,
+    Map<String, dynamic> secondMemory,
+  )
+  onLinkTapped;
+  final void Function(int memoryId, double localX, double localY)
+  onNodePositionChanged;
+  final VoidCallback? onExternalLinksTapped;
+  final VoidCallback? onLinksTapped;
+  final VoidCallback? onZeroLinksAction;
 
   const SpiderWebGraphView({
     super.key,
     required this.memories,
+    this.memoryGroups = const [],
+    this.smallWebGroups = const [],
     required this.links,
+    this.savedPositions = const {},
+    this.viewportRightInset = 0,
+    this.externalLinkCount = 0,
     required this.onNodeTapped,
+    required this.onLinkTapped,
+    required this.onNodePositionChanged,
+    this.onExternalLinksTapped,
+    this.onLinksTapped,
+    this.onZeroLinksAction,
   });
+
+  /// Exposes the legacy-position repair rule to focused geometry tests.
+  @visibleForTesting
+  static Offset snapSavedPositionForTesting(Offset position) =>
+      _SpiderWebGraphViewState._nearestLocalSlot(position);
+
+  /// Exposes the responsive camera rule without leaking controller state.
+  @visibleForTesting
+  static double fittedScaleForTesting({
+    required Size viewport,
+    required int webCount,
+    double rightInset = 0,
+  }) => _SpiderWebGraphViewState._fittedScale(
+    viewport,
+    _SpiderWebGraphViewState._transformsForCount(webCount, const []),
+    rightInset,
+  );
+
+  /// Exposes the padded visual extent used by the initial fit calculation.
+  @visibleForTesting
+  static Size fittedContentSizeForTesting({required int webCount}) =>
+      _SpiderWebGraphViewState._contentBounds(
+        _SpiderWebGraphViewState._transformsForCount(webCount, const []),
+      ).size;
+
+  @visibleForTesting
+  static int visibleSlotCountForTesting() => _GraphPainter.webSlots.length;
+
+  @visibleForTesting
+  static double maximumSlotRadiusForTesting() =>
+      _GraphPainter.webSlots.map((slot) => slot.distance).fold(0.0, max);
+
+  @visibleForTesting
+  static double screenDragTargetDiameterForTesting({
+    required double scale,
+    double nodeTapRadius = 24,
+  }) =>
+      _SpiderWebGraphViewState._nodeHitRadiusForScale(nodeTapRadius, scale) *
+      scale *
+      2;
+
+  @visibleForTesting
+  static Offset edgeControlForTesting({
+    required Offset start,
+    required Offset end,
+    required Offset webCenter,
+  }) => _edgeControlPoint(start, end, webCenter);
+
+  @visibleForTesting
+  static Offset visibleSlotForTesting(int index) {
+    final slots = _GraphPainter.webSlots;
+    return slots[index.clamp(0, slots.length - 1)];
+  }
+
+  @visibleForTesting
+  static double maximumScaleForTesting({required int webCount}) =>
+      _SpiderWebGraphViewState._maximumScaleForWebCount(webCount);
 
   @override
   State<SpiderWebGraphView> createState() => _SpiderWebGraphViewState();
@@ -69,8 +186,12 @@ class _SpiderWebGraphViewState extends State<SpiderWebGraphView>
 
   List<_Node> _nodes = [];
   List<_Edge> _edges = [];
+  List<_WebTransform> _webTransforms = const [_WebTransform(Offset.zero, 1)];
   String _graphSignature = '';
   _Node? _draggedNode;
+  Offset? _dragOrigin;
+  final Set<int> _activePointers = <int>{};
+  bool _multiTouchGestureActive = false;
   Size? _viewSize;
   bool _hasAnimated = false;
 
@@ -79,6 +200,8 @@ class _SpiderWebGraphViewState extends State<SpiderWebGraphView>
   DateTime _spawnAt = DateTime.now();
   Duration _lastVisualTick = Duration.zero;
   final List<_Ripple> _ripples = [];
+  int? _selectedMemoryId;
+  bool _reduceMotion = false;
 
   @override
   void initState() {
@@ -92,9 +215,21 @@ class _SpiderWebGraphViewState extends State<SpiderWebGraphView>
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _reduceMotion = MediaQuery.disableAnimationsOf(context);
+  }
+
+  @override
   void didUpdateWidget(SpiderWebGraphView oldWidget) {
     super.didUpdateWidget(oldWidget);
-    final nextSignature = _signatureFor(widget.memories, widget.links);
+    final nextSignature = _signatureFor(
+      widget.memories,
+      widget.memoryGroups,
+      widget.smallWebGroups,
+      widget.links,
+      widget.savedPositions,
+    );
     if (nextSignature != _graphSignature) {
       _initGraph();
       _hasAnimated = false;
@@ -109,123 +244,16 @@ class _SpiderWebGraphViewState extends State<SpiderWebGraphView>
     super.dispose();
   }
 
-  /// 模擬溫度：1.0 → 逐幀降溫 → <0.02 物理凍結（節點釘住不再飄）。
-  /// 開新圖時滿溫重排；拖拽釋放時局部回溫讓鄰居讓位後再靜下來。
-  double _simAlpha = 1.0;
-
   void _tick(Duration elapsed) {
-    if (_nodes.isEmpty) return;
-
-    // ═══ 環境動畫時鐘（呼吸/流光/漣漪永遠走，與物理無關）═══
+    if (_nodes.isEmpty || _reduceMotion) return;
     _timeSec = elapsed.inMicroseconds / 1e6;
     _ripples.removeWhere(
       (r) => DateTime.now().difference(r.at).inMilliseconds > _Ripple.lifeMs,
     );
-
-    // ═══ 物理已冷卻：只維持低頻視覺重繪，節點釘住 ═══
-    if (_simAlpha < 0.02 && _draggedNode == null) {
-      if ((elapsed - _lastVisualTick).inMilliseconds >= 66 && mounted) {
-        _lastVisualTick = elapsed;
-        setState(() {});
-      }
-      return;
-    }
-
-    // Physics parameters for "沉穩微調" (stable & viscous)
-    const double repulsionK = 450000.0;
-    const double springK = 0.008;
-    const double springLength = 160.0;
-    const double damping = 0.55;
-    const double gravityK = 0.00012;
-
-    final forces = List.generate(_nodes.length, (_) => [0.0, 0.0]);
-
-    // Repulsion
-    for (int i = 0; i < _nodes.length; i++) {
-      for (int j = i + 1; j < _nodes.length; j++) {
-        final n1 = _nodes[i];
-        final n2 = _nodes[j];
-        final dx = n1.x - n2.x;
-        final dy = n1.y - n2.y;
-        double distSq = dx * dx + dy * dy;
-        if (distSq < 10.0) distSq = 10.0;
-        final f = repulsionK / distSq;
-        final dist = sqrt(distSq);
-        final fx = (dx / dist) * f;
-        final fy = (dy / dist) * f;
-
-        forces[i][0] += fx;
-        forces[i][1] += fy;
-        forces[j][0] -= fx;
-        forces[j][1] -= fy;
-      }
-    }
-
-    // Spring (Edges)
-    for (final edge in _edges) {
-      final n1 = edge.source;
-      final n2 = edge.target;
-      final dx = n2.x - n1.x;
-      final dy = n2.y - n1.y;
-      final dist = sqrt(dx * dx + dy * dy);
-      if (dist > 0) {
-        final f = (dist - springLength) * springK;
-        final fx = (dx / dist) * f;
-        final fy = (dy / dist) * f;
-
-        final i = _nodes.indexOf(n1);
-        final j = _nodes.indexOf(n2);
-        forces[i][0] += fx;
-        forces[i][1] += fy;
-        forces[j][0] -= fx;
-        forces[j][1] -= fy;
-      }
-    }
-
-    // Gravity & Boundary
-    for (int i = 0; i < _nodes.length; i++) {
-      final n = _nodes[i];
-      forces[i][0] -= n.x * gravityK;
-      forces[i][1] -= n.y * gravityK;
-
-      // Boundary enforcement: acts like a strong invisible elastic net
-      // Expanded boundary to allow nodes to explore the larger web
-      final maxNodeRadius = 1400.0;
-      final dist = sqrt(n.x * n.x + n.y * n.y);
-      if (dist > maxNodeRadius) {
-        final push = (dist - maxNodeRadius) * 0.08;
-        forces[i][0] -= (n.x / dist) * push;
-        forces[i][1] -= (n.y / dist) * push;
-      }
-    }
-
-    bool needsRepaint = false;
-    for (int i = 0; i < _nodes.length; i++) {
-      final n = _nodes[i];
-      if (n.isDragged) continue;
-
-      // 力乘溫度：降溫過程中推力漸弱，網「織好就定形」，不再永久漂移
-      n.vx = (n.vx + forces[i][0] * _simAlpha) * damping;
-      n.vy = (n.vy + forces[i][1] * _simAlpha) * damping;
-
-      if (n.vx.abs() > 0.05 || n.vy.abs() > 0.05) {
-        n.x += n.vx;
-        n.y += n.vy;
-        needsRepaint = true;
-      }
-    }
-
-    // 降溫（~4 秒冷卻）；拖拽中保持熱度讓鄰居持續讓位
-    if (_draggedNode == null) {
-      _simAlpha *= 0.988;
-    }
-
-    // ═══ 環境動畫：低頻心跳兜底（~15fps）═══
-    if (!needsRepaint && (elapsed - _lastVisualTick).inMilliseconds >= 66) {
-      needsRepaint = true;
-    }
-
-    if (needsRepaint && mounted) {
+    // Nodes are anchored to the existing web geometry. Only the restrained
+    // ambient light/ripple clock repaints; the old O(n²) force simulation is
+    // deliberately gone because it pulled memories away from the silk.
+    if ((elapsed - _lastVisualTick).inMilliseconds >= 66 && mounted) {
       _lastVisualTick = elapsed;
       setState(() {});
     }
@@ -235,18 +263,33 @@ class _SpiderWebGraphViewState extends State<SpiderWebGraphView>
     if (!mounted || widget.memories.isEmpty || _viewSize == null) return;
 
     final size = _viewSize!;
-    final startScale = 0.42;
-    final endScale = _nodes.length <= 8 ? 0.88 : 0.72;
+    final endScale = _fittedScale(
+      size,
+      _webTransforms,
+      widget.viewportRightInset,
+    );
+    final startScale = endScale * 0.72;
+    final contentBounds = _contentBounds(_webTransforms);
+    final contentCenter = contentBounds.center;
+    final viewportCenter = Offset(
+      (size.width - widget.viewportRightInset.clamp(0, size.width - 1)) / 2,
+      size.height / 2,
+    );
 
     Matrix4 centeredMatrix(double scale) {
-      final tx = size.width / 2 - _canvasCenter * scale;
-      final ty = size.height / 2 - _canvasCenter * scale;
+      final tx = viewportCenter.dx - (_canvasCenter + contentCenter.dx) * scale;
+      final ty = viewportCenter.dy - (_canvasCenter + contentCenter.dy) * scale;
       // translate/scale 已 deprecated：改用等價的顯式構造
       return Matrix4.translationValues(
         tx,
         ty,
         0,
       ).multiplied(Matrix4.diagonal3Values(scale, scale, 1));
+    }
+
+    if (_reduceMotion) {
+      _transformationController.value = centeredMatrix(endScale);
+      return;
     }
 
     _animationController
@@ -274,52 +317,63 @@ class _SpiderWebGraphViewState extends State<SpiderWebGraphView>
   }
 
   void _initGraph() {
-    _graphSignature = _signatureFor(widget.memories, widget.links);
+    _graphSignature = _signatureFor(
+      widget.memories,
+      widget.memoryGroups,
+      widget.smallWebGroups,
+      widget.links,
+      widget.savedPositions,
+    );
     _spawnAt = DateTime.now(); // 節點織網入場動畫起點
-    _simAlpha = 1.0; // 新圖滿溫重排，~4s 後自然凍結
-    final sorted = [...widget.memories];
-    sorted.sort((a, b) {
-      final ac = _clarityFor(a);
-      final bc = _clarityFor(b);
-      final c = bc.compareTo(ac);
-      if (c != 0) return c;
-      return (_memoryId(a) ?? 0).compareTo(_memoryId(b) ?? 0);
-    });
-
     final nodeMap = <int, _Node>{};
-    final random = Random(42);
-    const spokes = 12;
-
+    final groups = widget.memoryGroups.isEmpty
+        ? <List<Map<String, dynamic>>>[widget.memories]
+        : widget.memoryGroups.where((group) => group.isNotEmpty).toList();
+    _webTransforms = _transformsFor(groups.length, widget.smallWebGroups);
     _nodes = <_Node>[];
-    for (var i = 0; i < sorted.length; i++) {
-      final memory = sorted[i];
-      final id = _memoryId(memory);
-      if (id == null) continue;
-
-      final clarity = _clarityFor(memory).clamp(0.18, 1.0);
-      final mentionCount = (memory['mention_count'] as int?) ?? 0;
-      final category = memory['category'] as String? ?? '';
-
-      final ring = i ~/ spokes;
-      final spoke = i % spokes;
-      final angle =
-          ((spoke + ring * 0.38) * 2 * pi / spokes) +
-          (random.nextDouble() - 0.5) * 0.16;
-      final clarityPull = (1 - clarity) * 360;
-      final mentionPull = min(mentionCount, 8) * 18;
-      final ringRadius = 210 + ring * 150 + clarityPull - mentionPull;
-      final radius = ringRadius.clamp(180.0, _graphRadius);
-
-      final node = _Node(
-        data: memory,
-        x: radius * cos(angle),
-        y: radius * sin(angle),
-        clarity: clarity,
-        mentionCount: mentionCount,
-        category: category,
-      );
-      nodeMap[id] = node;
-      _nodes.add(node);
+    final slots = _GraphPainter.webSlots;
+    for (var webIndex = 0; webIndex < groups.length; webIndex++) {
+      final sorted = [...groups[webIndex]];
+      sorted.sort((a, b) {
+        final mentions = ((b['mention_count'] as num?)?.toInt() ?? 0).compareTo(
+          (a['mention_count'] as num?)?.toInt() ?? 0,
+        );
+        if (mentions != 0) return mentions;
+        final clarity = _clarityFor(b).compareTo(_clarityFor(a));
+        if (clarity != 0) return clarity;
+        return (_memoryId(a) ?? 0).compareTo(_memoryId(b) ?? 0);
+      });
+      final transform = _webTransforms[webIndex];
+      for (var i = 0; i < sorted.length; i++) {
+        final memory = sorted[i];
+        final id = _memoryId(memory);
+        if (id == null) continue;
+        final clarity = _clarityFor(memory).clamp(0.18, 1.0);
+        final mentionCount = (memory['mention_count'] as num?)?.toInt() ?? 0;
+        final category = memory['category'] as String? ?? '';
+        final slotIndex = sorted.length <= 1
+            ? slots.length ~/ 2
+            : ((i * (slots.length - 1)) / (sorted.length - 1)).round();
+        final saved = widget.savedPositions[id];
+        final slot = saved == null
+            ? slots[slotIndex.clamp(0, slots.length - 1)]
+            // Older builds persisted free-drag coordinates. Re-snap them at
+            // a visible intersection so memories cannot remain between webs
+            // or on an extremely faint outer rail.
+            : _nearestLocalSlot(Offset(saved.x, saved.y));
+        final point = transform.center + slot * transform.scale;
+        final node = _Node(
+          data: memory,
+          webIndex: webIndex,
+          x: point.dx,
+          y: point.dy,
+          clarity: clarity,
+          mentionCount: mentionCount,
+          category: category,
+        );
+        nodeMap[id] = node;
+        _nodes.add(node);
+      }
     }
 
     _edges = widget.links
@@ -330,7 +384,7 @@ class _SpiderWebGraphViewState extends State<SpiderWebGraphView>
           final n1 = nodeMap[id1];
           final n2 = nodeMap[id2];
           if (n1 == null || n2 == null) return null;
-          return _Edge(n1, n2);
+          return _Edge(n1, n2, link);
         })
         .whereType<_Edge>()
         .toList();
@@ -340,7 +394,10 @@ class _SpiderWebGraphViewState extends State<SpiderWebGraphView>
 
   String _signatureFor(
     List<Map<String, dynamic>> memories,
+    List<List<Map<String, dynamic>>> memoryGroups,
+    List<bool> smallWebGroups,
     List<Map<String, dynamic>> links,
+    Map<int, SpiderWebNodePosition> savedPositions,
   ) {
     final memPart = memories
         .map(
@@ -349,9 +406,119 @@ class _SpiderWebGraphViewState extends State<SpiderWebGraphView>
         )
         .join('|');
     final linkPart = links
-        .map((l) => '${l['memory_id_1']}-${l['memory_id_2']}')
+        .map(
+          (l) =>
+              '${l['memory_id_1']}-${l['memory_id_2']}:${l['status']}:${l['relation_type']}:${l['strength']}',
+        )
         .join('|');
-    return '$memPart::$linkPart';
+    final groupPart = memoryGroups
+        .map((group) => group.map((m) => m['id']).join(','))
+        .join('/');
+    final positionPart = savedPositions.entries
+        .map((entry) => '${entry.key}:${entry.value.x}:${entry.value.y}')
+        .join('|');
+    return '$memPart::$groupPart::${smallWebGroups.join(',')}::$linkPart::$positionPart';
+  }
+
+  List<_WebTransform> _transformsFor(int count, List<bool> smallGroups) =>
+      _transformsForCount(count, smallGroups);
+
+  static List<_WebTransform> _transformsForCount(
+    int count,
+    List<bool> smallGroups,
+  ) {
+    final base = switch (count.clamp(1, 4)) {
+      1 => const [_WebTransform(Offset.zero, 1)],
+      2 => const [
+        _WebTransform(Offset(-690, 0), 0.56),
+        _WebTransform(Offset(690, 0), 0.56),
+      ],
+      3 => const [
+        _WebTransform(Offset(-690, -430), 0.47),
+        _WebTransform(Offset(690, -430), 0.47),
+        _WebTransform(Offset(0, 650), 0.47),
+      ],
+      _ => const [
+        _WebTransform(Offset(-650, -520), 0.42),
+        _WebTransform(Offset(650, -520), 0.42),
+        _WebTransform(Offset(-650, 520), 0.42),
+        _WebTransform(Offset(650, 520), 0.42),
+      ],
+    };
+    return [
+      for (var index = 0; index < base.length; index++)
+        _WebTransform(
+          base[index].center,
+          base[index].scale *
+              (index < smallGroups.length && smallGroups[index] ? 0.68 : 1),
+        ),
+    ];
+  }
+
+  static Rect _contentBounds(List<_WebTransform> transforms) {
+    final safeTransforms = transforms.isEmpty
+        ? const [_WebTransform(Offset.zero, 1)]
+        : transforms;
+    Rect? bounds;
+    for (final transform in safeTransforms) {
+      // The painted silk ends at graphRadius + 220, but node glows and labels
+      // extend beyond it. Keep a real visual gutter in the fit bounds so the
+      // outer ring is never flush-clipped by the viewport.
+      final radius = (_graphRadius + 360) * transform.scale;
+      final webBounds = Rect.fromCircle(
+        center: transform.center,
+        radius: radius,
+      );
+      bounds = bounds == null ? webBounds : bounds.expandToInclude(webBounds);
+    }
+    return bounds!;
+  }
+
+  static double _fittedScale(
+    Size viewport,
+    List<_WebTransform> transforms,
+    double rightInset,
+  ) {
+    final bounds = _contentBounds(transforms);
+    final safeInset = rightInset.clamp(0.0, max(0.0, viewport.width - 1));
+    final availableWidth = max(1.0, viewport.width - safeInset - 28);
+    final availableHeight = max(1.0, viewport.height - 36);
+    final widthScale = availableWidth / max(1.0, bounds.width);
+    final heightScale = availableHeight / max(1.0, bounds.height);
+    return min(widthScale, heightScale).clamp(0.04, 0.34);
+  }
+
+  Offset _nearestSilkPoint(_Node node, Offset canvasPoint) {
+    final transform = _webTransforms[node.webIndex];
+    final local = (canvasPoint - transform.center) / transform.scale;
+    final best = _nearestLocalSilkPoint(local);
+    return transform.center + best * transform.scale;
+  }
+
+  static Offset _nearestLocalSilkPoint(Offset local) {
+    var best = _GraphPainter.webRailSamples.first;
+    var bestDistance = double.infinity;
+    for (final sample in _GraphPainter.webRailSamples) {
+      final distance = (sample - local).distanceSquared;
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        best = sample;
+      }
+    }
+    return best;
+  }
+
+  static Offset _nearestLocalSlot(Offset local) {
+    var best = _GraphPainter.webSlots.first;
+    var bestDistance = double.infinity;
+    for (final slot in _GraphPainter.webSlots) {
+      final distance = (slot - local).distanceSquared;
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        best = slot;
+      }
+    }
+    return best;
   }
 
   int? _memoryId(Map<String, dynamic> memory) {
@@ -360,6 +527,22 @@ class _SpiderWebGraphViewState extends State<SpiderWebGraphView>
     if (raw is num) return raw.toInt();
     return int.tryParse(raw?.toString() ?? '');
   }
+
+  double get _currentScale =>
+      max(0.001, _transformationController.value.getMaxScaleOnAxis());
+
+  static double _nodeHitRadiusForScale(double tapRadius, double scale) =>
+      max(tapRadius * 2.5, _minimumScreenNodeHitRadius / max(scale, 0.001));
+
+  double _nodeHitRadius(_Node node) =>
+      _nodeHitRadiusForScale(node.tapRadius, _currentScale);
+
+  double get _dragThreshold => 8.0 / _currentScale;
+
+  static double _maximumScaleForWebCount(int webCount) =>
+      webCount <= 1 ? 3.6 : 2.4;
+
+  double get _maximumScale => _maximumScaleForWebCount(_webTransforms.length);
 
   double _clarityFor(Map<String, dynamic> memory) {
     final category = memory['category'] as String? ?? '';
@@ -378,6 +561,11 @@ class _SpiderWebGraphViewState extends State<SpiderWebGraphView>
   }
 
   void _handlePointerUp(PointerUpEvent details) {
+    _activePointers.remove(details.pointer);
+    if (_multiTouchGestureActive) {
+      if (_activePointers.isEmpty) _multiTouchGestureActive = false;
+      return;
+    }
     final adjustedTapPos =
         details.localPosition - const Offset(_canvasCenter, _canvasCenter);
 
@@ -388,7 +576,7 @@ class _SpiderWebGraphViewState extends State<SpiderWebGraphView>
       final dy = node.y - adjustedTapPos.dy;
       final distance = dx * dx + dy * dy;
       // Use the same generous hit radius as down
-      final hitRadius = node.tapRadius * 2.5;
+      final hitRadius = _nodeHitRadius(node);
       if (distance <= hitRadius * hitRadius && distance < bestDistance) {
         best = node;
         bestDistance = distance;
@@ -396,9 +584,18 @@ class _SpiderWebGraphViewState extends State<SpiderWebGraphView>
     }
 
     // Only consider it a tap if the user didn't drag it significantly
-    if (best != null && _draggedDistance < 8.0) {
-      _ripples.add(_Ripple(Offset(best.x, best.y), DateTime.now()));
-      widget.onNodeTapped(best.data);
+    if (best != null && _draggedDistance < _dragThreshold) {
+      final selected = best;
+      _ripples.add(_Ripple(Offset(selected.x, selected.y), DateTime.now()));
+      setState(() => _selectedMemoryId = _memoryId(selected.data));
+      widget.onNodeTapped(selected.data);
+    } else if (best == null && _draggedDistance < _dragThreshold) {
+      final edge = _nearestEdge(adjustedTapPos);
+      if (edge != null) {
+        widget.onLinkTapped(edge.data, edge.source.data, edge.target.data);
+      } else if (_selectedMemoryId != null) {
+        setState(() => _selectedMemoryId = null);
+      }
     }
 
     _handlePointerUpOrCancel();
@@ -406,7 +603,42 @@ class _SpiderWebGraphViewState extends State<SpiderWebGraphView>
 
   double _draggedDistance = 0.0;
 
+  _Edge? _nearestEdge(Offset point) {
+    _Edge? best;
+    var bestDistance = max(18.0, 18.0 / _currentScale);
+    for (final edge in _edges) {
+      final start = Offset(edge.source.x, edge.source.y);
+      final end = Offset(edge.target.x, edge.target.y);
+      final control = _edgeControlPoint(
+        start,
+        end,
+        _edgeWebCenter(edge, _webTransforms),
+      );
+      for (var sample = 0; sample <= 24; sample++) {
+        final candidate = _GraphPainter.quadPoint(
+          start,
+          control,
+          end,
+          sample / 24,
+        );
+        final distance = (candidate - point).distance;
+        if (distance < bestDistance) {
+          bestDistance = distance;
+          best = edge;
+        }
+      }
+    }
+    return best;
+  }
+
   void _handlePointerDown(PointerDownEvent details) {
+    _activePointers.add(details.pointer);
+    if (_activePointers.length > 1) {
+      _multiTouchGestureActive = true;
+      _cancelNodeDragForViewportGesture();
+      return;
+    }
+    if (_multiTouchGestureActive) return;
     _draggedDistance = 0.0;
     final adjustedTapPos =
         details.localPosition - const Offset(_canvasCenter, _canvasCenter);
@@ -417,7 +649,7 @@ class _SpiderWebGraphViewState extends State<SpiderWebGraphView>
       final dx = node.x - adjustedTapPos.dx;
       final dy = node.y - adjustedTapPos.dy;
       final distance = dx * dx + dy * dy;
-      final hitRadius = node.tapRadius * 2.5;
+      final hitRadius = _nodeHitRadius(node);
       if (distance <= hitRadius * hitRadius && distance < bestDistance) {
         best = node;
         bestDistance = distance;
@@ -428,34 +660,78 @@ class _SpiderWebGraphViewState extends State<SpiderWebGraphView>
       final node = best; // 閉包內 promotion 失效，取非空局部變量
       setState(() {
         _draggedNode = node;
+        _dragOrigin = Offset(node.x, node.y);
         node.isDragged = true;
         node.vx = 0;
         node.vy = 0;
-        // 回溫：拖拽期間鄰居要能讓位
-        _simAlpha = max(_simAlpha, 0.55);
       });
     }
   }
 
   void _handlePointerMove(PointerMoveEvent details) {
+    if (_multiTouchGestureActive || _activePointers.length != 1) return;
+    _draggedDistance += details.localDelta.distance;
     if (_draggedNode != null) {
-      _draggedDistance += details.localDelta.distance;
       setState(() {
-        _draggedNode!.x += details.localDelta.dx;
-        _draggedNode!.y += details.localDelta.dy;
+        final node = _draggedNode!;
+        final proposed = Offset(node.x, node.y) + details.localDelta;
+        final silk = _nearestSilkPoint(node, proposed);
+        final transform = _webTransforms[node.webIndex];
+        final stickyRange = max(72.0, 150.0 * transform.scale);
+        final next = (proposed - silk).distance <= stickyRange
+            ? Offset.lerp(proposed, silk, 0.72)!
+            : proposed;
+        node.x = next.dx;
+        node.y = next.dy;
       });
     }
   }
 
   void _handlePointerUpOrCancel() {
     if (_draggedNode != null) {
+      final node = _draggedNode!;
+      final transform = _webTransforms[node.webIndex];
+      final silk = _nearestSilkPoint(node, Offset(node.x, node.y));
+      final local = (silk - transform.center) / transform.scale;
       setState(() {
-        _draggedNode!.isDragged = false;
+        node
+          ..x = silk.dx
+          ..y = silk.dy
+          ..isDragged = false;
         _draggedNode = null;
-        // 鬆手後留一點餘溫收拾殘局，隨後自然凍結
-        _simAlpha = max(_simAlpha, 0.30);
+        _dragOrigin = null;
       });
+      final id = _memoryId(node.data);
+      if (id != null && _draggedDistance >= _dragThreshold) {
+        widget.onNodePositionChanged(id, local.dx, local.dy);
+      }
     }
+  }
+
+  void _cancelNodeDragForViewportGesture() {
+    final node = _draggedNode;
+    if (node == null) return;
+    final origin = _dragOrigin;
+    setState(() {
+      if (origin != null) {
+        node
+          ..x = origin.dx
+          ..y = origin.dy;
+      }
+      node.isDragged = false;
+      _draggedNode = null;
+      _dragOrigin = null;
+      _draggedDistance = 0;
+    });
+  }
+
+  void _handlePointerCancel(PointerCancelEvent details) {
+    _activePointers.remove(details.pointer);
+    if (_multiTouchGestureActive) {
+      if (_activePointers.isEmpty) _multiTouchGestureActive = false;
+      return;
+    }
+    _handlePointerUpOrCancel();
   }
 
   @override
@@ -482,7 +758,7 @@ class _SpiderWebGraphViewState extends State<SpiderWebGraphView>
                   constraints.maxWidth,
                   constraints.maxHeight,
                 );
-                if (_viewSize != newSize) {
+                if (_viewSize != newSize || !_hasAnimated) {
                   _viewSize = newSize;
                   if (!_hasAnimated) {
                     _hasAnimated = true;
@@ -495,26 +771,33 @@ class _SpiderWebGraphViewState extends State<SpiderWebGraphView>
                   transformationController: _transformationController,
                   constrained: false,
                   panEnabled: _draggedNode == null,
-                  scaleEnabled: _draggedNode == null,
+                  // Keep the scale recognizer alive while the first finger is
+                  // over a node. A second pointer cancels node dragging and
+                  // hands the gesture to the viewport instead of blocking
+                  // pinch-to-zoom in dense single-web layers.
+                  scaleEnabled: true,
                   boundaryMargin: const EdgeInsets.all(1400),
-                  minScale: 0.18,
-                  maxScale: 2.4,
+                  minScale: 0.04,
+                  maxScale: _maximumScale,
                   child: Listener(
                     behavior: HitTestBehavior.opaque,
                     onPointerDown: _handlePointerDown,
                     onPointerMove: _handlePointerMove,
                     onPointerUp: _handlePointerUp,
-                    onPointerCancel: (_) => _handlePointerUpOrCancel(),
+                    onPointerCancel: _handlePointerCancel,
                     child: CustomPaint(
                       size: const Size(_canvasSize, _canvasSize),
                       painter: _GraphPainter(
                         _nodes,
                         _edges,
+                        webTransforms: _webTransforms,
                         timeSec: _timeSec,
                         entryElapsedMs: DateTime.now()
                             .difference(_spawnAt)
                             .inMilliseconds,
                         ripples: _ripples,
+                        selectedMemoryId: _selectedMemoryId,
+                        reduceMotion: _reduceMotion,
                       ),
                     ),
                   ),
@@ -533,15 +816,68 @@ class _SpiderWebGraphViewState extends State<SpiderWebGraphView>
               ),
             ),
           ),
-          if (_edges.isNotEmpty)
+          Positioned(
+            top: 12,
+            right: 12,
+            child: _GraphBadge(
+              icon: Icons.polyline_rounded,
+              label: L.pick(
+                en: '${_edges.length} links',
+                zhTW: '${_edges.length} 連線',
+              ),
+              onTap: widget.onLinksTapped,
+            ),
+          ),
+          if (widget.externalLinkCount > 0)
             Positioned(
-              top: 12,
+              top: 60,
               right: 12,
               child: _GraphBadge(
-                icon: Icons.polyline_rounded,
+                icon: Icons.layers_rounded,
                 label: L.pick(
-                  en: '${_edges.length} links',
-                  zhTW: '${_edges.length} 連線',
+                  en: '${widget.externalLinkCount} cross-layer',
+                  zhTW: '${widget.externalLinkCount} 跨層連線',
+                  zhCN: '${widget.externalLinkCount} 跨层连线',
+                ),
+                onTap: widget.onExternalLinksTapped,
+              ),
+            ),
+          if (widget.onZeroLinksAction != null &&
+              _edges.isEmpty &&
+              widget.externalLinkCount == 0 &&
+              _nodes.length >= 2)
+            Positioned(
+              left: 20,
+              right: 20,
+              bottom: 18,
+              child: Semantics(
+                button: widget.onZeroLinksAction != null,
+                label: L.pick(
+                  en: 'These memories have no relations yet. Run a local scan.',
+                  zhTW: '這些記憶尚未建立關係，可執行本地掃描。',
+                  zhCN: '这些记忆尚未建立关系，可执行本地扫描。',
+                ),
+                child: Center(
+                  child: OutlinedButton.icon(
+                    onPressed: widget.onZeroLinksAction,
+                    style: OutlinedButton.styleFrom(
+                      minimumSize: const Size(0, 44),
+                      backgroundColor: Colors.transparent,
+                      foregroundColor: YanciTheme.textSecondary,
+                      side: BorderSide(
+                        color: YanciTheme.textSecondary.withValues(alpha: 0.18),
+                        width: 0.8,
+                      ),
+                    ),
+                    icon: const Icon(Icons.manage_search_rounded, size: 18),
+                    label: Text(
+                      L.pick(
+                        en: 'On-device memory deduplication check',
+                        zhTW: '本機記憶去重檢查',
+                        zhCN: '本机记忆去重检查',
+                      ),
+                    ),
+                  ),
                 ),
               ),
             ),
@@ -554,44 +890,57 @@ class _SpiderWebGraphViewState extends State<SpiderWebGraphView>
 class _GraphBadge extends StatelessWidget {
   final IconData icon;
   final String label;
+  final VoidCallback? onTap;
 
-  const _GraphBadge({required this.icon, required this.label});
+  const _GraphBadge({required this.icon, required this.label, this.onTap});
 
   @override
   Widget build(BuildContext context) {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(999),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-          decoration: BoxDecoration(
-            color: YanciTheme.isDark
-                ? Colors.white.withValues(alpha: 0.08)
-                : Colors.white.withValues(alpha: 0.64),
-            borderRadius: BorderRadius.circular(999),
-            border: Border.all(
-              color: YanciTheme.isDark
-                  ? Colors.white.withValues(alpha: 0.08)
-                  : Colors.white.withValues(alpha: 0.72),
-              width: 0.5,
-            ),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(icon, size: 14, color: YanciTheme.accent),
-              const SizedBox(width: 6),
-              Text(
-                label,
-                style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
-                  color: YanciTheme.textSecondary,
-                  fontFamily: YanciTheme.fontFamily,
+    return Semantics(
+      button: onTap != null,
+      label: label,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(999),
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
+          child: Material(
+            color: Colors.transparent,
+            child: InkWell(
+              onTap: onTap,
+              borderRadius: BorderRadius.circular(999),
+              child: Container(
+                constraints: const BoxConstraints(minHeight: 44),
+                padding: const EdgeInsets.symmetric(horizontal: 10),
+                decoration: BoxDecoration(
+                  color: YanciTheme.isDark
+                      ? Colors.white.withValues(alpha: 0.08)
+                      : Colors.white.withValues(alpha: 0.64),
+                  borderRadius: BorderRadius.circular(999),
+                  border: Border.all(
+                    color: YanciTheme.isDark
+                        ? Colors.white.withValues(alpha: 0.08)
+                        : Colors.white.withValues(alpha: 0.72),
+                    width: 0.5,
+                  ),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(icon, size: 14, color: YanciTheme.accent),
+                    const SizedBox(width: 6),
+                    Text(
+                      label,
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color: YanciTheme.textSecondary,
+                        fontFamily: YanciTheme.fontFamily,
+                      ),
+                    ),
+                  ],
                 ),
               ),
-            ],
+            ),
           ),
         ),
       ),
@@ -659,16 +1008,22 @@ class _Ripple {
 class _GraphPainter extends CustomPainter {
   final List<_Node> nodes;
   final List<_Edge> edges;
+  final List<_WebTransform> webTransforms;
   final double timeSec; // 環境動畫時鐘（呼吸/流光）
   final int entryElapsedMs; // 入場經過毫秒（織網 stagger）
   final List<_Ripple> ripples;
+  final int? selectedMemoryId;
+  final bool reduceMotion;
 
   _GraphPainter(
     this.nodes,
     this.edges, {
+    this.webTransforms = const [_WebTransform(Offset.zero, 1)],
     this.timeSec = 0,
     this.entryElapsedMs = 99999,
     this.ripples = const [],
+    this.selectedMemoryId,
+    this.reduceMotion = false,
   });
 
   // 入場參數：每節點錯開 35ms、單節點 420ms 完成
@@ -732,6 +1087,61 @@ class _GraphPainter extends CustomPainter {
   // 蛛網幾何是確定性的（jitter 用 sin 偽隨機）——Path 只建一次，
   // 每幀重建 8圈×12輻貝茲是白燒的 CPU。
   static Path? _cachedWebPath;
+  static List<Offset>? _cachedWebSlots;
+  static List<Offset>? _cachedWebRailSamples;
+
+  /// Stable node anchors taken from the exact current web construction. The
+  /// geometry is shared with the painter, so capacity/layering never changes
+  /// the silhouette the user already likes.
+  static List<Offset> get webSlots {
+    if (_cachedWebSlots != null) return _cachedWebSlots!;
+    const spokes = 12;
+    final spokeAngles = <double>[
+      for (var i = 0; i < spokes; i++)
+        (i * 2 * pi / spokes) + sin(i * 99.7) * 0.35,
+    ];
+    final intersections = <Offset>[];
+    var r = 85.0;
+    for (var ring = 0; ring < 8; ring++) {
+      for (var i = 0; i < spokes; i++) {
+        final angle = spokeAngles[i];
+        final wobble =
+            sin(ring * 3.1 + i * 2.7) * 75.0 + cos(i * 5.5 - ring * 1.2) * 45.0;
+        final currentR = (r + wobble).clamp(r - 70.0, r + 140.0);
+        intersections.add(Offset(cos(angle) * currentR, sin(angle) * currentR));
+        r += (175.0 + ring * 30.0) / spokes;
+      }
+      r += 25.0 + sin(ring * 4.2) * 35.0;
+    }
+    // The spiral continues beyond the visible web so the decorative spokes
+    // can fade naturally. Memory anchors must not follow those hidden rings:
+    // distributing nodes across all 96 intersections placed later memories
+    // outside the clipped silk even before the user touched them.
+    _cachedWebSlots = List<Offset>.unmodifiable(
+      intersections.where((point) => point.distance <= _graphRadius),
+    );
+    return _cachedWebSlots!;
+  }
+
+  /// Dense samples used by range stickiness while dragging. Samples beyond
+  /// the visible web radius are excluded so long anchor rays cannot swallow a
+  /// memory outside the intended plane.
+  static List<Offset> get webRailSamples {
+    if (_cachedWebRailSamples != null) return _cachedWebRailSamples!;
+    _cachedWebPath ??= _buildWebPath();
+    final samples = <Offset>[];
+    for (final metric in _cachedWebPath!.computeMetrics()) {
+      for (var distance = 0.0; distance <= metric.length; distance += 28.0) {
+        final point = metric.getTangentForOffset(distance)?.position;
+        if (point != null && point.distance <= _graphRadius + 220) {
+          samples.add(point);
+        }
+      }
+    }
+    samples.addAll(webSlots);
+    _cachedWebRailSamples = List<Offset>.unmodifiable(samples);
+    return _cachedWebRailSamples!;
+  }
 
   static Path _buildWebPath() {
     const spokes = 12;
@@ -792,17 +1202,30 @@ class _GraphPainter extends CustomPainter {
     _cachedWebPath ??= _buildWebPath();
     // 絲線光澤極緩慢地明暗（週期 ~9s）。基準壓淡一檔——
     // 背景是裝飾，真實記憶連線才是主角，層次要拉開。
-    final sheen = 0.20 + 0.06 * sin(timeSec * 0.7);
+    final sheen = reduceMotion ? 0.23 : 0.20 + 0.06 * sin(timeSec * 0.7);
     final webPaint = Paint()
       ..color = YanciTheme.accent.withValues(alpha: sheen)
       ..strokeWidth = 1.8
       ..strokeCap = StrokeCap.round
       ..style = PaintingStyle.stroke;
-    canvas.drawPath(_cachedWebPath!, webPaint);
+    for (final transform in webTransforms) {
+      canvas.save();
+      canvas.translate(transform.center.dx, transform.center.dy);
+      canvas.scale(transform.scale);
+      if (webTransforms.length > 1) {
+        canvas.clipPath(
+          Path()..addOval(
+            Rect.fromCircle(center: Offset.zero, radius: _graphRadius + 220),
+          ),
+        );
+      }
+      canvas.drawPath(_cachedWebPath!, webPaint);
+      canvas.restore();
+    }
   }
 
   /// 二次貝茲上的點（t∈0~1）——流光沿線走用
-  static Offset _quadPoint(Offset p0, Offset c, Offset p1, double t) {
+  static Offset quadPoint(Offset p0, Offset c, Offset p1, double t) {
     final u = 1 - t;
     return Offset(
       u * u * p0.dx + 2 * u * t * c.dx + t * t * p1.dx,
@@ -813,50 +1236,99 @@ class _GraphPainter extends CustomPainter {
   void _drawEdges(Canvas canvas) {
     for (var ei = 0; ei < edges.length; ei++) {
       final edge = edges[ei];
+      final status = edge.data['status']?.toString() ?? 'confirmed';
+      final type = edge.data['relation_type']?.toString() ?? 'related';
+      final suggested = status == 'suggested';
       final p1 = Offset(edge.source.x, edge.source.y);
       final p2 = Offset(edge.target.x, edge.target.y);
       final midpoint = Offset.lerp(p1, p2, 0.5)!;
-      final control = Offset.lerp(midpoint, Offset.zero, 0.22)!;
+      final control = _edgeControlPoint(
+        p1,
+        p2,
+        _edgeWebCenter(edge, webTransforms),
+      );
       final clarity = ((edge.source.clarity + edge.target.clarity) / 2).clamp(
         0.22,
         1.0,
       );
       // 拖拽高亮：牽的那幾根線亮起來、變韌
       final tugged = edge.source.isDragged || edge.target.isDragged;
+      final firstId = _nodeId(edge.source);
+      final secondId = _nodeId(edge.target);
+      final selectedPath =
+          selectedMemoryId == null ||
+          selectedMemoryId == firstId ||
+          selectedMemoryId == secondId;
       // 可見性映射：clarity 只調強弱，不再乘到隱形——
       // 老記憶 clarity 貼底時舊算法 alpha≈0.09，被 0.3+ 的背景蛛網
       // 完全淹沒，「連線消失」的真兇。底線抬到 0.55。
-      final vis = 0.55 + 0.40 * clarity;
+      final vis = (0.55 + 0.40 * clarity) * (selectedPath ? 1 : 0.18);
 
       final path = Path()
         ..moveTo(p1.dx, p1.dy)
         ..quadraticBezierTo(control.dx, control.dy, p2.dx, p2.dy);
 
+      final semanticColor = switch (type) {
+        'conflict_update' => Colors.orange.shade400,
+        'duplicate_candidate' => YanciTheme.accentLight,
+        _ => YanciTheme.accentLight,
+      };
       final glow = Paint()
-        ..color = YanciTheme.accentGlow.withValues(
-          alpha: (tugged ? 0.40 : 0.24) * vis,
+        ..color = semanticColor.withValues(
+          alpha:
+              (tugged
+                  ? 0.40
+                  : suggested
+                  ? 0.10
+                  : 0.24) *
+              vis,
         )
         ..strokeWidth = tugged ? 9 : 7
         ..strokeCap = StrokeCap.round
         ..style = PaintingStyle.stroke
         ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 8);
       final line = Paint()
-        ..color = YanciTheme.accentLight.withValues(
-          alpha: (tugged ? 0.95 : 0.80) * vis,
+        ..color = semanticColor.withValues(
+          alpha:
+              (tugged
+                  ? 0.95
+                  : suggested
+                  ? 0.66
+                  : 0.80) *
+              vis,
         )
-        ..strokeWidth = (tugged ? 2.8 : 2.2) + clarity * 0.8
+        ..strokeWidth =
+            (tugged
+                ? 2.8
+                : type == 'duplicate_candidate'
+                ? 3.0
+                : 2.2) +
+            clarity * 0.8
         ..strokeCap = StrokeCap.round
         ..style = PaintingStyle.stroke;
 
-      canvas.drawPath(path, glow);
-      canvas.drawPath(path, line);
+      if (!suggested) canvas.drawPath(path, glow);
+      if (suggested) {
+        _drawDashedPath(
+          canvas,
+          path,
+          line,
+          type == 'conflict_update' ? 12 : 18,
+        );
+        _drawRelationMarker(canvas, midpoint, type, semanticColor, vis);
+      } else {
+        canvas.drawPath(path, line);
+      }
 
       // ═══ 流光：清晰的連線上有微光沿絲滑行（神經傳導感）═══
-      if (clarity >= 0.55 && edges.length <= 60) {
+      if (!suggested &&
+          !reduceMotion &&
+          clarity >= 0.55 &&
+          edges.length <= 60) {
         // 每根線相位錯開，速度 ~8s 一趟，方向由索引奇偶交替
         var t = (timeSec * 0.13 + ei * 0.37) % 1.0;
         if (ei.isOdd) t = 1.0 - t;
-        final pos = _quadPoint(p1, control, p2, t);
+        final pos = quadPoint(p1, control, p2, t);
         final sparkAlpha = (0.5 + 0.3 * sin(timeSec * 2.1 + ei)) * clarity;
         canvas.drawCircle(
           pos,
@@ -874,9 +1346,80 @@ class _GraphPainter extends CustomPainter {
     }
   }
 
+  static int? _nodeId(_Node node) {
+    final raw = node.data['id'];
+    return raw is num ? raw.toInt() : int.tryParse(raw?.toString() ?? '');
+  }
+
+  void _drawDashedPath(
+    Canvas canvas,
+    Path path,
+    Paint paint,
+    double dashLength,
+  ) {
+    for (final metric in path.computeMetrics()) {
+      var distance = 0.0;
+      while (distance < metric.length) {
+        final end = min(distance + dashLength, metric.length);
+        canvas.drawPath(metric.extractPath(distance, end), paint);
+        distance = end + dashLength * 0.62;
+      }
+    }
+  }
+
+  void _drawRelationMarker(
+    Canvas canvas,
+    Offset center,
+    String type,
+    Color color,
+    double visibility,
+  ) {
+    final radius = type == 'duplicate_candidate' ? 11.0 : 9.0;
+    final marker = Path()
+      ..moveTo(center.dx, center.dy - radius)
+      ..lineTo(center.dx + radius, center.dy)
+      ..lineTo(center.dx, center.dy + radius)
+      ..lineTo(center.dx - radius, center.dy)
+      ..close();
+    canvas.drawPath(
+      marker,
+      Paint()..color = color.withValues(alpha: 0.82 * visibility),
+    );
+    final glyph = switch (type) {
+      'duplicate_candidate' => '≋',
+      'conflict_update' => '!',
+      _ => '?',
+    };
+    final painter = TextPainter(
+      text: TextSpan(
+        text: glyph,
+        style: TextStyle(
+          color: Colors.white.withValues(alpha: visibility),
+          fontSize: 10,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    painter.paint(
+      canvas,
+      center - Offset(painter.width / 2, painter.height / 2),
+    );
+  }
+
   void _drawNodes(Canvas canvas) {
     for (var ni = 0; ni < nodes.length; ni++) {
       final node = nodes[ni];
+      final nodeId = _nodeId(node);
+      final connectedToSelection =
+          selectedMemoryId == null ||
+          nodeId == selectedMemoryId ||
+          edges.any((edge) {
+            final first = _nodeId(edge.source);
+            final second = _nodeId(edge.target);
+            return (first == selectedMemoryId && second == nodeId) ||
+                (second == selectedMemoryId && first == nodeId);
+          });
       // ═══ 入場：沿排序逐個「織」出來（縮放回彈 + 淡入）═══
       final entry = _entryProgress(ni);
       if (entry <= 0) continue;
@@ -888,8 +1431,9 @@ class _GraphPainter extends CustomPainter {
       final mentionBoost = min(node.mentionCount, 8) * 0.45;
 
       // ═══ 呼吸：相位按索引錯開；清晰度越低呼吸越微弱（將熄的燈）═══
-      final breath =
-          sin(timeSec * 1.5 + ni * 1.7) * (0.35 + 0.65 * node.clarity);
+      final breath = reduceMotion
+          ? 0.0
+          : sin(timeSec * 1.5 + ni * 1.7) * (0.35 + 0.65 * node.clarity);
       final breathGlow = 1.0 + 0.16 * breath;
       // 被拖拽的本體與其鄰居一起提亮（牽一髮動全網）
       final excited =
@@ -910,19 +1454,27 @@ class _GraphPainter extends CustomPainter {
               (0.22 + node.clarity * 0.22) *
               (1.0 + 0.25 * breath) *
               excite *
-              entryAlpha,
+              entryAlpha *
+              (connectedToSelection ? 1 : 0.22),
         )
         ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 16);
       final halo = Paint()
-        ..color = color.withValues(alpha: 0.12 * entryAlpha)
+        ..color = color.withValues(
+          alpha: 0.12 * entryAlpha * (connectedToSelection ? 1 : 0.22),
+        )
         ..style = PaintingStyle.stroke
         ..strokeWidth = 1.2;
       final dot = Paint()
         ..color = color.withValues(
-          alpha: (0.66 + node.clarity * 0.32) * entryAlpha,
+          alpha:
+              (0.66 + node.clarity * 0.32) *
+              entryAlpha *
+              (connectedToSelection ? 1 : 0.24),
         );
       final core = Paint()
-        ..color = Colors.white.withValues(alpha: 0.86 * entryAlpha);
+        ..color = Colors.white.withValues(
+          alpha: 0.86 * entryAlpha * (connectedToSelection ? 1 : 0.28),
+        );
 
       canvas.drawCircle(p, glowRadius, outerGlow);
       canvas.drawCircle(p, dotRadius + 8, halo);
@@ -934,7 +1486,9 @@ class _GraphPainter extends CustomPainter {
               node.clarity >= 0.64 ||
               node.mentionCount >= 3) &&
           entry >= 1.0;
-      if (shouldLabel) _drawLabel(canvas, node, p, color);
+      if (shouldLabel && connectedToSelection) {
+        _drawLabel(canvas, node, p, color);
+      }
     }
   }
 

@@ -12,6 +12,7 @@ import '../services/settings_manager.dart';
 import '../services/token_estimator.dart';
 import '../services/local_ai_service.dart';
 import '../services/locale_strings.dart';
+import '../services/recall_text_matcher.dart';
 
 /// 窗口摘要器 — 鏈式摘要 + 關鍵詞提取
 ///
@@ -104,6 +105,108 @@ Output valid JSON only: {"summary":"text","timeline":[{"type":"event","subject":
 
   static String get currentCompressionPrompt =>
       L.locale == 'en' ? _compressPromptEn : _zhPrompt(_compressPromptZh);
+
+  /// Canonical storage contract shared by automatic summaries, manual
+  /// summaries, full-block revisions, and keyword-source snapshots. Prompting
+  /// asks the model for this shape; this finalizer guarantees it even when a
+  /// provider ignores Markdown instructions or adds its own wrapper.
+  static String normalizeSummaryFormat(String raw, {String? locale}) {
+    var text = raw.trim().replaceAll('\r\n', '\n');
+    final fence = RegExp(r'^```(?:\w+)?\s*([\s\S]*?)\s*```$').firstMatch(text);
+    if (fence != null) text = fence.group(1)!.trim();
+    text = text
+        .replaceFirst(
+          RegExp(
+            r'^(?:【\s*(?:手動摘要|手动摘要|Manual Summary)\s*】|'
+            r'\[\s*(?:Manual Summary|手動摘要|手动摘要)\s*\])\s*',
+            caseSensitive: false,
+          ),
+          '',
+        )
+        .trim();
+    if (text.isEmpty) return '';
+
+    final activeLocale = locale ?? L.locale;
+    final priorHeading = activeLocale == 'en' ? 'Prior Context' : '前情提要';
+    final updateHeading = activeLocale == 'en' ? 'This Update' : '本次摘要';
+    final headingPattern = RegExp(
+      r'^\s*(?:#{1,6}\s*)?'
+      r'(前情提要|前情摘要|先前摘要|本次摘要|最新摘要|'
+      r'Prior Context|Previous Summary|Prior Summary|'
+      r'This Update|Latest Summary|Recent Summary)\s*[:：]?\s*$',
+      caseSensitive: false,
+    );
+    final priorAliases = <String>{
+      '前情提要',
+      '前情摘要',
+      '先前摘要',
+      'prior context',
+      'previous summary',
+      'prior summary',
+    };
+
+    final preamble = <String>[];
+    final prior = <String>[];
+    final update = <String>[];
+    List<String>? target;
+    var sawHeading = false;
+    for (final line in text.split('\n')) {
+      final match = headingPattern.firstMatch(line);
+      if (match != null) {
+        sawHeading = true;
+        final label = (match.group(1) ?? '').toLowerCase();
+        target = priorAliases.contains(label) ? prior : update;
+        continue;
+      }
+      (target ?? preamble).add(line);
+    }
+
+    if (!sawHeading) {
+      update.addAll(preamble);
+      preamble.clear();
+    } else if (preamble.any((line) => line.trim().isNotEmpty)) {
+      // Preserve facts from a provider-added preface instead of silently
+      // discarding them. They describe context before the first named part.
+      prior.insertAll(0, preamble);
+    }
+
+    String body(List<String> lines) {
+      final value = lines.join('\n').trim();
+      return value.isEmpty ? '—' : value;
+    }
+
+    String updateBody(List<String> lines) {
+      var value = body(lines).replaceAllMapped(
+        RegExp(r'^\s*-\s+(?=\*\*)', multiLine: true),
+        (_) => '* ',
+      );
+      if (value == '—') return value;
+      final hasSection = RegExp(
+        r'^\s*\*\*\d+\.\s+.+\*\*\s*$',
+        multiLine: true,
+      ).hasMatch(value);
+      final hasEntry = RegExp(
+        r'^\s*\*\s+\*\*[^*]+[:：]\*\*\s+.+$',
+        multiLine: true,
+      ).hasMatch(value);
+      if (hasSection && hasEntry) return value;
+
+      value = value
+          .replaceAll(RegExp(r'^#{1,6}\s+', multiLine: true), '')
+          .replaceAll(RegExp(r'^\s*[-*]\s+', multiLine: true), '')
+          .replaceAll(RegExp(r'\s+'), ' ')
+          .trim();
+      if (activeLocale == 'en') {
+        return '**1. Important events and decisions**\n'
+            '* **Summary:** $value';
+      }
+      return '**1. ${activeLocale == 'zh_CN' ? '重要事件与决定' : '重要事件與決定'}**\n'
+          '* **摘要：** $value';
+    }
+
+    return '## $priorHeading\n${body(prior)}\n\n'
+        '## $updateHeading\n${updateBody(update)}';
+  }
 
   /// 簡中輸出強制指令：僅 zh_CN 語系附加；zh_TW / en 返回空字串。
   /// 壓縮請求使用獨立 adapter 調用，不進聊天緩存條目，因此調整摘要
@@ -261,7 +364,7 @@ Rules:
       userMessage: userContent.toString(),
     );
     final decoded = decodeSummaryEnvelope(response);
-    final summaryText = decoded.summary;
+    final summaryText = normalizeSummaryFormat(decoded.summary);
     if (summaryText.isEmpty) return 0;
     final timelineCandidates = await recoverMissingMenstrualCandidates(
       messages: messages,
@@ -454,6 +557,7 @@ Rules:
       characterId: characterId,
       originalSummary: originalSummary,
       issue: issue,
+      requireFullFormat: true,
     );
     if (revised.isEmpty) return '';
 
@@ -479,14 +583,12 @@ Rules:
       characterId: characterId,
       originalSummary: originalSegment,
       issue: issue,
+      requireFullFormat: false,
     );
     if (revisedSegment.isEmpty) return '';
 
-    final revisedFull = _replaceRange(
-      fullSummary,
-      segmentStart,
-      segmentEnd,
-      revisedSegment,
+    final revisedFull = normalizeSummaryFormat(
+      _replaceRange(fullSummary, segmentStart, segmentEnd, revisedSegment),
     );
     await DatabaseHelper.updateContextSummary(
       id: id,
@@ -507,6 +609,7 @@ Rules:
       characterId: characterId,
       originalSummary: originalSummary,
       issue: issue,
+      requireFullFormat: true,
     );
     if (revised.isEmpty) return '';
 
@@ -540,14 +643,12 @@ Rules:
       characterId: characterId,
       originalSummary: originalSegment,
       issue: issue,
+      requireFullFormat: false,
     );
     if (revisedSegment.isEmpty) return '';
 
-    final revisedFull = _replaceRange(
-      fullSummary,
-      segmentStart,
-      segmentEnd,
-      revisedSegment,
+    final revisedFull = normalizeSummaryFormat(
+      _replaceRange(fullSummary, segmentStart, segmentEnd, revisedSegment),
     );
     final isEn = L.locale == 'en';
     final keywords = await _callModel(
@@ -663,28 +764,36 @@ Rules:
     required String currentMessage,
     String? excludeWindowId,
   }) {
-    final query = currentMessage.trim().toLowerCase();
-    if (query.isEmpty) return null;
+    if (currentMessage.trim().isEmpty) return null;
     final excluded = (excludeWindowId ?? '').trim();
 
-    for (final block in keywordBlocks.reversed) {
+    final matches =
+        <({Map<String, dynamic> block, RecallKeywordMatch match})>[];
+    for (final block in keywordBlocks) {
       final sourceWindowId = (block['source_window_id'] as String? ?? '')
           .trim();
       if (excluded.isNotEmpty && sourceWindowId == excluded) continue;
       final source = (block['source_summary_content'] as String? ?? '').trim();
       if (source.isEmpty) continue;
-      final matchedKeywords = (block['keywords'] as String? ?? '')
-          .split(RegExp(r'[,，、\n]'))
-          .map((k) => k.trim().toLowerCase())
-          .where((k) => k.length >= 2 && query.contains(k))
-          .toList();
-      if (matchedKeywords.isEmpty) continue;
-
-      final segment = _pickMatchedSummarySegment(source, matchedKeywords);
+      final match = RecallTextMatcher.bestKeywordMatch(
+        currentMessage,
+        block['keywords'] as String? ?? '',
+      );
+      if (match != null) matches.add((block: block, match: match));
+    }
+    matches.sort(
+      (left, right) => right.match.score.compareTo(left.match.score),
+    );
+    for (final candidate in matches) {
+      final block = candidate.block;
+      final source = (block['source_summary_content'] as String? ?? '').trim();
+      final segment = _pickMatchedSummarySegment(source, [
+        candidate.match.keyword,
+      ]);
       if (segment == null) continue;
       return _formatKeywordRecallBlock(
         segment,
-        sourceWindowId: sourceWindowId,
+        sourceWindowId: (block['source_window_id'] as String? ?? '').trim(),
         createdAt: block['created_at'] as String? ?? '',
       );
     }
@@ -692,7 +801,7 @@ Rules:
   }
 
   static String _formatSummaryBlock(Map<String, dynamic> block) {
-    final content = (block['content'] as String? ?? '').trim();
+    final content = normalizeSummaryFormat(block['content'] as String? ?? '');
     if (content.isEmpty) return '';
     final windowId = (block['source_window_id'] as String? ?? '').trim();
     final date = _dateLabel(block['created_at'] as String? ?? '');
@@ -729,8 +838,11 @@ Rules:
   ) {
     final segments = _splitSummarySegments(source);
     for (final segment in segments.reversed) {
-      final lower = segment.content.toLowerCase();
-      if (matchedKeywords.any(lower.contains)) return segment;
+      if (matchedKeywords.any(
+        (keyword) => RecallTextMatcher.containsPhrase(segment.content, keyword),
+      )) {
+        return segment;
+      }
     }
     if (segments.length == 1) return segments.first;
     return null;
@@ -828,6 +940,7 @@ Rules:
     required String characterId,
     required String originalSummary,
     required String issue,
+    required bool requireFullFormat,
   }) async {
     final isEn = L.locale == 'en';
     final identity = await _buildIdentityContext(characterId);
@@ -848,7 +961,8 @@ Rules:
       systemPrompt: promptParts.join('\n\n'),
       userMessage: userMessage,
     );
-    return _cleanRevisedSummaryText(revised);
+    final cleaned = _cleanRevisedSummaryText(revised);
+    return requireFullFormat ? normalizeSummaryFormat(cleaned) : cleaned;
   }
 
   static String _replaceRange(

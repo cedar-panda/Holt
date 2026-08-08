@@ -15,11 +15,13 @@ class ChatLongScreenshotResult {
   final String path;
   final int width;
   final int height;
+  final bool downscaled;
 
   const ChatLongScreenshotResult({
     required this.path,
     required this.width,
     required this.height,
+    required this.downscaled,
   });
 }
 
@@ -31,12 +33,13 @@ class ChatLongScreenshotService {
 
   static const int _chunkSize = 4;
   static const int _maxOutputHeight = 20000;
+  static const int _highQualitySelectionLimit = 4;
 
   static Future<ChatLongScreenshotResult> captureAndSave({
     required BuildContext context,
     required List<Widget> items,
     required Color backgroundColor,
-    double pixelRatio = 2,
+    double? pixelRatio,
   }) async {
     if (items.isEmpty) {
       throw StateError('No chat content to capture');
@@ -44,7 +47,11 @@ class ChatLongScreenshotService {
 
     final media = MediaQuery.of(context);
     final logicalWidth = media.size.width;
-    final ratio = pixelRatio.clamp(1.0, 2.0).toDouble();
+    final ratio = _resolveLongScreenshotPixelRatio(
+      devicePixelRatio: media.devicePixelRatio,
+      requestedPixelRatio: pixelRatio,
+      selectionCount: items.length,
+    );
     final rendered = await showGeneralDialog<_LongScreenshotDialogResult>(
       context: context,
       barrierDismissible: false,
@@ -80,6 +87,7 @@ class ChatLongScreenshotService {
       path: path,
       width: rendered.width,
       height: rendered.height,
+      downscaled: rendered.downscaled,
     );
   }
 }
@@ -179,6 +187,7 @@ class _LongScreenshotCaptureHostState
           bytes: stitched['bytes']! as Uint8List,
           width: stitched['width']! as int,
           height: stitched['height']! as int,
+          downscaled: stitched['downscaled']! as bool,
         ),
       );
     } catch (error, stack) {
@@ -283,12 +292,14 @@ class _LongScreenshotDialogResult {
   final Uint8List? bytes;
   final int width;
   final int height;
+  final bool downscaled;
   final String? error;
 
   const _LongScreenshotDialogResult({
     this.bytes,
     this.width = 0,
     this.height = 0,
+    this.downscaled = false,
     this.error,
   });
 }
@@ -328,7 +339,7 @@ Map<String, Object> _stitchLongScreenshot(Map<String, Object> payload) {
         decoded,
         width: outputWidth,
         height: scaledHeights[i],
-        interpolation: img.Interpolation.linear,
+        interpolation: img.Interpolation.cubic,
       );
     }
     img.compositeImage(output, decoded, dstY: y);
@@ -339,10 +350,39 @@ Map<String, Object> _stitchLongScreenshot(Map<String, Object> payload) {
     'bytes': Uint8List.fromList(img.encodePng(output, level: 6)),
     'width': outputWidth,
     'height': outputHeight,
+    'downscaled': scale < 1,
   };
+}
+
+double _resolveLongScreenshotPixelRatio({
+  required double devicePixelRatio,
+  required int selectionCount,
+  double? requestedPixelRatio,
+}) {
+  if (requestedPixelRatio != null) {
+    return requestedPixelRatio.clamp(1.0, 3.5).toDouble();
+  }
+  if (selectionCount <= ChatLongScreenshotService._highQualitySelectionLimit) {
+    // Small selections are frequently viewed as standalone screenshots. Give
+    // them a visibly denser source image without multiplying the memory cost
+    // of a full conversation capture.
+    return 3.5;
+  }
+  return devicePixelRatio.clamp(2.0, 3.0).toDouble();
 }
 
 @visibleForTesting
 Map<String, Object> stitchLongScreenshotChunksForTesting(
   Map<String, Object> payload,
 ) => _stitchLongScreenshot(payload);
+
+@visibleForTesting
+double resolveLongScreenshotPixelRatioForTesting({
+  required double devicePixelRatio,
+  required int selectionCount,
+  double? requestedPixelRatio,
+}) => _resolveLongScreenshotPixelRatio(
+  devicePixelRatio: devicePixelRatio,
+  selectionCount: selectionCount,
+  requestedPixelRatio: requestedPixelRatio,
+);

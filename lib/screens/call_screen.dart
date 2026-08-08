@@ -7,10 +7,11 @@ import '../services/locale_strings.dart';
 import '../services/settings_manager.dart';
 import '../services/tts_service.dart';
 import '../services/api_adapter.dart';
-import '../services/token_estimator.dart';
 import '../services/token_tracker.dart';
 import '../services/call_audio_pipeline.dart';
 import '../services/call_prompt_composer.dart';
+import '../services/deferred_prompt.dart';
+import '../services/bio_clock_service.dart';
 import '../services/prompt_cache_channels.dart';
 import '../services/cache_stats_helper.dart';
 import '../memory/retriever.dart';
@@ -48,8 +49,8 @@ class CallScreen extends StatefulWidget {
   /// 聊天已建好的緩存；沒傳則退回通話自拼的舊前綴。
   final String? staticPart;
   final String? profilePart;
+  final String? windowPart;
   final List<Map<String, String>> initialHistory;
-  final PromptCacheChannels? cacheChannels;
 
   const CallScreen({
     super.key,
@@ -60,8 +61,8 @@ class CallScreen extends StatefulWidget {
     this.cacheStaticSnapshot,
     this.staticPart,
     this.profilePart,
+    this.windowPart,
     this.initialHistory = const <Map<String, String>>[],
-    this.cacheChannels,
   });
 
   @override
@@ -113,7 +114,6 @@ class _CallScreenState extends State<CallScreen>
   bool _bootstrapReady = false;
   bool _bootstrapFailed = false;
   bool _sendingUserTurn = false;
-  late final PromptCacheChannels _promptCacheChannels;
 
   // 來電
   final RingtonePlayer _ringtone = RingtonePlayer();
@@ -143,7 +143,6 @@ class _CallScreenState extends State<CallScreen>
   void initState() {
     super.initState();
     _phase = widget.incoming ? _CallPhase.ringing : _CallPhase.dialing;
-    _promptCacheChannels = widget.cacheChannels ?? PromptCacheChannels();
     _statusText = widget.incoming
         ? L.get('call_incoming')
         : (L.pick(en: 'Dialing…', zhTW: '正在撥號'));
@@ -682,6 +681,7 @@ class _CallScreenState extends State<CallScreen>
       turnAdapter = adapter;
       _activeAdapter = adapter;
       final emotionEnabled = await MemorySettings.isAbilityEnabled('emotion');
+      final bioclockEnabled = await MemorySettings.isAbilityEnabled('bioclock');
 
       // 靜態前綴：優先用聊天傳入的同款 bundle（同 namespace，直接命中
       // 聊天已建緩存；emotion ability 等工具段已在 bundle 內，不重複加）。
@@ -689,9 +689,11 @@ class _CallScreenState extends State<CallScreen>
       // 緩存門檻（Sonnet 1024 / Opus 4096），基本不會命中。
       final String staticPrompt;
       final String? profilePrompt;
+      final String windowPrompt;
       if (widget.staticPart?.isNotEmpty == true) {
         staticPrompt = widget.staticPart!;
         profilePrompt = widget.profilePart;
+        windowPrompt = widget.windowPart ?? '';
       } else {
         final baseSystemPrompt = await ApiSettings.getSystemPrompt();
         staticPrompt = [
@@ -699,8 +701,10 @@ class _CallScreenState extends State<CallScreen>
           if (widget.cacheStaticSnapshot?.isNotEmpty == true)
             widget.cacheStaticSnapshot!,
           if (emotionEnabled) EmotionCoordinates.abilityPrompt(),
+          if (bioclockEnabled) BioClockService.abilityPrompt(),
         ].join('\n\n');
         profilePrompt = null;
+        windowPrompt = widget.cacheStaticSnapshot ?? '';
       }
 
       final dynamicParts = <String>[];
@@ -710,10 +714,34 @@ class _CallScreenState extends State<CallScreen>
         characterId: _characterId,
         windowId: widget.conversationId,
       );
-      if (memoryPrompt.isNotEmpty) dynamicParts.add(memoryPrompt);
+      final turnEffects = DeferredPromptBatch()..add(memoryPrompt);
+      if (memoryPrompt.isNotEmpty) {
+        dynamicParts.add(
+          SystemContextMarkdown.section(
+            enTitle: 'Memory',
+            zhTWTitle: '記憶',
+            zhCNTitle: '记忆',
+            content: memoryPrompt.text,
+          ),
+        );
+      }
       if (emotionEnabled) {
         final emoState = await EmotionCoordinates.statePrompt(_characterId);
         if (emoState.isNotEmpty) dynamicParts.add(emoState);
+      }
+      if (bioclockEnabled) {
+        final clockPrompt = await BioClockService.turnPrompt(_characterId);
+        if (clockPrompt.isNotEmpty) {
+          dynamicParts.add(
+            SystemContextMarkdown.section(
+              enTitle: 'Bio Clock',
+              zhTWTitle: '生物鐘',
+              zhCNTitle: '生物钟',
+              content: clockPrompt.text,
+            ),
+          );
+          turnEffects.add(clockPrompt);
+        }
       }
       // v3 才允許語音標籤，其他 TTS 模型明確禁用（不然標籤會被讀出來/漏顯示）
       final ttsProvider = await TtsSettings.getTtsProvider();
@@ -802,12 +830,9 @@ class _CallScreenState extends State<CallScreen>
       final structured = StructuredPrompt(
         staticPart: staticPrompt,
         profilePart: profilePrompt,
-        dynamicPart: turnPayload.dynamicPart,
-        cacheStableDynamicPart: await _cacheStableDynamicPart(
-          provider: providerName,
-          model: model,
-          liveDynamicPart: turnPayload.dynamicPart,
-        ),
+        windowPart: windowPrompt,
+        controlPart: turnPayload.controlPart,
+        liveStatePart: turnPayload.liveStatePart,
         cacheChannel: PromptCacheChannel.call,
       );
 
@@ -828,6 +853,7 @@ class _CallScreenState extends State<CallScreen>
           return;
         }
         rawBuf.write(chunk);
+        await turnEffects.commit();
         final currentResponse = rawBuf.toString();
 
         if (_phase == _CallPhase.dialing &&
@@ -864,14 +890,21 @@ class _CallScreenState extends State<CallScreen>
         }
       }
 
+      await turnEffects.commit();
       final response = rawBuf.toString();
       if (!mounted || _popped || serial != _turnSerial) return;
-      final processedResponse = emotionEnabled
+      var processedResponse = emotionEnabled
           ? await EmotionCoordinates.processReply(
               response,
               characterId: _characterId,
             )
           : response;
+      if (bioclockEnabled) {
+        processedResponse = await BioClockService.processReply(
+          processedResponse,
+          characterId: _characterId,
+        );
+      }
       final rawDisplayText = _filterStream(processedResponse).trim();
       final cleanText = rawDisplayText
           .replaceAll(RegExp(r'\[[a-zA-Z0-9_]+\]'), '')
@@ -973,31 +1006,6 @@ class _CallScreenState extends State<CallScreen>
         text: normalized,
         isUser: true,
       ),
-    );
-  }
-
-  /// Claude 的 prompt cache 依序是 tools → system → messages。
-  /// 通話 runtime system 和文字聊天不同，因此各自保存一份穩定快照；
-  /// 跨模式時由 OpenRouter adapter 補回該通道的歷史 breakpoint。
-  Future<String?> _cacheStableDynamicPart({
-    required String provider,
-    required String model,
-    required String liveDynamicPart,
-  }) async {
-    final cacheEnabled = await MemorySettings.getEnablePromptCaching();
-    final isClaudeCache = TokenEstimator.isClaudePromptCacheModel(
-      provider: provider,
-      model: model,
-    );
-    return _promptCacheChannels.stableDynamic(
-      cacheEnabled: cacheEnabled,
-      isClaudeCache: isClaudeCache,
-      conversationId: widget.conversationId,
-      provider: provider,
-      model: model,
-      locale: L.locale,
-      channel: PromptCacheChannel.call,
-      liveDynamicPart: liveDynamicPart,
     );
   }
 

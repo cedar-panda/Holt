@@ -28,12 +28,13 @@ void main() {
       structuredPrompt: StructuredPrompt(
         staticPart: 'Character',
         profilePart: 'Profile',
-        dynamicPart: 'Memory',
+        liveStatePart: 'Memory CURRENT TIME=09:30',
       ),
     );
 
     expect(body['model'], ThinkingMachinesService.defaultModel);
-    expect(body['system'], 'Character\n\nProfile\n\nMemory');
+    expect(body['system'], contains('Character\n\nProfile'));
+    expect(body['system'], contains('Memory'));
     expect(body['thinking'], <String, dynamic>{'type': 'disabled'});
     expect(body.containsKey('output_config'), isFalse);
     final messages = body['messages'] as List;

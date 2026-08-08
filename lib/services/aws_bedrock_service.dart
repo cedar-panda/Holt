@@ -8,6 +8,7 @@ import 'aws_event_stream.dart';
 import 'stream_transport.dart';
 import 'settings/memory_settings.dart';
 import 'token_estimator.dart';
+import 'system_context_debug.dart';
 
 /// AWS Bedrock 直連 Claude — 帶 Signature V4 簽名
 class BedrockService implements ApiAdapter {
@@ -218,26 +219,72 @@ class BedrockService implements ApiAdapter {
       'messages': allMessages,
     };
 
+    var runtimeTransport = '';
+    var runtimeFallback = '';
+    var cachePrefixPreserved = true;
     if (structuredPrompt != null) {
-      final dynamicPrompt = structuredPrompt.dynamicForCache(
-        enabled: enableCache,
-      );
-      final systemBlock = <String, dynamic>{
-        'type': 'text',
-        'text': structuredPrompt.staticPart,
-      };
-      if (enableCache) {
-        systemBlock['cache_control'] = Map<String, String>.from(cacheControl);
+      final cacheableBlocks = structuredPrompt.cacheableParts
+          .where((part) => part.isNotEmpty)
+          .map((part) => <String, dynamic>{'type': 'text', 'text': part})
+          .toList();
+      if (enableCache && cacheableBlocks.isNotEmpty) {
+        cacheableBlocks.last['cache_control'] = Map<String, String>.from(
+          cacheControl,
+        );
       }
-      body['system'] = <Map<String, dynamic>>[
-        systemBlock,
-        if (dynamicPrompt.isNotEmpty)
-          <String, dynamic>{'type': 'text', 'text': dynamicPrompt},
-      ];
+      if (RuntimeContextSidecar.supportsClaudeMidConversationSystem(modelId)) {
+        final attached = RuntimeContextSidecar.appendSystemAfterLatestUser(
+          allMessages,
+          structuredPrompt.liveStatePart,
+        );
+        if (attached) runtimeTransport = 'claude_mid_system';
+      } else {
+        final attached =
+            RuntimeContextSidecar.appendToPreviousAssistantBeforeLatestUser(
+              allMessages,
+              structuredPrompt.liveStatePart,
+            );
+        if (attached) {
+          runtimeTransport = enableCache
+              ? 'assistant_state_after_cache_breakpoint'
+              : 'assistant_state';
+        } else if (RuntimeContextSidecar.appendToSystemBlocks(
+          cacheableBlocks,
+          structuredPrompt.liveStatePart,
+        )) {
+          runtimeTransport = 'top_level_system_fallback';
+          runtimeFallback = 'No previous assistant turn was available.';
+          cachePrefixPreserved = !enableCache || latestUserIndex <= 0;
+        }
+      }
+      body['system'] = cacheableBlocks;
     } else if (systemPrompt != null && systemPrompt.isNotEmpty) {
       body['system'] = systemPrompt;
     }
 
+    if (structuredPrompt != null) {
+      SystemContextDebug.recordChatRequest(
+        provider: 'bedrock',
+        model: modelId,
+        cacheChannel: structuredPrompt.cacheChannel,
+        sessionId: CacheSession.conversationId,
+        transport: runtimeTransport,
+        sourceMessages: messages,
+        requestMessages: allMessages,
+        stableContext: structuredPrompt.cacheableParts.join('\n\n'),
+        liveState: structuredPrompt.liveStatePart,
+        cacheEnabled: enableCache,
+        cachePrefixPreserved: cachePrefixPreserved,
+        fallbackReason: runtimeFallback,
+        topLevelRoles: body.containsKey('system')
+            ? const <String>['system']
+            : const <String>[],
+        cacheBreakpointIndex: enableCache && latestUserIndex > 0
+            ? latestUserIndex - 1
+            : -1,
+        expectTime: structuredPrompt.liveStatePart.trim().isNotEmpty,
+      );
+    }
     return body;
   }
 

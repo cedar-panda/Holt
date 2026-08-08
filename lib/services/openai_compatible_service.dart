@@ -3,10 +3,11 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:http/http.dart' as http;
 import 'api_adapter.dart';
-import 'openrouter_service.dart' show ModelInfo;
+import 'model_info.dart';
 import 'settings/memory_settings.dart';
 import 'sse_stream.dart';
 import 'stream_transport.dart';
+import 'system_context_debug.dart';
 import 'token_estimator.dart';
 
 /// OpenAI 兼容 API（支持任何中轉站 / 自建端點）
@@ -341,34 +342,29 @@ class OpenAICompatibleService implements ApiAdapter {
     );
     final shouldCache = cacheControl != null && enableCache;
 
-    // ═══ system 分層；user 永遠只保留真實消息 ═══
-    final staticPrompt = structuredPrompt?.staticPart ?? systemPrompt ?? '';
-    final profilePrompt = structuredPrompt?.profilePart ?? '';
-    final dynamicPrompt =
-        structuredPrompt?.dynamicForCache(enabled: shouldCache) ?? '';
-    if (staticPrompt.isNotEmpty) {
+    // ═══ system 分層：只放可快取的穩定前綴 ═══
+    final cacheableParts =
+        structuredPrompt?.cacheableParts ?? <String>[systemPrompt ?? ''];
+    final liveState = structuredPrompt?.liveStatePart ?? '';
+    for (var i = 0; i < cacheableParts.length; i++) {
+      final part = cacheableParts[i];
+      if (part.isEmpty) continue;
       if (shouldCache) {
         allMessages.add({
           'role': 'system',
           'content': <Map<String, dynamic>>[
             {
               'type': 'text',
-              'text': staticPrompt,
-              'cache_control': Map<String, String>.from(cacheControl),
+              'text': part,
+              if (i == cacheableParts.length - 1)
+                'cache_control': Map<String, String>.from(cacheControl),
             },
           ],
         });
       } else {
-        allMessages.add({'role': 'system', 'content': staticPrompt});
+        allMessages.add({'role': 'system', 'content': part});
       }
     }
-    if (profilePrompt.isNotEmpty) {
-      allMessages.add({'role': 'system', 'content': profilePrompt});
-    }
-    if (dynamicPrompt.isNotEmpty) {
-      allMessages.add({'role': 'system', 'content': dynamicPrompt});
-    }
-
     // 對話歷史
     for (final m in messages) {
       final role = m['role'] ?? 'user';
@@ -406,7 +402,9 @@ class OpenAICompatibleService implements ApiAdapter {
     if (shouldCache) {
       CacheBreakpoint.applyRolling(
         allMessages,
-        minIndex: staticPrompt.isNotEmpty ? 1 : 0,
+        minIndex: allMessages
+            .takeWhile((message) => message['role'] == 'system')
+            .length,
         maxIndexExclusive: latestUserIndex >= 0
             ? latestUserIndex
             : allMessages.length,
@@ -414,10 +412,80 @@ class OpenAICompatibleService implements ApiAdapter {
       );
     }
 
-    return {
+    // runtime 不得借用 user role。新版 Claude 可用官方 mid-system；舊版
+    // Claude 只能放回頂層 system。其他 Chat Completions 路線放在最新 user 前。
+    final lowerModel = model.toLowerCase();
+    var runtimeTransport = '';
+    var runtimeFallback = '';
+    var cachePrefixPreserved = true;
+    if (lowerModel.contains('claude')) {
+      if (RuntimeContextSidecar.supportsClaudeMidConversationSystem(model)) {
+        final attached = RuntimeContextSidecar.appendSystemAfterLatestUser(
+          allMessages,
+          liveState,
+        );
+        if (attached) runtimeTransport = 'claude_mid_system';
+      } else {
+        final attached =
+            RuntimeContextSidecar.appendToPreviousAssistantBeforeLatestUser(
+              allMessages,
+              liveState,
+            );
+        if (attached) {
+          runtimeTransport = shouldCache
+              ? 'assistant_state_after_cache_breakpoint'
+              : 'assistant_state';
+        } else if (RuntimeContextSidecar.appendToLeadingSystemMessage(
+          allMessages,
+          liveState,
+        )) {
+          runtimeTransport = 'top_level_system_fallback';
+          runtimeFallback = 'No previous assistant turn was available.';
+          final historyStart = allMessages
+              .takeWhile((message) => message['role'] == 'system')
+              .length;
+          cachePrefixPreserved =
+              !shouldCache || latestUserIndex <= historyStart;
+        }
+      }
+    } else {
+      final runtimeRole =
+          lowerModel.contains('gpt') || lowerModel.contains('openai')
+          ? 'developer'
+          : 'system';
+      final attached = RuntimeContextSidecar.insertSystemBeforeLatestUser(
+        allMessages,
+        liveState,
+        role: runtimeRole,
+      );
+      if (attached) runtimeTransport = '${runtimeRole}_before_latest_user';
+    }
+
+    final body = <String, dynamic>{
       'model': _modelForRequest(model),
       'messages': allMessages,
       'stream': stream,
     };
+    if (structuredPrompt != null) {
+      SystemContextDebug.recordChatRequest(
+        provider: 'openai_compatible',
+        model: model,
+        cacheChannel: structuredPrompt.cacheChannel,
+        sessionId: CacheSession.conversationId,
+        transport: runtimeTransport,
+        sourceMessages: messages,
+        requestMessages: allMessages,
+        stableContext: cacheableParts.join('\n\n'),
+        liveState: liveState,
+        cacheEnabled: shouldCache,
+        cachePrefixPreserved: cachePrefixPreserved,
+        fallbackReason: runtimeFallback,
+        cacheBreakpointIndex: shouldCache && latestUserIndex > 0
+            ? latestUserIndex - 1
+            : -1,
+        expectTime: liveState.trim().isNotEmpty,
+      );
+    }
+    return body;
   }
 }

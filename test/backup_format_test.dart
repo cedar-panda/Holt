@@ -281,6 +281,31 @@ void main() {
     );
   });
 
+  test('export cleanup only recognizes Holt backup artifacts', () {
+    expect(
+      BackupService.isExportArtifactNameForTesting(
+        'holt_backup_2026-08-03T12-39-31.holt.zip',
+      ),
+      isTrue,
+    );
+    expect(
+      BackupService.isExportArtifactNameForTesting(
+        'holt_export_2026-08-03T12-39-31.json',
+      ),
+      isTrue,
+    );
+    expect(
+      BackupService.isExportArtifactNameForTesting('family-photo.zip'),
+      isFalse,
+    );
+    expect(
+      BackupService.isExportArtifactNameForTesting(
+        'holt_backup_2026-08-03T12-39-31.holt.zip.bak',
+      ),
+      isFalse,
+    );
+  });
+
   test('VACUUM INTO creates a readable single-file snapshot', () async {
     final source = await databaseFactoryFfi.openDatabase(inMemoryDatabasePath);
     final temp = await Directory.systemTemp.createTemp('holt-vacuum-test-');

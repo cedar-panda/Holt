@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:math';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../memory/database.dart';
+import 'deferred_prompt.dart';
 import 'locale_strings.dart';
 
 /// ═══════════════════════════════════════════════════════════════
@@ -105,18 +106,25 @@ class BioClockData {
   DateTime? firstClockAt;
   DateTime? lastCalibrateAt;
   DateTime? lastInjectAt;
+  String? lastDedupPromptKey;
+  DateTime? lastDedupPromptAt;
   int nextId;
   List<PendingDedup> pendingDedup;
+  List<String> deliveredSetupKeys;
 
   BioClockData({
     List<ClockHabit>? habits,
     this.firstClockAt,
     this.lastCalibrateAt,
     this.lastInjectAt,
+    this.lastDedupPromptKey,
+    this.lastDedupPromptAt,
     this.nextId = 1,
     List<PendingDedup>? pendingDedup,
+    List<String>? deliveredSetupKeys,
   }) : habits = habits ?? [],
-       pendingDedup = pendingDedup ?? [];
+       pendingDedup = pendingDedup ?? [],
+       deliveredSetupKeys = deliveredSetupKeys ?? [];
 
   Map<String, dynamic> toJson() => {
     'habits': habits.map((h) => h.toJson()).toList(),
@@ -124,7 +132,10 @@ class BioClockData {
       'first_clock_at': firstClockAt?.toIso8601String(),
       'last_calibrate_at': lastCalibrateAt?.toIso8601String(),
       'last_inject_at': lastInjectAt?.toIso8601String(),
+      'last_dedup_prompt_key': lastDedupPromptKey,
+      'last_dedup_prompt_at': lastDedupPromptAt?.toIso8601String(),
       'next_id': nextId,
+      'delivered_setup_keys': deliveredSetupKeys,
     },
     'pending_dedup': pendingDedup.map((d) => d.toJson()).toList(),
   };
@@ -144,7 +155,14 @@ class BioClockData {
       lastInjectAt: meta['last_inject_at'] != null
           ? DateTime.parse(meta['last_inject_at'] as String)
           : null,
+      lastDedupPromptKey: meta['last_dedup_prompt_key'] as String?,
+      lastDedupPromptAt: meta['last_dedup_prompt_at'] != null
+          ? DateTime.parse(meta['last_dedup_prompt_at'] as String)
+          : null,
       nextId: meta['next_id'] as int? ?? 1,
+      deliveredSetupKeys: (meta['delivered_setup_keys'] as List<dynamic>? ?? [])
+          .map((value) => value.toString())
+          .toList(),
       pendingDedup: (j['pending_dedup'] as List<dynamic>? ?? [])
           .map((e) => PendingDedup.fromJson(e as Map<String, dynamic>))
           .toList(),
@@ -172,6 +190,10 @@ class BioClockService {
 
   /// 單一習慣冷卻（小時）：16h 內同一習慣不重複觸發
   static const int kHabitCooldownHours = 16;
+
+  /// 未解決的同一組重複習慣，最多每 12h 提醒一次。這只限制整理提示，
+  /// 不會擋住當前時段提醒、校準或構建提示。
+  static const int kDedupPromptCooldownHours = 12;
 
   /// 白名單：免 16h 冷卻（可早晚各一次）
   static const kBidailyKeywords = ['洗澡', '刷牙', '上廁所', '運動'];
@@ -320,6 +342,10 @@ class BioClockService {
     data.pendingDedup.removeWhere(
       (d) => d.existingId == keepId || d.newHabit.id == keepId,
     );
+    if (data.lastDedupPromptKey == _dedupKey(pending)) {
+      data.lastDedupPromptKey = null;
+      data.lastDedupPromptAt = null;
+    }
 
     await _save(characterId, data);
   }
@@ -339,6 +365,8 @@ class BioClockService {
     }
     data.habits.removeWhere((h) => toRemove.contains(h.id));
     data.pendingDedup.clear();
+    data.lastDedupPromptKey = null;
+    data.lastDedupPromptAt = null;
 
     await _save(characterId, data);
   }
@@ -347,8 +375,8 @@ class BioClockService {
   // C. 觸發（±2h 窗口、冷卻、白名單）
   // ─────────────────────────────────────────────
 
-  /// 檢查是否該注入生物鐘提示。返回提示文本或空字串。
-  /// 有副作用：更新 lastInjectAt 和 lastTriggeredAt。
+  /// 檢查是否該注入生物鐘提示。生成階段只讀；只有請求成功後
+  /// [DeferredPrompt.commit] 才更新 lastInjectAt / lastTriggeredAt。
   /// 習慣清單（靜態注入用）。
   /// 模型以前看不到本地已存的習慣 → 反覆記重複條目，dedup 只能事後補救。
   /// 清單放靜態 prompt：模型隨時看得到 ①②③ 全貌，從根上不重複；
@@ -416,16 +444,16 @@ class BioClockService {
     return buf.toString().trimRight();
   }
 
-  static Future<String> triggerPrompt(String characterId) async {
+  static Future<DeferredPrompt> triggerPrompt(String characterId) async {
     final data = await _load(characterId);
-    if (data.habits.isEmpty) return '';
+    if (data.habits.isEmpty) return DeferredPrompt.empty();
 
     final now = DateTime.now();
 
     // 3h 注入冷卻
     if (data.lastInjectAt != null) {
       final elapsed = now.difference(data.lastInjectAt!).inHours;
-      if (elapsed < kInjectCooldownHours) return '';
+      if (elapsed < kInjectCooldownHours) return DeferredPrompt.empty();
     }
 
     // 查 ±2h 窗口內的習慣
@@ -450,7 +478,7 @@ class BioClockService {
       matched.add(h);
     }
 
-    if (matched.isEmpty) return '';
+    if (matched.isEmpty) return DeferredPrompt.empty();
 
     // 取最接近當前時間的那條
     matched.sort((a, b) {
@@ -460,14 +488,29 @@ class BioClockService {
     });
     final pick = matched.first;
 
-    // 更新觸發時間
-    pick.lastTriggeredAt = now;
-    data.lastInjectAt = now;
-    await _save(characterId, data);
-
     final pickTime =
         '${pick.hour.toString().padLeft(2, '0')}:${pick.minute.toString().padLeft(2, '0')}';
-    return '${L.pick(en: '【Bio Clock Reminder】You have a habit around ', zhTW: '【生物鐘提醒】你在 ')}$pickTime${L.pick(en: ': ', zhTW: ' 左右有習慣：')}${pick.content}${L.pick(en: ' (This is the habit time, not the current time; follow 【Time】 for the current time.)', zhTW: '（這是習慣時間，不是現在的時間，以【時間】為準）')}';
+    final prompt =
+        '${L.pick(en: '【Bio Clock Reminder】You have a habit around ', zhTW: '【生物鐘提醒】你在 ')}$pickTime${L.pick(en: ': ', zhTW: ' 左右有習慣：')}${pick.content}${L.pick(en: ' (This is the habit time, not the current time; follow 【Time】 for the current time.)', zhTW: '（這是習慣時間，不是現在的時間，以【時間】為準）')}';
+    final pickedId = pick.id;
+    return DeferredPrompt(
+      prompt,
+      onCommit: () async {
+        final latest = await _load(characterId);
+        final current = latest.habits
+            .where((h) => h.id == pickedId)
+            .firstOrNull;
+        if (current == null) return;
+        if (current.lastTriggeredAt == null ||
+            current.lastTriggeredAt!.isBefore(now)) {
+          current.lastTriggeredAt = now;
+        }
+        if (latest.lastInjectAt == null || latest.lastInjectAt!.isBefore(now)) {
+          latest.lastInjectAt = now;
+        }
+        await _save(characterId, latest);
+      },
+    );
   }
 
   /// 時間窗口判定（處理跨午夜）
@@ -486,16 +529,17 @@ class BioClockService {
   // D. 校準（頻率遞減）
   // ─────────────────────────────────────────────
 
-  /// 檢查是否該發校準 prompt。返回校準文本或空字串。
-  /// 有副作用：更新 lastCalibrateAt。
-  static Future<String> calibratePrompt(String characterId) async {
+  /// 檢查是否該發校準 prompt。生成階段只讀；請求成功後才提交時間。
+  static Future<DeferredPrompt> calibratePrompt(String characterId) async {
     final data = await _load(characterId);
-    if (data.habits.isEmpty && data.firstClockAt == null) return '';
+    if (data.habits.isEmpty && data.firstClockAt == null) {
+      return DeferredPrompt.empty();
+    }
 
     final now = DateTime.now();
 
     // 首次寫入前不校準
-    if (data.firstClockAt == null) return '';
+    if (data.firstClockAt == null) return DeferredPrompt.empty();
 
     // 計算角色年齡（天）和校準間隔
     final ageDays = now.difference(data.firstClockAt!).inDays;
@@ -508,9 +552,12 @@ class BioClockService {
     }
 
     // 是否到期
-    if (data.lastCalibrateAt != null) {
+    if (data.lastCalibrateAt == null) {
+      final sinceFirst = now.difference(data.firstClockAt!).inDays;
+      if (sinceFirst < interval) return DeferredPrompt.empty();
+    } else {
       final sinceLast = now.difference(data.lastCalibrateAt!).inDays;
-      if (sinceLast < interval) return '';
+      if (sinceLast < interval) return DeferredPrompt.empty();
     }
 
     // 組裝校準 prompt
@@ -525,7 +572,7 @@ class BioClockService {
       final h = data.habits[i];
       final timeStr =
           '${h.hour.toString().padLeft(2, '0')}:${h.minute.toString().padLeft(2, '0')}';
-      buf.writeln('${_circledNum(i + 1)} $timeStr ${h.content}');
+      buf.writeln('${_circledNum(h.id)} $timeStr ${h.content}');
     }
     buf.writeln(
       L.pick(
@@ -547,25 +594,45 @@ class BioClockService {
       ),
     );
 
-    // 更新校準時間
-    data.lastCalibrateAt = now;
-    await _save(characterId, data);
-
-    return buf.toString();
+    return DeferredPrompt(
+      buf.toString(),
+      onCommit: () async {
+        final latest = await _load(characterId);
+        if (latest.lastCalibrateAt == null ||
+            latest.lastCalibrateAt!.isBefore(now)) {
+          latest.lastCalibrateAt = now;
+          await _save(characterId, latest);
+        }
+      },
+    );
   }
 
-  /// 去重提問 prompt（pendingDedup 非空時注入）
-  static Future<String> dedupPrompt(String characterId) async {
+  /// 去重提問 prompt（pendingDedup 非空時注入）。生成階段只讀；同一組
+  /// 重複項只有在提示成功送達後才進入冷卻，失敗請求仍可重試。
+  static Future<DeferredPrompt> dedupPrompt(String characterId) async {
     final data = await _load(characterId);
-    if (data.pendingDedup.isEmpty) return '';
+    if (data.pendingDedup.isEmpty) return DeferredPrompt.empty();
 
     final d = data.pendingDedup.first;
+    final dedupKey = _dedupKey(d);
     final existing = data.habits.where((h) => h.id == d.existingId).firstOrNull;
     if (existing == null) {
       // 已被清理，跳過
       data.pendingDedup.removeAt(0);
+      if (data.lastDedupPromptKey == dedupKey) {
+        data.lastDedupPromptKey = null;
+        data.lastDedupPromptAt = null;
+      }
       await _save(characterId, data);
-      return '';
+      return DeferredPrompt.empty();
+    }
+
+    final now = DateTime.now();
+    if (data.lastDedupPromptKey == dedupKey &&
+        data.lastDedupPromptAt != null &&
+        now.difference(data.lastDedupPromptAt!).inHours <
+            kDedupPromptCooldownHours) {
+      return DeferredPrompt.empty();
     }
 
     final tA =
@@ -582,8 +649,29 @@ class BioClockService {
       zhTW:
           '請用 <clock_keep>①</clock_keep> 或 <clock_keep>②</clock_keep> 選擇保留哪一條，另一條會被移除。\n標籤直接打在回覆末尾，不要在思考過程中討論。',
     );
-    return '$header\n① $tA ${existing.content}\n② $tB ${d.newHabit.content}\n$instruction';
+    final prompt =
+        '$header\n① $tA ${existing.content}\n② $tB ${d.newHabit.content}\n$instruction';
+    return DeferredPrompt(
+      prompt,
+      onCommit: () async {
+        final latest = await _load(characterId);
+        final stillPending = latest.pendingDedup.any(
+          (pending) => _dedupKey(pending) == dedupKey,
+        );
+        if (!stillPending) return;
+        if (latest.lastDedupPromptKey != dedupKey ||
+            latest.lastDedupPromptAt == null ||
+            latest.lastDedupPromptAt!.isBefore(now)) {
+          latest.lastDedupPromptKey = dedupKey;
+          latest.lastDedupPromptAt = now;
+          await _save(characterId, latest);
+        }
+      },
+    );
   }
+
+  static String _dedupKey(PendingDedup pending) =>
+      '${pending.existingId}:${pending.newHabit.id}';
 
   static String _circledNum(int n) {
     const nums = ['①', '②', '③', '④', '⑤', '⑥', '⑦', '⑧', '⑨', '⑩'];
@@ -677,9 +765,11 @@ class BioClockService {
       if (parsed == null) continue;
 
       final data = await _load(characterId);
-      if (idx < 0 || idx >= data.habits.length) continue;
-      final old = data.habits[idx];
-      data.habits[idx] = ClockHabit(
+      final habitId = idx + 1;
+      final pos = data.habits.indexWhere((h) => h.id == habitId);
+      if (pos == -1) continue;
+      final old = data.habits[pos];
+      data.habits[pos] = ClockHabit(
         id: old.id,
         hour: parsed.hour,
         minute: parsed.minute,
@@ -689,7 +779,7 @@ class BioClockService {
         lastTriggeredAt: old.lastTriggeredAt,
       );
       await _save(characterId, data);
-      lastActionLog.add('🕐 更新習慣 ${_circledNum(idx + 1)} → ${parsed.content}');
+      lastActionLog.add('🕐 更新習慣 ${_circledNum(habitId)} → ${parsed.content}');
     }
     out = out.replaceAll(_clockUpdateRe, '');
 
@@ -700,8 +790,10 @@ class BioClockService {
       if (idx == null) continue;
 
       final data = await _load(characterId);
-      if (idx < 0 || idx >= data.habits.length) continue;
-      final removed = data.habits.removeAt(idx);
+      final habitId = idx + 1;
+      final pos = data.habits.indexWhere((h) => h.id == habitId);
+      if (pos == -1) continue;
+      final removed = data.habits.removeAt(pos);
       await _save(characterId, data);
       lastActionLog.add('🕐 刪除習慣 ${removed.content}');
     }
@@ -1013,47 +1105,104 @@ class BioClockService {
   // H. 前 7 天生物鐘構建提示
   // ─────────────────────────────────────────────
 
-  /// 生物鐘構建期提示（角色建立後前 7 天，每天第一輪對話發送）
-  /// 返回空字串表示不在構建期或本時段不需要提示
-  static Future<String> setupPrompt(String characterId) async {
+  /// 本輪生物鐘提示的單一入口。實際時段提醒永遠優先；同一組去重提示
+  /// 成功送達後會冷卻，不能長期阻塞校準與構建提示。
+  static Future<DeferredPrompt> turnPrompt(String characterId) async {
+    final trigger = await triggerPrompt(characterId);
+    if (trigger.isNotEmpty) return trigger;
+
+    final dedup = await dedupPrompt(characterId);
+    if (dedup.isNotEmpty) return dedup;
+
+    final calibration = await calibratePrompt(characterId);
+    if (calibration.isNotEmpty) return calibration;
+
+    return setupPrompt(characterId);
+  }
+
+  /// 生物鐘構建期提示。每個本地日期／時段最多成功送達一次；生成階段只讀，
+  /// [DeferredPrompt.commit] 後才記錄，避免失敗請求造成飯點提示幽靈消費。
+  static Future<DeferredPrompt> setupPrompt(
+    String characterId, {
+    DateTime? at,
+  }) async {
     final data = await _load(characterId);
-    if (data.habits.length >= 3) return ''; // 已有 3+ 習慣，不再提示
+    if (data.habits.length >= 3) return DeferredPrompt.empty();
+
+    final now = at ?? DateTime.now();
 
     // 用第一條習慣的時間判斷是否超過 7 天
     if (data.firstClockAt != null &&
-        DateTime.now().difference(data.firstClockAt!).inDays > 7) {
-      return ''; // 超過 7 天不再提示
+        now.difference(data.firstClockAt!).inDays > 7) {
+      return DeferredPrompt.empty();
     }
 
-    final now = DateTime.now();
     final hour = now.hour;
+    final slot = switch (hour) {
+      >= 6 && < 9 => 'breakfast',
+      >= 11 && < 13 => 'lunch',
+      >= 17 && < 19 => 'dinner',
+      >= 22 || < 2 => 'sleep',
+      _ => 'routine',
+    };
+    final date =
+        '${now.year.toString().padLeft(4, '0')}-'
+        '${now.month.toString().padLeft(2, '0')}-'
+        '${now.day.toString().padLeft(2, '0')}';
+    final deliveryKey = '$date:$slot';
+    if (data.deliveredSetupKeys.contains(deliveryKey)) {
+      return DeferredPrompt.empty();
+    }
+
+    late final String prompt;
 
     if (L.locale == 'en') {
       if (hour >= 6 && hour < 9) {
-        return '【Bio Clock Setup】Good morning! What time do you usually have breakfast? Record with <clock> if you want.';
+        prompt =
+            '【Bio Clock Setup】Good morning! What time do you usually have breakfast? Record with <clock> if you want.';
       } else if (hour >= 11 && hour < 13) {
-        return '【Bio Clock Setup】It\'s lunchtime. Hungry? Eating or skipping is fine.';
+        prompt =
+            '【Bio Clock Setup】It\'s lunchtime. Hungry? Eating or skipping is fine.';
       } else if (hour >= 17 && hour < 19) {
-        return '【Bio Clock Setup】Around dinner time. Do you usually eat around now?';
+        prompt =
+            '【Bio Clock Setup】Around dinner time. Do you usually eat around now?';
       } else if (hour >= 22 || hour < 2) {
-        return '【Bio Clock Setup】Getting late. What time do you usually sleep?';
+        prompt =
+            '【Bio Clock Setup】Getting late. What time do you usually sleep?';
+      } else {
+        prompt =
+            '【Bio Clock Setup】If this conversation naturally reveals a stable routine, record it silently with <clock>HH:MM activity @keywords</clock>. Do not mention the tag.';
       }
-      return '【Bio Clock Setup】If this conversation naturally reveals a stable routine, record it silently with <clock>HH:MM activity @keywords</clock>. Do not mention the tag.';
+    } else if (hour >= 6 && hour < 9) {
+      prompt = L.pick(en: '', zhTW: '【生物鐘構建】早安，平常幾點吃早餐？想記的話用 <clock> 記下來。');
+    } else if (hour >= 11 && hour < 13) {
+      prompt = L.pick(en: '', zhTW: '【生物鐘構建】飯點了，肚子有些餓嗎？吃不吃都行。');
+    } else if (hour >= 17 && hour < 19) {
+      prompt = L.pick(en: '', zhTW: '【生物鐘構建】快到晚餐時間了，平常這時候吃嗎？');
+    } else if (hour >= 22 || hour < 2) {
+      prompt = L.pick(en: '', zhTW: '【生物鐘構建】晚了，記得休息。幾點想睡？');
+    } else {
+      prompt = L.pick(
+        en: '',
+        zhTW:
+            '【生物鐘構建】如果這輪自然出現固定作息線索，請在回覆末尾用 <clock>HH:MM 活動內容 @關鍵詞</clock> 靜默記錄；正文不要說你在記錄。',
+      );
     }
 
-    if (hour >= 6 && hour < 9) {
-      return L.pick(en: '', zhTW: '【生物鐘構建】早安，平常幾點吃早餐？想記的話用 <clock> 記下來。');
-    } else if (hour >= 11 && hour < 13) {
-      return L.pick(en: '', zhTW: '【生物鐘構建】飯點了，肚子有些餓嗎？吃不吃都行。');
-    } else if (hour >= 17 && hour < 19) {
-      return L.pick(en: '', zhTW: '【生物鐘構建】快到晚餐時間了，平常這時候吃嗎？');
-    } else if (hour >= 22 || hour < 2) {
-      return L.pick(en: '', zhTW: '【生物鐘構建】晚了，記得休息。幾點想睡？');
-    }
-    return L.pick(
-      en: '',
-      zhTW:
-          '【生物鐘構建】如果這輪自然出現固定作息線索，請在回覆末尾用 <clock>HH:MM 活動內容 @關鍵詞</clock> 靜默記錄；正文不要說你在記錄。',
+    return DeferredPrompt(
+      prompt,
+      onCommit: () async {
+        final latest = await _load(characterId);
+        if (latest.deliveredSetupKeys.contains(deliveryKey)) return;
+        latest.deliveredSetupKeys.add(deliveryKey);
+        if (latest.deliveredSetupKeys.length > 32) {
+          latest.deliveredSetupKeys.removeRange(
+            0,
+            latest.deliveredSetupKeys.length - 32,
+          );
+        }
+        await _save(characterId, latest);
+      },
     );
   }
 

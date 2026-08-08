@@ -1,8 +1,12 @@
+import 'dart:math';
+
 import '../models/memory.dart';
 import '../services/settings_manager.dart';
 import '../services/token_estimator.dart';
 import '../services/settings/memory_settings.dart';
+import '../services/deferred_prompt.dart';
 import '../services/locale_strings.dart';
+import '../services/recall_text_matcher.dart';
 import 'spider_web_core.dart';
 import 'database.dart';
 import 'emotion_coordinates.dart';
@@ -97,7 +101,7 @@ class Retriever {
     return verbs.any(msg.contains);
   }
 
-  static Future<String> buildMemoryPrompt({
+  static Future<DeferredPrompt> buildMemoryPrompt({
     String mode = 'romance',
     String? currentMessage,
     String characterId = 'default',
@@ -107,6 +111,7 @@ class Retriever {
     final injectionLog = <String>[];
     _injectionLogsByWindow[scope] = injectionLog;
     _triggeredCountByWindow[scope] = 0;
+    final sendLimit = await MemorySettings.getMemorySendLimit();
 
     // ═══ 維護模式：全量注入 ═══
     if (isMaintenanceIntent(currentMessage)) {
@@ -122,38 +127,40 @@ class Retriever {
       final lines = <String>[];
       for (final mem in [...allPerm, ...allAct]) {
         if (mem.id == null || !seen.add(mem.id!)) continue;
-        if (lines.length >= 150) break;
+        if (lines.length >= sendLimit) break;
         final mark = mem.isPermanent ? '★' : '';
         lines.add(
           '[#${shortFor(mem.id!, windowId: scope)}·${_displayCategory(mem.category)}$mark] ${mem.content}',
         );
       }
-      if (lines.isEmpty) return '';
+      if (lines.isEmpty) return DeferredPrompt.empty();
       injectionLog.add('🧰 維護模式：全量注入 ${lines.length} 條');
-      return <String>[
-        L.pick(
-          en: '【Complete Memory List — Maintenance Mode】',
-          zhTW: '【全量記憶清單 — 維護模式】',
-        ),
-        L.pick(
-          en: 'The other person is asking you to organize memories. This turn includes every memory with an id; ★ means permanent.',
-          zhTW: '對方正在要求整理記憶。本輪你擁有全部記憶的視角（帶編號，★ 為永久）。',
-        ),
-        L.pick(
-          en: 'Write memories consistently in third person, using character and user names instead of “I” or “you”.',
-          zhTW: '記憶統一用第三人稱（角色名和用戶名，不用「我」「你」）。',
-        ),
-        L.pick(
-          en: 'Decide which memories are duplicated, outdated, or should be merged. Use <memo_del> and <memo_merge>.',
-          zhTW: '請判斷哪些重複、過時或該合併，用 <memo_del> 與 <memo_merge> 操作，',
-        ),
-        L.pick(
-          en: 'Keep merged memories in third person. In the visible reply, explain naturally what you organized. Do not change anything when uncertain.',
-          zhTW: '合併時也維持第三人稱。並在正文裡用自己的話告訴對方你整理了什麼。沒把握的不要動。',
-        ),
-        '---',
-        ...lines,
-      ].join('\n');
+      return DeferredPrompt(
+        <String>[
+          L.pick(
+            en: '【Complete Memory List — Maintenance Mode】',
+            zhTW: '【全量記憶清單 — 維護模式】',
+          ),
+          L.pick(
+            en: 'The other person is asking you to organize memories. This turn includes every memory with an id; ★ means permanent.',
+            zhTW: '對方正在要求整理記憶。本輪你擁有全部記憶的視角（帶編號，★ 為永久）。',
+          ),
+          L.pick(
+            en: 'Write memories consistently in third person, using character and user names instead of “I” or “you”.',
+            zhTW: '記憶統一用第三人稱（角色名和用戶名，不用「我」「你」）。',
+          ),
+          L.pick(
+            en: 'Decide which memories are duplicated, outdated, or should be merged. Use <memo_del> and <memo_merge>.',
+            zhTW: '請判斷哪些重複、過時或該合併，用 <memo_del> 與 <memo_merge> 操作，',
+          ),
+          L.pick(
+            en: 'Keep merged memories in third person. In the visible reply, explain naturally what you organized. Do not change anything when uncertain.',
+            zhTW: '合併時也維持第三人稱。並在正文裡用自己的話告訴對方你整理了什麼。沒把握的不要動。',
+          ),
+          '---',
+          ...lines,
+        ].join('\n'),
+      );
     }
 
     // ═══ 正常模式：單一預算，扁平注入 ═══
@@ -217,10 +224,12 @@ class Retriever {
 
     final injected = <String>[];
     final seen = <int>{};
+    final triggeredMemoryIds = <int>{};
     int usedTokens = 0;
 
     // ── 輔助：嘗試注入一條 ──
     bool tryInject(Memory mem, {String? prefix}) {
+      if (injected.length >= sendLimit) return false;
       if (mem.id != null && !seen.add(mem.id!)) return false;
 
       final shortNo = mem.id != null ? shortFor(mem.id!, windowId: scope) : 0;
@@ -248,7 +257,8 @@ class Retriever {
     }
 
     // ── 0. 強行回想（背景發酵，最高優先）──
-    final pendingRecall = SpiderWebCore.takePendingForceRecall(scope);
+    final pendingRecall = SpiderWebCore.peekPendingForceRecall(scope);
+    var forceRecallInjected = false;
     if (isSpiderWebEnabled &&
         pendingRecall != null &&
         pendingRecall.isNotEmpty) {
@@ -258,11 +268,13 @@ class Retriever {
       if (matches.isNotEmpty) {
         injectionLog.add('🔍 強行回想命中：「$pendingRecall」(${matches.length}條)');
         for (final mem in matches) {
-          tryInject(
-            mem,
-            prefix:
-                '[#${mem.id != null ? shortFor(mem.id!, windowId: scope) : 0}·${_displayCategory(mem.category)}][${L.pick(en: 'Forced recall match', zhTW: '強行回想命中')}] ${mem.content}',
-          );
+          forceRecallInjected =
+              tryInject(
+                mem,
+                prefix:
+                    '[#${mem.id != null ? shortFor(mem.id!, windowId: scope) : 0}·${_displayCategory(mem.category)}][${L.pick(en: 'Forced recall match', zhTW: '強行回想命中')}] ${mem.content}',
+              ) ||
+              forceRecallInjected;
         }
       }
     }
@@ -270,35 +282,31 @@ class Retriever {
     // ① 觸發詞命中（高優先）
     int triggered = 0;
     if (currentMessage != null && currentMessage.isNotEmpty) {
-      for (final mem in allActive) {
-        if (mem.triggers.isEmpty) continue;
-        String? hitTrigger;
-        for (final t
-            in mem.triggers
-                .split(RegExp(r'[,，、]'))
-                .map((t) => t.trim())
-                .where((t) => t.length >= 2)) {
-          if (currentMessage.contains(t)) {
-            hitTrigger = t;
-            break;
-          }
-        }
-        if (hitTrigger == null) continue;
+      final matches = <({Memory memory, RecallKeywordMatch match})>[];
+      for (final memory in allActive) {
+        final match = RecallTextMatcher.bestKeywordMatch(
+          currentMessage,
+          memory.triggers,
+        );
+        if (match != null) matches.add((memory: memory, match: match));
+      }
+      matches.sort((left, right) {
+        final byScore = right.match.score.compareTo(left.match.score);
+        if (byScore != 0) return byScore;
+        final byMentions = right.memory.mentionCount.compareTo(
+          left.memory.mentionCount,
+        );
+        if (byMentions != 0) return byMentions;
+        return right.memory.updatedAt.compareTo(left.memory.updatedAt);
+      });
+      for (final candidate in matches) {
+        final mem = candidate.memory;
         if (tryInject(mem)) {
           triggered++;
-          injectionLog.add('⚡ 觸發 #${mem.id} [${mem.category}] ← 「$hitTrigger」');
-          if (mem.id != null) {
-            if (isSpiderWebEnabled) {
-              // triggerMemory 本身已原子累加 mention_count；不可再先加一次，
-              // 否則蛛網角色每次命中會被計成兩次。
-              await SpiderWebCore.triggerMemory(
-                mem.id!,
-                characterId: characterId,
-              );
-            } else {
-              await DatabaseHelper.incrementMention(mem.id!);
-            }
-          }
+          injectionLog.add(
+            '⚡ 觸發 #${mem.id} [${mem.category}] ← 「${candidate.match.keyword}」',
+          );
+          if (mem.id != null) triggeredMemoryIds.add(mem.id!);
         }
       }
     }
@@ -328,6 +336,13 @@ class Retriever {
         if (clarity < 0.8) continue;
 
         double score = clarity;
+        // 被實際觸發過的記憶具有連續性價值。採用對數增益，避免高頻條目
+        // 永久壟斷排序；8 次約 +0.13，128 次也只到約 +0.28。
+        final mentionBonus = min(
+          0.28,
+          (log(mem.mentionCount + 1) / ln2) * 0.04,
+        );
+        score += mentionBonus;
         if (curX != null &&
             curY != null &&
             mem.emotionX != null &&
@@ -372,7 +387,21 @@ class Retriever {
     }
 
     sections.add('---');
-    return sections.join('\n');
+    return DeferredPrompt(
+      sections.join('\n'),
+      onCommit: () async {
+        for (final id in triggeredMemoryIds) {
+          if (isSpiderWebEnabled) {
+            await SpiderWebCore.triggerMemory(id, characterId: characterId);
+          } else {
+            await DatabaseHelper.incrementMention(id);
+          }
+        }
+        if (forceRecallInjected && pendingRecall != null) {
+          SpiderWebCore.consumePendingForceRecall(scope, pendingRecall);
+        }
+      },
+    );
   }
 }
 

@@ -75,6 +75,28 @@ void main() {
     expect(MemoryActions.lastSearchQueryFor(windowId), isNull);
   });
 
+  test(
+    'a second response pass preserves earlier memory action state',
+    () async {
+      const windowId = 'multi-pass-memory-state';
+      addTearDown(() => MemoryActions.releaseWindow(windowId));
+
+      await MemoryActions.processReply(
+        '<search_chat>上一次的約定</search_chat>',
+        characterId: 'char-1',
+        mode: 'romance',
+        windowId: windowId,
+      );
+      MemoryActions.stripReply('第二次回覆', windowId: windowId, resetState: false);
+
+      expect(MemoryActions.lastSearchQueryFor(windowId), '上一次的約定');
+      expect(
+        MemoryActions.lastActionLogFor(windowId),
+        contains('🔍 搜尋「上一次的約定」'),
+      );
+    },
+  );
+
   test('revoked KeepAlive lease cannot authorize a stale worker', () async {
     SharedPreferences.setMockInitialValues(<String, Object>{
       'keepalive_conv_id': 'conv-live',

@@ -3,6 +3,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:project_yanci/services/settings/api_settings.dart';
 import 'package:project_yanci/services/settings/memory_settings.dart';
+import 'package:project_yanci/services/xai_service.dart';
 
 import 'helpers/secure_storage_test_mock.dart';
 
@@ -19,6 +20,7 @@ void main() {
 
   for (final provider in <String>[
     'openrouter',
+    'xai',
     'bedrock',
     'gemini',
     'deepseek',
@@ -41,6 +43,15 @@ void main() {
       },
     );
   }
+
+  test('xAI key and model build the native Grok adapter', () async {
+    await ApiSettings.saveXaiApiKey('xai-test-key');
+    await ApiSettings.saveProviderModelSelection('xai', 'grok-4.5');
+
+    expect(await ApiSettings.getXaiApiKey(), 'xai-test-key');
+    expect(await ApiSettings.getModelForProvider('xai'), 'grok-4.5');
+    expect(await ApiSettings.buildAdapter(), isA<XaiService>());
+  });
 
   test('OpenAI-compatible source distinguishes a missing API key', () async {
     SharedPreferences.setMockInitialValues(<String, Object>{
@@ -134,6 +145,41 @@ void main() {
     expect(await ApiSettings.getStarredModels(), isNot(contains(model)));
     expect(await ApiSettings.getStarredModelProvider(model), isNull);
   });
+
+  test(
+    'starred model usage ranks cloud first and resumes after re-starring',
+    () async {
+      const cloudA = 'anthropic/claude-sonnet-4';
+      const cloudB = 'google/gemini-3-flash';
+      const local = 'local:qwen3-4b';
+      await ApiSettings.saveStarredModels([cloudA, local, cloudB]);
+
+      await ApiSettings.recordStarredModelUsage(cloudA);
+      await ApiSettings.recordStarredModelUsage(cloudB);
+      await ApiSettings.recordStarredModelUsage(cloudB);
+      for (var i = 0; i < 5; i++) {
+        await ApiSettings.recordStarredModelUsage(local);
+      }
+
+      expect(await ApiSettings.getRankedStarredModels(), [
+        cloudB,
+        cloudA,
+        local,
+      ]);
+
+      await ApiSettings.saveStarredModels([cloudA, local]);
+      await ApiSettings.recordStarredModelUsage(cloudB);
+      expect(await ApiSettings.getRankedStarredModels(), [cloudA, local]);
+
+      await ApiSettings.saveStarredModels([cloudA, local, cloudB]);
+      expect(await ApiSettings.getRankedStarredModels(), [
+        cloudB,
+        cloudA,
+        local,
+      ]);
+      expect((await ApiSettings.getStarredModelUsageCounts())[cloudB], 2);
+    },
+  );
 
   test('provider and model selection are saved together', () async {
     const model = '[A2-量]claude-opus-4-6-thinking';

@@ -54,6 +54,13 @@ void main() {
         outputFile: output,
       );
 
+      final archive = ZipDecoder().decodeBytes(await output.readAsBytes());
+      expect(
+        archive.where((entry) => !entry.isFile),
+        isEmpty,
+        reason: 'portable backups must not contain broken directory entries',
+      );
+
       final extracted = await PortableBackupBundle.extract(
         bundle: output,
         destinationRoot: destination,

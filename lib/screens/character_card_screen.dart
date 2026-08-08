@@ -16,6 +16,7 @@ import '../memory/database.dart';
 import '../services/settings_manager.dart';
 import '../services/token_estimator.dart';
 import '../services/sticker_service.dart';
+import '../services/spider_web_state_service.dart';
 import '../widgets/emotion_panel.dart';
 import '../utils/latest_request_gate.dart';
 
@@ -93,12 +94,6 @@ class _CharacterCardScreenState extends State<CharacterCardScreen> {
       _drawAnchorUserCtrl.text = char['draw_anchor_user'] ?? '';
       _drawAnchorCharCtrl.text = char['draw_anchor_char'] ?? '';
       _drawStyleCtrl.text = char['draw_style'] ?? '';
-      _showExtras =
-          _raceController.text.isNotEmpty ||
-          _skillController.text.isNotEmpty ||
-          _ageController.text.isNotEmpty ||
-          _heightController.text.isNotEmpty ||
-          _ttsVoiceId.isNotEmpty;
     }
     setState(() => _isLoading = false);
   }
@@ -1278,6 +1273,7 @@ class _CharacterCardScreenState extends State<CharacterCardScreen> {
     );
     if (result == true) {
       await DatabaseHelper.deleteCharacter(id);
+      await SpiderWebStateService.clearCharacterState(id);
       // 刪的是活躍角色時回退 default（沿用列表頁的原邏輯）
       final activeId = await UserSettings.getActiveCharacterId();
       if (id == activeId) {

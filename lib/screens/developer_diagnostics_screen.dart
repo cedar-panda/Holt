@@ -5,6 +5,7 @@ import '../services/settings/user_settings.dart';
 import '../services/locale_strings.dart';
 import '../widgets/gradient_background.dart';
 import 'context_debug_screen.dart';
+import 'system_context_debug_screen.dart';
 import '../services/bio_clock_service.dart';
 import '../services/cache_debug_log.dart';
 
@@ -109,9 +110,9 @@ class _DeveloperDiagnosticsScreenState
                         padding: const EdgeInsets.only(top: 10),
                         child: Text(
                           L.pick(
-                            en: 'Reading:\n⚠️ Fingerprint changed = static-prefix drift (segments listed below the row)\n🧯 Context cache stalled = 3 consecutive long prompts only read the fixed prefix\nUnchanged but ⚡0 = expired TTL or route drift\nGray ⚙ rows are internal requests (naming/summary), excluded from comparison',
+                            en: 'Reading:\n⚠️ Fingerprint changed = static-prefix drift (segments listed below the row)\n🧯 Context cache stalled = 3 consecutive long prompts only read the fixed prefix\nClaude unchanged but ⚡0 = expired TTL or route drift; Grok ⚡0 is normal on the first request or after eviction\nGray ⚙ rows are internal requests (naming/summary), excluded from comparison',
                             zhTW:
-                                '判讀：\n⚠️ 指紋變 = 靜態前綴漂移（行下方會列出具體變更段）\n🧯 上下文快取停滯 = 長提示連續 3 次只讀到固定前綴\n指紋沒變但 ⚡0 = TTL 過期或路由漂移\n灰色 ⚙ 行 = 命名/摘要等內部請求，已排除在比較外',
+                                '判讀：\n⚠️ 指紋變 = 靜態前綴漂移（行下方會列出具體變更段）\n🧯 上下文快取停滯 = 長提示連續 3 次只讀到固定前綴\nClaude 指紋沒變但 ⚡0 = TTL 過期或路由漂移；Grok 首輪／遭逐出時 ⚡0 屬正常\n灰色 ⚙ 行 = 命名/摘要等內部請求，已排除在比較外',
                           ),
                           style: YanciTheme.bodySmall.copyWith(
                             fontSize: 11,
@@ -212,6 +213,13 @@ class _DeveloperDiagnosticsScreenState
                         e['context_stall_count'] as int? ?? 0;
                     final dynamicSnapshotActive =
                         e['dynamic_snapshot_active'] == true;
+                    final cacheMode = (e['cache_mode'] ?? '').toString();
+                    final runtimeEventCount =
+                        e['runtime_event_count'] as int? ?? 0;
+                    final reasoningPreserved =
+                        e['reasoning_payload_preserved'] == true;
+                    final reasoningTokens = e['reasoning_t'] as int? ?? 0;
+                    final actualCost = e['actual_cost'] as num?;
                     final cacheChannel = (e['cache_channel'] ?? 'text')
                         .toString();
                     final resumeIndices =
@@ -266,6 +274,19 @@ class _DeveloperDiagnosticsScreenState
                       requestTailNote += '\n    ↳ runtime system：窗口固定快照';
                     }
                     requestTailNote += '\n    ↳ cache channel：$cacheChannel';
+                    if (cacheMode == 'xai_implicit_prefix') {
+                      requestTailNote +=
+                          '\n    ↳ Grok 自動 prefix cache · 隱藏事件 $runtimeEventCount'
+                          '${reasoningPreserved ? ' · reasoning 已回送' : ''}';
+                    }
+                    if (reasoningTokens > 0) {
+                      requestTailNote +=
+                          '\n    ↳ reasoning ${_fmtT(reasoningTokens)}t';
+                    }
+                    if (actualCost != null) {
+                      requestTailNote +=
+                          '\n    ↳ 實付 US\$${actualCost.toDouble().toStringAsFixed(6)}';
+                    }
                     if (resumeIndices.isNotEmpty) {
                       requestTailNote += ' · resume ${resumeIndices.join(',')}';
                     }
@@ -384,6 +405,53 @@ class _DeveloperDiagnosticsScreenState
                 child: ListView(
                   padding: const EdgeInsets.all(YanciTheme.spacingMd),
                   children: [
+                    GestureDetector(
+                      onTap: () => Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) => const SystemContextDebugScreen(),
+                        ),
+                      ),
+                      child: _buildGlassCard(
+                        child: Row(
+                          children: [
+                            Icon(
+                              Icons.account_tree_outlined,
+                              size: 20,
+                              color: YanciTheme.accent,
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    'System Context Live',
+                                    style: YanciTheme.bodyText.copyWith(
+                                      fontSize: 15,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    L.pick(
+                                      en: 'Actual roles, transport & cache safety',
+                                      zhTW: '實際 role、傳輸與 cache 安全',
+                                    ),
+                                    style: YanciTheme.bodySmall,
+                                  ),
+                                ],
+                              ),
+                            ),
+                            Icon(
+                              Icons.chevron_right,
+                              size: 20,
+                              color: YanciTheme.textSecondary,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
                     GestureDetector(
                       onTap: () async {
                         final navigator = Navigator.of(context);

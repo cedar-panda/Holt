@@ -152,7 +152,7 @@ void main() {
         structuredPrompt: StructuredPrompt(
           staticPart: 'static rules',
           profilePart: 'stable profile',
-          dynamicPart: 'fresh dynamic',
+          liveStatePart: 'fresh dynamic CURRENT TIME=09:30',
         ),
         messages: const [
           {'role': 'user', 'content': 'old user'},
@@ -169,26 +169,29 @@ void main() {
       final systemBlocks = system['content'] as List;
       expect(system['role'], 'system');
       expect(systemBlocks.length, 3);
-      expect((systemBlocks[1] as Map<String, dynamic>)['cache_control'], const {
+      expect((systemBlocks[2] as Map<String, dynamic>)['cache_control'], const {
         'type': 'ephemeral',
         'ttl': '1h',
       });
-      final focusedDynamic =
-          (systemBlocks.last as Map<String, dynamic>)['text'] as String;
-      expect(focusedDynamic, contains('fresh dynamic'));
-      expect(focusedDynamic, contains('answer this first'));
       expect(
-        (systemBlocks.last as Map<String, dynamic>).containsKey(
-          'cache_control',
-        ),
-        isFalse,
+        systemBlocks.map((block) => (block as Map)['text']).join('\n'),
+        isNot(contains('fresh dynamic')),
       );
 
       final previousAssistant = messages[2] as Map<String, dynamic>;
       final previousAssistantBlocks = previousAssistant['content'] as List;
       expect(
-        (previousAssistantBlocks.last as Map<String, dynamic>)['cache_control'],
+        (previousAssistantBlocks.first
+            as Map<String, dynamic>)['cache_control'],
         const {'type': 'ephemeral', 'ttl': '1h'},
+      );
+      expect(
+        (previousAssistantBlocks.last as Map<String, dynamic>)['text'],
+        contains('fresh dynamic'),
+      );
+      expect(
+        (previousAssistantBlocks.last as Map<String, dynamic>)['text'],
+        contains('answer this first'),
       );
 
       final latestUser = messages[3] as Map<String, dynamic>;
@@ -223,84 +226,113 @@ void main() {
     },
   );
 
-  test('OpenRouter cache disabled keeps runtime context out of user', () async {
-    SharedPreferences.setMockInitialValues({'enable_prompt_caching': false});
-    CacheSession.conversationId = 'conv-test';
-    OpenRouterService.resetCacheStats();
+  test(
+    'OpenRouter cache disabled still uses a separate runtime sidecar',
+    () async {
+      SharedPreferences.setMockInitialValues({'enable_prompt_caching': false});
+      CacheSession.conversationId = 'conv-test';
+      OpenRouterService.resetCacheStats();
 
-    final service = OpenRouterService(apiKey: 'test');
-    final body = await service.debugBuildBodyForTesting(
-      model: 'anthropic/claude-sonnet-4',
-      structuredPrompt: StructuredPrompt(
-        staticPart: 'static rules',
-        profilePart: 'stable profile',
-        dynamicPart: 'fresh dynamic',
-      ),
-      messages: const [
-        {'role': 'user', 'content': 'latest user'},
-      ],
-    );
+      final service = OpenRouterService(apiKey: 'test');
+      final body = await service.debugBuildBodyForTesting(
+        model: 'anthropic/claude-sonnet-4',
+        structuredPrompt: StructuredPrompt(
+          staticPart: 'static rules',
+          profilePart: 'stable profile',
+          liveStatePart: 'fresh dynamic CURRENT TIME=09:30',
+        ),
+        messages: const [
+          {'role': 'user', 'content': 'latest user'},
+        ],
+      );
 
-    expect(body.containsKey('session_id'), isFalse);
+      expect(body.containsKey('session_id'), isFalse);
 
-    final messages = body['messages'] as List;
-    expect((messages[0] as Map<String, dynamic>)['content'], 'static rules');
-    expect((messages[1] as Map<String, dynamic>)['content'], 'stable profile');
-    expect((messages[2] as Map<String, dynamic>)['role'], 'system');
-    expect(
-      (messages[2] as Map<String, dynamic>)['content'],
-      contains('fresh dynamic'),
-    );
-    expect(
-      (messages[2] as Map<String, dynamic>)['content'],
-      contains('answer this first'),
-    );
+      final messages = body['messages'] as List;
+      final systems = messages
+          .cast<Map<String, dynamic>>()
+          .where((message) => message['role'] == 'system')
+          .toList();
+      expect(systems.first['content'], 'static rules');
+      expect(
+        ((systems.last['content'] as List).last
+            as Map<String, dynamic>)['text'],
+        contains('fresh dynamic'),
+      );
+      expect(
+        ((systems.last['content'] as List).last
+            as Map<String, dynamic>)['text'],
+        contains('answer this first'),
+      );
+      expect(
+        (messages[1] as Map<String, dynamic>)['content'],
+        'stable profile',
+      );
+      final latestUser = messages[3] as Map<String, dynamic>;
+      expect(latestUser['role'], 'user');
+      expect(latestUser['content'], 'latest user');
+      expect(OpenRouterService.lastCacheDiagnostics['enable_cache'], isFalse);
+      expect(
+        OpenRouterService.lastCacheDiagnostics['latest_user_focus'],
+        isTrue,
+      );
+    },
+  );
 
-    final latestUser = messages[3] as Map<String, dynamic>;
-    expect(latestUser['role'], 'user');
-    expect(latestUser['content'], 'latest user');
-    expect(OpenRouterService.lastCacheDiagnostics['enable_cache'], isFalse);
-    expect(OpenRouterService.lastCacheDiagnostics['latest_user_focus'], isTrue);
-  });
+  test(
+    'OpenRouter cache sends live turn context after cached window',
+    () async {
+      SharedPreferences.setMockInitialValues({'enable_prompt_caching': true});
+      CacheSession.conversationId = 'conv-stable-runtime';
+      OpenRouterService.resetCacheStats();
 
-  test('OpenRouter cache uses the window-stable runtime snapshot', () async {
-    SharedPreferences.setMockInitialValues({'enable_prompt_caching': true});
-    CacheSession.conversationId = 'conv-stable-runtime';
-    OpenRouterService.resetCacheStats();
+      final service = OpenRouterService(apiKey: 'test');
+      final body = await service.debugBuildBodyForTesting(
+        model: 'anthropic/claude-sonnet-4',
+        structuredPrompt: StructuredPrompt(
+          staticPart: 'static rules',
+          windowPart: 'window memory at 08:00',
+          liveStatePart: 'live memory at 09:30',
+        ),
+        messages: const [
+          {'role': 'assistant', 'content': 'previous reply'},
+          {'role': 'user', 'content': 'actual latest message'},
+        ],
+      );
 
-    final service = OpenRouterService(apiKey: 'test');
-    final body = await service.debugBuildBodyForTesting(
-      model: 'anthropic/claude-sonnet-4',
-      structuredPrompt: StructuredPrompt(
-        staticPart: 'static rules',
-        dynamicPart: 'live memory at 09:30',
-        cacheStableDynamicPart: 'window memory at 08:00',
-      ),
-      messages: const [
-        {'role': 'assistant', 'content': 'previous reply'},
-        {'role': 'user', 'content': 'actual latest message'},
-      ],
-    );
+      final messages = body['messages'] as List;
+      final systemBlocks =
+          (messages.first as Map<String, dynamic>)['content'] as List;
+      expect(
+        (systemBlocks[1] as Map<String, dynamic>)['text'],
+        'window memory at 08:00',
+      );
+      expect(
+        systemBlocks.map((block) => (block as Map)['text']).join('\n'),
+        isNot(contains('live memory at 09:30')),
+      );
+      final previousAssistant = messages[1] as Map<String, dynamic>;
+      expect(
+        (previousAssistant['content'] as List)
+            .map((block) => (block as Map)['text'])
+            .join('\n'),
+        contains('live memory at 09:30'),
+      );
+      final latestUser = messages.last as Map<String, dynamic>;
+      final latestBlocks = latestUser['content'] as List;
+      expect(latestBlocks, hasLength(1));
+      expect(
+        (latestBlocks.single as Map<String, dynamic>)['text'],
+        'actual latest message',
+      );
+      expect(
+        OpenRouterService.lastCacheDiagnostics['dynamic_snapshot_active'],
+        isFalse,
+      );
+    },
+  );
 
-    final messages = body['messages'] as List;
-    final systemBlocks =
-        (messages.first as Map<String, dynamic>)['content'] as List;
-    final runtimeText =
-        (systemBlocks.last as Map<String, dynamic>)['text'] as String;
-    expect(runtimeText, contains('window memory at 08:00'));
-    expect(runtimeText, isNot(contains('live memory at 09:30')));
-    final latestUser = messages.last as Map<String, dynamic>;
-    expect(
-      ((latestUser['content'] as List).single as Map<String, dynamic>)['text'],
-      'actual latest message',
-    );
-    expect(
-      OpenRouterService.lastCacheDiagnostics['dynamic_snapshot_active'],
-      isTrue,
-    );
-  });
-
-  test('OpenRouter non-Claude models keep runtime context in system', () async {
+  test('OpenRouter non-Claude models use the same runtime sidecar', () async {
     SharedPreferences.setMockInitialValues({'enable_prompt_caching': false});
     OpenRouterService.resetCacheStats();
 
@@ -309,7 +341,7 @@ void main() {
       model: 'google/gemini-2.5-flash',
       structuredPrompt: StructuredPrompt(
         staticPart: 'static rules',
-        dynamicPart: 'fresh dynamic',
+        liveStatePart: 'fresh dynamic CURRENT TIME=09:30',
       ),
       messages: const [
         {'role': 'user', 'content': 'latest user'},
@@ -319,7 +351,9 @@ void main() {
     final messages = body['messages'] as List;
     final latestUser = messages.last as Map<String, dynamic>;
     expect(latestUser['content'], 'latest user');
-    expect((messages[1] as Map<String, dynamic>)['content'], 'fresh dynamic');
+    final runtimeSystem = messages[messages.length - 2] as Map<String, dynamic>;
+    expect(runtimeSystem['role'], 'system');
+    expect(runtimeSystem['content'], contains('fresh dynamic'));
     expect(
       OpenRouterService.lastCacheDiagnostics['latest_user_focus'],
       isFalse,

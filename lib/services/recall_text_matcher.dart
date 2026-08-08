@@ -1,0 +1,157 @@
+import 'package:flutter/foundation.dart' show immutable;
+
+@immutable
+class RecallKeywordMatch {
+  final String keyword;
+  final int score;
+
+  const RecallKeywordMatch(this.keyword, this.score);
+}
+
+/// Provider-independent text matching used by both long-term memories and
+/// compressed-summary keyword recall.
+class RecallTextMatcher {
+  static RecallKeywordMatch? bestKeywordMatch(
+    String query,
+    String keywordText,
+  ) {
+    final normalizedQuery = _normalize(query);
+    final compactQuery = _compact(normalizedQuery);
+    if (compactQuery.isEmpty) return null;
+
+    RecallKeywordMatch? best;
+    for (final keyword in splitKeywords(keywordText)) {
+      final score = _score(
+        normalizedQuery: normalizedQuery,
+        compactQuery: compactQuery,
+        keyword: keyword,
+      );
+      if (score <= 0 || (best != null && best.score >= score)) continue;
+      best = RecallKeywordMatch(keyword, score);
+    }
+    return best;
+  }
+
+  static bool containsPhrase(String text, String phrase) =>
+      bestKeywordMatch(text, phrase) != null;
+
+  static List<String> splitKeywords(String raw) {
+    final seen = <String>{};
+    final result = <String>[];
+    for (final group in raw.split(RegExp(r'[,，、;；\n|｜]+'))) {
+      final alternatives = group.split(RegExp(r'[=＝/／]+'));
+      for (final alternative in alternatives) {
+        final candidates = <String>[
+          alternative,
+          ...RegExp(
+            r'[（(]([^）)]+)[）)]',
+          ).allMatches(alternative).map((match) => match.group(1) ?? ''),
+        ];
+        for (var candidate in candidates) {
+          candidate = candidate
+              .replaceAll(RegExp(r'[（(][^）)]*[）)]'), ' ')
+              .trim();
+          final key = _compact(_normalize(candidate));
+          if (!_isUsableKeyword(key) || !seen.add(key)) continue;
+          result.add(candidate);
+        }
+      }
+    }
+    return result;
+  }
+
+  static int _score({
+    required String normalizedQuery,
+    required String compactQuery,
+    required String keyword,
+  }) {
+    final normalizedKeyword = _normalize(keyword);
+    final compactKeyword = _compact(normalizedKeyword);
+    if (!_isUsableKeyword(compactKeyword)) return 0;
+
+    if (normalizedQuery.contains(normalizedKeyword)) {
+      return 1000 + compactKeyword.length.clamp(0, 100);
+    }
+    if (compactQuery.contains(compactKeyword)) {
+      return 900 + compactKeyword.length.clamp(0, 100);
+    }
+
+    final keywordWords = normalizedKeyword
+        .split(RegExp(r'\s+'))
+        .where((word) => word.length >= 2)
+        .toList();
+    if (keywordWords.length > 1 &&
+        keywordWords.every(normalizedQuery.contains)) {
+      return 800 + compactKeyword.length.clamp(0, 100);
+    }
+
+    // Conservative typo tolerance for Latin product/model names. CJK fuzzy
+    // matching is deliberately excluded because one-character differences
+    // produce too many unrelated recalls.
+    if (RegExp(r'^[a-z0-9]+$').hasMatch(compactKeyword) &&
+        compactKeyword.length >= 4) {
+      for (final word in normalizedQuery.split(RegExp(r'[^a-z0-9]+'))) {
+        if ((word.length - compactKeyword.length).abs() > 1) continue;
+        if (_editDistanceAtMostOne(word, compactKeyword)) {
+          return 600 + compactKeyword.length.clamp(0, 100);
+        }
+      }
+    }
+    return 0;
+  }
+
+  static bool _isUsableKeyword(String keyword) {
+    if (keyword.isEmpty) return false;
+    if (RegExp(
+      r'[\u3400-\u9fff\u3040-\u30ff\uac00-\ud7af]',
+    ).hasMatch(keyword)) {
+      return keyword.length >= 2;
+    }
+    return keyword.length >= 3;
+  }
+
+  static String _normalize(String input) {
+    final buffer = StringBuffer();
+    for (final rune in input.trim().toLowerCase().runes) {
+      if (rune == 0x3000) {
+        buffer.write(' ');
+      } else if (rune >= 0xff01 && rune <= 0xff5e) {
+        buffer.writeCharCode(rune - 0xfee0);
+      } else {
+        buffer.writeCharCode(rune);
+      }
+    }
+    return buffer.toString().replaceAll(RegExp(r'\s+'), ' ').trim();
+  }
+
+  static String _compact(String input) => input.replaceAll(
+    RegExp(r'[^a-z0-9\u3400-\u9fff\u3040-\u30ff\uac00-\ud7af]+'),
+    '',
+  );
+
+  static bool _editDistanceAtMostOne(String left, String right) {
+    if (left == right) return true;
+    if ((left.length - right.length).abs() > 1) return false;
+    var i = 0;
+    var j = 0;
+    var edits = 0;
+    while (i < left.length && j < right.length) {
+      if (left.codeUnitAt(i) == right.codeUnitAt(j)) {
+        i++;
+        j++;
+        continue;
+      }
+      if (++edits > 1) return false;
+      if (left.length > right.length) {
+        i++;
+      } else if (right.length > left.length) {
+        j++;
+      } else {
+        i++;
+        j++;
+      }
+    }
+    if (i < left.length || j < right.length) edits++;
+    return edits <= 1;
+  }
+}

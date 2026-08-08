@@ -12,7 +12,7 @@
     <!-- allowBackup=false：聊天資料庫與 SharedPreferences 不隨系統雲備份上傳。
          換機遷移一律走 app 內的導出/導入（backup_service），數據不過第三方雲。 -->
     <application
-        android:label="Holt"
+        android:label="${holtApplicationLabel}"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
         android:allowBackup="false"

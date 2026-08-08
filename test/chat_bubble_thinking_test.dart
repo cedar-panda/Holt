@@ -9,15 +9,20 @@ import 'package:project_yanci/widgets/bubble_action_glyph.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  test('thinking label stays English in every interface locale', () async {
-    SharedPreferences.setMockInitialValues(<String, Object>{});
-    for (final locale in const ['zh_TW', 'zh_CN', 'en']) {
-      await L.setLocale(locale);
-      expect(L.get('chat_thinking'), 'Thinking');
-    }
-  });
+  test(
+    'thinking tree label stays Thinking in every interface locale',
+    () async {
+      SharedPreferences.setMockInitialValues(<String, Object>{});
+      await L.setLocale('zh_TW');
+      expect(L.get('chat_thinking_tree'), 'Thinking');
+      await L.setLocale('zh_CN');
+      expect(L.get('chat_thinking_tree'), 'Thinking');
+      await L.setLocale('en');
+      expect(L.get('chat_thinking_tree'), 'Thinking');
+    },
+  );
 
-  testWidgets('thinking block stays transparent and remains expandable', (
+  testWidgets('thinking tree stays transparent and remains expandable', (
     tester,
   ) async {
     SharedPreferences.setMockInitialValues(<String, Object>{});
@@ -32,7 +37,7 @@ void main() {
     );
     await tester.pump(const Duration(milliseconds: 400));
 
-    expect(find.byIcon(Icons.bubble_chart_outlined), findsOneWidget);
+    expect(find.byIcon(Icons.bubble_chart_outlined), findsNothing);
     expect(find.byIcon(Icons.psychology_outlined), findsNothing);
     expect(find.text('Thinking'), findsOneWidget);
 
@@ -44,96 +49,172 @@ void main() {
 
     expect(find.text('正在整理想法'), findsNothing);
     await tester.tap(find.byKey(const ValueKey('thinking-chain-container')));
-    await tester.pump();
+    await tester.pumpAndSettle();
     expect(find.text('正在整理想法'), findsOneWidget);
+    expect(find.byKey(const ValueKey('thinking-tree-body')), findsOneWidget);
+    expect(
+      tester
+          .widget<AnimatedRotation>(
+            find.byKey(const ValueKey('thinking-tree-chevron')),
+          )
+          .turns,
+      0.25,
+    );
     expect(find.text('正常回覆'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets(
-    'memory and emotion disclosures match the thinking visual treatment',
-    (tester) async {
-      SharedPreferences.setMockInitialValues(<String, Object>{});
-      await L.setLocale('zh_TW');
+  testWidgets('thinking and memory branches render markdown', (tester) async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    await L.setLocale('zh_TW');
 
-      await tester.pumpWidget(
-        const MaterialApp(
-          home: Scaffold(
-            body: ChatBubble(
-              text: '<think>正在整理想法</think>正常回覆',
-              isUser: false,
-              captureMode: true,
-              memoryLog:
-                  '讀取相關記憶\n'
-                  '📍 情緒打點：安心\n'
-                  '情緒座標: (0.3, -0.2)\n'
-                  'Done',
-            ),
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: ChatBubble(
+            text: '<think>**判斷**\n\n- 線索一</think>正常回覆',
+            isUser: false,
+            captureMode: true,
+            thinkingExpandedOverride: true,
+            memoryLog: '**命中記憶**\n\n- 條目一\nDone',
           ),
         ),
-      );
+      ),
+    );
 
-      const disclosureKeys = <ValueKey<String>>[
-        ValueKey('thinking-chain-container'),
-        ValueKey('memory-log-container'),
-        ValueKey('emotion-log-container'),
-        ValueKey('emotion-coordinate-container'),
-      ];
-      for (final key in disclosureKeys) {
-        final container = tester.widget<Container>(find.byKey(key));
-        expect(container.color, isNull, reason: '$key should stay transparent');
-        expect(
-          container.decoration,
-          isNull,
-          reason: '$key should not draw a border or surface',
-        );
-      }
+    expect(
+      find.byKey(const ValueKey('thinking-chain-content')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('memory-markdown-content')),
+      findsOneWidget,
+    );
+    expect(find.text('判斷'), findsOneWidget);
+    expect(find.text('線索一'), findsOneWidget);
+    expect(find.text('命中記憶'), findsOneWidget);
+    expect(find.text('條目一'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
 
-      Color? disclosureIconColor(ValueKey<String> key, IconData icon) {
-        return tester
-            .widget<Icon>(
-              find.descendant(of: find.byKey(key), matching: find.byIcon(icon)),
-            )
-            .color;
-      }
+  testWidgets('emotion nests inside Memory when both appear under Thinking', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    await L.setLocale('zh_TW');
 
-      final thinkingColor = disclosureIconColor(
-        const ValueKey('thinking-chain-container'),
-        Icons.bubble_chart_outlined,
-      );
-      expect(
-        disclosureIconColor(
-          const ValueKey('memory-log-container'),
-          Icons.auto_awesome_outlined,
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: ChatBubble(
+            text: '<think>正在整理想法</think>正常回覆',
+            isUser: false,
+            captureMode: true,
+            memoryLog:
+                '讀取相關記憶\n'
+                '📍 情緒打點：安心\n'
+                '情緒座標: (0.3, -0.2)\n'
+                'Done',
+          ),
         ),
-        thinkingColor,
-      );
-      expect(
-        disclosureIconColor(
-          const ValueKey('emotion-log-container'),
-          Icons.favorite_border_rounded,
-        ),
-        thinkingColor,
-      );
-      expect(
-        disclosureIconColor(
-          const ValueKey('emotion-coordinate-container'),
-          Icons.favorite_border_rounded,
-        ),
-        thinkingColor,
-      );
+      ),
+    );
 
-      expect(find.text('讀取相關記憶'), findsNothing);
-      expect(find.text('📍 情緒打點：安心'), findsNothing);
-      await tester.tap(find.byKey(const ValueKey('memory-log-container')));
-      await tester.tap(find.byKey(const ValueKey('emotion-log-container')));
-      await tester.pump();
-      expect(find.text('讀取相關記憶'), findsOneWidget);
-      expect(find.text('📍 情緒打點：安心'), findsOneWidget);
-      expect(find.text('Done ✓'), findsNWidgets(2));
-      expect(tester.takeException(), isNull);
-    },
-  );
+    expect(find.text('Thinking'), findsOneWidget);
+    expect(find.byKey(const ValueKey('memory-log-container')), findsNothing);
+    expect(find.byKey(const ValueKey('emotion-log-container')), findsNothing);
+    expect(find.text('讀取相關記憶'), findsNothing);
+    expect(find.text('📍 情緒打點：安心'), findsNothing);
+
+    await tester.tap(find.byKey(const ValueKey('thinking-chain-container')));
+    await tester.pumpAndSettle();
+
+    final treeBody = tester.widget<Container>(
+      find.byKey(const ValueKey('thinking-tree-body')),
+    );
+    expect(treeBody.decoration, isNull);
+
+    const transparentKeys = <ValueKey<String>>[
+      ValueKey('thinking-chain-container'),
+      ValueKey('memory-log-container'),
+    ];
+    for (final key in transparentKeys) {
+      final container = tester.widget<Container>(find.byKey(key));
+      expect(container.color, isNull, reason: '$key should stay transparent');
+      expect(
+        container.decoration,
+        isNull,
+        reason: '$key should not draw a border or surface',
+      );
+    }
+
+    Color? branchIconColor(ValueKey<String> key, IconData icon) {
+      return tester
+          .widget<Icon>(
+            find.descendant(of: find.byKey(key), matching: find.byIcon(icon)),
+          )
+          .color;
+    }
+
+    final thinkingColor = tester
+        .widget<Text>(find.text('Thinking'))
+        .style!
+        .color;
+    expect(
+      branchIconColor(
+        const ValueKey('memory-log-container'),
+        Icons.auto_awesome_outlined,
+      ),
+      thinkingColor,
+    );
+    expect(find.text('讀取相關記憶'), findsNothing);
+    expect(find.text('📍 情緒打點：安心'), findsNothing);
+    expect(find.text('(0.3, -0.2)'), findsNothing);
+    final thinkingX = tester
+        .getTopLeft(find.byKey(const ValueKey('thinking-chain-content')))
+        .dx;
+    expect(
+      tester.getTopLeft(find.byKey(const ValueKey('memory-log-container'))).dx,
+      greaterThanOrEqualTo(thinkingX + 12),
+    );
+    await tester.tap(find.byKey(const ValueKey('memory-log-container')));
+    await tester.pumpAndSettle();
+    expect(find.text('讀取相關記憶'), findsOneWidget);
+    expect(find.text('📍 情緒打點：安心'), findsOneWidget);
+    expect(find.text('(0.3, -0.2)'), findsOneWidget);
+    for (final key in const <ValueKey<String>>[
+      ValueKey('emotion-log-container'),
+      ValueKey('emotion-coordinate-container'),
+    ]) {
+      final container = tester.widget<Container>(find.byKey(key));
+      expect(container.color, isNull, reason: '$key should stay transparent');
+      expect(container.decoration, isNull);
+    }
+    expect(
+      branchIconColor(
+        const ValueKey('emotion-log-container'),
+        Icons.favorite_border_rounded,
+      ),
+      thinkingColor,
+    );
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('emotion-log-container')),
+        matching: find.byIcon(Icons.keyboard_arrow_right_rounded),
+      ),
+      findsNothing,
+    );
+    expect(
+      tester.getTopLeft(find.byKey(const ValueKey('emotion-log-container'))).dx,
+      greaterThan(
+        tester
+            .getTopLeft(find.byKey(const ValueKey('memory-log-container')))
+            .dx,
+      ),
+    );
+    expect(find.text('Done ✓'), findsNWidgets(2));
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets('capture mode paints bubble content without waiting for ticker', (
     tester,
@@ -158,6 +239,112 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('memory-only metadata uses Memory as its root', (tester) async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    await L.setLocale('zh_TW');
+
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: ChatBubble(
+            text: '正常回覆',
+            isUser: false,
+            captureMode: true,
+            memoryLog: '讀取相關記憶\nDone',
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('Thinking'), findsNothing);
+    expect(find.text('Memory'), findsOneWidget);
+    expect(find.byKey(const ValueKey('memory-root-container')), findsOneWidget);
+    expect(find.byKey(const ValueKey('memory-log-container')), findsNothing);
+    expect(find.text('讀取相關記憶'), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('memory-root-container')));
+    await tester.pump();
+    expect(find.byKey(const ValueKey('memory-root-body')), findsOneWidget);
+    expect(find.text('讀取相關記憶'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('thinking-chain-container')),
+      findsNothing,
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('memory root contains emotion when Thinking is absent', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    await L.setLocale('zh_TW');
+
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: ChatBubble(
+            text: '正常回覆',
+            isUser: false,
+            captureMode: true,
+            memoryLog:
+                '讀取相關記憶\n'
+                '📍 情緒打點：安心\n'
+                '情緒座標: (0.3, -0.2)\n'
+                'Done',
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('Memory'), findsOneWidget);
+    expect(find.text('Thinking'), findsNothing);
+    expect(find.text('Mood'), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('memory-root-container')));
+    await tester.pump();
+    expect(find.text('讀取相關記憶'), findsOneWidget);
+    expect(find.text('Mood'), findsOneWidget);
+    expect(find.text('📍 情緒打點：安心'), findsOneWidget);
+    expect(find.text('(0.3, -0.2)'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('emotion-only metadata uses an independent emotion root', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    await L.setLocale('zh_TW');
+
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: ChatBubble(
+            text: '正常回覆',
+            isUser: false,
+            captureMode: true,
+            memoryLog:
+                '📍 情緒打點：安心\n'
+                '情緒座標: (0.3, -0.2)\n'
+                'Done',
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('Thinking'), findsNothing);
+    expect(find.text('Memory'), findsNothing);
+    expect(find.text('Mood'), findsOneWidget);
+    expect(find.text('(0.3, -0.2)'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('emotion-root-container')),
+      findsOneWidget,
+    );
+    expect(find.text('📍 情緒打點：安心'), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('emotion-root-container')));
+    await tester.pump();
+    expect(find.text('📍 情緒打點：安心'), findsOneWidget);
+    expect(find.byKey(const ValueKey('emotion-root-body')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('capture mode can force thinking open without toggling it', (
     tester,
   ) async {
@@ -172,16 +359,98 @@ void main() {
             isUser: false,
             captureMode: true,
             thinkingExpandedOverride: true,
+            memoryLog:
+                '讀取相關記憶\n'
+                '📍 情緒打點：安心\n'
+                '情緒座標: (0.3, -0.2)\n'
+                'Done',
           ),
         ),
       ),
     );
 
     expect(find.text('截圖中的完整思考'), findsOneWidget);
-    expect(find.byIcon(Icons.expand_less_rounded), findsOneWidget);
-    await tester.tap(find.byKey(const ValueKey('thinking-chain-container')));
+    expect(find.text('讀取相關記憶'), findsOneWidget);
+    expect(find.text('📍 情緒打點：安心'), findsOneWidget);
+    expect(find.text('(0.3, -0.2)'), findsOneWidget);
+    expect(
+      tester
+          .widget<AnimatedRotation>(
+            find.byKey(const ValueKey('thinking-tree-chevron')),
+          )
+          .turns,
+      0.25,
+    );
+    await tester.tap(
+      find.byKey(const ValueKey('thinking-chain-container')),
+      warnIfMissed: false,
+    );
     await tester.pump();
     expect(find.text('截圖中的完整思考'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('capture details can include emotion without exposing memory', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    await L.setLocale('zh_TW');
+
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: ChatBubble(
+            text: '<think>不公開的思考</think>正常回覆',
+            isUser: false,
+            captureMode: true,
+            thinkingExpandedOverride: true,
+            includeThinkingDetails: false,
+            includeMemoryDetails: false,
+            includeEmotionDetails: true,
+            memoryLog:
+                '不公開的記憶\n'
+                '📍 情緒打點：安心\n'
+                '情緒座標: (0.3, -0.2)\n'
+                'Done',
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('不公開的思考'), findsNothing);
+    expect(find.text('不公開的記憶'), findsNothing);
+    expect(find.byKey(const ValueKey('memory-log-container')), findsNothing);
+    expect(find.text('📍 情緒打點：安心'), findsOneWidget);
+    expect(find.text('(0.3, -0.2)'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: ChatBubble(
+            text: '<think>不公開的思考</think>正常回覆',
+            isUser: false,
+            captureMode: true,
+            thinkingExpandedOverride: true,
+            includeThinkingDetails: false,
+            includeMemoryDetails: true,
+            includeEmotionDetails: false,
+            memoryLog:
+                '公開的記憶\n'
+                '📍 不公開的情緒\n'
+                '情緒座標: (0.3, -0.2)\n'
+                'Done',
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text('不公開的思考'), findsNothing);
+    expect(find.text('公開的記憶'), findsOneWidget);
+    expect(find.text('📍 不公開的情緒'), findsNothing);
+    expect(find.text('(0.3, -0.2)'), findsNothing);
+    expect(find.byKey(const ValueKey('emotion-log-container')), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
@@ -238,6 +507,36 @@ void main() {
       tester.getCenter(bookmarkSlot).dy,
       closeTo(tester.getCenter(ttsSlot).dy, 0.01),
     );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('pending memory badge opens review from the source reply', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    await L.setLocale('zh_TW');
+    var opened = false;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ChatBubble(
+            text: '<think>正在整理</think>正常回覆',
+            isUser: false,
+            captureMode: true,
+            memoryLog: '◌ 提出刪除記憶建議\nDone',
+            pendingMemoryActionCount: 2,
+            onMemoryReviewTap: () => opened = true,
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text('2 待確認'), findsWidgets);
+    await tester.tap(find.text('2 待確認').first);
+    await tester.pump();
+    expect(opened, isTrue);
     expect(tester.takeException(), isNull);
   });
 }

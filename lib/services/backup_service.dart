@@ -18,6 +18,15 @@ import 'keep_alive_service.dart';
 import 'model_cost_policy.dart';
 import 'portable_backup_bundle.dart';
 
+class LegacyExportStats {
+  final int fileCount;
+  final int totalBytes;
+
+  const LegacyExportStats({this.fileCount = 0, this.totalBytes = 0});
+
+  bool get isEmpty => fileCount == 0;
+}
+
 /// JSON 備份和本地資料庫備份。
 ///
 /// JSON v5 是「覆蓋還原」格式：先完整解析、驗證及正規化，然後在一個
@@ -36,6 +45,7 @@ class BackupService {
     'memories',
     'spider_web_links',
     'archive',
+    'pending_memory_actions',
     'sticky_notes',
     'shop_items',
     'backpack_items',
@@ -142,7 +152,7 @@ class BackupService {
         .split('.')
         .first;
     final fileName = 'holt_export_$timestamp.json';
-    final dir = await _getExportDir();
+    final dir = await _prepareExportDir();
     final filePath = p.join(dir.path, fileName);
     await File(filePath).writeAsString(
       const JsonEncoder.withIndent('  ').convert(data),
@@ -218,7 +228,7 @@ class BackupService {
         .replaceAll(':', '-')
         .split('.')
         .first;
-    final exportDir = await _getExportDir();
+    final exportDir = await _prepareExportDir();
     final documents = await getApplicationDocumentsDirectory();
     final temporary = await getTemporaryDirectory();
     final snapshotDir = Directory(
@@ -248,6 +258,62 @@ class BackupService {
         await snapshotDir.delete(recursive: true);
       }
     }
+  }
+
+  /// Removes a generated export after the system picker or share sheet has
+  /// completed. Only Holt-named files inside the app cache are eligible.
+  static Future<void> discardExportArtifact(String path) {
+    return _operationLock.synchronized(() async {
+      final exportDir = await _getExportDir();
+      final normalizedDir = p.normalize(p.absolute(exportDir.path));
+      final normalizedPath = p.normalize(p.absolute(path));
+      final name = p.basename(normalizedPath);
+      if (!p.isWithin(normalizedDir, normalizedPath) ||
+          !_isExportArtifactName(name)) {
+        throw ArgumentError.value(path, 'path', 'Not a Holt export artifact');
+      }
+      final file = File(normalizedPath);
+      if (await file.exists()) await file.delete();
+    });
+  }
+
+  /// Old builds wrote every export attempt into Android/data/.../files/Holt.
+  /// Keep those user files until an explicit, confirmed cleanup action.
+  static Future<LegacyExportStats> getLegacyExportStats() async {
+    try {
+      final files = await _legacyExportFiles();
+      var totalBytes = 0;
+      for (final file in files) {
+        totalBytes += await file.length();
+      }
+      return LegacyExportStats(fileCount: files.length, totalBytes: totalBytes);
+    } catch (error) {
+      debugPrint('Legacy export scan failed: $error');
+      return const LegacyExportStats();
+    }
+  }
+
+  static Future<LegacyExportStats> deleteLegacyExports() {
+    return _operationLock.synchronized(() async {
+      final files = await _legacyExportFiles();
+      var removedBytes = 0;
+      var removedCount = 0;
+      for (final file in files) {
+        final length = await file.length();
+        await file.delete();
+        removedBytes += length;
+        removedCount++;
+      }
+      return LegacyExportStats(
+        fileCount: removedCount,
+        totalBytes: removedBytes,
+      );
+    });
+  }
+
+  @visibleForTesting
+  static bool isExportArtifactNameForTesting(String name) {
+    return _isExportArtifactName(name);
   }
 
   // ════════════════════════════════════
@@ -412,7 +478,11 @@ class BackupService {
         schema['tables'],
         field: 'schema.tables',
       ).map((value) => value.toString()).toSet();
-      final missing = appTables.where((table) => !tables.contains(table));
+      // pending_memory_actions was added without changing the v5 container
+      // number. Older v5 exports remain valid and restore an empty inbox.
+      final missing = appTables.where(
+        (table) => table != 'pending_memory_actions' && !tables.contains(table),
+      );
       if (missing.isNotEmpty) {
         throw FormatException('v5 備份缺少資料表宣告：${missing.join(', ')}');
       }
@@ -429,7 +499,11 @@ class BackupService {
       _normalizeLegacyCore(data, result, fallbackTime);
     } else {
       for (final table in appTables) {
-        result[table] = _mapRows(data[table], field: table, required: true);
+        result[table] = _mapRows(
+          data[table],
+          field: table,
+          required: table != 'pending_memory_actions',
+        );
       }
     }
 
@@ -1201,18 +1275,44 @@ class BackupService {
   // ════════════════════════════════════
 
   static Future<Directory> _getExportDir() async {
-    if (Platform.isAndroid) {
-      final external = await getExternalStorageDirectory();
-      if (external != null) {
-        final dir = Directory(p.join(external.path, 'Holt'));
-        if (!await dir.exists()) await dir.create(recursive: true);
-        return dir;
-      }
-    }
-    final documents = await getApplicationDocumentsDirectory();
-    final dir = Directory(p.join(documents.path, 'Holt'));
+    final temporary = await getTemporaryDirectory();
+    final dir = Directory(p.join(temporary.path, 'HoltExport'));
     if (!await dir.exists()) await dir.create(recursive: true);
     return dir;
+  }
+
+  static Future<Directory> _prepareExportDir() async {
+    final dir = await _getExportDir();
+    final staleBefore = DateTime.now().subtract(const Duration(days: 1));
+    for (final file in await _exportFilesIn(dir)) {
+      if ((await file.lastModified()).isBefore(staleBefore)) {
+        await file.delete();
+      }
+    }
+    return dir;
+  }
+
+  static Future<List<File>> _legacyExportFiles() async {
+    if (!Platform.isAndroid) return const <File>[];
+    final external = await getExternalStorageDirectory();
+    if (external == null) return const <File>[];
+    return _exportFilesIn(Directory(p.join(external.path, 'Holt')));
+  }
+
+  static Future<List<File>> _exportFilesIn(Directory dir) async {
+    if (!await dir.exists()) return const <File>[];
+    final files = <File>[];
+    await for (final entity in dir.list(followLinks: false)) {
+      if (entity is File && _isExportArtifactName(p.basename(entity.path))) {
+        files.add(entity);
+      }
+    }
+    return files;
+  }
+
+  static bool _isExportArtifactName(String name) {
+    return (name.startsWith('holt_backup_') && name.endsWith('.holt.zip')) ||
+        (name.startsWith('holt_export_') && name.endsWith('.json'));
   }
 
   static Future<Directory> _getBackupDir({bool create = true}) async {

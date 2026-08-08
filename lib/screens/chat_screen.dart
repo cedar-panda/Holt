@@ -17,9 +17,11 @@ import '../widgets/atom_thinking.dart';
 import '../services/api_adapter.dart';
 import '../services/settings_manager.dart';
 import '../services/token_estimator.dart';
+import '../services/deferred_prompt.dart';
 import '../services/prompt_cache_channels.dart';
 import '../services/model_cost_policy.dart';
 import '../services/memory_actions.dart';
+import '../services/memory_guard_service.dart';
 import '../services/image_gen_service.dart';
 import '../memory/emotion_coordinates.dart';
 import '../services/token_tracker.dart';
@@ -50,6 +52,8 @@ import '../widgets/scratch_card.dart';
 import '../widgets/shop_backpack_sheets.dart';
 import '../widgets/sticker_preview_quality.dart';
 import '../widgets/long_screenshot_options_sheet.dart';
+import '../widgets/chat_model_picker.dart';
+import '../widgets/memory_review_tab.dart';
 import 'call_screen.dart';
 import 'manual_summary_clean_screen.dart';
 import '../services/call_audio_pipeline.dart';
@@ -78,12 +82,20 @@ class ChatScreen extends StatefulWidget {
 class _StaticPromptBundle {
   final String staticPart;
   final String? profilePart;
+  final String windowPart;
 
-  const _StaticPromptBundle({required this.staticPart, this.profilePart});
+  const _StaticPromptBundle({
+    required this.staticPart,
+    this.profilePart,
+    required this.windowPart,
+  });
 }
 
 class _ChatScreenState extends State<ChatScreen> {
   final List<Message> _messages = [];
+  final GlobalKey _modelPickerAnchorKey = GlobalKey(
+    debugLabel: 'chatModelPickerAnchor',
+  );
 
   /// 渲染起點（_messages 索引）——渲染與發送解耦：
   /// 上下文照常發全窗（緩存前綴不斷），UI 每次只掛最近 50 條，
@@ -145,6 +157,7 @@ class _ChatScreenState extends State<ChatScreen> {
   final Set<int> _cacheHitIndices = {};
   final Map<String, ScratchData> _scratchDataMap = {};
   final Map<String, TransferData> _transferDataMap = {};
+  final Map<int, ({int total, int unread})> _pendingMemoryActionCounts = {};
   bool _walletChanged = false;
   List<Map<String, String>>? _lastKeepAliveMessages;
   StructuredPrompt? _lastKeepAliveStructuredPrompt;
@@ -155,7 +168,6 @@ class _ChatScreenState extends State<ChatScreen> {
   int? _coinSnapshotUser;
   String? _windowSummaryId;
   String? _cacheWindowSummaryStaticSnapshot;
-  final PromptCacheChannels _promptCacheChannels = PromptCacheChannels();
   String? _promptLocaleSnapshot;
   OverlayEntry? _modelHintOverlay;
   bool _manualSummarySelecting = false;
@@ -544,6 +556,11 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   String _timePrompt(DateTime now) {
+    final offset = now.timeZoneOffset;
+    final offsetSign = offset.isNegative ? '-' : '+';
+    final offsetMinutes = offset.inMinutes.abs();
+    final offsetText =
+        'UTC$offsetSign${(offsetMinutes ~/ 60).toString().padLeft(2, '0')}:${(offsetMinutes % 60).toString().padLeft(2, '0')}';
     if (L.locale == 'en') {
       const weekdays = [
         'Monday',
@@ -554,42 +571,13 @@ class _ChatScreenState extends State<ChatScreen> {
         'Saturday',
         'Sunday',
       ];
-      return '【Time】${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')} ${weekdays[now.weekday - 1]} ${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
+      return '【Current Local Time】${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')} ${weekdays[now.weekday - 1]} ${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')} ($offsetText)';
     }
     const weekdays = ['一', '二', '三', '四', '五', '六', '日'];
     return L.pick(
       en: '',
       zhTW:
-          '【時間】${now.year}年${now.month}月${now.day}日 週${weekdays[now.weekday - 1]} ${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}',
-    );
-  }
-
-  /// Claude 的 cache hierarchy 是 tools → system → messages。若 system 內的
-  /// 時間／檢索記憶每輪變動，後面的整段對話歷史就無法命中。
-  ///
-  /// 現有 OpenRouter、OpenAI-compatible 與 Bedrock 路徑沒有足夠把握能穩定
-  /// 透傳「歷史中段 system」，所以採保守策略：cache on 時把 runtime system
-  /// 固定在本聊天窗口；cache off 或非 Claude 照常使用本輪即時內容。
-  /// user message 完全不參與這個快照。
-  Future<String?> _cacheStableDynamicPart({
-    required String provider,
-    required String model,
-    required String liveDynamicPart,
-  }) async {
-    final cacheEnabled = await MemorySettings.getEnablePromptCaching();
-    final isClaudeCache = TokenEstimator.isClaudePromptCacheModel(
-      provider: provider,
-      model: model,
-    );
-    return _promptCacheChannels.stableDynamic(
-      cacheEnabled: cacheEnabled,
-      isClaudeCache: isClaudeCache,
-      conversationId: widget.conversationId,
-      provider: provider,
-      model: model,
-      locale: L.locale,
-      channel: PromptCacheChannel.text,
-      liveDynamicPart: liveDynamicPart,
+          '【當前本地時間】${now.year}年${now.month}月${now.day}日 週${weekdays[now.weekday - 1]} ${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}（$offsetText）',
     );
   }
 
@@ -683,6 +671,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _packQtySnapshot ??= await ShopService.packQtySnapshot(characterId);
 
     final staticParts = <String>[];
+    final windowParts = <String>[];
     final normalizedSystemPrompt = systemPrompt.trim();
     final normalizedCharacterDescription = charDesc.trim();
     // Older builds copied the selected character description into the global
@@ -700,17 +689,17 @@ class _ChatScreenState extends State<ChatScreen> {
       staticParts.add(normalizedSystemPrompt);
     }
     if (_selfNotesSnapshot!.isNotEmpty) {
-      staticParts.add(
+      windowParts.add(
         '${L.pick(en: '【Self-notes (previously written by you)】', zhTW: '【自我註記（你過去為自己記下的）】')}\n$_selfNotesSnapshot',
       );
     }
     // 已婚狀態（僅已簽角色注入；未簽空串＝前綴逐字節不變。
     // 簽署瞬間變一次＝一次性重建，之後永久命中）
     final marriageNote = await MarriageService.staticPrompt(characterId);
-    if (marriageNote.isNotEmpty) staticParts.add(marriageNote);
-    staticParts.add(await _coinStaticPrompt(characterId));
+    if (marriageNote.isNotEmpty) windowParts.add(marriageNote);
+    windowParts.add(await _coinStaticPrompt(characterId));
     if (staticWindowSummary.isNotEmpty) {
-      staticParts.add(staticWindowSummary);
+      windowParts.add(staticWindowSummary);
     }
 
     final toolSections = <String>[];
@@ -754,18 +743,19 @@ class _ChatScreenState extends State<ChatScreen> {
       toolSections.add(ToolPrompts.xPost());
     }
     if (_stickerPromptSnapshot!.isNotEmpty) {
-      toolSections.add(_stickerPromptSnapshot!);
+      windowParts.add(_stickerPromptSnapshot!);
     }
 
     staticParts.add(
       '${ToolPrompts.toolHeader()}\n\n${toolSections.join('\n\n')}',
     );
 
-    if (habitList.isNotEmpty) staticParts.add(habitList);
+    if (habitList.isNotEmpty) windowParts.add(habitList);
 
     return _StaticPromptBundle(
       staticPart: staticParts.join('\n\n'),
       profilePart: userProfile.isNotEmpty ? userProfile : null,
+      windowPart: windowParts.join('\n\n'),
     );
   }
 
@@ -856,6 +846,7 @@ class _ChatScreenState extends State<ChatScreen> {
       _cacheHitIndices.clear();
       _scratchDataMap.clear();
       _transferDataMap.clear();
+      _pendingMemoryActionCounts.clear();
       _tokensSinceSummary = 0;
       _charAvatarPath = null;
     });
@@ -1038,6 +1029,8 @@ class _ChatScreenState extends State<ChatScreen> {
             windowFirstId,
           )
         : false;
+    final pendingMemoryActions =
+        await MemoryGuardService.pendingCountsByMessage(widget.conversationId);
 
     if (!mounted) return;
     setState(() {
@@ -1053,6 +1046,9 @@ class _ChatScreenState extends State<ChatScreen> {
       );
       _olderMessages.clear();
       _olderHasMore = hasBefore;
+      _pendingMemoryActionCounts
+        ..clear()
+        ..addAll(pendingMemoryActions);
       _cacheHitIndices.clear();
       for (int i = 0; i < _messages.length; i++) {
         if (_messages[i].cacheHit) {
@@ -1063,6 +1059,96 @@ class _ChatScreenState extends State<ChatScreen> {
 
     // 非同步還原 _tokensSinceSummary，防止退出窗口導致 token 重新歸零
     await _restoreTokensSinceSummary();
+  }
+
+  Future<void> _refreshPendingMemoryActionCounts({bool notify = true}) async {
+    final counts = await MemoryGuardService.pendingCountsByMessage(
+      widget.conversationId,
+    );
+    if (!mounted) return;
+    if (notify) {
+      setState(() {
+        _pendingMemoryActionCounts
+          ..clear()
+          ..addAll(counts);
+      });
+    } else {
+      _pendingMemoryActionCounts
+        ..clear()
+        ..addAll(counts);
+    }
+  }
+
+  Future<void> _bindMemoryProposalsToMessage(int messageId) async {
+    final proposalIds = MemoryActions.lastProposalIdsFor(widget.conversationId);
+    if (proposalIds.isEmpty) return;
+    await MemoryGuardService.bindToMessage(
+      proposalIds: proposalIds,
+      conversationId: widget.conversationId,
+      messageId: messageId,
+    );
+    await _refreshPendingMemoryActionCounts(notify: false);
+  }
+
+  Future<void> _openMemoryReview(int sourceMessageId) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) => FractionallySizedBox(
+        heightFactor: 0.86,
+        child: Container(
+          decoration: BoxDecoration(
+            color: YanciTheme.surfacePanel,
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(22)),
+          ),
+          child: Column(
+            children: [
+              const SizedBox(height: 10),
+              Container(
+                width: 38,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: YanciTheme.textSecondary.withValues(alpha: 0.22),
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(18, 10, 8, 4),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        L.pick(
+                          en: 'Memory proposals from this reply',
+                          zhTW: '這則回覆的記憶提案',
+                          zhCN: '这则回复的记忆提案',
+                        ),
+                        style: YanciTheme.headingMedium,
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: L.pick(en: 'Close', zhTW: '關閉', zhCN: '关闭'),
+                      onPressed: () => Navigator.pop(sheetContext),
+                      icon: const Icon(Icons.close_rounded),
+                    ),
+                  ],
+                ),
+              ),
+              Expanded(
+                child: MemoryReviewTab(
+                  characterId: _activeCharacterId,
+                  sourceMessageId: sourceMessageId,
+                  onChanged: () => _refreshPendingMemoryActionCounts(),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    await _refreshPendingMemoryActionCounts();
   }
 
   Future<void> _restoreTokensSinceSummary() async {
@@ -1487,14 +1573,12 @@ class _ChatScreenState extends State<ChatScreen> {
     await _onSendMessage(MarriageService.signedEventNote());
   }
 
-  /// 同逛期間的動態清單注入（text/image 雙路徑共用），注入即遞減
-  Future<String> _shopBrowsePrompt() async {
-    if (_shopInviteRoundsLeft <= 0) return '';
+  /// 同逛期間的動態清單。只有實際送達模型後才遞減輪數。
+  Future<DeferredPrompt> _shopBrowsePrompt() async {
+    if (_shopInviteRoundsLeft <= 0) return DeferredPrompt.empty();
     if (!await ShopService.isEnabled()) {
-      _shopInviteRoundsLeft = 0;
-      return '';
+      return DeferredPrompt.empty();
     }
-    _shopInviteRoundsLeft--;
     final catalog = await ShopService.buildShopListPromptText();
     final header = L.pick(
       en: '【Browsing the Shop Together】You are browsing the shop together. Current catalog:',
@@ -1505,7 +1589,25 @@ class _ChatScreenState extends State<ChatScreen> {
       zhTW:
           '聊商品、給建議、看上什麼用 <buy item="完整id" target="self或user"/> 買，或不感興趣都隨你。清單對方看不到，正文不要提清單或系統本身。',
     );
-    return '$header\n$catalog\n$instruction';
+    return DeferredPrompt(
+      '$header\n$catalog\n$instruction',
+      onCommit: () async {
+        if (_shopInviteRoundsLeft > 0) _shopInviteRoundsLeft--;
+      },
+    );
+  }
+
+  DeferredPrompt _pendingBuyFailurePrompt() {
+    final note = ShopService.pendingBuyFailureNote;
+    if (note == null || note.isEmpty) return DeferredPrompt.empty();
+    return DeferredPrompt(
+      note,
+      onCommit: () async {
+        if (ShopService.pendingBuyFailureNote == note) {
+          ShopService.pendingBuyFailureNote = null;
+        }
+      },
+    );
   }
 
   void _openChatBackpack() {
@@ -1550,6 +1652,22 @@ class _ChatScreenState extends State<ChatScreen> {
   // codex 抓到的緩存失效主因。凍結快照進靜態，窗內新增走動態。
   String? _selfNotesSnapshot;
   Set<String>? _selfNotesSnapshotLines;
+
+  String _selfNotesDeltaPrompt(String selfNotes) {
+    if (selfNotes.isEmpty || _selfNotesSnapshotLines == null) return '';
+    final freshNotes = selfNotes
+        .split('\n')
+        .where(
+          (line) =>
+              line.trim().isNotEmpty &&
+              !_selfNotesSnapshotLines!.contains(line),
+        )
+        .toList();
+    if (freshNotes.isEmpty) return '';
+    return '${L.pick(en: '【Self-notes added or refined this window】', zhTW: '【本窗口你新增或修訂的自我註記】')}\n'
+        '${L.pick(en: 'When one resembles an older snapshot note, treat this newer wording as its replacement.', zhTW: '若與窗口快照中的舊註記近似，以這裡的新版本為準。')}\n'
+        '${freshNotes.join('\n')}';
+  }
 
   /// 滯後截斷：平時錨點固定（前綴穩定，不打斷緩存）；
   /// 超限時一次砍到限額 60%，然後再次固定，直到下次超限。
@@ -1863,6 +1981,11 @@ class _ChatScreenState extends State<ChatScreen> {
     required String model,
     required String provider,
   }) async {
+    try {
+      await ApiSettings.recordStarredModelUsage(model);
+    } catch (_) {
+      // 常用度只影響排序，不能讓偏好寫入失敗打斷已完成的聊天。
+    }
     _tokensSinceSummary +=
         TokenEstimator.estimate(userText) +
         TokenEstimator.estimate(assistantText);
@@ -2545,7 +2668,6 @@ class _ChatScreenState extends State<ChatScreen> {
       (enabled) async =>
           enabled ? await EmotionCoordinates.statePrompt(charId) : '',
     );
-    final clockDedupF = BioClockService.dedupPrompt(charId);
     final recallPromptF = CharacterTimelineService.recallPrompt(charId, text);
     final fatiguePromptF = bioclockEnabledF.then(
       (enabled) async =>
@@ -2591,10 +2713,30 @@ class _ChatScreenState extends State<ChatScreen> {
     );
 
     final dynamicParts = <String>[];
+    final controlParts = <String>[];
+    final turnEffects = DeferredPromptBatch()..add(memoryPrompt);
     final now = DateTime.now();
-    if (memoryPrompt.isNotEmpty) dynamicParts.add(memoryPrompt);
+    if (memoryPrompt.isNotEmpty) {
+      dynamicParts.add(
+        SystemContextMarkdown.section(
+          enTitle: 'Memory',
+          zhTWTitle: '記憶',
+          zhCNTitle: '记忆',
+          content: memoryPrompt.text,
+        ),
+      );
+    }
     final contextSummary = await dynamicWindowSummaryF;
-    if (contextSummary.isNotEmpty) dynamicParts.add(contextSummary);
+    if (contextSummary.isNotEmpty) {
+      dynamicParts.add(
+        SystemContextMarkdown.section(
+          enTitle: 'Conversation Summary',
+          zhTWTitle: '對話摘要',
+          zhCNTitle: '对话摘要',
+          content: contextSummary,
+        ),
+      );
+    }
 
     final coinDelta = await _coinDeltaPrompt(charId);
     if (coinDelta.isNotEmpty) dynamicParts.add(coinDelta);
@@ -2614,15 +2756,18 @@ class _ChatScreenState extends State<ChatScreen> {
     if (scratchGiftPrompt.isNotEmpty) dynamicParts.add(scratchGiftPrompt);
 
     // 上輪購買失敗回饋（消費即清，防止她以為禮物送出去了）
-    final buyFailNote = ShopService.pendingBuyFailureNote;
-    if (buyFailNote != null) {
-      dynamicParts.add(buyFailNote);
-      ShopService.pendingBuyFailureNote = null;
+    final buyFailPrompt = _pendingBuyFailurePrompt();
+    if (buyFailPrompt.isNotEmpty) {
+      dynamicParts.add(buyFailPrompt.text);
+      turnEffects.add(buyFailPrompt);
     }
 
     // 同逛商店：邀請後清單跟隨 3 輪（動態注入不入庫）
     final browsePrompt = await _shopBrowsePrompt();
-    if (browsePrompt.isNotEmpty) dynamicParts.add(browsePrompt);
+    if (browsePrompt.isNotEmpty) {
+      dynamicParts.add(browsePrompt.text);
+      turnEffects.add(browsePrompt);
+    }
 
     // 結婚證：解鎖後她也可主動遞（未簽＋未遞過才注入）
     final proposeHint = await MarriageService.proposeHintPrompt(charId);
@@ -2640,17 +2785,20 @@ class _ChatScreenState extends State<ChatScreen> {
     final emoState = await emoStateF;
     if (emoState.isNotEmpty) dynamicParts.add(emoState);
 
-    // 生物鐘（觸發 / 去重 / 校準，優先級：去重 > 校準 > 觸發）
-    final clockDedup = await clockDedupF;
-    if (clockDedup.isNotEmpty) {
-      dynamicParts.add(clockDedup);
-    } else {
-      final clockCal = await BioClockService.calibratePrompt(charId);
-      if (clockCal.isNotEmpty) {
-        dynamicParts.add(clockCal);
-      } else {
-        final clockTrigger = await BioClockService.triggerPrompt(charId);
-        if (clockTrigger.isNotEmpty) dynamicParts.add(clockTrigger);
+    // 生物鐘單一路徑：當前時段提醒 > 去重（帶冷卻） > 校準 > 構建／飯點。
+    // 所有帶冷卻或時段消費的提示都在模型成功返回後才提交。
+    if (bioclockEnabled) {
+      final clockPrompt = await BioClockService.turnPrompt(charId);
+      if (clockPrompt.isNotEmpty) {
+        dynamicParts.add(
+          SystemContextMarkdown.section(
+            enTitle: 'Bio Clock',
+            zhTWTitle: '生物鐘',
+            zhCNTitle: '生物钟',
+            content: clockPrompt.text,
+          ),
+        );
+        turnEffects.add(clockPrompt);
       }
     }
 
@@ -2660,22 +2808,29 @@ class _ChatScreenState extends State<ChatScreen> {
         charId,
         _habitSnapshotIds!,
       );
-      if (habitDelta.isNotEmpty) dynamicParts.add(habitDelta);
+      if (habitDelta.isNotEmpty) {
+        dynamicParts.add(
+          SystemContextMarkdown.section(
+            enTitle: 'Bio Clock Changes',
+            zhTWTitle: '生物鐘變動',
+            zhCNTitle: '生物钟变动',
+            content: habitDelta,
+          ),
+        );
+      }
     }
 
     // 本窗口新記的自我註記（persona_note 增量，同上原理）
-    if (selfNotes.isNotEmpty && _selfNotesSnapshotLines != null) {
-      final freshNotes = selfNotes
-          .split('\n')
-          .where(
-            (l) => l.trim().isNotEmpty && !_selfNotesSnapshotLines!.contains(l),
-          )
-          .toList();
-      if (freshNotes.isNotEmpty) {
-        dynamicParts.add(
-          '${L.pick(en: '【Self-notes added this window】', zhTW: '【本窗口你新記的自我註記】')}\n${freshNotes.join('\n')}',
-        );
-      }
+    final selfNotesDelta = _selfNotesDeltaPrompt(selfNotes);
+    if (selfNotesDelta.isNotEmpty) {
+      dynamicParts.add(
+        SystemContextMarkdown.section(
+          enTitle: 'Self Notes',
+          zhTWTitle: '自我註記',
+          zhCNTitle: '自我注记',
+          content: selfNotesDelta,
+        ),
+      );
     }
 
     // 角色生活化（每個對話框第一條注入狀態快照）
@@ -2689,41 +2844,70 @@ class _ChatScreenState extends State<ChatScreen> {
         charId,
       );
       if (snapshot.isNotEmpty) dynamicParts.add(snapshot);
-
-      if (bioclockEnabled) {
-        final setup = await BioClockService.setupPrompt(charId);
-        if (setup.isNotEmpty) dynamicParts.add(setup);
-      }
     }
 
     // 回憶觸發（已提前發射）
     final recallPrompt = await recallPromptF;
-    if (recallPrompt.isNotEmpty) dynamicParts.add(recallPrompt);
+    if (recallPrompt.isNotEmpty) {
+      dynamicParts.add(
+        SystemContextMarkdown.section(
+          enTitle: 'Recall',
+          zhTWTitle: '回憶觸發',
+          zhCNTitle: '回忆触发',
+          content: recallPrompt,
+        ),
+      );
+    }
 
     // 疲勞提示（已提前發射）
     final fatiguePrompt = await fatiguePromptF;
-    if (fatiguePrompt.isNotEmpty) dynamicParts.add(fatiguePrompt);
+    if (fatiguePrompt.isNotEmpty) {
+      dynamicParts.add(
+        SystemContextMarkdown.section(
+          enTitle: 'Bio Clock',
+          zhTWTitle: '生物鐘',
+          zhCNTitle: '生物钟',
+          content: fatiguePrompt,
+        ),
+      );
+    }
 
     // 時間變動最頻繁，放在動態區塊後段。
-    dynamicParts.add(_timePrompt(now));
+    dynamicParts.add(
+      SystemContextMarkdown.section(
+        enTitle: 'Current Time',
+        zhTWTitle: '當前時間',
+        zhCNTitle: '当前时间',
+        content: _timePrompt(now),
+      ),
+    );
 
     // 思考鏈
     if (thinkingEnabled && providerName != 'thinking_machines') {
-      dynamicParts.add(
-        L.pick(
-          en: '【Thinking Mode】Before replying, show your inner thought process in <think>...</think> tags (first person). Use the same language as the normal reply for the thought process, then reply normally.',
-          zhTW:
-              '【思考模式】在回覆前，用 <think>...</think> 標籤展示你的內心思考過程（第一人稱），思考內容必須與正常回覆使用相同語言，思考完再正常回覆。',
+      controlParts.add(
+        SystemContextMarkdown.section(
+          enTitle: 'Thinking',
+          zhTWTitle: 'Thinking',
+          content: L.pick(
+            en: '【Thinking Mode】Before replying, show your inner thought process in <think>...</think> tags (first person). Use the same language as the normal reply for the thought process, then reply normally.',
+            zhTW:
+                '【思考模式】在回覆前，用 <think>...</think> 標籤展示你的內心思考過程（第一人稱），思考內容必須與正常回覆使用相同語言，思考完再正常回覆。',
+          ),
         ),
       );
     }
 
     // 拆分回覆模式
     if (_splitReply) {
-      dynamicParts.add(
-        L.pick(
-          en: '【Split Reply Mode】Reply using speech only — no action descriptions, no narration, no *asterisk actions*. Use line breaks between separate thoughts. Keep each paragraph concise.',
-          zhTW: '【拆分回覆模式】只用說話內容回覆，不要使用動作描述、旁白敘事、*星號動作*。不同的話之間用換行分段。每段簡短自然。',
+      controlParts.add(
+        SystemContextMarkdown.section(
+          enTitle: 'Reply Format',
+          zhTWTitle: '回覆格式',
+          zhCNTitle: '回复格式',
+          content: L.pick(
+            en: '【Split Reply Mode】Reply using speech only — no action descriptions, no narration, no *asterisk actions*. Use line breaks between separate thoughts. Keep each paragraph concise.',
+            zhTW: '【拆分回覆模式】只用說話內容回覆，不要使用動作描述、旁白敘事、*星號動作*。不同的話之間用換行分段。每段簡短自然。',
+          ),
         ),
       );
     }
@@ -2734,7 +2918,16 @@ class _ChatScreenState extends State<ChatScreen> {
       emotionEnabled: emotionEnabled,
       maxLines: freeformOn ? await ApiSettings.getFreeformMaxLines() : 0,
     );
-    if (replyStyle.isNotEmpty) dynamicParts.add(replyStyle);
+    if (replyStyle.isNotEmpty) {
+      controlParts.add(
+        SystemContextMarkdown.section(
+          enTitle: 'Reply Style',
+          zhTWTitle: '回覆風格',
+          zhCNTitle: '回复风格',
+          content: replyStyle,
+        ),
+      );
+    }
 
     // 系統生成的蛛網通知屬於本輪 runtime context，不能追加到用戶原文。
     if (isSpiderWebEnabled &&
@@ -2745,16 +2938,13 @@ class _ChatScreenState extends State<ChatScreen> {
       );
     }
 
-    final liveDynamicPart = dynamicParts.join('\n\n');
+    final liveDynamicPart = SystemContextMarkdown.join(dynamicParts);
     final structured = StructuredPrompt(
       staticPart: staticBundle.staticPart,
       profilePart: staticBundle.profilePart,
-      dynamicPart: liveDynamicPart,
-      cacheStableDynamicPart: await _cacheStableDynamicPart(
-        provider: providerName,
-        model: model,
-        liveDynamicPart: liveDynamicPart,
-      ),
+      windowPart: staticBundle.windowPart,
+      controlPart: SystemContextMarkdown.join(controlParts),
+      liveStatePart: liveDynamicPart,
       cacheChannel: PromptCacheChannel.text,
     );
 
@@ -2812,10 +3002,12 @@ class _ChatScreenState extends State<ChatScreen> {
         onUsage: (usage) => requestUsage = usage,
       )) {
         if (!_isCurrentGeneration(generationSerial)) return;
+        await turnEffects.commit();
         rawReply.write(chunk);
         if (mounted) _onStreamChunk(chunk);
       }
       streamCompleted = true;
+      await turnEffects.commit();
       final replyText = rawReply.toString();
       if (!_isCurrentGeneration(generationSerial)) return;
 
@@ -3115,10 +3307,12 @@ class _ChatScreenState extends State<ChatScreen> {
                   characterId: _activeCharacterId,
                   mode: await _memoryBucket(),
                   windowId: widget.conversationId,
+                  resetState: false,
                 )
               : MemoryActions.stripReply(
                   buf.toString(),
                   windowId: widget.conversationId,
+                  resetState: false,
                 );
           // ═══ 蛛網：follow-up 也需要處理 <memo_link>/<force_recall> ═══
           if (isSpiderWebEnabled) {
@@ -3199,6 +3393,7 @@ class _ChatScreenState extends State<ChatScreen> {
           var followUp = MemoryActions.stripReply(
             buf.toString(),
             windowId: widget.conversationId,
+            resetState: false,
           );
           followUp = await ShopService.processReply(
             followUp,
@@ -3247,6 +3442,7 @@ class _ChatScreenState extends State<ChatScreen> {
         memoryLog: memLog,
       );
       final insertedId = await DatabaseHelper.insertMessage(aiMsg);
+      await _bindMemoryProposalsToMessage(insertedId);
       unawaited(
         MarriageService.scanMessage(
           aiMsg.text,
@@ -3584,15 +3780,42 @@ class _ChatScreenState extends State<ChatScreen> {
     );
 
     final now = DateTime.now();
-    final dynamicParts = <String>[_timePrompt(now)];
-    if (memoryPrompt.isNotEmpty) dynamicParts.add(memoryPrompt);
+    final dynamicParts = <String>[
+      SystemContextMarkdown.section(
+        enTitle: 'Current Time',
+        zhTWTitle: '當前時間',
+        zhCNTitle: '当前时间',
+        content: _timePrompt(now),
+      ),
+    ];
+    final controlParts = <String>[];
+    final turnEffects = DeferredPromptBatch()..add(memoryPrompt);
+    if (memoryPrompt.isNotEmpty) {
+      dynamicParts.add(
+        SystemContextMarkdown.section(
+          enTitle: 'Memory',
+          zhTWTitle: '記憶',
+          zhCNTitle: '记忆',
+          content: memoryPrompt.text,
+        ),
+      );
+    }
     final imgContextSummary = await _buildDynamicWindowSummaryPrompt(
       _activeCharacterId,
       currentMessage: outboundCaption.isNotEmpty
           ? outboundCaption
           : L.pick(en: 'The user sent an image.', zhTW: '用戶發送了一張圖片'),
     );
-    if (imgContextSummary.isNotEmpty) dynamicParts.add(imgContextSummary);
+    if (imgContextSummary.isNotEmpty) {
+      dynamicParts.add(
+        SystemContextMarkdown.section(
+          enTitle: 'Conversation Summary',
+          zhTWTitle: '對話摘要',
+          zhCNTitle: '对话摘要',
+          content: imgContextSummary,
+        ),
+      );
+    }
     final imgCoinDelta = await _coinDeltaPrompt(_activeCharacterId);
     if (imgCoinDelta.isNotEmpty) dynamicParts.add(imgCoinDelta);
     // 背包窗內變動（與 text path 同步）
@@ -3612,14 +3835,17 @@ class _ChatScreenState extends State<ChatScreen> {
       dynamicParts.add(imgScratchGiftPrompt);
     }
     // 上輪購買失敗回饋（與 text path 同步）
-    final imgBuyFailNote = ShopService.pendingBuyFailureNote;
-    if (imgBuyFailNote != null) {
-      dynamicParts.add(imgBuyFailNote);
-      ShopService.pendingBuyFailureNote = null;
+    final imgBuyFailPrompt = _pendingBuyFailurePrompt();
+    if (imgBuyFailPrompt.isNotEmpty) {
+      dynamicParts.add(imgBuyFailPrompt.text);
+      turnEffects.add(imgBuyFailPrompt);
     }
     // 同逛商店清單跟隨（與 text path 同步）
     final imgBrowsePrompt = await _shopBrowsePrompt();
-    if (imgBrowsePrompt.isNotEmpty) dynamicParts.add(imgBrowsePrompt);
+    if (imgBrowsePrompt.isNotEmpty) {
+      dynamicParts.add(imgBrowsePrompt.text);
+      turnEffects.add(imgBrowsePrompt);
+    }
     // 結婚證主動遞提示（與 text path 同步）
     final imgProposeHint = await MarriageService.proposeHintPrompt(
       _activeCharacterId,
@@ -3638,71 +3864,103 @@ class _ChatScreenState extends State<ChatScreen> {
       if (emoState.isNotEmpty) dynamicParts.add(emoState);
     }
 
-    // 生物鐘
+    // 生物鐘：與文字路徑使用相同優先級與送達後提交機制。
     if (imgBioclockEnabled) {
-      final imgClockTrigger = await BioClockService.triggerPrompt(
+      final imgClockPrompt = await BioClockService.turnPrompt(
         _activeCharacterId,
       );
-      if (imgClockTrigger.isNotEmpty) dynamicParts.add(imgClockTrigger);
+      if (imgClockPrompt.isNotEmpty) {
+        dynamicParts.add(
+          SystemContextMarkdown.section(
+            enTitle: 'Bio Clock',
+            zhTWTitle: '生物鐘',
+            zhCNTitle: '生物钟',
+            content: imgClockPrompt.text,
+          ),
+        );
+        turnEffects.add(imgClockPrompt);
+      }
 
       final fatigueP = await BioClockService.fatiguePrompt(_activeCharacterId);
-      if (fatigueP.isNotEmpty) dynamicParts.add(fatigueP);
+      if (fatigueP.isNotEmpty) {
+        dynamicParts.add(
+          SystemContextMarkdown.section(
+            enTitle: 'Bio Clock',
+            zhTWTitle: '生物鐘',
+            zhCNTitle: '生物钟',
+            content: fatigueP,
+          ),
+        );
+      }
 
       if (_habitSnapshotIds != null) {
         final habitDelta = await BioClockService.habitDeltaPrompt(
           _activeCharacterId,
           _habitSnapshotIds!,
         );
-        if (habitDelta.isNotEmpty) dynamicParts.add(habitDelta);
+        if (habitDelta.isNotEmpty) {
+          dynamicParts.add(
+            SystemContextMarkdown.section(
+              enTitle: 'Bio Clock Changes',
+              zhTWTitle: '生物鐘變動',
+              zhCNTitle: '生物钟变动',
+              content: habitDelta,
+            ),
+          );
+        }
       }
     }
 
-    if (imgSelfNotes.isNotEmpty && _selfNotesSnapshotLines != null) {
-      final freshNotes = imgSelfNotes
-          .split('\n')
-          .where(
-            (l) => l.trim().isNotEmpty && !_selfNotesSnapshotLines!.contains(l),
-          )
-          .toList();
-      if (freshNotes.isNotEmpty) {
-        dynamicParts.add(
-          '${L.pick(en: '【Self-notes added this window】', zhTW: '【本窗口你新記的自我註記】')}\n${freshNotes.join('\n')}',
-        );
-      }
+    final selfNotesDelta = _selfNotesDeltaPrompt(imgSelfNotes);
+    if (selfNotesDelta.isNotEmpty) {
+      dynamicParts.add(
+        SystemContextMarkdown.section(
+          enTitle: 'Self Notes',
+          zhTWTitle: '自我註記',
+          zhCNTitle: '自我注记',
+          content: selfNotesDelta,
+        ),
+      );
     }
 
     // 思考鏈
     final thinkingOn = await ApiSettings.getThinkingChain();
     if (thinkingOn && imgProviderName != 'thinking_machines') {
-      dynamicParts.add(
-        L.pick(
-          en: '【Thinking Mode】Before replying, show your inner thought process in <think>...</think> tags (first person). Use the same language as the normal reply for the thought process, then reply normally.',
-          zhTW:
-              '【思考模式】在回覆前，用 <think>...</think> 標籤展示你的內心思考過程（第一人稱），思考內容必須與正常回覆使用相同語言，思考完再正常回覆。',
+      controlParts.add(
+        SystemContextMarkdown.section(
+          enTitle: 'Thinking',
+          zhTWTitle: 'Thinking',
+          content: L.pick(
+            en: '【Thinking Mode】Before replying, show your inner thought process in <think>...</think> tags (first person). Use the same language as the normal reply for the thought process, then reply normally.',
+            zhTW:
+                '【思考模式】在回覆前，用 <think>...</think> 標籤展示你的內心思考過程（第一人稱），思考內容必須與正常回覆使用相同語言，思考完再正常回覆。',
+          ),
         ),
       );
     }
 
     // 拆分回覆模式
     if (_splitReply) {
-      dynamicParts.add(
-        L.pick(
-          en: '【Split Reply Mode】Reply using speech only — no action descriptions, no narration, no *asterisk actions*. Use line breaks between separate thoughts. Keep each paragraph concise.',
-          zhTW: '【拆分回覆模式】只用說話內容回覆，不要使用動作描述、旁白敘事、*星號動作*。不同的話之間用換行分段。每段簡短自然。',
+      controlParts.add(
+        SystemContextMarkdown.section(
+          enTitle: 'Reply Format',
+          zhTWTitle: '回覆格式',
+          zhCNTitle: '回复格式',
+          content: L.pick(
+            en: '【Split Reply Mode】Reply using speech only — no action descriptions, no narration, no *asterisk actions*. Use line breaks between separate thoughts. Keep each paragraph concise.',
+            zhTW: '【拆分回覆模式】只用說話內容回覆，不要使用動作描述、旁白敘事、*星號動作*。不同的話之間用換行分段。每段簡短自然。',
+          ),
         ),
       );
     }
 
-    final liveDynamicPart = dynamicParts.join('\n\n');
+    final liveDynamicPart = SystemContextMarkdown.join(dynamicParts);
     final structured = StructuredPrompt(
       staticPart: staticBundle.staticPart,
       profilePart: staticBundle.profilePart,
-      dynamicPart: liveDynamicPart,
-      cacheStableDynamicPart: await _cacheStableDynamicPart(
-        provider: imgProviderName,
-        model: model,
-        liveDynamicPart: liveDynamicPart,
-      ),
+      windowPart: staticBundle.windowPart,
+      controlPart: SystemContextMarkdown.join(controlParts),
+      liveStatePart: liveDynamicPart,
       cacheChannel: PromptCacheChannel.text,
     );
 
@@ -3802,10 +4060,12 @@ class _ChatScreenState extends State<ChatScreen> {
         onUsage: (usage) => requestUsage = usage,
       )) {
         if (!_isCurrentGeneration(generationSerial)) return;
+        await turnEffects.commit();
         rawReply.write(chunk);
         if (mounted) _onStreamChunk(chunk);
       }
       streamCompleted = true;
+      await turnEffects.commit();
       final replyText = rawReply.toString();
       if (!_isCurrentGeneration(generationSerial) || _stopGenerationRequested) {
         _finishFailedGeneration();
@@ -4024,6 +4284,7 @@ class _ChatScreenState extends State<ChatScreen> {
         memoryLog: memLog,
       );
       final imgAiId = await DatabaseHelper.insertMessage(aiMsg);
+      await _bindMemoryProposalsToMessage(imgAiId);
       unawaited(
         MarriageService.scanMessage(
           aiMsg.text,
@@ -4965,6 +5226,12 @@ class _ChatScreenState extends State<ChatScreen> {
               originalIndex: i,
               showToolbar: false,
               memoryLog: j == 0 ? msg.memoryLog : '',
+              pendingMemoryActionCount: j == 0 && msg.id != null
+                  ? (_pendingMemoryActionCounts[msg.id]?.total ?? 0)
+                  : 0,
+              hasUnreadMemoryActions: j == 0 && msg.id != null
+                  ? (_pendingMemoryActionCounts[msg.id]?.unread ?? 0) > 0
+                  : false,
               cacheHit:
                   isLast &&
                   !msg.isUser &&
@@ -4991,6 +5258,12 @@ class _ChatScreenState extends State<ChatScreen> {
             cacheHit:
                 !msg.isUser && (msg.cacheHit || _cacheHitIndices.contains(i)),
             memoryLog: msg.memoryLog,
+            pendingMemoryActionCount: msg.id == null
+                ? 0
+                : (_pendingMemoryActionCounts[msg.id]?.total ?? 0),
+            hasUnreadMemoryActions:
+                msg.id != null &&
+                (_pendingMemoryActionCounts[msg.id]?.unread ?? 0) > 0,
             incomplete: msg.isIncomplete,
             giftName: giftMatch?.group(1)?.trim(),
             giftAccepted: giftMatch != null && charReplyAfter[srcIdx],
@@ -5193,6 +5466,13 @@ class _ChatScreenState extends State<ChatScreen> {
                 isUser: item.isUser,
                 timestamp: item.timestamp,
                 memoryLog: item.memoryLog,
+                pendingMemoryActionCount: item.pendingMemoryActionCount,
+                hasUnreadMemoryActions: item.hasUnreadMemoryActions,
+                onMemoryReviewTap:
+                    item.pendingMemoryActionCount > 0 &&
+                        item.dbMessageId != null
+                    ? () => _openMemoryReview(item.dbMessageId!)
+                    : null,
                 // 窗內消息 → 原地編輯重發；
                 // 純顯示段（originalIndex -1）→ 編輯即開分支對話，原時間線不動
                 onEdit: item.isUser
@@ -5774,6 +6054,7 @@ class _ChatScreenState extends State<ChatScreen> {
     // 與聊天窗口天然同一份，不會分叉。構建失敗退回 CallScreen 舊拼法。
     String? callStaticPart;
     String? callProfilePart;
+    String? callWindowPart;
     try {
       final charId = _activeCharacterId;
       final systemPrompt = await ApiSettings.getSystemPrompt();
@@ -5807,6 +6088,7 @@ class _ChatScreenState extends State<ChatScreen> {
       );
       callStaticPart = bundle.staticPart;
       callProfilePart = bundle.profilePart;
+      callWindowPart = bundle.windowPart;
     } catch (e) {
       debugPrint('通話靜態前綴構建失敗，退回舊前綴: $e');
     }
@@ -5824,8 +6106,8 @@ class _ChatScreenState extends State<ChatScreen> {
           cacheStaticSnapshot: _cacheWindowSummaryStaticSnapshot,
           staticPart: callStaticPart,
           profilePart: callProfilePart,
+          windowPart: callWindowPart,
           initialHistory: _callInitialHistory(),
-          cacheChannels: _promptCacheChannels,
         ),
       ),
     );
@@ -5966,19 +6248,24 @@ class _ChatScreenState extends State<ChatScreen> {
       final items = _buildLongScreenshotItems(
         captureMessages,
         expandThinking: options.expandThinking,
+        includeMemory: options.includeMemory,
+        includeEmotion: options.includeEmotion,
       );
       final result = await ChatLongScreenshotService.captureAndSave(
         context: context,
         items: items,
         backgroundColor: YanciTheme.backgroundGradient.first,
-        pixelRatio: 2,
       );
       if (!mounted) return;
       HapticFeedback.lightImpact();
       _showNonBlockingModelHint(
         L.pick(
-          en: '${options.messageCount} messages saved to Gallery.',
-          zhTW: '已將 ${options.messageCount} 條消息保存到相簿。',
+          en:
+              '${options.messageCount} messages saved to Gallery.'
+              '${result.downscaled ? ' The selection was very long and was reduced; choose a shorter range to keep native sharpness.' : ''}',
+          zhTW:
+              '已將 ${options.messageCount} 條消息保存到相簿。'
+              '${result.downscaled ? '所選內容過長，圖片已縮小；縮短範圍可保持原生清晰度。' : ''}',
         ),
         actionLabel: L.pick(en: 'Share', zhTW: '分享'),
         onAction: () => unawaited(_shareLongScreenshot(result.path)),
@@ -6077,6 +6364,8 @@ class _ChatScreenState extends State<ChatScreen> {
   List<Widget> _buildLongScreenshotItems(
     List<Message> messages, {
     required bool expandThinking,
+    required bool includeMemory,
+    required bool includeEmotion,
   }) {
     final charReplyAfter = List<bool>.filled(messages.length, false);
     var seenCharReply = false;
@@ -6144,6 +6433,9 @@ class _ChatScreenState extends State<ChatScreen> {
               imagePath: partIndex == 0 ? message.imagePath : null,
               messageKey: 'longshot_${message.id}_$partIndex',
               expandThinking: expandThinking,
+              includeMemory: includeMemory,
+              includeEmotion: includeEmotion,
+              includeMetadataLog: partIndex == 0,
             ),
           );
         }
@@ -6164,6 +6456,8 @@ class _ChatScreenState extends State<ChatScreen> {
           giftAccepted: giftMatch != null && charReplyAfter[i],
           includeCards: true,
           expandThinking: expandThinking,
+          includeMemory: includeMemory,
+          includeEmotion: includeEmotion,
         ),
       );
     }
@@ -6179,7 +6473,10 @@ class _ChatScreenState extends State<ChatScreen> {
     String? giftName,
     bool giftAccepted = false,
     bool includeCards = false,
+    bool includeMetadataLog = true,
     required bool expandThinking,
+    required bool includeMemory,
+    required bool includeEmotion,
   }) {
     final hasMarriageCert =
         (message.isUser && _marriageCertTagRe.hasMatch(message.text)) ||
@@ -6201,8 +6498,12 @@ class _ChatScreenState extends State<ChatScreen> {
       cacheHit: false,
       incomplete: message.isIncomplete,
       captureMode: true,
-      thinkingExpandedOverride: expandThinking,
-      memoryLog: '',
+      thinkingExpandedOverride:
+          expandThinking || includeMemory || includeEmotion,
+      includeThinkingDetails: expandThinking,
+      includeMemoryDetails: includeMemory,
+      includeEmotionDetails: includeEmotion,
+      memoryLog: includeMetadataLog ? message.memoryLog : '',
       scratchData: includeCards ? _scratchDataMap[persistedMessageKey] : null,
       transferData: includeCards ? _transferDataMap[persistedMessageKey] : null,
       giftName: giftName,
@@ -6330,6 +6631,7 @@ class _ChatScreenState extends State<ChatScreen> {
               const SizedBox(height: 2),
               // ═══ 模型 + token ═══
               GestureDetector(
+                key: _modelPickerAnchorKey,
                 onTap: _showModelPicker,
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
@@ -6514,10 +6816,12 @@ class _ChatScreenState extends State<ChatScreen> {
       final info = LocalModelService.availableModels
           .where((m) => m.key == key)
           .firstOrNull;
-      return '📱 ${info != null ? L.pick(en: info.nameEn, zhTW: info.name) : LocalModelService.fallbackDisplayNameForKey(key)}';
+      return info != null
+          ? L.pick(en: info.nameEn, zhTW: info.name)
+          : LocalModelService.fallbackDisplayNameForKey(key);
     }
     if (ApiSettings.isLocalApiModelId(model)) {
-      return '🖥 ${ApiSettings.extractLocalApiModel(model)}';
+      return ApiSettings.extractLocalApiModel(model);
     }
     var name = model;
     if (name.contains('/')) name = name.split('/').last;
@@ -6527,6 +6831,16 @@ class _ChatScreenState extends State<ChatScreen> {
     name = name.replaceAll('gemini-', 'gemini ');
     name = name.replaceAll('deepseek-', 'ds-');
     return name;
+  }
+
+  Color? _savedThemeColor(String? hex) {
+    if (hex == null) return null;
+    final normalized = hex.replaceAll('#', '').trim();
+    final value = int.tryParse(
+      normalized.length == 6 ? 'FF$normalized' : normalized,
+      radix: 16,
+    );
+    return value == null ? null : Color(value);
   }
 
   void _showNonBlockingModelHint(
@@ -6641,10 +6955,22 @@ class _ChatScreenState extends State<ChatScreen> {
     };
   }
 
-  /// 星標模型快速切換
+  /// 收藏模型快速切換
   void _showModelPicker() async {
-    final starred = await ApiSettings.getStarredModels();
+    final starred = await ApiSettings.getRankedStarredModels();
+    final thinkingEnabled = await ApiSettings.getThinkingChain();
+    final pickerAccent =
+        _savedThemeColor(await ThemeSettings.getCustomColor('accent')) ??
+        YanciTheme.accent;
     if (!mounted) return;
+
+    final anchorRenderObject = _modelPickerAnchorKey.currentContext
+        ?.findRenderObject();
+    final anchorRect =
+        anchorRenderObject is RenderBox && anchorRenderObject.hasSize
+        ? anchorRenderObject.localToGlobal(Offset.zero) &
+              anchorRenderObject.size
+        : null;
 
     if (starred.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -6662,256 +6988,112 @@ class _ChatScreenState extends State<ChatScreen> {
       return;
     }
 
+    final reduceMotion = MediaQuery.disableAnimationsOf(context);
     showGeneralDialog(
       context: context,
       barrierColor: Colors.black.withValues(alpha: 0.5),
       barrierDismissible: true,
       barrierLabel: 'ModelPicker',
-      transitionDuration: const Duration(milliseconds: 350),
-      transitionBuilder: (context, anim1, anim2, child) {
-        return ScaleTransition(
-          alignment: Alignment.topCenter,
-          scale: CurvedAnimation(parent: anim1, curve: Curves.easeOutBack),
-          child: FadeTransition(opacity: anim1, child: child),
-        );
-      },
+      transitionDuration: reduceMotion
+          ? Duration.zero
+          : const Duration(milliseconds: 220),
+      transitionBuilder: (context, anim1, anim2, child) => child,
       pageBuilder: (ctx, anim1, anim2) {
-        final height = MediaQuery.of(ctx).size.height;
-        final width = MediaQuery.of(ctx).size.width;
-        bool? localThinking;
+        final media = MediaQuery.of(ctx);
+        final height = media.size.height;
+        final width = media.size.width;
+        final preferredTop = (anchorRect?.bottom ?? media.padding.top + 36) + 6;
+        final minTop = media.padding.top + 4;
+        final maxTopCandidate = height - media.padding.bottom - 120;
+        final maxTop = maxTopCandidate < minTop ? minTop : maxTopCandidate;
+        final panelTop = preferredTop.clamp(minTop, maxTop).toDouble();
+        final availableHeight = height - panelTop - media.padding.bottom - 12;
+        final maxPanelHeight = availableHeight < height * 0.5
+            ? availableHeight
+            : height * 0.5;
+        final entries = starred
+            .map(
+              (modelId) => ChatModelPickerEntry(
+                id: modelId,
+                label: _fullModelName(modelId),
+                isLocal:
+                    LocalModelService.isLocalModelId(modelId) ||
+                    ApiSettings.isLocalApiModelId(modelId),
+              ),
+            )
+            .toList(growable: false);
 
-        return SafeArea(
-          child: Align(
-            alignment: Alignment.topCenter,
-            child: Padding(
-              padding: const EdgeInsets.only(top: 8),
-              child: Material(
-                color: Colors.transparent,
-                child: Container(
-                  width: width * (2 / 3),
-                  constraints: BoxConstraints(maxHeight: height * 0.5),
-                  decoration: BoxDecoration(
-                    color: YanciTheme.isDark
-                        ? const Color(0xF0252228)
-                        : Colors.white.withValues(alpha: 0.97),
-                    borderRadius: BorderRadius.circular(YanciTheme.radiusLg),
-                    border: Border.all(
-                      color: YanciTheme.textSecondary.withValues(alpha: 0.1),
-                    ),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withValues(alpha: 0.3),
-                        blurRadius: 20,
-                        offset: const Offset(0, 10),
-                      ),
-                    ],
-                  ),
-                  child: StatefulBuilder(
-                    builder: (ctx, setDialogState) {
-                      return FutureBuilder<bool>(
-                        future: ApiSettings.getThinkingChain(),
-                        builder: (ctx, snap) {
-                          final currentThinking =
-                              localThinking ?? snap.data ?? false;
-                          return Padding(
-                            padding: const EdgeInsets.all(12),
-                            child: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                // 思考鏈開關
-                                GestureDetector(
-                                  behavior: HitTestBehavior.opaque,
-                                  onTap: () async {
-                                    final newVal = !currentThinking;
-                                    setDialogState(
-                                      () => localThinking = newVal,
-                                    );
-                                    await ApiSettings.saveThinkingChain(newVal);
-                                  },
-                                  child: Padding(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 4,
-                                      vertical: 8,
-                                    ),
-                                    child: Row(
-                                      mainAxisAlignment:
-                                          MainAxisAlignment.spaceBetween,
-                                      children: [
-                                        Text(
-                                          L.pick(
-                                            en: 'Thinking Chain',
-                                            zhTW: '思考鏈',
-                                          ),
-                                          style: YanciTheme.bodyText.copyWith(
-                                            fontSize: 14,
-                                            fontWeight: FontWeight.w600,
-                                          ),
-                                        ),
-                                        Transform.scale(
-                                          scale: 0.85,
-                                          child: Switch(
-                                            value: currentThinking,
-                                            activeThumbColor: YanciTheme.accent,
-                                            activeTrackColor: YanciTheme.accent
-                                                .withValues(alpha: 0.3),
-                                            onChanged: (val) async {
-                                              setDialogState(
-                                                () => localThinking = val,
-                                              );
-                                              await ApiSettings.saveThinkingChain(
-                                                val,
-                                              );
-                                            },
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(height: 4),
-                                Divider(
-                                  color: YanciTheme.textSecondary.withValues(
-                                    alpha: 0.2,
-                                  ),
-                                  height: 1,
-                                ),
-                                const SizedBox(height: 12),
-                                // 模型列表
-                                Flexible(
-                                  child: ListView(
-                                    shrinkWrap: true,
-                                    padding: EdgeInsets.zero,
-                                    children: starred.map((modelId) {
-                                      final isActive = modelId == _currentModel;
-                                      final displayName = _fullModelName(
-                                        modelId,
-                                      );
-                                      return GestureDetector(
-                                        onTap: () async {
-                                          final provider =
-                                              await ApiSettings.resolveStarredModelProvider(
-                                                modelId,
-                                              );
-                                          await ApiSettings.saveProviderModelSelection(
-                                            provider,
-                                            modelId,
-                                          );
-                                          final policyResult =
-                                              await ModelCostPolicy.applySelection(
-                                                provider: provider,
-                                                model: modelId,
-                                                apiKey:
-                                                    provider ==
-                                                        'thinking_machines'
-                                                    ? await ApiSettings.getThinkingMachinesApiKey()
-                                                    : '',
-                                              );
-                                          final supportsRenewal =
-                                              TokenEstimator.supportsCloseWindowKeepAlive(
-                                                provider: provider,
-                                                model: modelId,
-                                              );
-                                          if (!supportsRenewal) {
-                                            await MemorySettings.saveKeepAliveEnabled(
-                                              false,
-                                            );
-                                          }
-                                          if (!mounted) return;
-                                          setState(
-                                            () => _currentModel = modelId,
-                                          );
-                                          if (ctx.mounted) Navigator.pop(ctx);
-                                          if (policyResult.notice !=
-                                              ModelCostPolicyNotice.none) {
-                                            _showNonBlockingModelHint(
-                                              _modelCostPolicyMessage(
-                                                policyResult.notice,
-                                              ),
-                                            );
-                                          } else if (!supportsRenewal) {
-                                            _showNonBlockingModelHint(
-                                              L.pick(
-                                                en: 'This model has no confirmed 1h cache TTL, so auto cache renewal stays off.',
-                                                zhTW: L.pick(
-                                                  en: 'This model has no confirmed one-hour cache TTL, so automatic renewal remains off.',
-                                                  zhTW:
-                                                      '此模型沒有已確認的 1 小時緩存 TTL，自動延續命中已保持關閉。',
-                                                ),
-                                              ),
-                                            );
-                                          }
-                                        },
-                                        child: Container(
-                                          width: double.infinity,
-                                          margin: const EdgeInsets.only(
-                                            bottom: 6,
-                                          ),
-                                          padding: const EdgeInsets.symmetric(
-                                            horizontal: 14,
-                                            vertical: 12,
-                                          ),
-                                          decoration: BoxDecoration(
-                                            color: isActive
-                                                ? YanciTheme.accent.withValues(
-                                                    alpha: 0.12,
-                                                  )
-                                                : Colors.transparent,
-                                            borderRadius: BorderRadius.circular(
-                                              YanciTheme.radiusSm,
-                                            ),
-                                            border: isActive
-                                                ? Border.all(
-                                                    color: YanciTheme.accent
-                                                        .withValues(alpha: 0.3),
-                                                  )
-                                                : null,
-                                          ),
-                                          child: Row(
-                                            children: [
-                                              Icon(
-                                                Icons.star_rounded,
-                                                size: 14,
-                                                color: YanciTheme.accent
-                                                    .withValues(alpha: 0.6),
-                                              ),
-                                              const SizedBox(width: 8),
-                                              Expanded(
-                                                child: _MarqueeText(
-                                                  text: displayName,
-                                                  style: YanciTheme.bodyText
-                                                      .copyWith(
-                                                        fontSize: 13,
-                                                        color: isActive
-                                                            ? YanciTheme.accent
-                                                            : YanciTheme
-                                                                  .textPrimary,
-                                                      ),
-                                                ),
-                                              ),
-                                              if (isActive)
-                                                Icon(
-                                                  Icons.check_rounded,
-                                                  size: 16,
-                                                  color: YanciTheme.accent,
-                                                ),
-                                            ],
-                                          ),
-                                        ),
-                                      );
-                                    }).toList(),
-                                  ),
-                                ),
-                              ],
-                            ),
+        return Stack(
+          children: [
+            Positioned(
+              top: panelTop,
+              left: 0,
+              right: 0,
+              child: Align(
+                alignment: Alignment.topCenter,
+                child: Material(
+                  color: Colors.transparent,
+                  child: ChatModelPickerRouteTransition(
+                    animation: anim1,
+                    reduceMotion: reduceMotion,
+                    child: Container(
+                      width: (width * 0.74).clamp(240.0, 380.0),
+                      constraints: BoxConstraints(maxHeight: maxPanelHeight),
+                      child: ChatModelPickerPanel(
+                        entries: entries,
+                        currentModelId: _currentModel,
+                        initialThinking: thinkingEnabled,
+                        accentColor: pickerAccent,
+                        onThinkingChanged: ApiSettings.saveThinkingChain,
+                        onModelSelected: (modelId) async {
+                          final provider =
+                              await ApiSettings.resolveStarredModelProvider(
+                                modelId,
+                              );
+                          await ApiSettings.saveProviderModelSelection(
+                            provider,
+                            modelId,
                           );
+                          final policyResult =
+                              await ModelCostPolicy.applySelection(
+                                provider: provider,
+                                model: modelId,
+                                apiKey: provider == 'thinking_machines'
+                                    ? await ApiSettings.getThinkingMachinesApiKey()
+                                    : '',
+                              );
+                          final supportsRenewal =
+                              TokenEstimator.supportsCloseWindowKeepAlive(
+                                provider: provider,
+                                model: modelId,
+                              );
+                          if (!supportsRenewal) {
+                            await MemorySettings.saveKeepAliveEnabled(false);
+                          }
+                          if (!mounted) return;
+                          setState(() => _currentModel = modelId);
+                          if (ctx.mounted) Navigator.pop(ctx);
+                          if (policyResult.notice !=
+                              ModelCostPolicyNotice.none) {
+                            _showNonBlockingModelHint(
+                              _modelCostPolicyMessage(policyResult.notice),
+                            );
+                          } else if (!supportsRenewal) {
+                            _showNonBlockingModelHint(
+                              L.pick(
+                                en: 'This model has no confirmed one-hour cache TTL, so automatic renewal remains off.',
+                                zhTW: '此模型沒有已確認的 1 小時緩存 TTL，自動延續命中已保持關閉。',
+                              ),
+                            );
+                          }
                         },
-                      );
-                    },
+                      ),
+                    ),
                   ),
                 ),
               ),
             ),
-          ),
+          ],
         );
       },
     );
@@ -6996,6 +7178,15 @@ class _ChatScreenState extends State<ChatScreen> {
   (String, Color)? _getCacheDisplay(String provider, ApiUsage usage) {
     final stats = usage.raw;
     switch (provider) {
+      case 'xai':
+        final read = usage.cacheReadTokens;
+        if (read > 0) {
+          return (
+            '⚡ grok cache hit ${read}t',
+            Colors.green.withValues(alpha: 0.6),
+          );
+        }
+        return null;
       case 'openrouter':
         final read = usage.cacheReadTokens;
         final created = usage.cacheCreationTokens;
@@ -7085,6 +7276,8 @@ class _DisplayItem {
   final bool cacheHit;
   final bool incomplete;
   final String memoryLog;
+  final int pendingMemoryActionCount;
+  final bool hasUnreadMemoryActions;
 
   /// 非空 → 這項渲染成居中分割線（通話已結束等），不渲染氣泡
   final String? callDivider;
@@ -7113,6 +7306,8 @@ class _DisplayItem {
     this.dbMessageId,
     required this.originalIndex,
     this.memoryLog = '',
+    this.pendingMemoryActionCount = 0,
+    this.hasUnreadMemoryActions = false,
     this.showToolbar = true,
     this.cacheHit = false,
     this.incomplete = false,
@@ -7123,91 +7318,4 @@ class _DisplayItem {
     this.hasMarriageCert = false,
     this.certFromChar = false,
   });
-}
-
-/// 文字過長時慢速水平滾動，短文字靜態顯示
-class _MarqueeText extends StatefulWidget {
-  final String text;
-  final TextStyle style;
-
-  const _MarqueeText({required this.text, required this.style});
-
-  @override
-  State<_MarqueeText> createState() => _MarqueeTextState();
-}
-
-class _MarqueeTextState extends State<_MarqueeText>
-    with SingleTickerProviderStateMixin {
-  late final ScrollController _scrollCtrl;
-  AnimationController? _animCtrl;
-  bool _needsScroll = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _scrollCtrl = ScrollController();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _checkOverflow());
-  }
-
-  void _checkOverflow() {
-    if (!mounted) return;
-    if (_scrollCtrl.hasClients && _scrollCtrl.position.maxScrollExtent > 0) {
-      setState(() => _needsScroll = true);
-      _startScrolling();
-    }
-  }
-
-  void _startScrolling() {
-    _animCtrl?.dispose();
-    final extent = _scrollCtrl.position.maxScrollExtent;
-    // 每秒滾動 20 像素（慢速）
-    final durationMs = (extent / 20 * 1000).round().clamp(2000, 15000);
-    _animCtrl = AnimationController(
-      vsync: this,
-      duration: Duration(milliseconds: durationMs),
-    );
-    _animCtrl!.addListener(() {
-      if (_scrollCtrl.hasClients) {
-        _scrollCtrl.jumpTo(
-          _animCtrl!.value * _scrollCtrl.position.maxScrollExtent,
-        );
-      }
-    });
-    // 來回滾動
-    _animCtrl!.repeat(reverse: true);
-  }
-
-  @override
-  void didUpdateWidget(covariant _MarqueeText old) {
-    super.didUpdateWidget(old);
-    if (old.text != widget.text) {
-      _animCtrl?.stop();
-      _needsScroll = false;
-      WidgetsBinding.instance.addPostFrameCallback((_) => _checkOverflow());
-    }
-  }
-
-  @override
-  void dispose() {
-    _animCtrl?.dispose();
-    _scrollCtrl.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return SingleChildScrollView(
-      controller: _scrollCtrl,
-      scrollDirection: Axis.horizontal,
-      physics: _needsScroll
-          ? const NeverScrollableScrollPhysics()
-          : const NeverScrollableScrollPhysics(),
-      child: Text(
-        widget.text,
-        style: widget.style,
-        maxLines: 1,
-        softWrap: false,
-      ),
-    );
-  }
 }

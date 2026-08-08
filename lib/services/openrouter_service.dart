@@ -5,7 +5,10 @@ import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:http/http.dart' as http;
 import 'api_adapter.dart';
 import 'cache_debug_log.dart';
+import 'grok_context_ledger.dart';
 import 'locale_strings.dart';
+import 'model_info.dart';
+import 'system_context_debug.dart';
 import 'settings_manager.dart';
 import 'sse_stream.dart';
 import 'stream_transport.dart';
@@ -113,8 +116,15 @@ class OpenRouterService implements ApiAdapter {
         m.contains('mythos');
   }
 
+  static bool _isXaiModel(String model) {
+    final normalized = model.trim().toLowerCase();
+    return normalized.startsWith('x-ai/') ||
+        normalized.startsWith('xai/') ||
+        normalized.startsWith('grok-');
+  }
+
   /// Claude 在工具與動態背景很長時，偶爾會把上一輪當成當前任務。
-  /// 這兩個標記只包在 system runtime context 中：不改 static prompt、
+  /// 這兩個標記只包在 request-only runtime sidecar 中：不改 static prompt、
   /// 不移動 rolling breakpoint，也不寫回 messages/history。
   static bool _needsLatestUserFocus(String model) {
     final m = model.toLowerCase();
@@ -181,6 +191,15 @@ class OpenRouterService implements ApiAdapter {
       }
 
       final data = jsonDecode(response.body);
+      final message = data['choices']?[0]?['message'];
+      if (_isXaiModel(model) && message is Map) {
+        await _rememberGrokReasoning(
+          model: model,
+          diagnostics: requestDiagnostics,
+          reasoningDetails: message['reasoning_details'],
+          reasoning: message['reasoning'] ?? message['reasoning_content'],
+        );
+      }
       final stats = _extractCacheStats(
         data,
         requestDiagnostics: requestDiagnostics,
@@ -190,7 +209,7 @@ class OpenRouterService implements ApiAdapter {
           ApiUsage.fromStats(stats, diagnostics: requestDiagnostics),
         );
       }
-      return data['choices'][0]['message']['content'] ?? '';
+      return message is Map ? '${message['content'] ?? ''}' : '';
     } finally {
       if (identical(_activeClient, client)) _activeClient = null;
       client.close();
@@ -239,6 +258,8 @@ class OpenRouterService implements ApiAdapter {
       }
 
       Map<String, dynamic>? finalUsageData;
+      final reasoningDetails = <dynamic>[];
+      final reasoning = StringBuffer();
       final streamDiagnostics = SseStreamDiagnostics();
       await for (final data in SseStream.data(
         response.stream,
@@ -254,14 +275,27 @@ class OpenRouterService implements ApiAdapter {
           if (json['usage'] != null) {
             finalUsageData = json;
           }
-          final delta = json['choices']?[0]?['delta']?['content'];
-          if (delta != null && delta.isNotEmpty) {
-            yield delta;
+          final delta = json['choices']?[0]?['delta'];
+          if (delta is Map) {
+            final details = delta['reasoning_details'];
+            if (details is List) reasoningDetails.addAll(details);
+            final hidden = delta['reasoning'] ?? delta['reasoning_content'];
+            if (hidden is String && hidden.isNotEmpty) reasoning.write(hidden);
+            final content = delta['content'];
+            if (content is String && content.isNotEmpty) yield content;
           }
         } catch (_) {}
       }
       requestDiagnostics['malformed_utf8_replacements'] =
           streamDiagnostics.malformedUtf8Replacements;
+      if (_isXaiModel(model)) {
+        await _rememberGrokReasoning(
+          model: model,
+          diagnostics: requestDiagnostics,
+          reasoningDetails: reasoningDetails,
+          reasoning: reasoning.toString(),
+        );
+      }
       lastCacheDiagnostics = Map<String, Object?>.from(requestDiagnostics);
       if (finalUsageData != null) {
         final stats = _extractCacheStats(
@@ -348,108 +382,125 @@ class OpenRouterService implements ApiAdapter {
 
     // ═══ 核心：system prompt 構建 ═══
     final useStructured = structuredPrompt != null && _isAnthropicModel(model);
+    final isGrok = _isXaiModel(model);
     final cacheControl = TokenEstimator.promptCacheControl(
       provider: 'openrouter',
       model: model,
     );
     final cacheEnabled = await MemorySettings.getEnablePromptCaching();
     final enableCache = useStructured && cacheEnabled && cacheControl != null;
+    // Grok caching is implicit and has no Anthropic-style write surcharge or
+    // cache_control switch. A structured chat always gets its own append-only
+    // ledger and sticky route; Claude's explicit-cache path stays untouched.
+    final enableGrokCache = isGrok && structuredPrompt != null;
+    final anyCacheEnabled = enableCache || enableGrokCache;
     final focusLatestUser =
         structuredPrompt != null &&
-        structuredPrompt.dynamicForCache(enabled: enableCache).isNotEmpty &&
+        structuredPrompt.liveStatePart.isNotEmpty &&
         _needsLatestUserFocus(model);
-    final runtimeDynamicPart =
-        structuredPrompt?.dynamicForCache(enabled: enableCache) ?? '';
+    final runtimeDynamicPart = structuredPrompt?.liveStatePart ?? '';
     final sentDynamicPart = structuredPrompt == null
         ? ''
         : (focusLatestUser
               ? _focusedDynamicPart(runtimeDynamicPart)
               : runtimeDynamicPart);
+    final stableContext = structuredPrompt == null
+        ? (systemPrompt ?? '')
+        : structuredPrompt.cacheableParts.join('\n\n');
 
     if (useStructured) {
       final staticText = structuredPrompt.staticPart;
       final profileText = structuredPrompt.profilePart ?? '';
+      final windowText = structuredPrompt.windowPart;
+      final controlText = structuredPrompt.resolvedControlPart;
       if (enableCache) {
-        // Anthropic 模型 + cache on：static/profile 原文與 breakpoint 保持
-        // 不變；dynamic 作為 breakpoint 後的 system block，絕不污染 user。
+        // Anthropic 模型 + cache on：system 只放可快取的穩定前綴。
+        // turn 會在 rolling breakpoint 設好後作獨立 system message。
         final contentBlocks = <Map<String, dynamic>>[
           if (staticText.isNotEmpty) {'type': 'text', 'text': staticText},
           if (profileText.isNotEmpty) {'type': 'text', 'text': profileText},
+          if (windowText.isNotEmpty) {'type': 'text', 'text': windowText},
+          if (controlText.isNotEmpty) {'type': 'text', 'text': controlText},
         ];
         if (contentBlocks.isNotEmpty) {
           contentBlocks.last['cache_control'] = Map<String, String>.from(
             cacheControl,
           );
         }
-        if (sentDynamicPart.isNotEmpty) {
-          contentBlocks.add({'type': 'text', 'text': sentDynamicPart});
-        }
         if (contentBlocks.isNotEmpty) {
           allMessages.add({'role': 'system', 'content': contentBlocks});
         }
       } else {
-        // Cache off：dynamic 可每輪改變，但仍屬 system；user 只放原文。
+        // Cache off 仍保持相同 transport contract：穩定部分走 system，
+        // runtime 走獨立 sidecar，避免 provider 行為因 cache 開關而改變。
         if (staticText.isNotEmpty) {
           allMessages.add({'role': 'system', 'content': staticText});
         }
         if (profileText.isNotEmpty) {
           allMessages.add({'role': 'system', 'content': profileText});
         }
-        if (sentDynamicPart.isNotEmpty) {
-          allMessages.add({'role': 'system', 'content': sentDynamicPart});
+        if (windowText.isNotEmpty) {
+          allMessages.add({'role': 'system', 'content': windowText});
+        }
+        if (controlText.isNotEmpty) {
+          allMessages.add({'role': 'system', 'content': controlText});
         }
       }
     } else {
       // 非 Anthropic 模型 → 普通字串拆分成多個 system message
-      final prompt = structuredPrompt?.staticPart ?? systemPrompt ?? '';
-      if (prompt.isNotEmpty) {
-        allMessages.add({'role': 'system', 'content': prompt});
-      }
-      if (structuredPrompt?.profilePart != null &&
-          structuredPrompt!.profilePart!.isNotEmpty) {
-        allMessages.add({
-          'role': 'system',
-          'content': structuredPrompt.profilePart!,
-        });
-      }
-      if (sentDynamicPart.isNotEmpty) {
-        allMessages.add({'role': 'system', 'content': sentDynamicPart});
+      final systemParts =
+          structuredPrompt?.cacheableParts ?? <String>[systemPrompt ?? ''];
+      for (final part in systemParts.where((part) => part.isNotEmpty)) {
+        allMessages.add({'role': 'system', 'content': part});
       }
     }
 
-    // 加入對話歷史
-    for (int i = 0; i < messages.length; i++) {
-      final m = messages[i];
-      final role = m['role'] ?? 'user';
-      final content = m['content'] ?? '';
-      final imageUrl = m['image_data_url'];
+    GrokPreparedHistory? grokPrepared;
+    if (enableGrokCache) {
+      grokPrepared = await GrokContextLedger.prepareHistory(
+        sourceMessages: messages,
+        providerRoute: 'openrouter_xai',
+        model: model,
+        cacheChannel: structuredPrompt.cacheChannel,
+        stableContext: stableContext,
+        liveState: sentDynamicPart,
+      );
+      allMessages.addAll(grokPrepared.messages);
+    } else {
+      // 加入對話歷史
+      for (int i = 0; i < messages.length; i++) {
+        final m = messages[i];
+        final role = m['role'] ?? 'user';
+        final content = m['content'] ?? '';
+        final imageUrl = m['image_data_url'];
 
-      // 多模態消息（圖+文）
-      if (imageUrl != null && role == 'user') {
-        final contentBlocks = <Map<String, dynamic>>[
-          {
-            'type': 'image_url',
-            'image_url': {'url': imageUrl},
-          },
-          {
-            'type': 'text',
-            'text': content.isNotEmpty ? content : '（用戶發送了一張圖片）',
-          },
-        ];
-        allMessages.add({'role': role, 'content': contentBlocks});
-      } else if (enableCache) {
-        // 緩存模式：統一 content blocks 格式
-        // 顯式標注 <String, dynamic>：滾動 breakpoint 要往 block 掛
-        // cache_control（Map 值），讓 Dart 推斷成 Map<String, String>
-        // 會在運行時拋 type error
-        allMessages.add({
-          'role': role,
-          'content': <Map<String, dynamic>>[
-            {'type': 'text', 'text': content},
-          ],
-        });
-      } else {
-        allMessages.add({'role': role, 'content': content});
+        // 多模態消息（圖+文）
+        if (imageUrl != null && role == 'user') {
+          final contentBlocks = <Map<String, dynamic>>[
+            {
+              'type': 'image_url',
+              'image_url': {'url': imageUrl},
+            },
+            {
+              'type': 'text',
+              'text': content.isNotEmpty ? content : '（用戶發送了一張圖片）',
+            },
+          ];
+          allMessages.add({'role': role, 'content': contentBlocks});
+        } else if (enableCache) {
+          // 緩存模式：統一 content blocks 格式
+          // 顯式標注 <String, dynamic>：滾動 breakpoint 要往 block 掛
+          // cache_control（Map 值），讓 Dart 推斷成 Map<String, String>
+          // 會在運行時拋 type error
+          allMessages.add({
+            'role': role,
+            'content': <Map<String, dynamic>>[
+              {'type': 'text', 'text': content},
+            ],
+          });
+        } else {
+          allMessages.add({'role': role, 'content': content});
+        }
       }
     }
 
@@ -484,6 +535,53 @@ class OpenRouterService implements ApiAdapter {
       _rememberCurrentCheckpoint(checkpointKey, messages);
     }
 
+    // 必須在所有 history breakpoint 都落定後才注入，且不得借用 user role。
+    // 新 Claude 使用官方 mid-conversation system；舊 Claude 沒有這項能力，
+    // 只能退回頂層 system（保穩定 system cache，但歷史段需重建）。
+    var runtimeTransport = '';
+    var runtimeFallback = '';
+    var cachePrefixPreserved = true;
+    if (enableGrokCache) {
+      runtimeTransport = 'grok_append_only_system_event';
+    } else if (_isAnthropicModel(model)) {
+      if (RuntimeContextSidecar.supportsClaudeMidConversationSystem(model)) {
+        final attached = RuntimeContextSidecar.appendSystemAfterLatestUser(
+          allMessages,
+          sentDynamicPart,
+        );
+        if (attached) runtimeTransport = 'claude_mid_system';
+      } else {
+        final attached =
+            RuntimeContextSidecar.appendToPreviousAssistantBeforeLatestUser(
+              allMessages,
+              sentDynamicPart,
+            );
+        if (attached) {
+          runtimeTransport = enableCache
+              ? 'assistant_state_after_cache_breakpoint'
+              : 'assistant_state';
+        } else if (RuntimeContextSidecar.appendToLeadingSystemMessage(
+          allMessages,
+          sentDynamicPart,
+        )) {
+          runtimeTransport = 'top_level_system_fallback';
+          runtimeFallback = 'No previous assistant turn was available.';
+          cachePrefixPreserved =
+              !enableCache || latestUserIndex <= historyStartIndex;
+        }
+      }
+    } else {
+      final runtimeRole = model.toLowerCase().contains('openai/')
+          ? 'developer'
+          : 'system';
+      final attached = RuntimeContextSidecar.insertSystemBeforeLatestUser(
+        allMessages,
+        sentDynamicPart,
+        role: runtimeRole,
+      );
+      if (attached) runtimeTransport = '${runtimeRole}_before_latest_user';
+    }
+
     final rollingBreakpointIndex = _latestNonSystemCacheControlIndex(
       allMessages,
     );
@@ -503,57 +601,57 @@ class OpenRouterService implements ApiAdapter {
       'model': model,
       'cache_setting_enabled': cacheEnabled,
       'use_structured': useStructured,
-      'enable_cache': enableCache,
-      'session_id': enableCache ? _sessionId : null,
+      'enable_cache': anyCacheEnabled,
+      'cache_mode': enableGrokCache
+          ? 'xai_implicit_prefix'
+          : (enableCache ? 'anthropic_explicit_breakpoint' : 'none'),
+      'session_id': enableGrokCache
+          ? grokPrepared?.affinityId
+          : (enableCache ? _sessionId : null),
       'cache_channel': cacheChannel,
       'channel_resume_indices': resumeSourceIndices,
       'cache_control': cacheControl,
+      'runtime_event_count': grokPrepared?.runtimeEventCount ?? 0,
+      'runtime_event_reused': grokPrepared?.reusedCurrentRuntime ?? false,
+      'reasoning_payload_preserved':
+          (grokPrepared?.reasoningPayloadCount ?? 0) > 0,
+      'reasoning_payload_count': grokPrepared?.reasoningPayloadCount ?? 0,
+      'grok_turn_anchor': grokPrepared?.currentTurnAnchor ?? '',
+      'grok_provider_route': enableGrokCache ? 'openrouter_xai' : '',
       'static_tokens': structuredPrompt == null
           ? TokenEstimator.estimate(systemPrompt ?? '')
           : TokenEstimator.estimate(
-              [
-                structuredPrompt.staticPart,
-                if ((structuredPrompt.profilePart ?? '').isNotEmpty)
-                  structuredPrompt.profilePart!,
-              ].join('\n\n'),
+              structuredPrompt.cacheableParts.join('\n\n'),
             ),
       'dynamic_tokens': structuredPrompt == null
           ? 0
           : TokenEstimator.estimate(sentDynamicPart),
-      'dynamic_snapshot_active':
-          enableCache && structuredPrompt.cacheStableDynamicPart != null,
+      'dynamic_snapshot_active': false,
       'dynamic_live_hash': structuredPrompt == null
           ? ''
-          : _shortHash(structuredPrompt.dynamicPart),
+          : _shortHash(structuredPrompt.liveStatePart),
       'dynamic_sent_hash': sentDynamicPart.isEmpty
           ? ''
           : _shortHash(sentDynamicPart),
       'static_hash': structuredPrompt == null
           ? _shortHash(systemPrompt ?? '')
-          : _shortHash(
-              [
-                structuredPrompt.staticPart,
-                if ((structuredPrompt.profilePart ?? '').isNotEmpty)
-                  structuredPrompt.profilePart!,
-              ].join('\n\n'),
-            ),
+          : _shortHash(structuredPrompt.cacheableParts.join('\n\n')),
       // 無 structuredPrompt = 命名/摘要等內部工具請求，
       // 不參與 debug 面板的指紋漂移比較（防插隊誤報）
       'is_structured': structuredPrompt != null,
       // 靜態前綴分段指紋：指紋漂移時 diff 出「具體哪段變了」
       'static_segs': structuredPrompt == null
           ? const <String>[]
-          : [
-              structuredPrompt.staticPart,
-              if ((structuredPrompt.profilePart ?? '').isNotEmpty)
-                structuredPrompt.profilePart!,
-            ].join('\n\n').split('\n\n').where((s) => s.trim().isNotEmpty).map((
-              s,
-            ) {
-              final head = s.trim().replaceAll('\n', ' ');
-              final label = head.length > 14 ? head.substring(0, 14) : head;
-              return '${_shortHash(s)}|$label';
-            }).toList(),
+          : structuredPrompt.cacheableParts
+                .join('\n\n')
+                .split('\n\n')
+                .where((s) => s.trim().isNotEmpty)
+                .map((s) {
+                  final head = s.trim().replaceAll('\n', ' ');
+                  final label = head.length > 14 ? head.substring(0, 14) : head;
+                  return '${_shortHash(s)}|$label';
+                })
+                .toList(),
       'latest_user_index': latestUserIndex,
       'rolling_breakpoint_index': rollingBreakpointIndex,
       'latest_user_has_cache_control': latestUserIndex >= 0
@@ -572,7 +670,7 @@ class OpenRouterService implements ApiAdapter {
       ..addAll(diagnostics);
     lastCacheDiagnostics = Map<String, Object?>.from(diagnostics);
 
-    return {
+    final body = <String, dynamic>{
       'model': model,
       'messages': allMessages,
       'stream': stream,
@@ -589,12 +687,34 @@ class OpenRouterService implements ApiAdapter {
       // ⚠️ 不可同時設 provider.order——OpenRouter 文件明確寫
       //    「Sticky routing is not used when you specify a manual provider order」，
       //    provider.order 會把 sticky routing 整個蓋掉，導致 cache 永遠命不中。
-      if (enableCache) 'session_id': _sessionId,
+      if (enableGrokCache) 'session_id': grokPrepared!.affinityId,
+      if (!enableGrokCache && enableCache) 'session_id': _sessionId,
       // 不送 top-level automatic cache_control。它會把自動斷點推到最後一個
       // cacheable block，越過上面刻意設在「最新 user 前」的 rolling
       // breakpoint；1h 寫入又是高倍率，會造成每輪大額重寫。
       // static/profile 與 rolling history 已各有明確 block-level 斷點。
     };
+    if (structuredPrompt != null) {
+      SystemContextDebug.recordChatRequest(
+        provider: 'openrouter',
+        model: model,
+        cacheChannel: cacheChannel,
+        sessionId: enableGrokCache
+            ? grokPrepared!.affinityId
+            : (enableCache ? _sessionId : CacheSession.conversationId),
+        transport: runtimeTransport,
+        sourceMessages: messages,
+        requestMessages: allMessages,
+        stableContext: structuredPrompt.cacheableParts.join('\n\n'),
+        liveState: sentDynamicPart,
+        cacheEnabled: anyCacheEnabled,
+        cachePrefixPreserved: cachePrefixPreserved,
+        fallbackReason: runtimeFallback,
+        cacheBreakpointIndex: rollingBreakpointIndex,
+        expectTime: structuredPrompt.liveStatePart.trim().isNotEmpty,
+      );
+    }
+    return body;
   }
 
   int _firstHistoryIndex(List<Map<String, dynamic>> messages) {
@@ -692,6 +812,31 @@ class OpenRouterService implements ApiAdapter {
   String _shortHash(String text) =>
       sha256.convert(utf8.encode(text)).toString().substring(0, 12);
 
+  Future<void> _rememberGrokReasoning({
+    required String model,
+    required Map<String, Object?> diagnostics,
+    dynamic reasoningDetails,
+    dynamic reasoning,
+  }) async {
+    final turnAnchor = '${diagnostics['grok_turn_anchor'] ?? ''}';
+    if (turnAnchor.isEmpty) return;
+    final payload = <String, dynamic>{};
+    if (reasoningDetails is List && reasoningDetails.isNotEmpty) {
+      payload['reasoning_details'] = reasoningDetails;
+    }
+    if (reasoning is String && reasoning.isNotEmpty) {
+      payload['reasoning'] = reasoning;
+    }
+    if (payload.isEmpty) return;
+    await GrokContextLedger.rememberReasoning(
+      providerRoute: 'openrouter_xai',
+      model: model,
+      cacheChannel: '${diagnostics['cache_channel'] ?? 'text'}',
+      turnAnchor: turnAnchor,
+      payload: payload,
+    );
+  }
+
   /// 提取 cache 統計
   Map<String, int>? _extractCacheStats(
     Map<String, dynamic> data, {
@@ -720,6 +865,11 @@ class OpenRouterService implements ApiAdapter {
     final write1h = creation is Map
         ? (creation['ephemeral_1h_input_tokens'] as num?)?.toInt() ?? 0
         : 0;
+    final completionDetails =
+        usage['completion_tokens_details'] ?? usage['output_tokens_details'];
+    final reasoningTokens = completionDetails is Map
+        ? (completionDetails['reasoning_tokens'] as num?)?.toInt() ?? 0
+        : 0;
 
     final stats = <String, int>{
       'prompt_tokens': usage['prompt_tokens'] ?? 0,
@@ -728,7 +878,15 @@ class OpenRouterService implements ApiAdapter {
       'cache_read': read,
       'cache_write_5m': write5m,
       'cache_write_1h': write1h,
+      'reasoning_tokens': reasoningTokens,
     };
+    final actualCost = usage['cost'];
+    if (actualCost is num) {
+      requestDiagnostics['actual_cost_usd'] = actualCost.toDouble();
+      requestDiagnostics['actual_cost_source'] = 'openrouter_usage';
+    }
+    requestDiagnostics['cached_tokens'] = read;
+    requestDiagnostics['reasoning_tokens'] = stats['reasoning_tokens'];
     lastCacheStats = Map<String, int>.from(stats);
 
     // 緩存診斷指紋（開發者診斷頁 Cache Debug 讀取）
@@ -766,7 +924,14 @@ class OpenRouterService implements ApiAdapter {
       'dynamic_snapshot_active': requestDiagnostics['dynamic_snapshot_active'],
       'dynamic_live_hash': requestDiagnostics['dynamic_live_hash'],
       'dynamic_sent_hash': requestDiagnostics['dynamic_sent_hash'],
+      'cache_mode': requestDiagnostics['cache_mode'],
+      'runtime_event_count': requestDiagnostics['runtime_event_count'],
+      'reasoning_payload_preserved':
+          requestDiagnostics['reasoning_payload_preserved'],
+      'reasoning_t': requestDiagnostics['reasoning_tokens'],
+      'actual_cost': requestDiagnostics['actual_cost_usd'],
     });
+    lastCacheDiagnostics = Map<String, Object?>.from(requestDiagnostics);
     return stats;
   }
 
@@ -862,35 +1027,5 @@ class _CacheChannelCheckpoint {
         role == other.role &&
         content == other.content &&
         imageDataUrl == other.imageDataUrl;
-  }
-}
-
-class ModelInfo {
-  final String id;
-  final String name;
-  final List<String> inputModalities;
-  final List<String> outputModalities;
-  final List<String> supportedParameters;
-
-  ModelInfo({
-    required this.id,
-    required this.name,
-    this.inputModalities = const [],
-    this.outputModalities = const [],
-    this.supportedParameters = const [],
-  });
-
-  bool get supportsImageOutput {
-    final outputs = outputModalities.map((m) => m.toLowerCase()).toSet();
-    if (outputs.contains('image')) return true;
-
-    final haystack = '$id $name ${supportedParameters.join(' ')}'.toLowerCase();
-    return haystack.contains('image') ||
-        haystack.contains('img') ||
-        haystack.contains('gpt-image') ||
-        haystack.contains('flux') ||
-        haystack.contains('dall-e') ||
-        haystack.contains('stable-diffusion') ||
-        haystack.contains('imagen');
   }
 }

@@ -1,9 +1,9 @@
 import '../memory/database.dart';
 import '../memory/emotion_coordinates.dart';
 import '../memory/retriever.dart';
-import '../memory/spider_web_core.dart';
 import '../models/memory.dart';
 import 'locale_strings.dart';
+import 'memory_guard_service.dart';
 
 /// 模型自主記憶動作
 ///
@@ -28,6 +28,21 @@ class MemoryActions {
   static List<String> lastActionLogFor(String windowId) => List.unmodifiable(
     _statesByWindow[windowId]?.actionLog ?? const <String>[],
   );
+
+  static List<String> lastProposalIdsFor(String windowId) => List.unmodifiable(
+    _statesByWindow[windowId]?.proposalIds ?? const <String>[],
+  );
+
+  static void registerProposal(
+    String windowId, {
+    required String proposalId,
+    required String log,
+  }) {
+    final state = _statesByWindow.putIfAbsent(windowId, _MemoryActionState.new);
+    if (state.proposalIds.contains(proposalId)) return;
+    state.proposalIds.add(proposalId);
+    if (log.trim().isNotEmpty) state.actionLog.add(log.trim());
+  }
 
   static String? lastSearchQueryFor(String windowId) =>
       _statesByWindow[windowId]?.lastSearchQuery;
@@ -71,8 +86,16 @@ class MemoryActions {
   );
 
   /// 記憶寫入關閉時只剝離標籤，不執行任何落庫/搜尋動作。
-  static String stripReply(String text, {required String windowId}) {
-    _resetState(windowId);
+  static String stripReply(
+    String text, {
+    required String windowId,
+    bool resetState = true,
+  }) {
+    if (resetState) {
+      _resetState(windowId);
+    } else {
+      _statesByWindow.putIfAbsent(windowId, _MemoryActionState.new);
+    }
     return text
         .replaceAll(_memoRe, '')
         .replaceAll(_noteRe, '')
@@ -149,8 +172,11 @@ class MemoryActions {
     required String characterId,
     required String mode,
     required String windowId,
+    bool resetState = true,
   }) async {
-    final state = _resetState(windowId);
+    final state = resetState
+        ? _resetState(windowId)
+        : _statesByWindow.putIfAbsent(windowId, _MemoryActionState.new);
     if (!text.contains('<memo') &&
         !text.contains('<persona_note>') &&
         !text.contains('<search_chat>') &&
@@ -183,21 +209,39 @@ class MemoryActions {
         emoRes = latest.concentration.round();
       }
 
-      final newId = await DatabaseHelper.insertMemory(
-        Memory(
+      final result = await MemoryGuardService.guardNewMemory(
+        candidate: Memory(
           characterId: characterId,
           mode: mode,
           category: parsed[0],
           content: finalContent,
           confidence: 'high',
+          sourceConversationId: windowId,
           triggers: parsed[2],
           emotionX: emoX,
           emotionY: emoY,
           emotionResonance: emoRes,
         ),
+        source: 'model',
+        sourceConversationId: windowId,
       );
-      state.lastInsertedMemoryId ??= newId;
-      state.actionLog.add('✚ 寫入 #$newId [${parsed[0]}] ${_clip(parsed[1])}');
+      switch (result.disposition) {
+        case GuardedMemoryWriteDisposition.inserted:
+          state.lastInsertedMemoryId ??= result.memoryId;
+          state.actionLog.add(
+            '✚ 寫入 #${result.memoryId} [${parsed[0]}] ${_clip(parsed[1])}',
+          );
+          break;
+        case GuardedMemoryWriteDisposition.skippedDuplicate:
+          state.actionLog.add('≋ 已略過重複記憶 [${parsed[0]}] ${_clip(parsed[1])}');
+          break;
+        case GuardedMemoryWriteDisposition.proposalCreated:
+          if (result.proposalId != null) {
+            state.proposalIds.add(result.proposalId!);
+          }
+          state.actionLog.add('◌ 疑似重複記憶已送往提案匣');
+          break;
+      }
       memoCount++;
     }
     int memoStripCount = 0;
@@ -212,8 +256,8 @@ class MemoryActions {
       if (noteCount >= 2) break;
       final note = m.group(1)!.trim();
       if (note.isEmpty) continue;
-      await DatabaseHelper.appendSelfNote(characterId, note);
-      state.actionLog.add('✎ 自我註記 ${_clip(note)}');
+      final changed = await DatabaseHelper.appendSelfNote(characterId, note);
+      if (changed) state.actionLog.add('✎ 自我註記 ${_clip(note)}');
       noteCount++;
     }
     int noteStripCount = 0;
@@ -222,7 +266,7 @@ class MemoryActions {
       (m) => noteStripCount++ < noteCount ? '' : m.group(0)!,
     );
 
-    // memo_del → 歸檔（可恢復，模型誤刪不致命）
+    // memo_del → 待確認提案；模型不得直接改動記憶。
     int delCount = 0;
     for (final m in _delRe.allMatches(text)) {
       // 模型給的是窗口短號 → 反查真 id；查不到=亂編，丟棄
@@ -233,14 +277,18 @@ class MemoryActions {
           .whereType<int>()
           .map((shortNo) => Retriever.realIdFor(shortNo, windowId: windowId))
           .whereType<int>()
-          .take(6);
-      for (final id in ids) {
-        await DatabaseHelper.archiveMemory(
-          id,
-          '模型刪除',
-          characterId: characterId,
-        );
-        state.actionLog.add('🗑 刪除記憶（入回收區）');
+          .take(6)
+          .toSet()
+          .toList();
+      final proposalId = await MemoryGuardService.proposeDelete(
+        characterId: characterId,
+        mode: mode,
+        sourceConversationId: windowId,
+        targetIds: ids,
+      );
+      if (proposalId != null) {
+        state.proposalIds.add(proposalId);
+        state.actionLog.add('◌ 提出刪除記憶建議');
       }
       delCount++;
     }
@@ -250,7 +298,7 @@ class MemoryActions {
       (m) => delStripCount++ < delCount ? '' : m.group(0)!,
     );
 
-    // memo_merge → 原條歸檔 + 合併條入庫
+    // memo_merge → 待確認提案；確認前不建立新條、不遷移連線。
     int mergeCount = 0;
     for (final m in _mergeRe.allMatches(text)) {
       if (mergeCount >= 2) break;
@@ -269,32 +317,19 @@ class MemoryActions {
       if (ids.length < 2) continue;
       final parsed = _parseEntry(body.substring(sep + 1).trim());
       if (parsed == null) continue;
-      final newId = await DatabaseHelper.insertMemory(
-        Memory(
-          characterId: characterId,
-          mode: mode,
-          category: parsed[0],
-          content: parsed[1],
-          confidence: 'high',
-          triggers: parsed[2],
-        ),
-      );
-      // 蛛網連線遷移：舊條的邊重指到合併後新條，合併不再剪網
-      await SpiderWebCore.remapLinksAfterMerge(
-        ids,
-        newId,
+      final proposalId = await MemoryGuardService.proposeMerge(
         characterId: characterId,
+        mode: mode,
+        sourceConversationId: windowId,
+        targetIds: ids,
+        category: parsed[0],
+        content: parsed[1],
+        triggers: parsed[2],
       );
-      for (final id in ids) {
-        await DatabaseHelper.archiveMemory(
-          id,
-          '模型合併',
-          characterId: characterId,
-        );
+      if (proposalId != null) {
+        state.proposalIds.add(proposalId);
+        state.actionLog.add('◌ 提出合併 ${ids.length} 條記憶建議 → ${_clip(parsed[1])}');
       }
-      state.actionLog.add(
-        '⇄ 合併 ${ids.map((i) => '#$i').join(',')} → ${_clip(parsed[1])}',
-      );
       mergeCount++;
     }
     int mergeStripCount = 0;
@@ -406,5 +441,6 @@ class MemoryActions {
 class _MemoryActionState {
   int? lastInsertedMemoryId;
   final List<String> actionLog = [];
+  final List<String> proposalIds = [];
   String? lastSearchQuery;
 }

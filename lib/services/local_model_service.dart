@@ -13,6 +13,7 @@ import 'api_adapter.dart';
 import 'settings/api_settings.dart';
 import 'locale_strings.dart';
 import 'token_estimator.dart';
+import 'system_context_debug.dart';
 
 /// ═══════════════════════════════════════════════
 /// 本地模型服務
@@ -1587,6 +1588,28 @@ class LocalModelService implements ApiAdapter {
 
     try {
       await previous;
+      final stableContext =
+          structuredPrompt?.cacheableParts.join('\n\n') ?? systemPrompt ?? '';
+      final combinedSystem = structuredPrompt?.combined ?? systemPrompt ?? '';
+      if (structuredPrompt != null) {
+        SystemContextDebug.recordChatRequest(
+          provider: 'local',
+          model: model,
+          cacheChannel: structuredPrompt.cacheChannel,
+          sessionId: CacheSession.conversationId,
+          transport: 'local_system_instruction',
+          sourceMessages: messages,
+          requestMessages: <Map<String, dynamic>>[
+            if (combinedSystem.trim().isNotEmpty)
+              <String, dynamic>{'role': 'system', 'content': combinedSystem},
+            ...messages.map((message) => <String, dynamic>{...message}),
+          ],
+          stableContext: stableContext,
+          liveState: structuredPrompt.liveStatePart,
+          cachePrefixPreserved: false,
+          expectTime: structuredPrompt.liveStatePart.trim().isNotEmpty,
+        );
+      }
       // 包裹原始 stream，加上超時 + 卡住偵測
       final rawStream = _llamaEngine != null
           ? _sendLlamaMessageStream(

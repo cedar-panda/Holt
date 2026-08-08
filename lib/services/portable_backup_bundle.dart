@@ -106,6 +106,13 @@ class PortableBackupBundle {
           stage,
           filename: outputFile.path,
           level: ZipFileEncoder.gzip,
+          // archive 4.0.9 writes deflated zero-byte directory placeholders
+          // that its own decoder accepts but Info-ZIP reports as invalid.
+          // The paths are implicit in the real file entries, so omitting the
+          // placeholders keeps Holt bundles compatible with standard ZIP tools.
+          filter: (entity, _) => entity is Directory
+              ? ZipFileOperation.skip
+              : ZipFileOperation.include,
         );
       } catch (_) {
         if (await outputFile.exists()) await outputFile.delete();

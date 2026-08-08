@@ -21,11 +21,15 @@ class LongScreenshotOptions {
   final int startIndex;
   final int endIndex;
   final bool expandThinking;
+  final bool includeMemory;
+  final bool includeEmotion;
 
   const LongScreenshotOptions({
     required this.startIndex,
     required this.endIndex,
     required this.expandThinking,
+    required this.includeMemory,
+    required this.includeEmotion,
   });
 
   int get messageCount => endIndex - startIndex + 1;
@@ -72,6 +76,8 @@ class _LongScreenshotOptionsSheetState
   late int _endIndex;
   late bool _editingStart;
   bool _expandThinking = false;
+  bool _includeMemory = false;
+  bool _includeEmotion = false;
   late final ScrollController _scrollController;
 
   @override
@@ -170,7 +176,7 @@ class _LongScreenshotOptionsSheetState
               activeColor: YanciTheme.accent,
               contentPadding: const EdgeInsets.symmetric(horizontal: 18),
               title: Text(
-                L.pick(en: 'Expand Thinking', zhTW: '展開 Thinking'),
+                L.pick(en: 'Expand Thinking', zhTW: '展開思考'),
                 style: YanciTheme.bodyText.copyWith(
                   fontSize: 14,
                   color: YanciTheme.textPrimary,
@@ -178,8 +184,54 @@ class _LongScreenshotOptionsSheetState
               ),
               subtitle: Text(
                 L.pick(
-                  en: 'Include the full thinking text in the screenshot.',
-                  zhTW: '勾選後，截圖會包含完整思考內容。',
+                  en: 'Show the full thinking text in the image.',
+                  zhTW: '在圖片中顯示完整思考內容。',
+                ),
+                style: YanciTheme.bodySmall.copyWith(fontSize: 11.5),
+              ),
+            ),
+            CheckboxListTile(
+              key: const ValueKey('longshot-memory-toggle'),
+              value: _includeMemory,
+              onChanged: (value) =>
+                  setState(() => _includeMemory = value ?? false),
+              controlAffinity: ListTileControlAffinity.trailing,
+              activeColor: YanciTheme.accent,
+              contentPadding: const EdgeInsets.symmetric(horizontal: 18),
+              title: Text(
+                L.pick(en: 'Include memory', zhTW: '包含記憶'),
+                style: YanciTheme.bodyText.copyWith(
+                  fontSize: 14,
+                  color: YanciTheme.textPrimary,
+                ),
+              ),
+              subtitle: Text(
+                L.pick(
+                  en: 'Show memory reads and operations. Off by default for privacy.',
+                  zhTW: '顯示記憶讀取與操作記錄；為保護隱私，預設關閉。',
+                ),
+                style: YanciTheme.bodySmall.copyWith(fontSize: 11.5),
+              ),
+            ),
+            CheckboxListTile(
+              key: const ValueKey('longshot-emotion-toggle'),
+              value: _includeEmotion,
+              onChanged: (value) =>
+                  setState(() => _includeEmotion = value ?? false),
+              controlAffinity: ListTileControlAffinity.trailing,
+              activeColor: YanciTheme.accent,
+              contentPadding: const EdgeInsets.symmetric(horizontal: 18),
+              title: Text(
+                L.pick(en: 'Include emotion', zhTW: '包含情緒'),
+                style: YanciTheme.bodyText.copyWith(
+                  fontSize: 14,
+                  color: YanciTheme.textPrimary,
+                ),
+              ),
+              subtitle: Text(
+                L.pick(
+                  en: 'Show emotion coordinates and emotion logs.',
+                  zhTW: '顯示情緒座標與情緒記錄。',
                 ),
                 style: YanciTheme.bodySmall.copyWith(fontSize: 11.5),
               ),
@@ -378,6 +430,8 @@ class _LongScreenshotOptionsSheetState
                           startIndex: _startIndex,
                           endIndex: _endIndex,
                           expandThinking: _expandThinking,
+                          includeMemory: _includeMemory,
+                          includeEmotion: _includeEmotion,
                         ),
                       ),
                       style: FilledButton.styleFrom(

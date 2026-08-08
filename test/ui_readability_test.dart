@@ -70,4 +70,26 @@ void main() {
     expect(en, contains('## Prior Context'));
     expect(en, contains('## This Update'));
   });
+
+  test('every summary response is finalized into one canonical structure', () {
+    expect(
+      ContextCompressor.normalizeSummaryFormat(
+        'GPT 自己改成的一段純文字摘要',
+        locale: 'zh_TW',
+      ),
+      '## 前情提要\n—\n\n## 本次摘要\n'
+      '**1. 重要事件與決定**\n'
+      '* **摘要：** GPT 自己改成的一段純文字摘要',
+    );
+    expect(
+      ContextCompressor.normalizeSummaryFormat(
+        '【手動摘要】\n## Previous Summary\nold\n\n'
+        '## Latest Summary\nnew',
+        locale: 'en',
+      ),
+      '## Prior Context\nold\n\n## This Update\n'
+      '**1. Important events and decisions**\n'
+      '* **Summary:** new',
+    );
+  });
 }

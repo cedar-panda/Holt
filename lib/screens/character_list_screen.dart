@@ -12,6 +12,7 @@ import '../services/marriage_service.dart';
 import '../services/settings_manager.dart';
 import 'saved_messages_screen.dart';
 import '../widgets/character_timeline_panel.dart';
+import '../widgets/character_self_notes_panel.dart';
 import '../widgets/x_post_panel.dart';
 import '../utils/latest_request_gate.dart';
 
@@ -215,6 +216,12 @@ class _CharacterListScreenState extends State<CharacterListScreen> {
                   characterId: _currentCharId,
                 ),
 
+              if (_characters.isNotEmpty)
+                CharacterSelfNotesPanel(
+                  key: ValueKey('self-notes-$_currentCharId'),
+                  characterId: _currentCharId,
+                ),
+
               const Spacer(),
 
               // ═══ 關聯資源入口（語音 / 表情庫 / 記憶 / 收藏）═══
@@ -277,8 +284,8 @@ class _CharacterListScreenState extends State<CharacterListScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // ═══ 圓形頭像 ═══
                   Container(
                     width: 42,
                     height: 42,
@@ -314,6 +321,8 @@ class _CharacterListScreenState extends State<CharacterListScreen> {
                       children: [
                         Text(
                           name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                           style: YanciTheme.headingMedium.copyWith(
                             fontSize: 16,
                           ),
@@ -383,6 +392,8 @@ class _CharacterListScreenState extends State<CharacterListScreen> {
                                 gender,
                                 relationship,
                               ].where((s) => s.isNotEmpty).join(' · '),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
                               style: YanciTheme.bodySmall.copyWith(
                                 fontSize: 11,
                                 color: YanciTheme.textSecondary.withValues(
@@ -394,21 +405,39 @@ class _CharacterListScreenState extends State<CharacterListScreen> {
                       ],
                     ),
                   ),
+                  const SizedBox(width: 8),
                   if (isActive)
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 2,
-                      ),
-                      decoration: BoxDecoration(
-                        color: YanciTheme.accent.withValues(alpha: 0.15),
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: Text(
-                        L.get('char_in_use'),
-                        style: TextStyle(
-                          fontSize: 10,
-                          color: YanciTheme.accent,
+                    _OnlineStatusPill(animate: isCurrent)
+                  else
+                    Semantics(
+                      button: true,
+                      label: L.get('char_use'),
+                      child: GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onTap: () async {
+                          HapticFeedback.mediumImpact();
+                          await UserSettings.saveActiveCharacterId(id);
+                          await UserSettings.saveCharacterName(name);
+                          if (!mounted) return;
+                          setState(() => _activeId = id);
+                        },
+                        child: Container(
+                          key: const ValueKey('character-card-talk-button'),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 5,
+                          ),
+                          decoration: BoxDecoration(
+                            color: YanciTheme.accent.withValues(alpha: 0.1),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Text(
+                            L.get('char_use'),
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: YanciTheme.accent,
+                            ),
+                          ),
                         ),
                       ),
                     ),
@@ -430,40 +459,11 @@ class _CharacterListScreenState extends State<CharacterListScreen> {
                 ),
               ],
               const Spacer(),
-              // ═══ 底部操作 ═══
               Row(
                 mainAxisAlignment: MainAxisAlignment.end,
                 children: [
-                  if (!isActive)
-                    GestureDetector(
-                      onTap: () async {
-                        HapticFeedback.mediumImpact();
-                        await UserSettings.saveActiveCharacterId(id);
-                        await UserSettings.saveCharacterName(name);
-                        if (!mounted) return;
-                        setState(() => _activeId = id);
-                      },
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 5,
-                        ),
-                        decoration: BoxDecoration(
-                          color: YanciTheme.accent.withValues(alpha: 0.1),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: Text(
-                          L.get('char_use'),
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: YanciTheme.accent,
-                          ),
-                        ),
-                      ),
-                    ),
                   const Spacer(),
                   if (XPostSettings.showEntry)
-                    // X 社群發文入口（暫時隱藏；功能碼保留）
                     IconButton(
                       icon: Icon(
                         Icons.alternate_email_rounded,
@@ -683,4 +683,135 @@ class _ResourceTab {
   final String label;
   final VoidCallback onTap;
   _ResourceTab(this.icon, this.label, this.onTap);
+}
+
+class _OnlineStatusPill extends StatefulWidget {
+  final bool animate;
+
+  const _OnlineStatusPill({required this.animate});
+
+  @override
+  State<_OnlineStatusPill> createState() => _OnlineStatusPillState();
+}
+
+class _OnlineStatusPillState extends State<_OnlineStatusPill>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _breathController;
+
+  @override
+  void initState() {
+    super.initState();
+    _breathController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1300),
+      value: 0.45,
+    );
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _syncAnimation();
+  }
+
+  @override
+  void didUpdateWidget(covariant _OnlineStatusPill oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.animate != widget.animate) _syncAnimation();
+  }
+
+  void _syncAnimation() {
+    final reduceMotion = MediaQuery.disableAnimationsOf(context);
+    if (widget.animate && !reduceMotion) {
+      if (!_breathController.isAnimating) {
+        _breathController.repeat(reverse: true);
+      }
+      return;
+    }
+    _breathController
+      ..stop()
+      ..value = 0.45;
+  }
+
+  @override
+  void dispose() {
+    _breathController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final onlineColor = YanciTheme.isDark
+        ? const Color(0xFF69D78E)
+        : const Color(0xFF2F9D5B);
+
+    return Semantics(
+      container: true,
+      label: L.get('char_online'),
+      child: ExcludeSemantics(
+        child: Container(
+          key: const ValueKey('character-card-online-status'),
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          decoration: BoxDecoration(
+            color: YanciTheme.accent.withValues(alpha: 0.1),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              RepaintBoundary(
+                child: AnimatedBuilder(
+                  animation: _breathController,
+                  builder: (context, child) {
+                    final breath = Curves.easeInOutSine.transform(
+                      _breathController.value,
+                    );
+                    return SizedBox(
+                      width: 12,
+                      height: 12,
+                      child: Stack(
+                        alignment: Alignment.center,
+                        children: [
+                          Transform.scale(
+                            scale: 0.9 + (breath * 0.65),
+                            child: Opacity(
+                              opacity: 0.22 * (1 - breath),
+                              child: Container(
+                                width: 10,
+                                height: 10,
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  color: onlineColor,
+                                ),
+                              ),
+                            ),
+                          ),
+                          Transform.scale(
+                            scale: 0.92 + (breath * 0.08),
+                            child: Container(
+                              width: 6,
+                              height: 6,
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                color: onlineColor,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  },
+                ),
+              ),
+              const SizedBox(width: 4),
+              Text(
+                L.get('char_online'),
+                style: TextStyle(fontSize: 10, color: YanciTheme.textSecondary),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }

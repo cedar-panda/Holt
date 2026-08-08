@@ -1,6 +1,8 @@
 import 'dart:math';
 import 'database.dart';
 import 'retriever.dart';
+import '../services/memory_actions.dart';
+import '../services/memory_guard_service.dart';
 
 class SpiderWebCore {
   static final Map<String, String> _pendingForceRecallByWindow = {};
@@ -71,8 +73,10 @@ class SpiderWebCore {
     // 2. 獲取相連的記憶 (神經傳導)
     final links = await db.query(
       'spider_web_links',
-      where: 'memory_id_1 = ? OR memory_id_2 = ?',
-      whereArgs: [memoryId, memoryId],
+      where:
+          'character_id = ? AND status = ? '
+          'AND (memory_id_1 = ? OR memory_id_2 = ?)',
+      whereArgs: [characterId, 'confirmed', memoryId, memoryId],
     );
 
     // 3. 找出相鄰節點的 ID，並更新它們的 last_accessed
@@ -112,12 +116,12 @@ class SpiderWebCore {
              m.last_accessed, m.mention_count
       FROM memories m
       LEFT JOIN spider_web_links l
-        ON (l.memory_id_1 = m.id AND EXISTS (
+        ON l.status = 'confirmed' AND ((l.memory_id_1 = m.id AND EXISTS (
               SELECT 1 FROM memories mo
               WHERE mo.id = l.memory_id_2 AND mo.status = 'active'))
         OR (l.memory_id_2 = m.id AND EXISTS (
               SELECT 1 FROM memories mo
-              WHERE mo.id = l.memory_id_1 AND mo.status = 'active'))
+              WHERE mo.id = l.memory_id_1 AND mo.status = 'active')))
       WHERE m.character_id = ?
         AND m.status = 'active'
         AND m.is_permanent = 0
@@ -183,29 +187,30 @@ class SpiderWebCore {
             .toList();
         // 只接受「本角色、未刪除」的記憶 id——擋懸空邊與跨角色污染
         final ids = <int>[];
+        var mode = 'romance';
         if (rawIds.length >= 2) {
           final ph = List.filled(rawIds.length, '?').join(',');
           final valid = await db.rawQuery(
-            "SELECT id FROM memories WHERE id IN ($ph) AND character_id = ? AND status = 'active'",
+            "SELECT id, mode FROM memories WHERE id IN ($ph) AND character_id = ? AND status = 'active'",
             [...rawIds, characterId],
           );
           ids.addAll(valid.map((r) => r['id'] as int));
+          if (valid.isNotEmpty) mode = valid.first['mode']?.toString() ?? mode;
         }
         if (ids.length >= 2) {
-          final batch = db.batch();
-          for (int i = 0; i < ids.length; i++) {
-            for (int j = i + 1; j < ids.length; j++) {
-              // ID 排序正規化：小的放 memory_id_1，大的放 memory_id_2
-              final id1 = min(ids[i], ids[j]);
-              final id2 = max(ids[i], ids[j]);
-              // INSERT OR IGNORE 利用 UNIQUE(memory_id_1, memory_id_2) 去重
-              batch.rawInsert(
-                'INSERT OR IGNORE INTO spider_web_links (character_id, memory_id_1, memory_id_2, created_at) VALUES (?, ?, ?, ?)',
-                [characterId, id1, id2, DateTime.now().toIso8601String()],
-              );
-            }
+          final proposalId = await MemoryGuardService.proposeLink(
+            characterId: characterId,
+            mode: mode,
+            sourceConversationId: windowId,
+            targetIds: ids,
+          );
+          if (proposalId != null) {
+            MemoryActions.registerProposal(
+              windowId,
+              proposalId: proposalId,
+              log: '◌ 提出連線 ${ids.length} 條記憶建議',
+            );
           }
-          await batch.commit(noResult: true);
         }
       }
     }
@@ -229,6 +234,20 @@ class SpiderWebCore {
   static String? takePendingForceRecall(String windowId) =>
       _pendingForceRecallByWindow.remove(windowId);
 
+  /// 只讀查看；組 prompt 時不得先消費，否則請求失敗會永久丟失回想。
+  static String? peekPendingForceRecall(String windowId) =>
+      _pendingForceRecallByWindow[windowId];
+
+  /// 僅在實際送達模型後消費，且避免清掉期間被新值覆蓋的回想。
+  static void consumePendingForceRecall(
+    String windowId,
+    String expectedKeyword,
+  ) {
+    if (_pendingForceRecallByWindow[windowId] == expectedKeyword) {
+      _pendingForceRecallByWindow.remove(windowId);
+    }
+  }
+
   static void releaseWindow(String windowId) {
     _pendingForceRecallByWindow.remove(windowId);
   }
@@ -246,24 +265,34 @@ class SpiderWebCore {
     final db = await DatabaseHelper.database;
     final ph = List.filled(oldIds.length, '?').join(',');
     final edges = await db.rawQuery(
-      'SELECT memory_id_1, memory_id_2 FROM spider_web_links '
+      'SELECT * FROM spider_web_links '
       'WHERE memory_id_1 IN ($ph) OR memory_id_2 IN ($ph)',
       [...oldIds, ...oldIds],
     );
     final oldSet = oldIds.toSet();
     final batch = db.batch();
     for (final e in edges) {
+      if (e['status']?.toString() != 'confirmed') continue;
       final a = e['memory_id_1'] as int;
       final b = e['memory_id_2'] as int;
       // 另一端：不在舊集合裡的那個；兩端都是舊條 = 內部邊，丟
       final other = oldSet.contains(a) ? b : a;
       if (oldSet.contains(other) || other == newId) continue;
       batch.rawInsert(
-        'INSERT OR IGNORE INTO spider_web_links (character_id, memory_id_1, memory_id_2, created_at) VALUES (?, ?, ?, ?)',
+        'INSERT OR IGNORE INTO spider_web_links '
+        '(character_id, memory_id_1, memory_id_2, created_at, relation_type, '
+        'strength, status, source, reason, updated_at) '
+        'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
         [
           characterId,
           min(newId, other),
           max(newId, other),
+          DateTime.now().toIso8601String(),
+          e['relation_type']?.toString() ?? 'related',
+          (e['strength'] as num?)?.toDouble() ?? 1.0,
+          'confirmed',
+          'merge_remap',
+          e['reason']?.toString() ?? '',
           DateTime.now().toIso8601String(),
         ],
       );

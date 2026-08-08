@@ -183,6 +183,22 @@ class MemorySettings {
     await p.setInt(_keyMemBudgetTotal, v);
   }
 
+  // ═══ 每輪記憶發送條數上限 ═══
+  static const String _keyMemorySendLimit = 'memory_send_limit_v1';
+  static const int defaultMemorySendLimit = 10;
+  static const int maxMemorySendLimit = 500;
+
+  static Future<int> getMemorySendLimit() async {
+    final p = await SharedPreferences.getInstance();
+    final value = p.getInt(_keyMemorySendLimit) ?? defaultMemorySendLimit;
+    return value.clamp(1, maxMemorySendLimit);
+  }
+
+  static Future<void> saveMemorySendLimit(int value) async {
+    final p = await SharedPreferences.getInstance();
+    await p.setInt(_keyMemorySendLimit, value.clamp(1, maxMemorySendLimit));
+  }
+
   // ═══ 蛛網記憶預算 ═══
   static const String _keySpiderWebBudget = 'spider_web_budget_total';
 

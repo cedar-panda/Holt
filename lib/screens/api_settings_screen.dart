@@ -6,6 +6,8 @@ import '../theme/app_theme.dart';
 import '../services/locale_strings.dart';
 import '../services/openai_compatible_service.dart';
 import '../services/openrouter_service.dart';
+import '../services/model_info.dart';
+import '../services/xai_service.dart';
 import '../services/thinking_machines_service.dart';
 import '../services/model_cost_policy.dart';
 import '../services/settings_manager.dart';
@@ -99,6 +101,7 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
   }
 
   final _apiKeyController = TextEditingController();
+  final _xaiKeyCtrl = TextEditingController();
   final _systemPromptController = TextEditingController();
 
   final _geminiKeyCtrl = TextEditingController();
@@ -140,6 +143,7 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
 
   Future<void> _loadSettings() async {
     final apiKey = await ApiSettings.getOpenRouterApiKey();
+    final xaiKey = await ApiSettings.getXaiApiKey();
     final systemPrompt = await ApiSettings.getSystemPrompt();
     final provider = await ApiSettings.getApiProvider();
 
@@ -180,6 +184,7 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
     if (mounted) {
       setState(() {
         _apiKeyController.text = apiKey;
+        _xaiKeyCtrl.text = xaiKey;
         _systemPromptController.text = systemPrompt;
         _provider = provider;
 
@@ -212,6 +217,8 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
       });
       if (_provider == 'openrouter' && apiKey.isNotEmpty) {
         _fetchModels();
+      } else if (_provider == 'xai' && xaiKey.isNotEmpty) {
+        _fetchModels();
       } else if (_provider == 'openai_compatible' && oaiBase.isNotEmpty) {
         _fetchModels();
       }
@@ -228,8 +235,11 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
   Future<void> _fetchModels() async {
     final requestGeneration = ++_modelFetchGeneration;
     final isCompatible = _provider == 'openai_compatible';
+    final isXai = _provider == 'xai';
     final apiKey = isCompatible
         ? _oaiCompatKeyCtrl.text.trim()
+        : isXai
+        ? _xaiKeyCtrl.text.trim()
         : _apiKeyController.text.trim();
     final baseUrl = _oaiCompatBaseUrlCtrl.text.trim();
     if ((!isCompatible && apiKey.isEmpty) ||
@@ -255,11 +265,13 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
               baseUrl: baseUrl,
               apiKey: apiKey,
             )
+          : isXai
+          ? await XaiService.fetchModels(apiKey)
           : await OpenRouterService.fetchModels(apiKey);
       if (mounted && requestGeneration == _modelFetchGeneration) {
         await ApiSettings.rememberStarredModelProviders(
           models.map((model) => model.id),
-          isCompatible ? 'openai_compatible' : 'openrouter',
+          isCompatible ? 'openai_compatible' : (isXai ? 'xai' : 'openrouter'),
         );
         if (!mounted || requestGeneration != _modelFetchGeneration) return;
         setState(() {
@@ -301,6 +313,18 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
     _modelFetchTimer?.cancel();
     final uri = Uri.tryParse(baseUrl.trim());
     if (uri == null || !uri.hasScheme || uri.host.isEmpty) return;
+    _modelFetchTimer = Timer(
+      const Duration(milliseconds: 700),
+      () => unawaited(_fetchModels()),
+    );
+  }
+
+  void _scheduleXaiModelFetch(String key) {
+    _modelFetchTimer?.cancel();
+    if (key.trim().length < 8) {
+      _modelFetchGeneration++;
+      return;
+    }
     _modelFetchTimer = Timer(
       const Duration(milliseconds: 700),
       () => unawaited(_fetchModels()),
@@ -377,6 +401,13 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
         response = await http
             .get(
               Uri.parse('https://openrouter.ai/api/v1/models'),
+              headers: {'Authorization': 'Bearer $keyStr'},
+            )
+            .timeout(const Duration(seconds: 20));
+      } else if (provider == 'xai') {
+        response = await http
+            .get(
+              Uri.parse('https://api.x.ai/v1/language-models'),
               headers: {'Authorization': 'Bearer $keyStr'},
             )
             .timeout(const Duration(seconds: 20));
@@ -478,6 +509,7 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
 
   String _providerLabel(String provider) => switch (provider) {
     'openrouter' => 'OpenRouter',
+    'xai' => 'xAI (Grok)',
     'gemini' => 'Google Gemini',
     'deepseek' => 'DeepSeek',
     'qwen' => 'Qwen',
@@ -644,6 +676,7 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
     // 先取完整快照；保存途中繼續輸入時，下一輪會再保存新快照，
     // 不會讓同一輪混入新舊欄位值。
     final openRouterKey = _apiKeyController.text.trim();
+    final xaiKey = _xaiKeyCtrl.text.trim();
     final systemPrompt = _systemPromptController.text.trim();
     final provider = _provider;
     final model = _modelValueForProvider();
@@ -663,6 +696,7 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
     final summaryModel = _summaryModel;
 
     await ApiSettings.saveOpenRouterApiKey(openRouterKey);
+    await ApiSettings.saveXaiApiKey(xaiKey);
     await ApiSettings.saveSystemPrompt(systemPrompt);
     await ApiSettings.saveProviderModelSelection(provider, model);
     await ApiSettings.saveGeminiApiKey(geminiKey);
@@ -706,6 +740,7 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
     _modelFetchTimer?.cancel();
     _modelFetchGeneration++;
     _apiKeyController.dispose();
+    _xaiKeyCtrl.dispose();
     _systemPromptController.dispose();
     _geminiKeyCtrl.dispose();
     _deepseekKeyCtrl.dispose();
@@ -1029,6 +1064,10 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
                                     child: Text('OpenRouter'),
                                   ),
                                   DropdownMenuItem(
+                                    value: 'xai',
+                                    child: Text('xAI (Grok)'),
+                                  ),
+                                  DropdownMenuItem(
                                     value: 'gemini',
                                     child: Text('Google Gemini'),
                                   ),
@@ -1071,6 +1110,7 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
                                   if (!mounted) return;
                                   setState(() => _selectedModel = savedModel);
                                   if (v == 'openrouter' ||
+                                      v == 'xai' ||
                                       v == 'openai_compatible') {
                                     _fetchModels();
                                   } else {
@@ -1146,6 +1186,107 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
                                             ),
                                           ),
                                   ],
+                                ),
+                              ),
+                            ],
+                            if (_provider == 'xai') ...[
+                              _buildGlassCard(
+                                child: TextField(
+                                  controller: _xaiKeyCtrl,
+                                  obscureText: _obscureProviderKeys,
+                                  style: YanciTheme.bodyText.copyWith(
+                                    fontSize: 13,
+                                  ),
+                                  onChanged: (value) {
+                                    _scheduleXaiModelFetch(value);
+                                    _debouncedSave();
+                                  },
+                                  decoration: InputDecoration(
+                                    hintText: 'xAI API Key',
+                                    hintStyle: YanciTheme.bodySmall.copyWith(
+                                      color: YanciTheme.textSecondary
+                                          .withValues(alpha: 0.4),
+                                    ),
+                                    suffixIconConstraints: const BoxConstraints(
+                                      minWidth: 88,
+                                    ),
+                                    suffixIcon: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        if (_isTestingApi)
+                                          const Padding(
+                                            padding: EdgeInsets.all(12),
+                                            child: SizedBox(
+                                              width: 16,
+                                              height: 16,
+                                              child: CircularProgressIndicator(
+                                                strokeWidth: 2,
+                                              ),
+                                            ),
+                                          )
+                                        else
+                                          IconButton(
+                                            icon: const Icon(
+                                              Icons.wifi_protected_setup,
+                                              size: 18,
+                                            ),
+                                            tooltip: L.pick(
+                                              en: 'Test xAI connection',
+                                              zhTW: '測試 xAI 連線',
+                                            ),
+                                            onPressed: () => _testApiConnection(
+                                              'xai',
+                                              _xaiKeyCtrl.text.trim(),
+                                            ),
+                                          ),
+                                        if (_isFetchingModels)
+                                          const Padding(
+                                            padding: EdgeInsets.all(12),
+                                            child: SizedBox(
+                                              width: 16,
+                                              height: 16,
+                                              child: CircularProgressIndicator(
+                                                strokeWidth: 2,
+                                              ),
+                                            ),
+                                          )
+                                        else
+                                          IconButton(
+                                            icon: const Icon(
+                                              Icons.refresh,
+                                              size: 18,
+                                            ),
+                                            tooltip: L.get(
+                                              'settings_model_refresh',
+                                            ),
+                                            onPressed: _fetchModels,
+                                          ),
+                                      ],
+                                    ),
+                                    border: InputBorder.none,
+                                    contentPadding: const EdgeInsets.symmetric(
+                                      vertical: 12,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(height: YanciTheme.spacingXs),
+                              Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 4,
+                                ),
+                                child: Text(
+                                  L.pick(
+                                    en: 'Grok prompt cache is automatic. Holt keeps a private append-only context ledger and sends x-grok-conv-id; no Anthropic cache_control is used.',
+                                    zhTW:
+                                        'Grok 使用官方自動 Prompt Cache。Holt 會保存本機隱藏的只追加背景並傳送 x-grok-conv-id；不會套用 Claude 的 cache_control。',
+                                  ),
+                                  style: YanciTheme.bodySmall.copyWith(
+                                    color: YanciTheme.textSecondary.withValues(
+                                      alpha: 0.65,
+                                    ),
+                                    fontSize: 11,
+                                  ),
                                 ),
                               ),
                             ],

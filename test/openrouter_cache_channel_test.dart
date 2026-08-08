@@ -32,14 +32,14 @@ void main() {
       ).join(' ');
       final textPrompt = StructuredPrompt(
         staticPart: staticPrefix,
-        dynamicPart: 'LIVE TEXT',
-        cacheStableDynamicPart: 'STABLE TEXT',
+        windowPart: 'TEXT WINDOW',
+        liveStatePart: 'LIVE TEXT',
         cacheChannel: PromptCacheChannel.text,
       );
       final callPrompt = StructuredPrompt(
         staticPart: staticPrefix,
-        dynamicPart: 'LIVE CALL',
-        cacheStableDynamicPart: 'STABLE CALL',
+        windowPart: 'CALL WINDOW',
+        liveStatePart: 'LIVE CALL',
         cacheChannel: PromptCacheChannel.call,
       );
       final firstTextHistory = <Map<String, String>>[

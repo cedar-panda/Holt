@@ -316,15 +316,20 @@ class _YanciAppState extends State<YanciApp> with WidgetsBindingObserver {
             final args = settings.arguments;
             String charId;
             var initialTab = 0;
+            int? sourceMessageId;
             if (args is Map) {
               charId = args['characterId'] as String? ?? 'default';
               initialTab = args['initialTab'] as int? ?? 0;
+              sourceMessageId = args['sourceMessageId'] as int?;
             } else {
               charId = args as String? ?? 'default';
             }
             return MaterialPageRoute(
-              builder: (_) =>
-                  MemoryScreen(characterId: charId, initialTab: initialTab),
+              builder: (_) => MemoryScreen(
+                characterId: charId,
+                initialTab: initialTab,
+                initialSourceMessageId: sourceMessageId,
+              ),
             );
           }
           if (settings.name == '/sticker') {

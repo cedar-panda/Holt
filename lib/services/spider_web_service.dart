@@ -29,8 +29,8 @@ class SpiderWebService {
   <memo_del>id</memo_del>  Delete outdated/wrong memories (comma-separated, recoverable)
   <memo_merge>id,id|[Category] new content @triggers</memo_merge>  Merge duplicates into one
   
-  <memo_link>id1,id2</memo_link>
-  Actively link two memories when you discover a potential connection. This will create a neural network resonance upon future triggers.
+  <memo_link>id1,id2,...</memo_link>
+  When the injected memories reveal a meaningful group, include every related id. The user will review the proposed links in this chat before anything is connected.
   
   <force_recall>keyword</force_recall>
   Use when memory is hazy or you want to recall more details. The system will retrieve detailed memories in the background and inject them in the next conversation.
@@ -74,8 +74,8 @@ class SpiderWebService {
   <memo_del>id</memo_del>  刪除過時記憶
   <memo_merge>id,id|[類別] 新內容 @觸發詞</memo_merge>  合併相似記憶
   
-  <memo_link>id1,id2</memo_link>
-  發現兩條記憶有關聯時可以串聯起來。
+  <memo_link>id1,id2,...</memo_link>
+  本輪帶入的記憶若形成有意義的關聯群，請列出所有相關編號。系統會先在對話內讓使用者確認，不會直接建立連線。
   
   <force_recall>關鍵字</force_recall>
   想要進一步回想細節時可以呼叫它。

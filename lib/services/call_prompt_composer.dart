@@ -1,15 +1,21 @@
 class CallTurnPayload {
   final List<Map<String, String>> messages;
-  final String dynamicPart;
+  final String controlPart;
+  final String liveStatePart;
 
-  const CallTurnPayload({required this.messages, required this.dynamicPart});
+  const CallTurnPayload({
+    required this.messages,
+    required this.controlPart,
+    required this.liveStatePart,
+  });
 }
 
 /// Keeps live-call runtime instructions in system context.
 ///
 /// [messages] must contain only the user's real utterances/actions and the
 /// assistant's replies. Time, mode, tag rules, and hidden call-state notes
-/// belong in [dynamicPart].
+/// Mode/tag/tool rules belong in [CallTurnPayload.controlPart]. Time and recalled
+/// state belong in [CallTurnPayload.liveStatePart].
 class CallPromptComposer {
   static const String dialToCharacterAction = '[call_action:dial_to_character]';
   static const String acceptCharacterCallAction =
@@ -32,12 +38,15 @@ class CallPromptComposer {
     }
 
     final weekdays = ['一', '二', '三', '四', '五', '六', '日'];
-    final runtimeInstructions = <String>[
-      '【系統提示】',
+    final timeState = <String>[
+      '### 當前時間',
       '現在時間：${now.year}年${now.month}月${now.day}日 '
           '週${weekdays[now.weekday - 1]} '
           '${now.hour.toString().padLeft(2, '0')}:'
           '${now.minute.toString().padLeft(2, '0')}',
+    ].join('\n');
+    final callControls = <String>[
+      '### 語音通話模式',
       '模式：語音通話中 — 口語化、簡短自然，像講電話。一句一句說，不要一大段。'
           '不要 markdown、不要動作描述或旁白，只說出口的話。',
       if (allowAudioTags)
@@ -55,9 +64,10 @@ class CallPromptComposer {
 
     return CallTurnPayload(
       messages: messages,
-      dynamicPart: [
+      controlPart: callControls,
+      liveStatePart: [
         ...dynamicParts.where((part) => part.trim().isNotEmpty),
-        runtimeInstructions,
+        timeState,
       ].join('\n\n'),
     );
   }

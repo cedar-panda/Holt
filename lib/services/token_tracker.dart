@@ -32,13 +32,13 @@ class TokenTracker {
     _completionTokens += completion;
     _cacheHitTokens += cacheHit;
 
-    final cost = _estimateCost(
-      model,
-      prompt,
-      completion,
-      cacheHit,
-      cacheCreation,
-    );
+    // Native xAI and OpenRouter return the amount actually billed after cache
+    // discounts. Prefer that over a generic local price table; other providers
+    // keep the existing estimator fallback.
+    final actualCost = usage.diagnostics['actual_cost_usd'];
+    final cost = actualCost is num
+        ? actualCost.toDouble()
+        : _estimateCost(model, prompt, completion, cacheHit, cacheCreation);
 
     await DatabaseHelper.logUsage(
       provider: provider,

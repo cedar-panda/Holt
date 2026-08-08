@@ -4,6 +4,7 @@ import 'package:http/http.dart' as http;
 import 'api_adapter.dart';
 import 'sse_stream.dart';
 import 'stream_transport.dart';
+import 'system_context_debug.dart';
 
 /// DeepSeek API（OpenAI 兼容格式，自動 prompt caching）
 /// 不需要手動標記 cache_control，DeepSeek 自動緩存重複前綴
@@ -176,19 +177,11 @@ class DeepSeekService implements ApiAdapter {
   }) {
     final allMessages = <Map<String, dynamic>>[];
 
-    // User turn 僅保留用戶原文；runtime context 使用獨立 system message。
-    final staticPrompt = structuredPrompt?.staticPart ?? systemPrompt ?? '';
-    final profilePrompt = structuredPrompt?.profilePart ?? '';
-    final dynamicPrompt = structuredPrompt?.dynamicPart ?? '';
-
-    if (staticPrompt.isNotEmpty) {
-      allMessages.add({'role': 'system', 'content': staticPrompt});
-    }
-    if (profilePrompt.isNotEmpty) {
-      allMessages.add({'role': 'system', 'content': profilePrompt});
-    }
-    if (dynamicPrompt.isNotEmpty) {
-      allMessages.add({'role': 'system', 'content': dynamicPrompt});
+    // system 僅保留穩定前綴；動態 runtime 在歷史後作 request-only system。
+    final systemParts =
+        structuredPrompt?.cacheableParts ?? <String>[systemPrompt ?? ''];
+    for (final part in systemParts.where((part) => part.isNotEmpty)) {
+      allMessages.add({'role': 'system', 'content': part});
     }
 
     for (final m in messages) {
@@ -198,11 +191,33 @@ class DeepSeekService implements ApiAdapter {
       });
     }
 
-    return {
+    final liveState = structuredPrompt?.liveStatePart ?? '';
+    final attached = RuntimeContextSidecar.insertSystemBeforeLatestUser(
+      allMessages,
+      liveState,
+    );
+
+    final body = <String, dynamic>{
       'model': model.contains('/') ? model.split('/').last : model,
       'messages': allMessages,
       'stream': stream,
     };
+    if (structuredPrompt != null) {
+      SystemContextDebug.recordChatRequest(
+        provider: 'deepseek',
+        model: model,
+        cacheChannel: structuredPrompt.cacheChannel,
+        sessionId: CacheSession.conversationId,
+        transport: attached ? 'system_before_latest_user' : '',
+        sourceMessages: messages,
+        requestMessages: allMessages,
+        stableContext: systemParts.join('\n\n'),
+        liveState: liveState,
+        cacheEnabled: true,
+        expectTime: liveState.trim().isNotEmpty,
+      );
+    }
+    return body;
   }
 
   Map<String, int>? _extractCacheStats(Map<String, dynamic> data) {

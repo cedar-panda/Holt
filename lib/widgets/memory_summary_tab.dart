@@ -7,7 +7,7 @@ import '../services/context_compressor.dart';
 import '../services/locale_strings.dart';
 import '../services/token_estimator.dart';
 
-/// 摘要 Tab — 視窗摘要卡片流 + 關鍵詞召回區
+/// 摘要 Tab — 無底色條目流 + 關鍵詞召回區
 class MemorySummaryTab extends StatefulWidget {
   final String characterId;
   final VoidCallback? onSummaryModified;
@@ -119,8 +119,22 @@ class _MemorySummaryTabState extends State<MemorySummaryTab>
     );
     if (!mounted) return;
     setState(() {
-      _summaries = summaries.reversed.toList(); // 新→舊
-      _keywords = keywords;
+      _summaries = summaries.reversed.map((row) {
+        return <String, dynamic>{
+          ...row,
+          'content': ContextCompressor.normalizeSummaryFormat(
+            row['content'] as String? ?? '',
+          ),
+        };
+      }).toList(); // 新→舊
+      _keywords = keywords.map((row) {
+        return <String, dynamic>{
+          ...row,
+          'source_summary_content': ContextCompressor.normalizeSummaryFormat(
+            row['source_summary_content'] as String? ?? '',
+          ),
+        };
+      }).toList();
       _loading = false;
     });
     _staggerCtrl.forward(from: 0.0);
@@ -145,7 +159,7 @@ class _MemorySummaryTabState extends State<MemorySummaryTab>
 
   Future<void> _saveEdit(Map<String, dynamic> summary) async {
     final id = summary['id'] as int;
-    final newContent = _editCtrl.text.trim();
+    final newContent = ContextCompressor.normalizeSummaryFormat(_editCtrl.text);
     if (newContent.isEmpty) return;
     final newTokens = TokenEstimator.estimate(newContent);
     await DatabaseHelper.updateContextSummary(
@@ -396,7 +410,7 @@ class _MemorySummaryTabState extends State<MemorySummaryTab>
         return ListView(
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 80),
           children: [
-            // 視窗摘要卡片流
+            // 視窗摘要條目流
             ..._buildSummaryCards(),
             // 關鍵詞召回區
             if (_keywords.isNotEmpty) ...[
@@ -443,174 +457,184 @@ class _MemorySummaryTabState extends State<MemorySummaryTab>
         ? '${date.month}/${date.day} ${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}'
         : '';
 
-    return Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: YanciTheme.glassInputBg,
-        borderRadius: BorderRadius.circular(YanciTheme.radiusSm),
-        border: Border.all(
-          color: isLocked
-              ? YanciTheme.accent.withValues(alpha: 0.35)
-              : YanciTheme.textSecondary.withValues(alpha: 0.08),
-          width: 0.5,
-        ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Header: date + badges
-          Row(
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                dateStr,
-                style: TextStyle(
-                  fontSize: 10,
-                  color: YanciTheme.textSecondary.withValues(alpha: 0.5),
-                ),
-              ),
-              if (windowId.isNotEmpty) ...[
-                const SizedBox(width: 6),
-                Text(
-                  '#$windowId',
-                  style: TextStyle(
-                    fontSize: 9,
-                    color: YanciTheme.textSecondary.withValues(alpha: 0.3),
-                    fontFamily: 'monospace',
+              // Header: date + badges
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 6,
+                      vertical: 2,
+                    ),
+                    decoration: BoxDecoration(
+                      color: YanciTheme.accent.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: Text(
+                      dateStr.isEmpty
+                          ? L.pick(en: 'Summary', zhTW: '摘要', zhCN: '摘要')
+                          : dateStr,
+                      style: TextStyle(fontSize: 10, color: YanciTheme.accent),
+                    ),
                   ),
-                ),
-              ],
-              const Spacer(),
-              if (isLocked) const Text('🔒', style: TextStyle(fontSize: 12)),
-            ],
-          ),
-          const SizedBox(height: 8),
-
-          // Content
-          GestureDetector(
-            onTap: isEditing
-                ? null
-                : () {
-                    setState(() {
-                      _expandedSummaryId = isExpanded ? null : id;
-                      if (!isExpanded) _editingSummaryId = null;
-                    });
-                  },
-            child: AnimatedSize(
-              duration: const Duration(milliseconds: 200),
-              curve: Curves.easeOutCubic,
-              alignment: Alignment.topCenter,
-              child: isEditing
-                  ? TextField(
-                      controller: _editCtrl,
-                      maxLines: null,
-                      style: YanciTheme.bodyText.copyWith(fontSize: 13),
-                      decoration: InputDecoration(
-                        border: InputBorder.none,
-                        hintText: L.pick(
-                          en: 'Edit summary...',
-                          zhTW: '編輯摘要...',
-                        ),
-                        hintStyle: TextStyle(
-                          color: YanciTheme.textSecondary.withValues(
-                            alpha: 0.3,
-                          ),
-                        ),
-                      ),
-                    )
-                  : SizedBox(
-                      width: double.infinity,
-                      child: _buildSummaryMarkdown(
-                        content,
-                        maxHeight: isExpanded && needsFullReader
-                            ? 164
-                            : (!isExpanded ? 68 : null),
+                  if (windowId.isNotEmpty) ...[
+                    const SizedBox(width: 6),
+                    Text(
+                      '#$windowId',
+                      style: TextStyle(
+                        fontSize: 9,
+                        color: YanciTheme.textSecondary.withValues(alpha: 0.3),
+                        fontFamily: 'monospace',
                       ),
                     ),
-            ),
-          ),
+                  ],
+                  const Spacer(),
+                  if (isLocked)
+                    const Text('🔒', style: TextStyle(fontSize: 12)),
+                ],
+              ),
+              const SizedBox(height: 8),
 
-          // Action bar (visible when expanded)
-          if (isExpanded) ...[
-            if (!isEditing && needsFullReader)
-              Align(
-                alignment: Alignment.centerRight,
-                child: TextButton.icon(
-                  key: const ValueKey('summary-full-reader-button'),
-                  onPressed: () => _showFullSummary(
-                    content: content,
-                    dateLabel: dateStr,
-                    windowId: windowId,
-                  ),
-                  icon: const Icon(Icons.menu_book_outlined, size: 15),
-                  label: Text(L.pick(en: 'Read all', zhTW: '閱讀全文')),
-                  style: TextButton.styleFrom(
-                    foregroundColor: YanciTheme.accent.withValues(alpha: 0.8),
-                    minimumSize: const Size(44, 44),
-                    padding: const EdgeInsets.symmetric(horizontal: 8),
-                    textStyle: const TextStyle(fontSize: 11),
-                  ),
+              // Content
+              GestureDetector(
+                onTap: isEditing
+                    ? null
+                    : () {
+                        setState(() {
+                          _expandedSummaryId = isExpanded ? null : id;
+                          if (!isExpanded) _editingSummaryId = null;
+                        });
+                      },
+                child: AnimatedSize(
+                  duration: const Duration(milliseconds: 200),
+                  curve: Curves.easeOutCubic,
+                  alignment: Alignment.topCenter,
+                  child: isEditing
+                      ? TextField(
+                          controller: _editCtrl,
+                          maxLines: null,
+                          style: YanciTheme.bodyText.copyWith(fontSize: 13),
+                          decoration: InputDecoration(
+                            border: InputBorder.none,
+                            hintText: L.pick(
+                              en: 'Edit summary...',
+                              zhTW: '編輯摘要...',
+                            ),
+                            hintStyle: TextStyle(
+                              color: YanciTheme.textSecondary.withValues(
+                                alpha: 0.3,
+                              ),
+                            ),
+                          ),
+                        )
+                      : SizedBox(
+                          width: double.infinity,
+                          child: _buildSummaryMarkdown(
+                            content,
+                            maxHeight: isExpanded && needsFullReader
+                                ? 164
+                                : (!isExpanded ? 68 : null),
+                          ),
+                        ),
                 ),
               ),
-            const SizedBox(height: 10),
-            Row(
-              children: [
-                // 編輯
-                _actionIcon(
-                  icon: isEditing ? Icons.check_rounded : Icons.edit_outlined,
-                  tooltip: L.pick(
-                    en: isEditing ? 'Save' : 'Edit',
-                    zhTW: isEditing ? '保存' : '編輯',
+
+              // Action bar (visible when expanded)
+              if (isExpanded) ...[
+                if (!isEditing && needsFullReader)
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: TextButton.icon(
+                      key: const ValueKey('summary-full-reader-button'),
+                      onPressed: () => _showFullSummary(
+                        content: content,
+                        dateLabel: dateStr,
+                        windowId: windowId,
+                      ),
+                      icon: const Icon(Icons.menu_book_outlined, size: 15),
+                      label: Text(L.pick(en: 'Read all', zhTW: '閱讀全文')),
+                      style: TextButton.styleFrom(
+                        foregroundColor: YanciTheme.accent.withValues(
+                          alpha: 0.8,
+                        ),
+                        minimumSize: const Size(44, 44),
+                        padding: const EdgeInsets.symmetric(horizontal: 8),
+                        textStyle: const TextStyle(fontSize: 11),
+                      ),
+                    ),
                   ),
-                  onTap: () {
-                    if (isEditing) {
-                      _saveEdit(summary);
-                    } else {
-                      _editCtrl.text = content;
-                      setState(() => _editingSummaryId = id);
-                    }
-                  },
-                ),
-                const SizedBox(width: 16),
-                // 鎖定
-                _actionIcon(
-                  icon: isLocked ? Icons.lock_rounded : Icons.lock_open_rounded,
-                  tooltip: L.pick(
-                    en: isLocked ? 'Unlock' : 'Lock',
-                    zhTW: isLocked ? '解鎖' : '鎖定',
-                  ),
-                  color: isLocked ? YanciTheme.accent : null,
-                  onTap: () => _toggleLock(summary),
-                ),
-                const SizedBox(width: 16),
-                // 重新生成
-                _actionIcon(
-                  icon: Icons.refresh_rounded,
-                  tooltip: L.pick(en: 'Regenerate', zhTW: '重新生成'),
-                  onTap: () => _regenerate(summary),
-                ),
-                const SizedBox(width: 16),
-                // 刪除
-                _actionIcon(
-                  icon: Icons.delete_outline_rounded,
-                  tooltip: L.pick(en: 'Delete', zhTW: '刪除'),
-                  color: Colors.red.withValues(alpha: 0.6),
-                  onTap: () => _deleteSummary(summary),
-                ),
-                const Spacer(),
-                // Token count
-                Text(
-                  '≈${summary['token_count'] ?? 0}t',
-                  style: TextStyle(
-                    fontSize: 10,
-                    color: YanciTheme.textSecondary.withValues(alpha: 0.3),
-                  ),
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    // 編輯
+                    _actionIcon(
+                      icon: isEditing
+                          ? Icons.check_rounded
+                          : Icons.edit_outlined,
+                      tooltip: L.pick(
+                        en: isEditing ? 'Save' : 'Edit',
+                        zhTW: isEditing ? '保存' : '編輯',
+                      ),
+                      onTap: () {
+                        if (isEditing) {
+                          _saveEdit(summary);
+                        } else {
+                          _editCtrl.text = content;
+                          setState(() => _editingSummaryId = id);
+                        }
+                      },
+                    ),
+                    const SizedBox(width: 16),
+                    // 鎖定
+                    _actionIcon(
+                      icon: isLocked
+                          ? Icons.lock_rounded
+                          : Icons.lock_open_rounded,
+                      tooltip: L.pick(
+                        en: isLocked ? 'Unlock' : 'Lock',
+                        zhTW: isLocked ? '解鎖' : '鎖定',
+                      ),
+                      color: isLocked ? YanciTheme.accent : null,
+                      onTap: () => _toggleLock(summary),
+                    ),
+                    const SizedBox(width: 16),
+                    // 重新生成
+                    _actionIcon(
+                      icon: Icons.refresh_rounded,
+                      tooltip: L.pick(en: 'Regenerate', zhTW: '重新生成'),
+                      onTap: () => _regenerate(summary),
+                    ),
+                    const SizedBox(width: 16),
+                    // 刪除
+                    _actionIcon(
+                      icon: Icons.delete_outline_rounded,
+                      tooltip: L.pick(en: 'Delete', zhTW: '刪除'),
+                      color: Colors.red.withValues(alpha: 0.6),
+                      onTap: () => _deleteSummary(summary),
+                    ),
+                    const Spacer(),
+                    // Token count
+                    Text(
+                      '≈${summary['token_count'] ?? 0}t',
+                      style: TextStyle(
+                        fontSize: 10,
+                        color: YanciTheme.textSecondary.withValues(alpha: 0.3),
+                      ),
+                    ),
+                  ],
                 ),
               ],
-            ),
-          ],
-        ],
-      ),
+            ],
+          ),
+        ),
+        if (index < _summaries.length - 1) const _SummaryFadeDivider(),
+      ],
     );
   }
 
@@ -711,12 +735,14 @@ class _MemorySummaryTabState extends State<MemorySummaryTab>
     required VoidCallback onTap,
   }) {
     final c = color ?? YanciTheme.textSecondary.withValues(alpha: 0.45);
-    return GestureDetector(
-      onTap: onTap,
-      child: Tooltip(
-        message: tooltip,
-        child: Icon(icon, size: 18, color: c),
-      ),
+    return IconButton(
+      onPressed: onTap,
+      tooltip: tooltip,
+      iconSize: 18,
+      color: c,
+      padding: EdgeInsets.zero,
+      constraints: const BoxConstraints.tightFor(width: 44, height: 44),
+      icon: Icon(icon),
     );
   }
 
@@ -876,6 +902,41 @@ class _MemorySummaryTabState extends State<MemorySummaryTab>
           ),
         ],
       ],
+    );
+  }
+}
+
+class _SummaryFadeDivider extends StatelessWidget {
+  const _SummaryFadeDivider();
+
+  @override
+  Widget build(BuildContext context) {
+    final line = YanciTheme.textSecondary.withValues(alpha: 0.16);
+    return ExcludeSemantics(
+      child: SizedBox(
+        height: 10,
+        child: Row(
+          children: [
+            Expanded(
+              child: Container(
+                height: 0.7,
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(colors: [Colors.transparent, line]),
+                ),
+              ),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Container(
+                height: 0.7,
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(colors: [line, Colors.transparent]),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

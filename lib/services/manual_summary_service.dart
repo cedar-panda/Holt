@@ -157,7 +157,7 @@ class ManualSummaryService {
       fallbackExcerpt: fallbackExcerpt,
     );
     final decoded = ContextCompressor.decodeSummaryEnvelope(rawResponse);
-    final content = _normalizeSummary(decoded.summary);
+    final content = ContextCompressor.normalizeSummaryFormat(decoded.summary);
     if (content.isEmpty) {
       throw Exception('摘要模型沒有返回內容');
     }
@@ -181,8 +181,7 @@ class ManualSummaryService {
             sourceMessages: sourceMessages,
           );
 
-    final savedContent =
-        '${L.pick(en: '【Manual Summary】', zhTW: '【手動摘要】')}\n$content';
+    final savedContent = content;
     final windowId = await DatabaseHelper.ensureConversationWindowSummaryId(
       conversationId,
     );
@@ -443,17 +442,6 @@ class ManualSummaryService {
     } catch (_) {
       return payload.toString();
     }
-  }
-
-  static String _normalizeSummary(String raw) {
-    final trimmed = raw.trim();
-    if (trimmed.startsWith('```')) {
-      return trimmed
-          .replaceFirst(RegExp(r'^```[a-zA-Z0-9_-]*\s*'), '')
-          .replaceFirst(RegExp(r'\s*```$'), '')
-          .trim();
-    }
-    return trimmed;
   }
 
   static String _buildUserPrompt(

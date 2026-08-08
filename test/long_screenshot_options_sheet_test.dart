@@ -8,12 +8,12 @@ import 'package:project_yanci/widgets/long_screenshot_options_sheet.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  testWidgets('long screenshot options choose exact range and thinking', (
+  testWidgets('long screenshot options choose range and private details', (
     tester,
   ) async {
     SharedPreferences.setMockInitialValues(<String, Object>{});
     await L.setLocale('zh_TW');
-    tester.view.physicalSize = const Size(480, 900);
+    tester.view.physicalSize = const Size(390, 844);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
@@ -64,8 +64,43 @@ void main() {
     await tester.tap(find.text('open'));
     await tester.pumpAndSettle();
     expect(find.text('已選 3 條 · 最多 3 條'), findsOneWidget);
+    expect(
+      tester
+          .widget<Checkbox>(
+            find.descendant(
+              of: find.byKey(const ValueKey('longshot-thinking-toggle')),
+              matching: find.byType(Checkbox),
+            ),
+          )
+          .value,
+      isFalse,
+    );
+    expect(
+      tester
+          .widget<Checkbox>(
+            find.descendant(
+              of: find.byKey(const ValueKey('longshot-memory-toggle')),
+              matching: find.byType(Checkbox),
+            ),
+          )
+          .value,
+      isFalse,
+    );
+    expect(
+      tester
+          .widget<Checkbox>(
+            find.descendant(
+              of: find.byKey(const ValueKey('longshot-emotion-toggle')),
+              matching: find.byType(Checkbox),
+            ),
+          )
+          .value,
+      isFalse,
+    );
 
     await tester.tap(find.byKey(const ValueKey('longshot-thinking-toggle')));
+    await tester.tap(find.byKey(const ValueKey('longshot-memory-toggle')));
+    await tester.tap(find.byKey(const ValueKey('longshot-emotion-toggle')));
     await tester.tap(find.byKey(const ValueKey('longshot-start-selector')));
     await tester.tap(find.byKey(const ValueKey('longshot-message-0')));
     await tester.tap(find.byKey(const ValueKey('longshot-message-1')));
@@ -77,6 +112,8 @@ void main() {
     expect(result?.startIndex, 0);
     expect(result?.endIndex, 1);
     expect(result?.expandThinking, isTrue);
+    expect(result?.includeMemory, isTrue);
+    expect(result?.includeEmotion, isTrue);
     expect(tester.takeException(), isNull);
   });
 }

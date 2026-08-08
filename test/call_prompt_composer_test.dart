@@ -17,14 +17,14 @@ void main() {
     ]);
     expect(payload.messages.single['content'], isNot(contains('系統提示')));
     expect(payload.messages.single['content'], isNot(contains('<hangup/>')));
-    expect(payload.dynamicPart, contains('【系統提示】'));
-    expect(payload.dynamicPart, contains('<hangup/>'));
+    expect(payload.controlPart, contains('語音通話模式'));
+    expect(payload.controlPart, contains('<hangup/>'));
     expect(
-      payload.dynamicPart,
+      payload.controlPart,
       contains(CallPromptComposer.dialToCharacterAction),
     );
     expect(
-      payload.dynamicPart,
+      payload.controlPart,
       contains(CallPromptComposer.acceptCharacterCallAction),
     );
   });
@@ -40,6 +40,7 @@ void main() {
     expect(payload.messages, const [
       {'role': 'user', 'content': '（開始通話）'},
     ]);
-    expect(payload.dynamicPart, contains('[laughing]'));
+    expect(payload.controlPart, contains('[laughing]'));
+    expect(payload.liveStatePart, contains('13:05'));
   });
 }

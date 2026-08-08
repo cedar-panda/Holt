@@ -31,7 +31,7 @@ void main() {
     () async {
       await DatabaseHelper.createSchemaForTesting(db);
 
-      expect(DatabaseHelper.schemaVersionForTesting, 38);
+      expect(DatabaseHelper.schemaVersionForTesting, 40);
       expect(await _columnNames(db, 'messages'), contains('status'));
       expect(await _columnNames(db, 'characters'), contains('bio_clock'));
       expect(await _columnNames(db, 'sticky_notes'), contains('character_id'));
@@ -60,6 +60,7 @@ void main() {
           'emotion_points',
           'grudge_seals',
           'character_timeline',
+          'pending_memory_actions',
         ]),
       );
 
@@ -84,6 +85,9 @@ void main() {
           'idx_timeline_event_daily_unique',
           'idx_timeline_source_message',
           'idx_saved_message_unique',
+          'idx_pending_memory_character_status',
+          'idx_pending_memory_source_message',
+          'idx_spider_web_status',
         ]),
       );
       expect(
@@ -155,6 +159,41 @@ void main() {
 
     expect(await DatabaseHelper.getConversationSummaryCursor('conv-a'), 2);
   });
+
+  test(
+    'v39 adds the memory proposal inbox without touching existing data',
+    () async {
+      await DatabaseHelper.createSchemaForTesting(db);
+      await db.insert('memories', {
+        'character_id': 'char-a',
+        'mode': 'romance',
+        'category': '重要事件',
+        'content': '升級前記憶',
+        'created_at': '2026-08-05T00:00:00.000',
+        'updated_at': '2026-08-05T00:00:00.000',
+        'last_accessed': '2026-08-05T00:00:00.000',
+      });
+      await db.execute('DROP TABLE pending_memory_actions');
+
+      await DatabaseHelper.upgradeSchemaForTesting(db, 38);
+
+      expect(
+        await _objectNames(db, 'table'),
+        contains('pending_memory_actions'),
+      );
+      expect(
+        await _objectNames(db, 'index'),
+        containsAll([
+          'idx_pending_memory_character_status',
+          'idx_pending_memory_source_message',
+        ]),
+      );
+      expect(
+        await db.query('memories', where: 'content = ?', whereArgs: ['升級前記憶']),
+        hasLength(1),
+      );
+    },
+  );
 
   test(
     'v35 database reaches v38 before indexes use new timeline columns',
@@ -755,6 +794,158 @@ void main() {
       expect(await _relationCount(db, 'character_timeline', 'char-b'), 1);
     },
   );
+
+  test('batch archive and unlink are character-scoped and atomic', () async {
+    await DatabaseHelper.createSchemaForTesting(db);
+    final a1 = await _insertMemory(db, 'char-a', 'A1');
+    final a2 = await _insertMemory(db, 'char-a', 'A2');
+    final b1 = await _insertMemory(db, 'char-b', 'B1');
+    expect(await DatabaseHelper.insertSpiderWebLink('char-a', a1, a2), isTrue);
+
+    expect(
+      await DatabaseHelper.archiveMemories(
+        [a1, a2, b1, a2],
+        'batch',
+        characterId: 'char-a',
+      ),
+      2,
+    );
+    expect(await DatabaseHelper.getArchivedCount(characterId: 'char-a'), 2);
+    expect(await DatabaseHelper.getArchivedCount(characterId: 'char-b'), 0);
+    expect(
+      await db.query(
+        'memories',
+        where: 'id IN (?, ?) AND status = ?',
+        whereArgs: [a1, a2, 'deleted'],
+      ),
+      hasLength(2),
+    );
+    expect(
+      await db.query('memories', where: 'id = ?', whereArgs: [b1]),
+      isNotEmpty,
+    );
+    expect(await DatabaseHelper.deleteSpiderWebLink('char-b', a1, a2), isFalse);
+    expect(await DatabaseHelper.deleteSpiderWebLink('char-a', a1, a2), isTrue);
+    final rejectedLinks = await db.query('spider_web_links');
+    expect(rejectedLinks, hasLength(1));
+    expect(rejectedLinks.single['status'], 'rejected');
+    expect(await DatabaseHelper.getSpiderWebLinks('char-a'), isEmpty);
+  });
+
+  test(
+    'batch restore returns archived memories in one scoped operation',
+    () async {
+      await DatabaseHelper.createSchemaForTesting(db);
+      final first = await _insertMemory(db, 'char-a', 'first');
+      final second = await _insertMemory(db, 'char-a', 'second');
+      expect(
+        await DatabaseHelper.archiveMemories(
+          [first, second],
+          'batch restore test',
+          characterId: 'char-a',
+        ),
+        2,
+      );
+      final archiveIds = (await DatabaseHelper.getArchivedMemories(
+        characterId: 'char-a',
+      )).map((row) => row['id'] as int).toList();
+
+      expect(
+        await DatabaseHelper.restoreFromArchives(
+          archiveIds,
+          characterId: 'char-a',
+        ),
+        2,
+      );
+      expect(await DatabaseHelper.getArchivedCount(characterId: 'char-a'), 0);
+      expect(
+        await db.query(
+          'memories',
+          where: 'id IN (?, ?) AND status = ?',
+          whereArgs: [first, second, 'active'],
+        ),
+        hasLength(2),
+      );
+    },
+  );
+
+  test('archived endpoints hide their web links until restored', () async {
+    await DatabaseHelper.createSchemaForTesting(db);
+    final first = await _insertMemory(db, 'char-a', 'first');
+    final second = await _insertMemory(db, 'char-a', 'second');
+    expect(
+      await DatabaseHelper.insertSpiderWebLink('char-a', first, second),
+      isTrue,
+    );
+    expect(await DatabaseHelper.getSpiderWebLinks('char-a'), hasLength(1));
+
+    expect(
+      await DatabaseHelper.archiveMemories(
+        [first],
+        'hide linked endpoint',
+        characterId: 'char-a',
+      ),
+      1,
+    );
+    expect(await DatabaseHelper.getSpiderWebLinks('char-a'), isEmpty);
+    expect(
+      await DatabaseHelper.getSpiderWebLinks('char-a', includeRejected: true),
+      isEmpty,
+    );
+
+    final archiveId =
+        (await DatabaseHelper.getArchivedMemories(
+              characterId: 'char-a',
+            )).single['id']
+            as int;
+    expect(
+      await DatabaseHelper.restoreFromArchive(archiveId, characterId: 'char-a'),
+      isTrue,
+    );
+    expect(await DatabaseHelper.getSpiderWebLinks('char-a'), hasLength(1));
+  });
+
+  test('v40 backfills explainable spider relation metadata', () async {
+    await DatabaseHelper.createSchemaForTesting(db);
+    await db.execute('DROP TABLE spider_web_links');
+    await db.execute('''
+      CREATE TABLE spider_web_links (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        character_id TEXT NOT NULL,
+        memory_id_1 INTEGER NOT NULL,
+        memory_id_2 INTEGER NOT NULL,
+        created_at TEXT NOT NULL,
+        CHECK(memory_id_1 < memory_id_2),
+        UNIQUE(character_id, memory_id_1, memory_id_2)
+      )
+    ''');
+    await db.insert('spider_web_links', {
+      'character_id': 'char-a',
+      'memory_id_1': 1,
+      'memory_id_2': 2,
+      'created_at': '2026-08-01T00:00:00.000',
+    });
+
+    await DatabaseHelper.upgradeSchemaForTesting(db, 39);
+
+    expect(
+      await _columnNames(db, 'spider_web_links'),
+      containsAll(<String>[
+        'relation_type',
+        'strength',
+        'status',
+        'source',
+        'reason',
+        'updated_at',
+      ]),
+    );
+    final row = (await db.query('spider_web_links')).single;
+    expect(row['relation_type'], 'related');
+    expect(row['strength'], 1.0);
+    expect(row['status'], 'confirmed');
+    expect(row['source'], 'legacy');
+    expect(row['updated_at'], '2026-08-01T00:00:00.000');
+  });
 
   test('character deletion clears all database-owned character data', () async {
     await DatabaseHelper.createSchemaForTesting(db);

@@ -107,7 +107,13 @@ class L {
       'zh_CN': '已选择图片，输入文字后一起发送',
       'en': 'Image selected, type to send together',
     },
-    'chat_thinking': {
+    'chat_thinking': {'zh_TW': '思考', 'zh_CN': '思考', 'en': 'Thinking'},
+    'chat_thinking_tree': {
+      'zh_TW': 'Thinking',
+      'zh_CN': 'Thinking',
+      'en': 'Thinking',
+    },
+    'chat_thinking_toggle': {
       'zh_TW': 'Thinking',
       'zh_CN': 'Thinking',
       'en': 'Thinking',
@@ -477,6 +483,7 @@ class L {
       'en': 'Name required',
     },
     'char_in_use': {'zh_TW': '交流中', 'zh_CN': '交流中', 'en': 'Talking'},
+    'char_online': {'zh_TW': '在線', 'zh_CN': '在线', 'en': 'Online'},
     'char_empty_hint': {
       'zh_TW': '這裡會放你心裡的每一個人。\n點右上角，寫第一張。',
       'zh_CN': '这里会放你心里的每一个人。\n点右上角，写第一张。',
@@ -588,14 +595,15 @@ class L {
     'me_tap_edit': {'zh_TW': '點擊編輯', 'zh_CN': '点击编辑', 'en': 'Tap to edit'},
     'me_backup_title': {'zh_TW': '備份', 'zh_CN': '备份', 'en': 'Backup'},
     'me_backup_auto_title': {
-      'zh_TW': '自動本地備份',
-      'zh_CN': '自动本地备份',
-      'en': 'Auto local backup',
+      'zh_TW': 'App 內部復原備份',
+      'zh_CN': 'App 内部恢复备份',
+      'en': 'In-app recovery backup',
     },
     'me_backup_auto_sub': {
-      'zh_TW': '啟動、每小時與進入背景時覆蓋保存',
-      'zh_CN': '启动、每小时与进入后台时覆盖保存',
-      'en': 'Overwrites on launch, hourly, and when backgrounded',
+      'zh_TW': '僅存於 App 私有空間；啟動、每小時與進入背景時覆蓋',
+      'zh_CN': '仅存于 App 私有空间；启动、每小时与进入后台时覆盖',
+      'en':
+          'Private app storage; overwritten on launch, hourly, and in background',
     },
     'me_backup_last': {
       'zh_TW': '最近備份：{0}',
@@ -625,11 +633,35 @@ class L {
       'zh_CN': '选择备份文件',
       'en': 'Select backup file',
     },
-    'me_export_json': {'zh_TW': '完整備份', 'zh_CN': '完整备份', 'en': 'Full backup'},
+    'me_export_json': {
+      'zh_TW': '保存完整備份',
+      'zh_CN': '保存完整备份',
+      'en': 'Save full backup',
+    },
     'me_export_json_sub': {
-      'zh_TW': '資料與媒體 ZIP',
-      'zh_CN': '数据与媒体 ZIP',
-      'en': 'Data + media ZIP',
+      'zh_TW': '選擇裝置資料夾；資料與媒體 ZIP',
+      'zh_CN': '选择设备文件夹；数据与媒体 ZIP',
+      'en': 'Choose a device folder; data + media ZIP',
+    },
+    'me_share_backup': {
+      'zh_TW': '分享完整備份',
+      'zh_CN': '分享完整备份',
+      'en': 'Share full backup',
+    },
+    'me_share_backup_sub': {
+      'zh_TW': '傳送到其他 App 或裝置',
+      'zh_CN': '发送到其他 App 或设备',
+      'en': 'Send to another app or device',
+    },
+    'me_cleanup_exports': {
+      'zh_TW': '清理舊版隱藏備份',
+      'zh_CN': '清理旧版隐藏备份',
+      'en': 'Clean old hidden backups',
+    },
+    'me_cleanup_exports_sub': {
+      'zh_TW': '{0} 份，共 {1}',
+      'zh_CN': '{0} 份，共 {1}',
+      'en': '{0} files, {1} total',
     },
     'me_local_backup': {'zh_TW': '本地備份', 'zh_CN': '本地备份', 'en': 'Local Backup'},
     'me_local_backup_sub': {
@@ -643,6 +675,32 @@ class L {
       'zh_TW': '已導出至 {0}',
       'zh_CN': '已导出至 {0}',
       'en': 'Exported to {0}',
+    },
+    'backup_saved': {
+      'zh_TW': '備份已保存到你選擇的位置。',
+      'zh_CN': '备份已保存到你选择的位置。',
+      'en': 'Backup saved to the selected location.',
+    },
+    'backup_shared': {
+      'zh_TW': '備份已交給分享目標。',
+      'zh_CN': '备份已交给分享目标。',
+      'en': 'Backup sent to the selected share target.',
+    },
+    'backup_cleanup_confirm_title': {
+      'zh_TW': '刪除舊版隱藏備份？',
+      'zh_CN': '删除旧版隐藏备份？',
+      'en': 'Delete old hidden backups?',
+    },
+    'backup_cleanup_confirm_body': {
+      'zh_TW': '將刪除 {0} 份、共 {1} 的舊版導出檔。請先確認你已有一份可讀的外部備份。',
+      'zh_CN': '将删除 {0} 份、共 {1} 的旧版导出文件。请先确认你已有一份可读的外部备份。',
+      'en':
+          'This deletes {0} old export files ({1}). First verify that you have a readable external backup.',
+    },
+    'backup_cleanup_done': {
+      'zh_TW': '已刪除 {0} 份舊版隱藏備份，釋放 {1}。',
+      'zh_CN': '已删除 {0} 份旧版隐藏备份，释放 {1}。',
+      'en': 'Deleted {0} old hidden backups and freed {1}.',
     },
     'backup_save_done': {'zh_TW': '已備份', 'zh_CN': '已备份', 'en': 'Backed up'},
     'backup_error': {

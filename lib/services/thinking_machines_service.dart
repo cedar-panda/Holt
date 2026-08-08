@@ -8,6 +8,7 @@ import 'api_adapter.dart';
 import 'locale_strings.dart';
 import 'sse_stream.dart';
 import 'stream_transport.dart';
+import 'system_context_debug.dart';
 
 /// Thinking Machines 第一方 Inkling API。
 ///
@@ -338,15 +339,11 @@ class ThinkingMachinesService implements ApiAdapter {
     StructuredPrompt? structuredPrompt,
     required bool stream,
   }) async {
-    final systemParts = <String>[];
-    final staticPrompt = structuredPrompt?.staticPart ?? systemPrompt ?? '';
-    final profilePrompt = structuredPrompt?.profilePart ?? '';
-    final dynamicPrompt = structuredPrompt?.dynamicPart ?? '';
-    if (staticPrompt.trim().isNotEmpty) systemParts.add(staticPrompt.trim());
-    if (profilePrompt.trim().isNotEmpty) systemParts.add(profilePrompt.trim());
-    if (dynamicPrompt.trim().isNotEmpty) {
-      systemParts.add(dynamicPrompt.trim());
-    }
+    final systemParts =
+        (structuredPrompt?.cacheableParts ?? <String>[systemPrompt ?? ''])
+            .map((part) => part.trim())
+            .where((part) => part.isNotEmpty)
+            .toList();
 
     final apiMessages = <Map<String, dynamic>>[];
     for (final message in messages) {
@@ -385,7 +382,26 @@ class ThinkingMachinesService implements ApiAdapter {
       });
     }
 
-    return <String, dynamic>{
+    final liveState = structuredPrompt?.liveStatePart ?? '';
+    var runtimeTransport = '';
+    var runtimeFallback = '';
+    final attached =
+        RuntimeContextSidecar.appendToPreviousAssistantBeforeLatestUser(
+          apiMessages,
+          liveState,
+        );
+    if (attached) {
+      runtimeTransport = 'assistant_state';
+    } else {
+      final runtimeContext = RuntimeContextSidecar.envelope(liveState);
+      if (runtimeContext.isNotEmpty) {
+        systemParts.add(runtimeContext);
+        runtimeTransport = 'top_level_system_fallback';
+        runtimeFallback = 'No previous assistant turn was available.';
+      }
+    }
+
+    final body = <String, dynamic>{
       'model': model.trim().isEmpty ? defaultModel : model.trim(),
       'max_tokens': _maxOutputTokens,
       'messages': apiMessages,
@@ -396,6 +412,25 @@ class ThinkingMachinesService implements ApiAdapter {
       else
         'thinking': const <String, dynamic>{'type': 'disabled'},
     };
+    if (structuredPrompt != null) {
+      SystemContextDebug.recordChatRequest(
+        provider: 'thinking_machines',
+        model: model.trim().isEmpty ? defaultModel : model.trim(),
+        cacheChannel: structuredPrompt.cacheChannel,
+        sessionId: CacheSession.conversationId,
+        transport: runtimeTransport,
+        sourceMessages: messages,
+        requestMessages: apiMessages,
+        stableContext: structuredPrompt.cacheableParts.join('\n\n'),
+        liveState: liveState,
+        fallbackReason: runtimeFallback,
+        topLevelRoles: systemParts.isEmpty
+            ? const <String>[]
+            : const <String>['system'],
+        expectTime: liveState.trim().isNotEmpty,
+      );
+    }
+    return body;
   }
 
   String get _normalizedEffort {

@@ -4,6 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../secure_store.dart';
 import '../api_adapter.dart';
 import '../openrouter_service.dart';
+import '../xai_service.dart';
 import '../aws_bedrock_service.dart';
 import '../gemini_service.dart';
 import '../deepseek_service.dart';
@@ -25,7 +26,7 @@ class ApiConfigException implements Exception {
   String toString() => message;
 }
 
-/// API 供應商配置（OpenRouter / Bedrock / Gemini / DeepSeek / Qwen / OpenAI Compatible / Local API）
+/// API 供應商配置（OpenRouter / xAI / Bedrock / Gemini / DeepSeek / Qwen / OpenAI Compatible / Local API）
 class ApiSettings {
   // ═══ 通用 ═══
   static const String _keyLegacyApiKey = 'api_key';
@@ -88,6 +89,9 @@ class ApiSettings {
       case 'openrouter':
         await saveOpenRouterApiKey(key);
         break;
+      case 'xai':
+        await saveXaiApiKey(key);
+        break;
       case 'gemini':
         await saveGeminiApiKey(key);
         break;
@@ -113,6 +117,8 @@ class ApiSettings {
     switch (provider) {
       case 'openrouter':
         return getOpenRouterApiKey();
+      case 'xai':
+        return getXaiApiKey();
       case 'gemini':
         return getGeminiApiKey();
       case 'deepseek':
@@ -167,6 +173,9 @@ class ApiSettings {
       return p.getString(_keyThinkingMachinesModel) ??
           ThinkingMachinesService.defaultModel;
     }
+    if (provider == 'xai') {
+      return p.getString(_keyXaiModel) ?? XaiService.defaultModel;
+    }
     return p.getString(_keyModel) ?? 'anthropic/claude-sonnet-4-20250514';
   }
 
@@ -196,6 +205,9 @@ class ApiSettings {
         break;
       case 'thinking_machines':
         await saveThinkingMachinesModel(value);
+        break;
+      case 'xai':
+        await saveXaiModel(value);
         break;
       case 'openai_compatible':
         await saveOaiCompatModel(value);
@@ -350,6 +362,30 @@ class ApiSettings {
     return p.getString(_keyQwenModel) ?? 'qwen-plus';
   }
 
+  // ═══ xAI / Grok ═══
+  static const String _keyXaiApiKey = 'xai_api_key';
+  static const String _keyXaiModel = 'xai_model';
+
+  static Future<void> saveXaiApiKey(String value) async {
+    await SecureStore.write(_keyXaiApiKey, value);
+  }
+
+  static Future<String> getXaiApiKey() async {
+    return SecureStore.read(_keyXaiApiKey);
+  }
+
+  static Future<void> saveXaiModel(String value) async {
+    final normalized = value.trim();
+    if (normalized.isEmpty) return;
+    final p = await SharedPreferences.getInstance();
+    await p.setString(_keyXaiModel, normalized);
+  }
+
+  static Future<String> getXaiModel() async {
+    final p = await SharedPreferences.getInstance();
+    return p.getString(_keyXaiModel) ?? XaiService.defaultModel;
+  }
+
   // ═══ Thinking Machines / Inkling ═══
   static const String _keyThinkingMachinesApiKey = 'thinking_machines_api_key';
   static const String _keyThinkingMachinesModel = 'thinking_machines_model';
@@ -478,6 +514,58 @@ class ApiSettings {
   // ═══ 星標模型 ═══
   static const String _keyStarredModels = 'starred_models';
   static const String _keyStarredModelProviders = 'starred_model_providers_v1';
+  static const String _keyStarredModelUsage = 'starred_model_usage_v1';
+
+  static Future<Map<String, int>> getStarredModelUsageCounts() async {
+    final p = await SharedPreferences.getInstance();
+    final raw = p.getString(_keyStarredModelUsage);
+    if (raw == null || raw.isEmpty) return {};
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return {};
+      return decoded.map((key, value) {
+        final count = value is num
+            ? value.toInt()
+            : int.tryParse('$value') ?? 0;
+        return MapEntry('$key', count < 0 ? 0 : count);
+      });
+    } catch (_) {
+      return {};
+    }
+  }
+
+  /// 只計算仍在收藏中的模型。取消收藏後計數休眠但不刪除，
+  /// 重新收藏即可延續原本的常用度排序。
+  static Future<void> recordStarredModelUsage(String modelId) async {
+    final normalized = modelId.trim();
+    if (normalized.isEmpty) return;
+    final p = await SharedPreferences.getInstance();
+    final starred = p.getStringList(_keyStarredModels) ?? const <String>[];
+    if (!starred.contains(normalized)) return;
+    final counts = await getStarredModelUsageCounts();
+    counts[normalized] = (counts[normalized] ?? 0) + 1;
+    await p.setString(_keyStarredModelUsage, jsonEncode(counts));
+  }
+
+  /// 雲端模型優先、本地模型置底；每組內按完成聊天輪數由高到低。
+  /// 同次數時維持原收藏順序，避免每次打開列表跳動。
+  static Future<List<String>> getRankedStarredModels() async {
+    final starred = await getStarredModels();
+    final counts = await getStarredModelUsageCounts();
+    final originalOrder = <String, int>{
+      for (var i = 0; i < starred.length; i++) starred[i]: i,
+    };
+    bool isLocal(String modelId) =>
+        LocalModelService.isLocalModelId(modelId) || isLocalApiModelId(modelId);
+
+    return [...starred]..sort((a, b) {
+      final localOrder = (isLocal(a) ? 1 : 0).compareTo(isLocal(b) ? 1 : 0);
+      if (localOrder != 0) return localOrder;
+      final usageOrder = (counts[b] ?? 0).compareTo(counts[a] ?? 0);
+      if (usageOrder != 0) return usageOrder;
+      return (originalOrder[a] ?? 0).compareTo(originalOrder[b] ?? 0);
+    });
+  }
 
   static Future<Map<String, String>> getStarredModelProviders() async {
     final p = await SharedPreferences.getInstance();
@@ -770,6 +858,16 @@ class ApiSettings {
       return OpenRouterService(apiKey: apiKey);
     }
 
+    if (provider == 'xai') {
+      final apiKey = await getXaiApiKey();
+      if (apiKey.isEmpty) {
+        throw ApiConfigException(
+          L.pick(en: 'xAI API Key is not configured', zhTW: 'xAI API Key 未設定'),
+        );
+      }
+      return XaiService(apiKey: apiKey);
+    }
+
     if (provider == 'local') {
       throw ApiConfigException(
         L.pick(en: 'No local model is configured', zhTW: '本地模型未設定'),
@@ -881,6 +979,8 @@ class ApiSettings {
         return getQwenModel();
       case 'thinking_machines':
         return getThinkingMachinesModel();
+      case 'xai':
+        return getXaiModel();
       case 'openai_compatible':
         return getOaiCompatModel();
       case 'local_api':
