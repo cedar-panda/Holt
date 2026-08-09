@@ -35,6 +35,7 @@ import '../services/shop_service.dart';
 import '../utils/text_safety.dart';
 import '../services/marriage_service.dart';
 import '../services/tool_prompts.dart';
+import '../services/tool_runner.dart';
 import '../services/x_post_service.dart';
 import '../services/x_post_settings.dart';
 import '../services/character_timeline_service.dart';
@@ -62,6 +63,67 @@ import '../services/chat_long_screenshot_service.dart';
 
 part 'chat_screen_generation.dart';
 part 'chat_screen_actions.dart';
+
+const String _chatSearchToolName = 'chat.search';
+
+class _ChatToolPermissionPolicy implements ToolPermissionPolicy {
+  const _ChatToolPermissionPolicy();
+
+  @override
+  Future<ToolPermissionDecision> requestPermission({
+    required ToolCall call,
+    required ToolDefinition definition,
+    required ToolContext context,
+    required ToolCancellationToken cancellationToken,
+  }) async {
+    cancellationToken.throwIfCancelled();
+    final isExistingLocalChatSearch =
+        call.name == _chatSearchToolName &&
+        definition.permission == ToolPermissionRequirement.sensitiveRead &&
+        context.mode == ToolRunMode.local;
+    return isExistingLocalChatSearch
+        ? ToolPermissionDecision.allow
+        : ToolPermissionDecision.deny;
+  }
+}
+
+ToolRunner _createChatToolRunner() {
+  final registry = ToolRegistry()
+    ..register(
+      ToolDefinition(
+        name: _chatSearchToolName,
+        description: 'Search local chat history for the current character.',
+        permission: ToolPermissionRequirement.sensitiveRead,
+        timeout: const Duration(seconds: 15),
+        retryableOnTimeout: true,
+        validateArguments: (arguments) {
+          final query = arguments['query'];
+          return query is String && query.trim().isNotEmpty
+              ? null
+              : 'chat.search requires a non-empty query.';
+        },
+        localHandler: (call, context, cancellationToken) async {
+          final characterId = context.characterId?.trim() ?? '';
+          if (characterId.isEmpty) {
+            throw const ToolInputException(
+              'chat.search requires a character id.',
+            );
+          }
+          cancellationToken.throwIfCancelled();
+          final rows = await DatabaseHelper.searchMessages(
+            keyword: (call.arguments['query']! as String).trim(),
+            characterId: characterId,
+          );
+          cancellationToken.throwIfCancelled();
+          return rows;
+        },
+      ),
+    );
+  return ToolRunner(
+    registry: registry,
+    permissionPolicy: const _ChatToolPermissionPolicy(),
+  );
+}
 
 /// 聊天頁面 — 完整版（2.0：adapter 工廠 + 角色綁定）
 class ChatScreen extends StatefulWidget {
@@ -178,6 +240,7 @@ class _ChatScreenState extends State<ChatScreen> {
   List<Map<String, dynamic>> _chatSearchResults = [];
   int _generationSerial = 0;
   ApiAdapter? _activeGenerationAdapter;
+  late final ToolRunner _toolRunner;
   bool _stopGenerationRequested = false;
 
   // ═══ 流式標籤實時剝離 ═══
@@ -273,6 +336,7 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void initState() {
     super.initState();
+    _toolRunner = _createChatToolRunner();
     _manualSummarySelecting = widget.startManualSummarySelection;
     // 窗口短號重置：模型視角的記憶編號按本窗注入順序從 1 重編
     Retriever.resetWindowIds(widget.conversationId);
@@ -669,6 +733,7 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void dispose() {
     _clearStreamQueue();
+    _toolRunner.cancelActive(reason: 'Chat screen disposed.');
     // 關窗口：觸發窗口摘要（fire-and-forget）
     final convId = widget.conversationId;
     final charId = _activeCharacterId;

@@ -88,6 +88,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
   void _stopActiveGeneration() {
     _stopGenerationRequested = true;
     _activeGenerationAdapter?.cancelActive();
+    _toolRunner.cancelActive(reason: 'Generation stopped.');
   }
 
   Future<ApiAdapter?> _prepareAdapterForGeneration({
@@ -113,6 +114,8 @@ extension _ChatGenerationMethods on _ChatScreenState {
     final adapter = _activeGenerationAdapter;
     _activeGenerationAdapter = null;
     adapter?.cancelActive();
+    _toolRunner.cancelActive(reason: 'Generation invalidated.');
+    MemoryActions.clearSearchQuery(widget.conversationId);
     _clearStreamQueue();
     _stopGenerationRequested = false;
     _generationSerial++;
@@ -975,14 +978,21 @@ extension _ChatGenerationMethods on _ChatScreenState {
   }
 
   void _finishFailedGeneration() {
+    MemoryActions.clearSearchQuery(widget.conversationId);
     if (mounted) {
       _refreshChatState(() {
         _clearStreamQueue();
         _setGenerating(false);
+        _chatSearching = false;
+        _chatSearchQuery = '';
+        _chatSearchResults = [];
       });
     } else {
       _clearStreamQueue();
       _setGenerating(false);
+      _chatSearching = false;
+      _chatSearchQuery = '';
+      _chatSearchResults = [];
     }
   }
 
@@ -1985,6 +1995,11 @@ extension _ChatGenerationMethods on _ChatScreenState {
         widget.conversationId,
       );
       if (searchQuery != null) {
+        if (!_isCurrentGeneration(generationSerial)) return;
+        if (_stopGenerationRequested) {
+          _finishFailedGeneration();
+          return;
+        }
         // Phase 1: 顯示搜索中狀態
         if (mounted) {
           _refreshChatState(() {
@@ -1995,10 +2010,25 @@ extension _ChatGenerationMethods on _ChatScreenState {
           });
           _scrollToBottom();
         }
-        final searchResults = await DatabaseHelper.searchMessages(
-          keyword: searchQuery,
-          characterId: _activeCharacterId,
+        final searchResult = await _toolRunner.run(
+          call: ToolCall.create(
+            name: _chatSearchToolName,
+            arguments: <String, Object?>{'query': searchQuery},
+          ),
+          context: ToolContext(
+            conversationId: widget.conversationId,
+            characterId: _activeCharacterId,
+            mode: ToolRunMode.local,
+            metadata: <String, Object?>{'generation_serial': generationSerial},
+          ),
         );
+        if (!_isCurrentGeneration(generationSerial)) return;
+        if (_stopGenerationRequested || searchResult.isCancelled) {
+          _finishFailedGeneration();
+          return;
+        }
+        final searchResults = searchResult
+            .requireData<List<Map<String, dynamic>>>();
         // Phase 2: 顯示搜索結果
         if (mounted) {
           _refreshChatState(() {
@@ -2031,6 +2061,9 @@ extension _ChatGenerationMethods on _ChatScreenState {
           );
           final injection =
               '$searchHeader「$searchQuery」\n${resultLines.join('\n')}\n---\n$searchRules';
+          // TODO(tool-result-transport): ApiAdapter 目前只接受字串 role；待所有
+          // provider 有統一 typed event 後，改用真正 tool_result／request-only
+          // sidecar，不能長期把 App 產生的檢索資料借作 user role。
           final followHistory = [
             ...history,
             if (processedText.trim().isNotEmpty)

@@ -1,5 +1,47 @@
 import 'dart:async';
-import 'dart:collection';
+
+Map<String, Object?> _deepFreezeJsonMap(
+  Map<String, Object?> source,
+  String label,
+) {
+  final frozen = <String, Object?>{};
+  for (final entry in source.entries) {
+    frozen[entry.key] = _deepFreezeJson(entry.value, '$label.${entry.key}');
+  }
+  return Map<String, Object?>.unmodifiable(frozen);
+}
+
+Object? _deepFreezeJson(Object? value, String path) {
+  if (value == null || value is String || value is num || value is bool) {
+    return value;
+  }
+  if (value is List) {
+    return List<Object?>.unmodifiable(<Object?>[
+      for (var i = 0; i < value.length; i++)
+        _deepFreezeJson(value[i], '$path[$i]'),
+    ]);
+  }
+  if (value is Map) {
+    final frozen = <String, Object?>{};
+    for (final entry in value.entries) {
+      final key = entry.key;
+      if (key is! String) {
+        throw ArgumentError.value(
+          key,
+          path,
+          'Tool payload map keys must be strings.',
+        );
+      }
+      frozen[key] = _deepFreezeJson(entry.value, '$path.$key');
+    }
+    return Map<String, Object?>.unmodifiable(frozen);
+  }
+  throw ArgumentError.value(
+    value,
+    path,
+    'Tool payloads must contain only JSON-compatible values.',
+  );
+}
 
 /// 工具需要取得的權限層級。
 ///
@@ -25,6 +67,7 @@ enum ToolErrorCode {
   unknownTool,
   duplicateCall,
   invalidArguments,
+  unsupportedMode,
   permissionDenied,
   cancelled,
   timedOut,
@@ -40,7 +83,7 @@ class ToolCall {
     required this.id,
     required this.name,
     Map<String, Object?> arguments = const <String, Object?>{},
-  }) : arguments = UnmodifiableMapView(Map<String, Object?>.from(arguments));
+  }) : arguments = _deepFreezeJsonMap(arguments, 'arguments');
 
   factory ToolCall.create({
     required String name,
@@ -64,11 +107,11 @@ class ToolCall {
 /// 不屬於模型對話正文的執行背景。
 class ToolContext {
   ToolContext({
+    required this.mode,
     this.conversationId,
     this.characterId,
-    this.mode = ToolRunMode.live,
     Map<String, Object?> metadata = const <String, Object?>{},
-  }) : metadata = UnmodifiableMapView(Map<String, Object?>.from(metadata));
+  }) : metadata = _deepFreezeJsonMap(metadata, 'metadata');
 
   final String? conversationId;
   final String? characterId;
@@ -81,6 +124,7 @@ class ToolCancellationToken {
   ToolCancellationToken._();
 
   final Completer<String?> _cancelled = Completer<String?>();
+  final Set<void Function(String?)> _listeners = <void Function(String?)>{};
   bool _isCancelled = false;
   String? _reason;
 
@@ -92,11 +136,32 @@ class ToolCancellationToken {
     if (_isCancelled) throw ToolCancelledException(_reason);
   }
 
+  /// 註冊同步取消清理，回傳的函式可解除監聽，避免長生命週期的上游 token
+  /// 持有已完成 ToolCall 的 controller。
+  void Function() addListener(void Function(String?) listener) {
+    if (_isCancelled) {
+      listener(_reason);
+      return () {};
+    }
+    _listeners.add(listener);
+    return () => _listeners.remove(listener);
+  }
+
   void _cancel(String? reason) {
     if (_isCancelled) return;
     _isCancelled = true;
     _reason = reason;
     _cancelled.complete(reason);
+    final listeners = List<void Function(String?)>.of(_listeners);
+    _listeners.clear();
+    for (final listener in listeners) {
+      try {
+        listener(reason);
+      } catch (_) {
+        // 取消是 best-effort fan-out；一個 executor 的清理失敗不能阻止其他
+        // active tool 收到取消，也不能改寫 Runner 對呼叫端的取消結果。
+      }
+    }
   }
 }
 
@@ -236,12 +301,21 @@ class ToolDefinition {
   ToolDefinition({
     required this.name,
     required this.description,
-    required this.handler,
+    required this.permission,
+    ToolHandler? localHandler,
+    ToolHandler? replayHandler,
+    ToolHandler? liveHandler,
     this.timeout = const Duration(seconds: 15),
-    this.permission = ToolPermissionRequirement.none,
     this.validateArguments,
     this.retryableOnFailure = false,
-  }) {
+    this.retryableOnTimeout = false,
+  }) : _handlers = Map<ToolRunMode, ToolHandler>.unmodifiable(
+         <ToolRunMode, ToolHandler>{
+           ToolRunMode.local: ?localHandler,
+           ToolRunMode.replay: ?replayHandler,
+           ToolRunMode.live: ?liveHandler,
+         },
+       ) {
     if (!_validName.hasMatch(name)) {
       throw ArgumentError.value(name, 'name', 'Invalid tool name.');
     }
@@ -252,17 +326,29 @@ class ToolDefinition {
         'Tool timeout must be greater than zero.',
       );
     }
+    if (_handlers.isEmpty) {
+      throw ArgumentError.value(
+        _handlers,
+        'handlers',
+        'At least one mode-specific tool handler is required.',
+      );
+    }
   }
 
   static final RegExp _validName = RegExp(r'^[a-zA-Z0-9_.-]{1,64}$');
 
   final String name;
   final String description;
-  final ToolHandler handler;
   final Duration timeout;
   final ToolPermissionRequirement permission;
   final ToolArgumentsValidator? validateArguments;
   final bool retryableOnFailure;
+  final bool retryableOnTimeout;
+  final Map<ToolRunMode, ToolHandler> _handlers;
+
+  bool supportsMode(ToolRunMode mode) => _handlers.containsKey(mode);
+
+  ToolHandler? handlerFor(ToolRunMode mode) => _handlers[mode];
 }
 
 class ToolRegistry {
@@ -288,6 +374,7 @@ abstract interface class ToolPermissionPolicy {
     required ToolCall call,
     required ToolDefinition definition,
     required ToolContext context,
+    required ToolCancellationToken cancellationToken,
   });
 }
 
@@ -301,6 +388,7 @@ class DenyProtectedToolPermissionPolicy implements ToolPermissionPolicy {
     required ToolCall call,
     required ToolDefinition definition,
     required ToolContext context,
+    required ToolCancellationToken cancellationToken,
   }) async {
     return ToolPermissionDecision.deny;
   }
@@ -316,8 +404,10 @@ class ToolRunner {
   final ToolPermissionPolicy permissionPolicy;
   final Map<String, ToolCancellationController> _active =
       <String, ToolCancellationController>{};
+  final Set<String> _inFlight = <String>{};
 
   int get activeCount => _active.length;
+  int get inFlightCount => _inFlight.length;
 
   Future<ToolResult> run({
     required ToolCall call,
@@ -336,13 +426,24 @@ class ToolRunner {
       );
     }
 
-    if (_active.containsKey(call.id)) {
+    if (_inFlight.contains(call.id)) {
       return _failed(
         call: call,
         stopwatch: stopwatch,
         status: ToolResultStatus.failed,
         code: ToolErrorCode.duplicateCall,
         message: 'Tool call ${call.id} is already running.',
+      );
+    }
+
+    if (!definition.supportsMode(context.mode)) {
+      return _failed(
+        call: call,
+        stopwatch: stopwatch,
+        status: ToolResultStatus.failed,
+        code: ToolErrorCode.unsupportedMode,
+        message:
+            'Tool ${call.name} does not support ${context.mode.name} mode.',
       );
     }
 
@@ -373,22 +474,22 @@ class ToolRunner {
 
     final controller = ToolCancellationController();
     _active[call.id] = controller;
+    _inFlight.add(call.id);
+    void Function()? unlinkCancellation;
     if (cancellationToken != null) {
-      if (cancellationToken.isCancelled) {
-        controller.cancel(cancellationToken.reason);
-      } else {
-        unawaited(cancellationToken.whenCancelled.then(controller.cancel));
-      }
+      unlinkCancellation = cancellationToken.addListener(controller.cancel);
     }
 
+    Future<Object?>? operation;
     try {
       controller.token.throwIfCancelled();
-      final operation = _execute(
+      operation = _execute(
         call: call,
         context: context,
         definition: definition,
         cancellationToken: controller.token,
       );
+      _releaseInFlightWhenSettled(call.id, operation);
       final data = await _raceCancellation(operation, controller.token).timeout(
         definition.timeout,
         onTimeout: () {
@@ -428,7 +529,7 @@ class ToolRunner {
         status: ToolResultStatus.timedOut,
         code: ToolErrorCode.timedOut,
         message: 'Tool ${call.name} timed out after ${definition.timeout}.',
-        retryable: true,
+        retryable: definition.retryableOnTimeout,
       );
     } on ToolCancelledException catch (error, stackTrace) {
       return _failed(
@@ -446,15 +547,17 @@ class ToolRunner {
         stopwatch: stopwatch,
         status: ToolResultStatus.failed,
         code: ToolErrorCode.executionFailed,
-        message: 'Tool ${call.name} failed: $error',
+        message: 'Tool ${call.name} failed.',
         retryable: definition.retryableOnFailure,
         cause: error,
         stackTrace: stackTrace,
       );
     } finally {
+      unlinkCancellation?.call();
       if (identical(_active[call.id], controller)) {
         _active.remove(call.id);
       }
+      if (operation == null) _inFlight.remove(call.id);
     }
   }
 
@@ -483,6 +586,7 @@ class ToolRunner {
         call: call,
         definition: definition,
         context: context,
+        cancellationToken: cancellationToken,
       );
       cancellationToken.throwIfCancelled();
       if (decision != ToolPermissionDecision.allow) {
@@ -491,7 +595,24 @@ class ToolRunner {
     }
 
     cancellationToken.throwIfCancelled();
-    return definition.handler(call, context, cancellationToken);
+    final handler = definition.handlerFor(context.mode);
+    if (handler == null) {
+      throw ToolInputException(
+        'Tool ${call.name} does not support ${context.mode.name} mode.',
+      );
+    }
+    return handler(call, context, cancellationToken);
+  }
+
+  void _releaseInFlightWhenSettled(String callId, Future<Object?> operation) {
+    unawaited(
+      operation.then<void>(
+        (_) => _inFlight.remove(callId),
+        onError: (Object _, StackTrace _) {
+          _inFlight.remove(callId);
+        },
+      ),
+    );
   }
 
   Future<Object?> _raceCancellation(
