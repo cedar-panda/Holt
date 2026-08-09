@@ -1,5 +1,110 @@
 import 'dart:async';
 
+const int _maxPublicMessageRunes = 512;
+const int _maxSafeDetailEntries = 8;
+const int _maxSafeDetailStringRunes = 256;
+const int _maxSafeDetailDepth = 2;
+
+String _sanitizePublicMessage(String value, {required String fallback}) {
+  final cleaned = value
+      .replaceAll(RegExp(r'[\x00-\x1F\x7F\u202A-\u202E\u2066-\u2069]'), ' ')
+      .replaceAll(RegExp(r'\s+'), ' ')
+      .trim();
+  if (cleaned.isEmpty) return fallback;
+  final runes = cleaned.runes.toList(growable: false);
+  if (runes.length <= _maxPublicMessageRunes) return cleaned;
+  return '${String.fromCharCodes(runes.take(_maxPublicMessageRunes))}…';
+}
+
+String _validateDomainCode(String value) {
+  final normalized = value.trim();
+  if (!RegExp(
+        r'^[a-z][a-z0-9]*(?:[._-][a-z0-9]+){1,7}$',
+      ).hasMatch(normalized) ||
+      normalized.length > 96) {
+    throw ArgumentError.value(value, 'domainCode', 'Invalid domain code.');
+  }
+  return normalized;
+}
+
+Map<String, Object?> _freezeSafeDetails(Map<String, Object?> source) {
+  if (source.length > _maxSafeDetailEntries) {
+    throw ArgumentError.value(
+      source,
+      'safeDetails',
+      'Too many public detail fields.',
+    );
+  }
+  final frozen = <String, Object?>{};
+  for (final entry in source.entries) {
+    _validateSafeDetailKey(entry.key);
+    frozen[entry.key] = _freezeSafeDetailValue(entry.value, 0, entry.key);
+  }
+  return Map<String, Object?>.unmodifiable(frozen);
+}
+
+Object? _freezeSafeDetailValue(Object? value, int depth, String path) {
+  if (value == null || value is bool || value is int) return value;
+  if (value is double && value.isFinite) return value;
+  if (value is String) {
+    final runes = value.runes.toList(growable: false);
+    if (runes.length > _maxSafeDetailStringRunes ||
+        _hasUnsafePublicText(value)) {
+      throw ArgumentError.value(value, path, 'Unsafe public detail string.');
+    }
+    return value;
+  }
+  if (depth >= _maxSafeDetailDepth) {
+    throw ArgumentError.value(
+      value,
+      path,
+      'Public details are too deeply nested.',
+    );
+  }
+  if (value is List) {
+    if (value.length > _maxSafeDetailEntries) {
+      throw ArgumentError.value(value, path, 'Public detail list is too long.');
+    }
+    return List<Object?>.unmodifiable(<Object?>[
+      for (var i = 0; i < value.length; i++)
+        _freezeSafeDetailValue(value[i], depth + 1, '$path[$i]'),
+    ]);
+  }
+  if (value is Map) {
+    if (value.length > _maxSafeDetailEntries) {
+      throw ArgumentError.value(value, path, 'Public detail map is too large.');
+    }
+    final frozen = <String, Object?>{};
+    for (final entry in value.entries) {
+      if (entry.key is! String) {
+        throw ArgumentError.value(
+          entry.key,
+          path,
+          'Detail keys must be strings.',
+        );
+      }
+      final key = entry.key as String;
+      _validateSafeDetailKey(key);
+      frozen[key] = _freezeSafeDetailValue(
+        entry.value,
+        depth + 1,
+        '$path.$key',
+      );
+    }
+    return Map<String, Object?>.unmodifiable(frozen);
+  }
+  throw ArgumentError.value(value, path, 'Unsafe public detail value.');
+}
+
+void _validateSafeDetailKey(String key) {
+  if (!RegExp(r'^[A-Za-z][A-Za-z0-9_]{0,31}$').hasMatch(key)) {
+    throw ArgumentError.value(key, 'safeDetails', 'Invalid public detail key.');
+  }
+}
+
+bool _hasUnsafePublicText(String value) =>
+    RegExp(r'[\x00-\x1F\x7F\u202A-\u202E\u2066-\u2069]').hasMatch(value);
+
 Map<String, Object?> _deepFreezeJsonMap(
   Map<String, Object?> source,
   String label,
@@ -83,7 +188,14 @@ class ToolCall {
     required this.id,
     required this.name,
     Map<String, Object?> arguments = const <String, Object?>{},
-  }) : arguments = _deepFreezeJsonMap(arguments, 'arguments');
+  }) : arguments = _deepFreezeJsonMap(arguments, 'arguments') {
+    if (!RegExp(r'^[A-Za-z0-9_.:-]{1,128}$').hasMatch(id)) {
+      throw ArgumentError.value(id, 'id', 'Invalid tool call id.');
+    }
+    if (!RegExp(r'^[A-Za-z0-9_.-]{1,64}$').hasMatch(name)) {
+      throw ArgumentError.value(name, 'name', 'Invalid tool name.');
+    }
+  }
 
   factory ToolCall.create({
     required String name,
@@ -195,20 +307,52 @@ class ToolInputException implements Exception {
   String toString() => message;
 }
 
-class ToolFailure {
-  const ToolFailure({
-    required this.code,
-    required this.message,
+/// Executor 已經把 provider/domain 錯誤整理成可安全公開的訊息。
+///
+/// 原始 exception 不會進入 [ToolFailure]；只有 executor 明確提供的
+/// [domainCode] 與 JSON-compatible [safeDetails] 可以交給 UI。這讓網路工具
+/// 可以逐次決定是否值得重試，而不必把整個工具靜態標成 retryable。
+class ToolReportedException implements Exception {
+  ToolReportedException({
+    required String safeMessage,
     this.retryable = false,
-    this.cause,
-    this.stackTrace,
-  });
+    required String domainCode,
+    Map<String, Object?> safeDetails = const <String, Object?>{},
+  }) : safeMessage = _sanitizePublicMessage(
+         safeMessage,
+         fallback: 'Tool execution failed.',
+       ),
+       domainCode = _validateDomainCode(domainCode),
+       safeDetails = _freezeSafeDetails(safeDetails);
+
+  final String safeMessage;
+  final bool retryable;
+  final String domainCode;
+  final Map<String, Object?> safeDetails;
+
+  @override
+  String toString() => safeMessage;
+}
+
+class ToolFailure {
+  ToolFailure({
+    required this.code,
+    required String message,
+    this.retryable = false,
+    String? domainCode,
+    Map<String, Object?> safeDetails = const <String, Object?>{},
+  }) : message = _sanitizePublicMessage(
+         message,
+         fallback: 'Tool execution failed.',
+       ),
+       domainCode = domainCode == null ? null : _validateDomainCode(domainCode),
+       safeDetails = _freezeSafeDetails(safeDetails);
 
   final ToolErrorCode code;
   final String message;
   final bool retryable;
-  final Object? cause;
-  final StackTrace? stackTrace;
+  final String? domainCode;
+  final Map<String, Object?> safeDetails;
 
   @override
   String toString() => message;
@@ -302,6 +446,8 @@ class ToolDefinition {
     required this.name,
     required this.description,
     required this.permission,
+    Map<ToolRunMode, ToolPermissionRequirement> modePermissions =
+        const <ToolRunMode, ToolPermissionRequirement>{},
     ToolHandler? localHandler,
     ToolHandler? replayHandler,
     ToolHandler? liveHandler,
@@ -315,7 +461,11 @@ class ToolDefinition {
            ToolRunMode.replay: ?replayHandler,
            ToolRunMode.live: ?liveHandler,
          },
-       ) {
+       ),
+       _modePermissions =
+           Map<ToolRunMode, ToolPermissionRequirement>.unmodifiable(
+             modePermissions,
+           ) {
     if (!_validName.hasMatch(name)) {
       throw ArgumentError.value(name, 'name', 'Invalid tool name.');
     }
@@ -333,6 +483,15 @@ class ToolDefinition {
         'At least one mode-specific tool handler is required.',
       );
     }
+    for (final mode in _modePermissions.keys) {
+      if (!_handlers.containsKey(mode)) {
+        throw ArgumentError.value(
+          mode,
+          'modePermissions',
+          'A mode-specific permission requires a handler for that mode.',
+        );
+      }
+    }
   }
 
   static final RegExp _validName = RegExp(r'^[a-zA-Z0-9_.-]{1,64}$');
@@ -345,10 +504,14 @@ class ToolDefinition {
   final bool retryableOnFailure;
   final bool retryableOnTimeout;
   final Map<ToolRunMode, ToolHandler> _handlers;
+  final Map<ToolRunMode, ToolPermissionRequirement> _modePermissions;
 
   bool supportsMode(ToolRunMode mode) => _handlers.containsKey(mode);
 
   ToolHandler? handlerFor(ToolRunMode mode) => _handlers[mode];
+
+  ToolPermissionRequirement permissionForMode(ToolRunMode mode) =>
+      _modePermissions[mode] ?? permission;
 }
 
 class ToolRegistry {
@@ -457,18 +620,19 @@ class ToolRunner {
           stopwatch: stopwatch,
           status: ToolResultStatus.failed,
           code: ToolErrorCode.invalidArguments,
-          message: validationError,
+          message: _sanitizePublicMessage(
+            validationError,
+            fallback: 'Invalid arguments for ${call.name}.',
+          ),
         );
       }
-    } catch (error, stackTrace) {
+    } catch (_) {
       return _failed(
         call: call,
         stopwatch: stopwatch,
         status: ToolResultStatus.failed,
         code: ToolErrorCode.invalidArguments,
         message: 'Unable to validate ${call.name} arguments.',
-        cause: error,
-        stackTrace: stackTrace,
       );
     }
 
@@ -512,15 +676,27 @@ class ToolRunner {
         code: ToolErrorCode.permissionDenied,
         message: 'Permission denied for tool ${call.name}.',
       );
-    } on ToolInputException catch (error, stackTrace) {
+    } on ToolInputException catch (error) {
       return _failed(
         call: call,
         stopwatch: stopwatch,
         status: ToolResultStatus.failed,
         code: ToolErrorCode.invalidArguments,
-        message: error.message,
-        cause: error,
-        stackTrace: stackTrace,
+        message: _sanitizePublicMessage(
+          error.message,
+          fallback: 'Invalid arguments for ${call.name}.',
+        ),
+      );
+    } on ToolReportedException catch (error) {
+      return _failed(
+        call: call,
+        stopwatch: stopwatch,
+        status: ToolResultStatus.failed,
+        code: ToolErrorCode.executionFailed,
+        message: error.safeMessage,
+        retryable: error.retryable,
+        domainCode: error.domainCode,
+        safeDetails: error.safeDetails,
       );
     } on _ToolTimeoutException {
       return _failed(
@@ -531,17 +707,15 @@ class ToolRunner {
         message: 'Tool ${call.name} timed out after ${definition.timeout}.',
         retryable: definition.retryableOnTimeout,
       );
-    } on ToolCancelledException catch (error, stackTrace) {
+    } on ToolCancelledException {
       return _failed(
         call: call,
         stopwatch: stopwatch,
         status: ToolResultStatus.cancelled,
         code: ToolErrorCode.cancelled,
-        message: error.toString(),
-        cause: error,
-        stackTrace: stackTrace,
+        message: 'Tool ${call.name} was cancelled.',
       );
-    } catch (error, stackTrace) {
+    } catch (_) {
       return _failed(
         call: call,
         stopwatch: stopwatch,
@@ -549,8 +723,6 @@ class ToolRunner {
         code: ToolErrorCode.executionFailed,
         message: 'Tool ${call.name} failed.',
         retryable: definition.retryableOnFailure,
-        cause: error,
-        stackTrace: stackTrace,
       );
     } finally {
       unlinkCancellation?.call();
@@ -581,7 +753,8 @@ class ToolRunner {
     required ToolDefinition definition,
     required ToolCancellationToken cancellationToken,
   }) async {
-    if (definition.permission != ToolPermissionRequirement.none) {
+    final permission = definition.permissionForMode(context.mode);
+    if (permission != ToolPermissionRequirement.none) {
       final decision = await permissionPolicy.requestPermission(
         call: call,
         definition: definition,
@@ -634,8 +807,8 @@ class ToolRunner {
     required ToolErrorCode code,
     required String message,
     bool retryable = false,
-    Object? cause,
-    StackTrace? stackTrace,
+    String? domainCode,
+    Map<String, Object?> safeDetails = const <String, Object?>{},
   }) {
     stopwatch.stop();
     return ToolResult.failure(
@@ -646,8 +819,8 @@ class ToolRunner {
         code: code,
         message: message,
         retryable: retryable,
-        cause: cause,
-        stackTrace: stackTrace,
+        domainCode: domainCode,
+        safeDetails: safeDetails,
       ),
     );
   }

@@ -126,6 +126,29 @@ void main() {
     expect(liveExecuted, isFalse);
   });
 
+  test('replay can use a narrower permission than the live handler', () async {
+    final registry = ToolRegistry()
+      ..register(
+        ToolDefinition(
+          name: 'network.fixture',
+          description: 'Network live, local fixture in replay.',
+          permission: ToolPermissionRequirement.network,
+          modePermissions: const <ToolRunMode, ToolPermissionRequirement>{
+            ToolRunMode.replay: ToolPermissionRequirement.none,
+          },
+          liveHandler: (_, _, _) async => 'live',
+          replayHandler: (_, _, _) async => 'fixture',
+        ),
+      );
+
+    final result = await ToolRunner(registry: registry).run(
+      call: ToolCall.create(name: 'network.fixture'),
+      context: ToolContext(mode: ToolRunMode.replay),
+    );
+
+    expect(result.requireData<String>(), 'fixture');
+  });
+
   test('tool payloads are deeply copied and frozen', () {
     final nested = <String, Object?>{
       'filters': <Object?>[
@@ -147,6 +170,22 @@ void main() {
     expect((context.metadata['trace']! as Map<String, Object?>)['turn'], 1);
     expect(() => frozenFilters.clear(), throwsUnsupportedError);
     expect(() => frozenDomain['domain'] = 'changed', throwsUnsupportedError);
+  });
+
+  test('tool call identifiers reject unsafe or oversized input', () {
+    expect(
+      () => ToolCall(id: 'bad\ncall', name: 'safe.tool'),
+      throwsArgumentError,
+    );
+    expect(
+      () => ToolCall(id: 'safe-call', name: 'bad\ntool'),
+      throwsArgumentError,
+    );
+    expect(
+      () =>
+          ToolCall(id: List<String>.filled(129, 'a').join(), name: 'safe.tool'),
+      throwsArgumentError,
+    );
   });
 
   test(
@@ -291,7 +330,8 @@ void main() {
     final result = await future;
 
     expect(result.status, ToolResultStatus.cancelled);
-    expect(result.failure?.message, contains('generation stopped'));
+    expect(result.failure?.message, 'Tool cancel.tool was cancelled.');
+    expect(result.failure?.message, isNot(contains('generation stopped')));
     expect(runner.activeCount, 0);
   });
 
@@ -362,8 +402,54 @@ void main() {
     expect(result.status, ToolResultStatus.failed);
     expect(result.failure?.code, ToolErrorCode.executionFailed);
     expect(result.failure?.retryable, isTrue);
-    expect(result.failure?.cause, isA<StateError>());
     expect(result.failure?.message, isNot(contains('boom')));
+  });
+
+  test('executor can report a safe dynamic failure', () async {
+    final registry = ToolRegistry()
+      ..register(
+        ToolDefinition(
+          name: 'reported.failure',
+          description: 'Returns a safe provider error.',
+          permission: ToolPermissionRequirement.none,
+          liveHandler: (_, _, _) async {
+            throw ToolReportedException(
+              safeMessage: 'Search provider is temporarily unavailable.',
+              retryable: true,
+              domainCode: 'provider_unavailable',
+              safeDetails: const <String, Object?>{'status_code': 503},
+            );
+          },
+        ),
+      );
+
+    final result = await ToolRunner(registry: registry).run(
+      call: ToolCall.create(name: 'reported.failure'),
+      context: ToolContext(mode: ToolRunMode.live),
+    );
+
+    expect(
+      result.failure?.message,
+      'Search provider is temporarily unavailable.',
+    );
+    expect(result.failure?.message, isNot(contains('secret-bearing')));
+    expect(result.failure?.retryable, isTrue);
+    expect(result.failure?.domainCode, 'provider_unavailable');
+    expect(result.failure?.safeDetails, const <String, Object?>{
+      'status_code': 503,
+    });
+    expect(
+      () => result.failure!.safeDetails['status_code'] = 200,
+      throwsUnsupportedError,
+    );
+    expect(
+      () => ToolReportedException(
+        safeMessage: 'Unsafe details.',
+        domainCode: 'provider.failure',
+        safeDetails: const <String, Object?>{'score': double.nan},
+      ),
+      throwsArgumentError,
+    );
   });
 
   test('registry refuses accidental duplicate registrations', () {

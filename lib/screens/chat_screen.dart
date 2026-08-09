@@ -79,7 +79,8 @@ class _ChatToolPermissionPolicy implements ToolPermissionPolicy {
     cancellationToken.throwIfCancelled();
     final isExistingLocalChatSearch =
         call.name == _chatSearchToolName &&
-        definition.permission == ToolPermissionRequirement.sensitiveRead &&
+        definition.permissionForMode(context.mode) ==
+            ToolPermissionRequirement.sensitiveRead &&
         context.mode == ToolRunMode.local;
     return isExistingLocalChatSearch
         ? ToolPermissionDecision.allow
