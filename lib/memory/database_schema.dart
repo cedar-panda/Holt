@@ -52,6 +52,7 @@ class _DatabaseSchema {
     await _createCharacterTables(db);
     await _createNotesTable(db);
     await _createUsageTable(db);
+    await _createWebSearchUsageTable(db);
     await _createVoiceTable(db);
     await _createSavedMessagesTable(db);
     await _createContextSummaryTables(db);
@@ -60,6 +61,7 @@ class _DatabaseSchema {
     await _createKnownIndexes(db);
     await _createSavedMessageUniqueIndex(db);
     await _createTimelineEventUniqueIndex(db);
+    await _createMemoryFts(db);
   }
 
   /// 用量記錄表
@@ -81,6 +83,71 @@ class _DatabaseSchema {
     await db.execute('''
       CREATE INDEX IF NOT EXISTS idx_usage_ts ON usage_logs(timestamp)
     ''');
+  }
+
+  /// One row per authorized provider route. The outgoing query, result text,
+  /// source URLs, and credentials deliberately never enter this ledger.
+  static Future<void> _createWebSearchUsageTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS web_search_usage_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        reservation_id TEXT NOT NULL,
+        logical_slot INTEGER NOT NULL CHECK(logical_slot IN (0, 1)),
+        conversation_id TEXT NOT NULL,
+        character_id TEXT NOT NULL,
+        turn_id TEXT NOT NULL,
+        generation_serial INTEGER NOT NULL CHECK(generation_serial >= 0),
+        budget_day TEXT NOT NULL,
+        plan_strategy TEXT NOT NULL
+          CHECK(plan_strategy IN ('single', 'dual')),
+        provider TEXT NOT NULL
+          CHECK(provider IN ('openRouter', 'gemini')),
+        provider_model TEXT NOT NULL,
+        provider_route TEXT NOT NULL,
+        call_id TEXT,
+        status TEXT NOT NULL DEFAULT 'reserved'
+          CHECK(status IN (
+            'reserved', 'claimed', 'launched', 'success', 'failure',
+            'cancelled', 'unknown', 'released'
+          )),
+        reserved_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        claimed_at TEXT,
+        launched_at TEXT,
+        settled_at TEXT,
+        search_requests INTEGER NOT NULL DEFAULT 0
+          CHECK(search_requests >= 0),
+        prompt_tokens INTEGER NOT NULL DEFAULT 0 CHECK(prompt_tokens >= 0),
+        completion_tokens INTEGER NOT NULL DEFAULT 0
+          CHECK(completion_tokens >= 0),
+        actual_cost_usd REAL CHECK(actual_cost_usd IS NULL OR actual_cost_usd >= 0),
+        cost_certainty TEXT NOT NULL DEFAULT 'unknown'
+          CHECK(cost_certainty IN ('known', 'unknown')),
+        UNIQUE(reservation_id, provider)
+      )
+    ''');
+    await _createWebSearchUsageIndexes(db);
+  }
+
+  static Future<void> _createWebSearchUsageIndexes(Database db) async {
+    const statements = <String>[
+      'CREATE UNIQUE INDEX IF NOT EXISTS idx_web_search_turn_once '
+          'ON web_search_usage_logs('
+          'conversation_id, turn_id, generation_serial) '
+          'WHERE logical_slot = 1',
+      'CREATE UNIQUE INDEX IF NOT EXISTS idx_web_search_call_once '
+          'ON web_search_usage_logs(call_id) '
+          'WHERE logical_slot = 1 AND call_id IS NOT NULL',
+      'CREATE INDEX IF NOT EXISTS idx_web_search_budget_status '
+          'ON web_search_usage_logs(budget_day, status)',
+      'CREATE UNIQUE INDEX IF NOT EXISTS idx_web_search_reservation '
+          'ON web_search_usage_logs(reservation_id) WHERE logical_slot = 1',
+      'CREATE INDEX IF NOT EXISTS idx_web_search_char_time '
+          'ON web_search_usage_logs(character_id, reserved_at DESC)',
+    ];
+    for (final statement in statements) {
+      await db.execute(statement);
+    }
   }
 
   /// 便利貼
@@ -185,6 +252,75 @@ class _DatabaseSchema {
       'ON character_timeline(character_id, value, substr(created_at, 1, 10)) '
       "WHERE type = 'event'",
     );
+  }
+
+  // ═══ FTS5 全文搜索索引 ═══
+  // 使用 contentless（content=''）模式：FTS 自存副本，不依賴 content table
+  // 的 rebuild 指令。好處是 rebuild 時可以只索引 active 記憶。
+  // tokenize=unicode61 對 CJK 逐字拆分——不完美但零依賴。
+  static Future<void> _createMemoryFts(Database db) async {
+    await db.execute('''
+      CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts
+      USING fts5(content, triggers, content='', tokenize='unicode61')
+    ''');
+
+    // INSERT trigger：新記憶寫入時自動索引（只索引 active）
+    await db.execute('''
+      CREATE TRIGGER IF NOT EXISTS memories_fts_ai
+      AFTER INSERT ON memories WHEN NEW.status = 'active'
+      BEGIN
+        INSERT INTO memories_fts(rowid, content, triggers)
+        VALUES (NEW.id, NEW.content, NEW.triggers);
+      END
+    ''');
+
+    // 封存/刪除 trigger：status 從 active 變成其他時移除索引
+    await db.execute('''
+      CREATE TRIGGER IF NOT EXISTS memories_fts_au_deactivate
+      AFTER UPDATE OF status ON memories
+      WHEN OLD.status = 'active' AND NEW.status != 'active'
+      BEGIN
+        INSERT INTO memories_fts(memories_fts, rowid, content, triggers)
+        VALUES ('delete', OLD.id, OLD.content, OLD.triggers);
+      END
+    ''');
+
+    // 恢復 trigger：status 從非 active 變回 active 時重新索引
+    await db.execute('''
+      CREATE TRIGGER IF NOT EXISTS memories_fts_au_activate
+      AFTER UPDATE OF status ON memories
+      WHEN OLD.status != 'active' AND NEW.status = 'active'
+      BEGIN
+        INSERT INTO memories_fts(rowid, content, triggers)
+        VALUES (NEW.id, NEW.content, NEW.triggers);
+      END
+    ''');
+
+    // 真正的 DELETE（極少發生，但防禦性加上）
+    await db.execute('''
+      CREATE TRIGGER IF NOT EXISTS memories_fts_ad
+      AFTER DELETE ON memories WHEN OLD.status = 'active'
+      BEGIN
+        INSERT INTO memories_fts(memories_fts, rowid, content, triggers)
+        VALUES ('delete', OLD.id, OLD.content, OLD.triggers);
+      END
+    ''');
+  }
+
+  /// 重建 FTS5 索引：清空後從 memories 表重新填充所有 active 記憶。
+  /// 用於：migration 初始化、備份還原後、手動修復。
+  static Future<void> rebuildMemoryFts(Database db) async {
+    // 先確保表和 trigger 存在
+    await _createMemoryFts(db);
+    // 清空 FTS 索引
+    await db.execute(
+      "INSERT INTO memories_fts(memories_fts) VALUES ('delete-all')",
+    );
+    // 重新填充所有 active 記憶
+    await db.execute('''
+      INSERT INTO memories_fts(rowid, content, triggers)
+      SELECT id, content, triggers FROM memories WHERE status = 'active'
+    ''');
   }
 
   /// 所有 fresh install 與 migration 最終都會走到這裡，確保查詢規劃一致。
@@ -741,6 +877,12 @@ class _DatabaseSchema {
         );
       }
     }
+    if (oldVersion < 42) {
+      await _createWebSearchUsageTable(db);
+    }
+    if (oldVersion < 43) {
+      await rebuildMemoryFts(db);
+    }
 
     // Rebuild shared indexes only after every versioned column migration has
     // completed. _migrateToV36 used to call this helper early; once v38 added
@@ -1036,6 +1178,7 @@ class _DatabaseSchema {
       'archive',
       'sticky_notes',
       'usage_logs',
+      'web_search_usage_logs',
       'saved_voices',
       'saved_messages',
       'context_summaries',

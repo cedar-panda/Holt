@@ -317,6 +317,29 @@ class Retriever {
       }
     }
 
+    // ①½ FTS5 全文搜索（觸發詞之後、永久記憶之前）
+    if (currentMessage != null && currentMessage.isNotEmpty) {
+      final ftsResults = await DatabaseHelper.searchMemoriesByText(
+        currentMessage,
+        mode: mode,
+        characterId: characterId,
+        limit: 10,
+      );
+      int ftsInjected = 0;
+      for (final mem in ftsResults) {
+        if (mem.id != null && seen.contains(mem.id)) continue;
+        if (tryInject(mem)) {
+          ftsInjected++;
+          injectionLog.add(
+            '🔎 全文命中 #${mem.id} [${mem.category}]',
+          );
+        }
+      }
+      if (ftsInjected > 0) {
+        injectionLog.add('↳ 全文搜索補充 $ftsInjected 條');
+      }
+    }
+
     // ② 永久記憶
     for (final mem in permanent) {
       tryInject(mem);

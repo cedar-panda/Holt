@@ -54,6 +54,7 @@ class BackupService {
     'context_summaries',
     'context_keywords',
     'usage_logs',
+    'web_search_usage_logs',
     'emotion_points',
     'grudge_seals',
     'character_timeline',
@@ -75,6 +76,7 @@ class BackupService {
     'context_summaries',
     'context_keywords',
     'usage_logs',
+    'web_search_usage_logs',
     'emotion_points',
     'grudge_seals',
     'character_timeline',
@@ -403,6 +405,14 @@ class BackupService {
       debugPrint('Post-restore model cost policy check failed: $error');
     }
 
+    // 備份還原會清空並重寫 memories 表，但 FTS5 虛擬表不在
+    // appTables 清單內、transaction 也不會動它。還原後重建索引。
+    try {
+      await DatabaseHelper.rebuildMemoryFts();
+    } catch (error) {
+      debugPrint('Post-restore FTS rebuild failed: $error');
+    }
+
     final charCount = prepared.tables['characters']!.length;
     final convCount = prepared.tables['conversations']!.length;
     final messageCount = prepared.tables['messages']!.length;
@@ -478,10 +488,13 @@ class BackupService {
         schema['tables'],
         field: 'schema.tables',
       ).map((value) => value.toString()).toSet();
-      // pending_memory_actions was added without changing the v5 container
-      // number. Older v5 exports remain valid and restore an empty inbox.
+      // These tables were added without changing the v5 container number.
+      // Older v5 exports remain valid and restore them empty.
       final missing = appTables.where(
-        (table) => table != 'pending_memory_actions' && !tables.contains(table),
+        (table) =>
+            table != 'pending_memory_actions' &&
+            table != 'web_search_usage_logs' &&
+            !tables.contains(table),
       );
       if (missing.isNotEmpty) {
         throw FormatException('v5 備份缺少資料表宣告：${missing.join(', ')}');
@@ -502,7 +515,9 @@ class BackupService {
         result[table] = _mapRows(
           data[table],
           field: table,
-          required: table != 'pending_memory_actions',
+          required:
+              table != 'pending_memory_actions' &&
+              table != 'web_search_usage_logs',
         );
       }
     }
@@ -1100,6 +1115,7 @@ class BackupService {
       WHERE type = 'table'
         AND name NOT LIKE 'sqlite_%'
         AND name != 'android_metadata'
+        AND name NOT LIKE 'memories_fts%'
     ''');
     final actual = rows
         .map((row) => row['name']?.toString())

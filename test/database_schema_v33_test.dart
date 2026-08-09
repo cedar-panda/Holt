@@ -31,7 +31,7 @@ void main() {
     () async {
       await DatabaseHelper.createSchemaForTesting(db);
 
-      expect(DatabaseHelper.schemaVersionForTesting, 41);
+      expect(DatabaseHelper.schemaVersionForTesting, 43);
       expect(await _columnNames(db, 'messages'), contains('status'));
       expect(await _columnNames(db, 'characters'), contains('bio_clock'));
       expect(
@@ -70,6 +70,7 @@ void main() {
           'grudge_seals',
           'character_timeline',
           'pending_memory_actions',
+          'web_search_usage_logs',
         ]),
       );
 
@@ -97,6 +98,11 @@ void main() {
           'idx_pending_memory_character_status',
           'idx_pending_memory_source_message',
           'idx_spider_web_status',
+          'idx_web_search_turn_once',
+          'idx_web_search_call_once',
+          'idx_web_search_budget_status',
+          'idx_web_search_reservation',
+          'idx_web_search_char_time',
         ]),
       );
       expect(
@@ -156,6 +162,45 @@ void main() {
     expect(row['whisper_model_text'], '');
     expect(row['whisper_source'], 'default');
     expect(row['whisper_model_override'], 1);
+  });
+
+  test('v42 adds the privacy-minimized web-search provider ledger', () async {
+    await DatabaseHelper.createSchemaForTesting(db);
+    await db.execute('DROP TABLE web_search_usage_logs');
+
+    await DatabaseHelper.upgradeSchemaForTesting(db, 41);
+
+    expect(
+      await _columnNames(db, 'web_search_usage_logs'),
+      containsAll(<String>[
+        'reservation_id',
+        'conversation_id',
+        'character_id',
+        'turn_id',
+        'generation_serial',
+        'plan_strategy',
+        'provider',
+        'provider_model',
+        'provider_route',
+        'call_id',
+        'status',
+        'search_requests',
+        'actual_cost_usd',
+        'cost_certainty',
+      ]),
+    );
+    final columns = await _columnNames(db, 'web_search_usage_logs');
+    expect(columns.where((column) => column.contains('query')), isEmpty);
+    expect(columns.where((column) => column.contains('source')), isEmpty);
+    expect(columns.where((column) => column.contains('key')), isEmpty);
+    expect(
+      await _objectNames(db, 'index'),
+      containsAll(<String>[
+        'idx_web_search_turn_once',
+        'idx_web_search_call_once',
+        'idx_web_search_budget_status',
+      ]),
+    );
   });
 
   test('v38 backfills the automatic summary message cursor', () async {
@@ -1022,6 +1067,22 @@ void main() {
       'provider': 'test',
       'model': 'test',
     });
+    await db.insert('web_search_usage_logs', {
+      'reservation_id': 'reservation-a',
+      'logical_slot': 1,
+      'conversation_id': 'conversation-a',
+      'character_id': 'char-a',
+      'turn_id': 'turn-a',
+      'generation_serial': 1,
+      'budget_day': '2026-08-09',
+      'plan_strategy': 'single',
+      'provider': 'openRouter',
+      'provider_model': 'openai/gpt-5-mini',
+      'provider_route': 'openrouter:web_search:exa:zdr-no-fallback',
+      'status': 'success',
+      'reserved_at': now,
+      'expires_at': now,
+    });
 
     await DatabaseHelper.deleteCharacter('char-a');
 
@@ -1034,6 +1095,7 @@ void main() {
       'archive',
       'sticky_notes',
       'usage_logs',
+      'web_search_usage_logs',
     ]) {
       expect(
         await _relationCount(db, table, 'char-a'),

@@ -1,6 +1,7 @@
 // ignore_for_file: unnecessary_string_escapes
 
 import 'dart:convert';
+import 'dart:developer' as developer;
 import 'dart:io';
 import 'dart:math';
 import 'package:sqflite/sqflite.dart';
@@ -14,13 +15,19 @@ import '../utils/iso_week.dart';
 
 part 'database_schema.dart';
 
+enum WebSearchUsageReservationResult {
+  reserved,
+  duplicateTurn,
+  dailyLimitExceeded,
+}
+
 /// 本地數據庫
 class DatabaseHelper {
   static Database? _database;
   static Future<Database>? _dbInitFuture;
   static Future<Database> Function() _databaseInitializer = _initDatabase;
   static const String _dbName = 'yanci.db';
-  static const int _dbVersion = 41;
+  static const int _dbVersion = 43;
   static final Random _windowIdRandom = Random.secure();
 
   static Future<Database> get database async {
@@ -816,6 +823,11 @@ class DatabaseHelper {
       batch.delete('sticky_notes', where: 'character_id = ?', whereArgs: [id]);
       batch.delete('usage_logs', where: 'character_id = ?', whereArgs: [id]);
       batch.delete(
+        'web_search_usage_logs',
+        where: 'character_id = ?',
+        whereArgs: [id],
+      );
+      batch.delete(
         'pending_memory_actions',
         where: 'character_id = ?',
         whereArgs: [id],
@@ -1379,6 +1391,81 @@ class DatabaseHelper {
   }
 
   // ═══════════════════════════════════
+  // ═══ FTS5 全文搜索 ═══
+
+  /// 重建 FTS5 全文索引。備份還原後必須呼叫。
+  static Future<void> rebuildMemoryFts() async {
+    final db = await database;
+    await _DatabaseSchema.rebuildMemoryFts(db);
+  }
+
+  /// BM25 全文搜索記憶。返回按相關度排序的 Memory 列表。
+  /// [query] 為用戶輸入的原始文本，會被拆成搜索詞。
+  /// 只搜索指定角色 + 模式的 active 記憶。
+  static Future<List<Memory>> searchMemoriesByText(
+    String query, {
+    required String mode,
+    String characterId = 'default',
+    int limit = 20,
+  }) async {
+    if (query.trim().isEmpty) return [];
+    final db = await database;
+
+    // 將用戶輸入拆成獨立搜索詞，用 OR 連接（任一詞命中即可）。
+    // FTS5 的 unicode61 tokenizer 會把 CJK 逐字拆分。
+    final terms = _buildFtsQuery(query);
+    if (terms.isEmpty) return [];
+
+    try {
+      final rows = await db.rawQuery(
+        '''
+        SELECT m.*, bm25(memories_fts, 1.0, 0.5) AS _rank
+        FROM memories_fts
+        JOIN memories m ON m.id = memories_fts.rowid
+        WHERE memories_fts MATCH ?
+          AND m.status = 'active'
+          AND m.mode = ?
+          AND m.character_id = ?
+        ORDER BY _rank
+        LIMIT ?
+        ''',
+        [terms, mode, characterId, limit],
+      );
+      return rows.map(Memory.fromMap).toList();
+    } catch (e) {
+      // FTS5 不可用時（極罕見）靜默降級，不阻塞主流程
+      developer.log('FTS5 search failed', error: e, name: 'DatabaseHelper');
+      return [];
+    }
+  }
+
+  /// 把用戶輸入轉成 FTS5 MATCH 表達式。
+  /// CJK 字符逐字拆開，其他按空白分詞，用 OR 連接。
+  /// 過濾掉太短的非 CJK token 和 FTS5 保留字元。
+  static String _buildFtsQuery(String input) {
+    final cjkRe = RegExp(r'[　-ヿ一-鿿＀-￯]');
+    final tokens = <String>{};
+
+    for (final char in input.runes) {
+      final s = String.fromCharCode(char);
+      if (cjkRe.hasMatch(s)) {
+        tokens.add(s);
+      }
+    }
+
+    // 非 CJK 部分按空白拆詞
+    final nonCjk = input.replaceAll(cjkRe, ' ').trim();
+    if (nonCjk.isNotEmpty) {
+      for (final word in nonCjk.split(RegExp(r'\s+'))) {
+        final cleaned = word.replaceAll(RegExp(r'["\*\(\)\{\}\[\]:^~]'), '');
+        if (cleaned.length >= 2) tokens.add(cleaned);
+      }
+    }
+
+    if (tokens.isEmpty) return '';
+    return tokens.map((t) => '"$t"').join(' OR ');
+  }
+
   // 記憶操作（帶角色過濾）
   // ═══════════════════════════════════
 
@@ -2084,6 +2171,312 @@ class DatabaseHelper {
   // ═══════════════════════════════════
   // 用量記錄
   // ═══════════════════════════════════
+
+  /// Atomically reserves every provider route in one logical web-search plan.
+  ///
+  /// Reserved rows consume capacity to prevent concurrent turns from racing
+  /// past the cap. Only rows that reach `launched` (or a final launch outcome)
+  /// are reported as provider launches; unlaunched rows are released.
+  static Future<WebSearchUsageReservationResult>
+  reserveWebSearchProviderLaunches({
+    required String reservationId,
+    required String conversationId,
+    required String characterId,
+    required String turnId,
+    required int generationSerial,
+    required String planStrategy,
+    required List<({String provider, String model, String route})> routes,
+    required String budgetDay,
+    required int dailyProviderLaunchCap,
+    required String reservedAt,
+    required String expiresAt,
+  }) async {
+    if (routes.isEmpty || routes.length > 2) {
+      throw ArgumentError.value(
+        routes,
+        'routes',
+        'Expected one or two routes.',
+      );
+    }
+    if ((planStrategy == 'single' && routes.length != 1) ||
+        (planStrategy == 'dual' && routes.length != 2) ||
+        (planStrategy != 'single' && planStrategy != 'dual')) {
+      throw ArgumentError.value(
+        planStrategy,
+        'planStrategy',
+        'Plan strategy does not match its routes.',
+      );
+    }
+    if (dailyProviderLaunchCap < 1) {
+      throw ArgumentError.value(
+        dailyProviderLaunchCap,
+        'dailyProviderLaunchCap',
+        'The daily provider-launch cap must be positive.',
+      );
+    }
+    final db = await database;
+    return db.transaction<WebSearchUsageReservationResult>((txn) async {
+      // A grant that was never claimed can be released safely. A claimed
+      // execution that vanished with the process is uncertain, so both a
+      // claimed dispatch window and an already-launched provider settle as
+      // unknown instead of silently granting the budget back or remaining in
+      // a non-final state forever.
+      await txn.rawUpdate(
+        "UPDATE web_search_usage_logs SET status = 'released', settled_at = ? "
+        "WHERE status = 'reserved' AND expires_at <= ?",
+        <Object?>[reservedAt, reservedAt],
+      );
+      await txn.rawUpdate(
+        "UPDATE web_search_usage_logs SET status = 'unknown', settled_at = ?, "
+        "cost_certainty = 'unknown' "
+        "WHERE status IN ('claimed', 'launched') "
+        'AND expires_at <= ?',
+        <Object?>[reservedAt, reservedAt],
+      );
+
+      final existingTurn = await txn.query(
+        'web_search_usage_logs',
+        columns: const <String>['id'],
+        where:
+            'conversation_id = ? AND turn_id = ? AND generation_serial = ? '
+            'AND logical_slot = 1',
+        whereArgs: <Object?>[conversationId, turnId, generationSerial],
+        limit: 1,
+      );
+      if (existingTurn.isNotEmpty) {
+        return WebSearchUsageReservationResult.duplicateTurn;
+      }
+
+      final countRows = await txn.rawQuery(
+        'SELECT COUNT(*) AS count FROM web_search_usage_logs '
+        "WHERE budget_day = ? AND status != 'released'",
+        <Object?>[budgetDay],
+      );
+      final reservedOrUsed = Sqflite.firstIntValue(countRows) ?? 0;
+      if (reservedOrUsed + routes.length > dailyProviderLaunchCap) {
+        return WebSearchUsageReservationResult.dailyLimitExceeded;
+      }
+
+      final batch = txn.batch();
+      for (var index = 0; index < routes.length; index++) {
+        final route = routes[index];
+        batch.insert('web_search_usage_logs', <String, Object?>{
+          'reservation_id': reservationId,
+          'logical_slot': index == 0 ? 1 : 0,
+          'conversation_id': conversationId,
+          'character_id': characterId,
+          'turn_id': turnId,
+          'generation_serial': generationSerial,
+          'budget_day': budgetDay,
+          'plan_strategy': planStrategy,
+          'provider': route.provider,
+          'provider_model': route.model,
+          'provider_route': route.route,
+          'status': 'reserved',
+          'reserved_at': reservedAt,
+          'expires_at': expiresAt,
+        }, conflictAlgorithm: ConflictAlgorithm.abort);
+      }
+      await batch.commit(noResult: true);
+      return WebSearchUsageReservationResult.reserved;
+    });
+  }
+
+  /// Consumes the durable half of a permission grant by binding it to exactly
+  /// one ToolCall id. The handler still has to claim the bound reservation.
+  static Future<bool> bindWebSearchReservationToCall({
+    required String reservationId,
+    required String callId,
+    required String now,
+  }) async {
+    final db = await database;
+    return db.transaction<bool>((txn) async {
+      final rows = await txn.query(
+        'web_search_usage_logs',
+        columns: const <String>['status', 'call_id', 'expires_at'],
+        where: 'reservation_id = ?',
+        whereArgs: <Object?>[reservationId],
+      );
+      if (rows.isEmpty ||
+          rows.any(
+            (row) =>
+                row['status'] != 'reserved' ||
+                row['call_id'] != null ||
+                (row['expires_at']! as String).compareTo(now) <= 0,
+          )) {
+        return false;
+      }
+      final reusedCall = await txn.query(
+        'web_search_usage_logs',
+        columns: const <String>['id'],
+        where: 'call_id = ? AND logical_slot = 1',
+        whereArgs: <Object?>[callId],
+        limit: 1,
+      );
+      if (reusedCall.isNotEmpty) return false;
+      final changed = await txn.update(
+        'web_search_usage_logs',
+        <String, Object?>{'call_id': callId},
+        where:
+            'reservation_id = ? AND status = ? AND call_id IS NULL '
+            'AND expires_at > ?',
+        whereArgs: <Object?>[reservationId, 'reserved', now],
+      );
+      return changed == rows.length;
+    });
+  }
+
+  /// Handler-only transition. It extends the short permission expiry into an
+  /// execution lease so another reservation cannot reap an active request.
+  static Future<bool> claimWebSearchReservation({
+    required String reservationId,
+    required String callId,
+    required String budgetDay,
+    required String claimedAt,
+    required String executionExpiresAt,
+  }) async {
+    final db = await database;
+    return db.transaction<bool>((txn) async {
+      final rows = await txn.query(
+        'web_search_usage_logs',
+        columns: const <String>['status', 'call_id', 'expires_at'],
+        where: 'reservation_id = ? AND budget_day = ?',
+        whereArgs: <Object?>[reservationId, budgetDay],
+      );
+      if (rows.isEmpty ||
+          rows.any(
+            (row) =>
+                row['status'] != 'reserved' ||
+                row['call_id'] != callId ||
+                (row['expires_at']! as String).compareTo(claimedAt) <= 0,
+          )) {
+        return false;
+      }
+      final changed = await txn.update(
+        'web_search_usage_logs',
+        <String, Object?>{
+          'status': 'claimed',
+          'claimed_at': claimedAt,
+          'expires_at': executionExpiresAt,
+        },
+        where:
+            'reservation_id = ? AND call_id = ? AND budget_day = ? AND status = ? '
+            'AND expires_at > ?',
+        whereArgs: <Object?>[
+          reservationId,
+          callId,
+          budgetDay,
+          'reserved',
+          claimedAt,
+        ],
+      );
+      return changed == rows.length;
+    });
+  }
+
+  /// Must be called immediately before dispatching a provider request.
+  static Future<bool> markWebSearchProviderLaunched({
+    required String reservationId,
+    required String callId,
+    required String provider,
+    required String providerModel,
+    required String providerRoute,
+    required String launchedAt,
+  }) async {
+    final db = await database;
+    final changed = await db.update(
+      'web_search_usage_logs',
+      <String, Object?>{'status': 'launched', 'launched_at': launchedAt},
+      where:
+          'reservation_id = ? AND call_id = ? AND provider = ? '
+          'AND provider_model = ? AND provider_route = ? AND status = ?',
+      whereArgs: <Object?>[
+        reservationId,
+        callId,
+        provider,
+        providerModel,
+        providerRoute,
+        'claimed',
+      ],
+    );
+    return changed == 1;
+  }
+
+  static Future<bool> settleWebSearchProviderLaunch({
+    required String reservationId,
+    required String callId,
+    required String provider,
+    required String providerModel,
+    required String providerRoute,
+    required String outcome,
+    required String settledAt,
+    required int searchRequests,
+    required int promptTokens,
+    required int completionTokens,
+    required double? actualCostUsd,
+    required String costCertainty,
+  }) async {
+    if (!const <String>{
+      'success',
+      'failure',
+      'cancelled',
+      'unknown',
+    }.contains(outcome)) {
+      throw ArgumentError.value(outcome, 'outcome', 'Invalid launch outcome.');
+    }
+    final db = await database;
+    final changed = await db.update(
+      'web_search_usage_logs',
+      <String, Object?>{
+        'status': outcome,
+        'settled_at': settledAt,
+        'search_requests': searchRequests,
+        'prompt_tokens': promptTokens,
+        'completion_tokens': completionTokens,
+        'actual_cost_usd': actualCostUsd,
+        'cost_certainty': costCertainty,
+      },
+      where:
+          'reservation_id = ? AND call_id = ? AND provider = ? '
+          'AND provider_model = ? AND provider_route = ? AND status = ?',
+      whereArgs: <Object?>[
+        reservationId,
+        callId,
+        provider,
+        providerModel,
+        providerRoute,
+        'launched',
+      ],
+    );
+    return changed == 1;
+  }
+
+  /// Releases only routes for which no provider dispatch was recorded.
+  static Future<int> releaseUnlaunchedWebSearchReservation({
+    required String reservationId,
+    String? callId,
+    required String settledAt,
+  }) async {
+    final db = await database;
+    final callClause = callId == null ? '' : ' AND call_id = ?';
+    return db.rawUpdate(
+      "UPDATE web_search_usage_logs SET status = 'released', settled_at = ? "
+      "WHERE reservation_id = ? AND status IN ('reserved', 'claimed')"
+      '$callClause',
+      <Object?>[settledAt, reservationId, ?callId],
+    );
+  }
+
+  /// Counts provider dispatches, not logical calls and not unused reservations.
+  static Future<int> getWebSearchProviderLaunchCount(String budgetDay) async {
+    final db = await database;
+    final rows = await db.rawQuery(
+      'SELECT COUNT(*) FROM web_search_usage_logs '
+      "WHERE budget_day = ? AND status NOT IN ('reserved', 'claimed', 'released')",
+      <Object?>[budgetDay],
+    );
+    return Sqflite.firstIntValue(rows) ?? 0;
+  }
 
   static Future<void> logUsage({
     required String provider,
