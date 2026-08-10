@@ -13,9 +13,9 @@ costs down. Build and signing instructions below; privacy details in
 **[Download Holt v1.3.7 APK](https://github.com/cedar-panda/Holt/releases/tag/v1.3.7)**
 
 **If you have any questions or encounter any issues while using it, please feel free to contact me at 
-wrenmyco@proton.me. 
+wrenmyco@proton.me. **
 
-I will get back to you as soon as possible. Thank you!**
+**I will get back to you as soon as possible. Thank you!**
 
 ## Screenshots
 
