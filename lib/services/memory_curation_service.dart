@@ -18,10 +18,15 @@ class MemoryCurationResult {
   final int createdLinks;
   final int duplicateProposals;
 
+  /// Optional one-sentence dream summary extracted from the model response.
+  /// Only populated when a dream-specific systemPromptOverride is used.
+  final String? dreamSummary;
+
   const MemoryCurationResult({
     required this.proposedRelations,
     required this.createdLinks,
     this.duplicateProposals = 0,
+    this.dreamSummary,
   });
 }
 
@@ -60,6 +65,7 @@ Rules:
     ApiAdapter? adapterOverride,
     String? modelOverride,
     String? providerOverride,
+    String? systemPromptOverride,
   }) async {
     final unique = <int, Memory>{
       for (final memory in memories)
@@ -85,6 +91,7 @@ Rules:
     var proposed = 0;
     var created = 0;
     var duplicateProposals = 0;
+    String? dreamSummary;
     for (var batchIndex = 0; batchIndex < batches.length; batchIndex++) {
       final batch = batches[batchIndex];
       ApiUsage? usage;
@@ -100,7 +107,7 @@ Rules:
           },
         ],
         model: model,
-        systemPrompt: _systemPrompt,
+        systemPrompt: systemPromptOverride ?? _systemPrompt,
         onUsage: (value) => usage = value,
       );
       if (usage != null) {
@@ -116,6 +123,7 @@ Rules:
         response,
         allowedIds: batch.map((memory) => memory.id!).toSet(),
       );
+      dreamSummary ??= extractDreamSummary(response);
       proposed += relations.length;
       for (final relation in relations) {
         final inserted = await DatabaseHelper.upsertSpiderWebRelation(
@@ -156,6 +164,7 @@ Rules:
       proposedRelations: proposed,
       createdLinks: created,
       duplicateProposals: duplicateProposals,
+      dreamSummary: dreamSummary,
     );
   }
 
@@ -277,6 +286,21 @@ Rules:
       return result;
     } catch (_) {
       return const [];
+    }
+  }
+
+  /// Extract the optional `dream_summary` string from a model response.
+  /// Returns null if not present or empty.
+  static String? extractDreamSummary(String response) {
+    final match = RegExp(r'\{[\s\S]*\}').firstMatch(response);
+    if (match == null) return null;
+    try {
+      final decoded = jsonDecode(match.group(0)!);
+      if (decoded is! Map) return null;
+      final summary = decoded['dream_summary']?.toString().trim();
+      return (summary != null && summary.isNotEmpty) ? summary : null;
+    } catch (_) {
+      return null;
     }
   }
 
