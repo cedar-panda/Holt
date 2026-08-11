@@ -2,7 +2,8 @@ import 'dart:async';
 import 'dart:io' show Platform;
 
 import 'package:app_links/app_links.dart';
-import 'package:flutter/foundation.dart' show kIsWeb, visibleForTesting;
+import 'package:flutter/foundation.dart'
+    show kDebugMode, kIsWeb, visibleForTesting;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
@@ -42,6 +43,13 @@ import 'widgets/yanci_sprite_overlay.dart';
 
 /// 全局主題通知器（任何頁面都能觸發重建）
 final themeNotifier = ValueNotifier<int>(0);
+
+/// Personal release builds may opt into diagnostics explicitly. Public
+/// distributable builds omit the define and therefore fail closed.
+const bool developerDiagnosticsEnabled = bool.fromEnvironment(
+  'HOLT_ENABLE_DEVELOPER_DIAGNOSTICS',
+  defaultValue: kDebugMode,
+);
 
 /// WorkManager 後台任務入口。獨立 isolate，@pragma 保住不被 tree-shake。
 /// 保活的後台補針邏輯全在 KeepAliveService.backgroundTick 裡，
@@ -310,8 +318,9 @@ class _YanciAppState extends State<YanciApp> with WidgetsBindingObserver {
           '/local_models': (context) => const LocalModelScreen(),
           '/usage': (context) => const UsageDashboardScreen(),
           '/game': (context) => const GameScreen(),
-          '/developer_diagnostics': (context) =>
-              const DeveloperDiagnosticsScreen(),
+          if (developerDiagnosticsEnabled)
+            '/developer_diagnostics': (context) =>
+                const DeveloperDiagnosticsScreen(),
         },
         onGenerateRoute: (settings) {
           if (settings.name == '/memory') {

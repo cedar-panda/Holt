@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:crypto/crypto.dart';
 import 'api_adapter.dart';
+import 'model_info.dart';
 import 'settings/memory_settings.dart';
 import 'sse_stream.dart';
 import 'stream_transport.dart';
@@ -34,7 +35,67 @@ class GeminiService implements ApiAdapter {
 
   static const Duration _cacheTtl = Duration(hours: 1);
 
-  GeminiService({required this.apiKey, this.modelId = 'gemini-2.0-flash'});
+  GeminiService({required this.apiKey, this.modelId = 'gemini-2.5-flash'});
+
+  /// Loads concrete Gemini models that accept `generateContent` requests.
+  ///
+  /// The API key stays in the request header so it cannot leak through URLs,
+  /// redirect logs, or exception messages.
+  static Future<List<ModelInfo>> fetchModels(
+    String apiKey, {
+    http.Client? client,
+  }) async {
+    final ownedClient = client == null ? http.Client() : null;
+    final activeClient = client ?? ownedClient!;
+    try {
+      final response = await activeClient
+          .get(
+            Uri.parse('$_baseUrl/models'),
+            headers: {'x-goog-api-key': apiKey},
+          )
+          .timeout(const Duration(seconds: 20));
+      if (response.statusCode != 200) {
+        throw Exception('無法獲取 Gemini 模型列表：${response.statusCode}');
+      }
+
+      final decoded = jsonDecode(response.body);
+      final rawModels = decoded is Map ? decoded['models'] : null;
+      if (rawModels is! List) {
+        throw const FormatException('Gemini 模型列表格式不正確');
+      }
+      final models = <ModelInfo>[];
+      for (final raw in rawModels) {
+        if (raw is! Map) continue;
+        final methods = _modelStringList(raw['supportedGenerationMethods']);
+        if (!methods.contains('generateContent')) continue;
+        final rawName = raw['name']?.toString().trim() ?? '';
+        final id = rawName.startsWith('models/')
+            ? rawName.substring('models/'.length)
+            : rawName;
+        if (id.isEmpty || id.toLowerCase().contains('embedding')) continue;
+        final displayName = raw['displayName']?.toString().trim() ?? '';
+        models.add(
+          ModelInfo(
+            id: id,
+            name: displayName.isEmpty ? id : displayName,
+            supportedParameters: methods,
+          ),
+        );
+      }
+      models.sort((a, b) => a.name.compareTo(b.name));
+      return models;
+    } finally {
+      ownedClient?.close();
+    }
+  }
+
+  static List<String> _modelStringList(Object? raw) {
+    if (raw is! List) return const <String>[];
+    return raw
+        .map((value) => value.toString().trim())
+        .where((value) => value.isNotEmpty)
+        .toList(growable: false);
+  }
 
   Map<String, dynamic> debugBuildBodyForTesting({
     required List<Map<String, String>> messages,
@@ -193,7 +254,7 @@ class GeminiService implements ApiAdapter {
   }
 
   String _extractModel(String model) {
-    // 如果是 OpenRouter 格式 "google/gemini-2.0-flash"
+    // 如果是 OpenRouter 格式（例如 "google/gemini-2.5-flash"）
     if (model.contains('/')) return model.split('/').last;
     return model;
   }

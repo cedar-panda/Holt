@@ -72,6 +72,31 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('unclosed think tag stays in the thinking tree', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    await L.setLocale('zh_TW');
+
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: ChatBubble(
+            text: '<think>連線中斷前的思考片段',
+            isUser: false,
+            captureMode: true,
+            thinkingExpandedOverride: true,
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('Thinking'), findsOneWidget);
+    expect(find.text('連線中斷前的思考片段'), findsOneWidget);
+    expect(find.textContaining('<think>'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('all preset themes keep context metadata transparent', (
     tester,
   ) async {

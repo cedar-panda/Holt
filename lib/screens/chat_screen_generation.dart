@@ -1126,6 +1126,9 @@ extension _ChatGenerationMethods on _ChatScreenState {
         : message;
   }
 
+  EdgeInsets _failureSnackBarMargin() =>
+      EdgeInsets.fromLTRB(16, 0, 16, MediaQuery.paddingOf(context).bottom + 88);
+
   void _showApiConfigFailure(ApiConfigException error) {
     if (!mounted) return;
     final messenger = ScaffoldMessenger.of(context);
@@ -1134,6 +1137,8 @@ extension _ChatGenerationMethods on _ChatScreenState {
       SnackBar(
         content: Text(error.message),
         behavior: SnackBarBehavior.floating,
+        margin: _failureSnackBarMargin(),
+        showCloseIcon: true,
         duration: const Duration(seconds: 8),
         action: SnackBarAction(
           label: L.pick(en: 'Settings', zhTW: '去設定'),
@@ -1153,6 +1158,8 @@ extension _ChatGenerationMethods on _ChatScreenState {
       SnackBar(
         content: Text(_apiErrorSummary(error)),
         behavior: SnackBarBehavior.floating,
+        margin: _failureSnackBarMargin(),
+        showCloseIcon: true,
         duration: const Duration(seconds: 8),
         action: SnackBarAction(
           label: L.pick(en: 'Retry', zhTW: '重試'),

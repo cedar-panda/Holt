@@ -3,6 +3,11 @@ import 'dart:convert';
 import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 
+const bool _developerDiagnosticsEnabled = bool.fromEnvironment(
+  'HOLT_ENABLE_DEVELOPER_DIAGNOSTICS',
+  defaultValue: kDebugMode,
+);
+
 /// 單次「實際 request 組裝完成後」的 System Context 快照。
 ///
 /// 只保存在記憶體，不寫資料庫／SharedPreferences。API headers 不會傳入；
@@ -124,6 +129,7 @@ class SystemContextDebug {
     String contentKey = 'content',
     bool expectTime = true,
   }) {
+    if (!_developerDiagnosticsEnabled) return;
     final roles = <String>[
       ...topLevelRoles.where((role) => role.trim().isNotEmpty),
       ...requestMessages

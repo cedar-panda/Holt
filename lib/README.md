@@ -1,5 +1,23 @@
 # Holt 語音更新 v2
 
+## 現行檔案樹補充
+
+```text
+lib/memory/
+├── database.dart                ← 資料庫公開 facade 與各領域 CRUD
+├── database_schema.dart         ← schema、migration、FTS5／FTS4 相容索引
+└── database_memory_search.dart  ← BM25 記憶檢索、FTS4 matchinfo 排序、文字 fallback
+```
+
+API 設定的遠端模型清單分派集中在
+`lib/services/provider_model_catalog.dart`。它把 OpenRouter、Gemini、xAI、
+DeepSeek 與 OpenAI-compatible 的 Key、端點及解析器隔離，避免切換供應商後
+沿用上一家的錯誤或憑證。
+
+`database_memory_search.dart` 從超過 3000 行的 `database.dart` 拆出全文搜尋；
+支援 FTS5 的平台使用 SQLite 原生 BM25，Android 系統缺少 FTS5 時改用 FTS4
+統計計算 BM25，不需要更換主資料庫或複製業務 CRUD。
+
 ## 檔案清單
 
 ```

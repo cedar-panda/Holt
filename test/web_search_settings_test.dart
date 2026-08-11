@@ -120,4 +120,55 @@ void main() {
     expect(find.text('OpenRouter · 已就緒'), findsNothing);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('model-list errors stay with the provider that produced them', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1080, 2400);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await L.setLocale('zh_TW');
+    await ApiSettings.saveGeminiApiKey('gemini-test-key');
+
+    await tester.pumpWidget(const MaterialApp(home: ApiSettingsScreen()));
+    for (var i = 0; i < 12; i++) {
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+
+    await tester.tap(
+      find.byKey(const Key('api_settings_model_section_toggle')),
+    );
+    await tester.pump();
+    await tester.tap(find.byTooltip(L.get('settings_model_refresh')).first);
+    await tester.pump();
+    expect(find.text('請先輸入 OpenRouter API Key'), findsOneWidget);
+
+    await tester.tap(find.byType(DropdownButton<String>).first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Google Gemini').last);
+    await tester.pumpAndSettle();
+
+    expect(find.text('請先輸入 OpenRouter API Key'), findsNothing);
+
+    Future<void> expectProviderConfigurationError(
+      String menuLabel,
+      String expectedError,
+    ) async {
+      await tester.tap(find.byType(DropdownButton<String>).first);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text(menuLabel).last);
+      await tester.pump();
+      expect(find.text(expectedError), findsOneWidget);
+      expect(find.text('請先輸入 OpenRouter API Key'), findsNothing);
+    }
+
+    await expectProviderConfigurationError('xAI (Grok)', '請先輸入 xAI API Key');
+    await expectProviderConfigurationError('DeepSeek', '請先輸入 DeepSeek API Key');
+    await expectProviderConfigurationError(
+      'OpenAI Compatible (Custom)',
+      '請先輸入 Base URL',
+    );
+    expect(tester.takeException(), isNull);
+  });
 }

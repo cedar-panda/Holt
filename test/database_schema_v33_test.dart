@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -165,6 +166,22 @@ void main() {
       expect(rows, hasLength(1));
     },
   );
+
+  test('FTS4 matchinfo fallback applies BM25 term and length scoring', () {
+    Uint8List encode(List<int> values) =>
+        Uint32List.fromList(values).buffer.asUint8List();
+
+    // p=1, c=2, n=10, then average lengths, row lengths, and x triples.
+    final strong = DatabaseHelper.bm25FromFts4MatchInfoForTesting(
+      encode([1, 2, 10, 10, 1, 3, 0, 3, 12, 2, 0, 0, 0]),
+    );
+    final weak = DatabaseHelper.bm25FromFts4MatchInfoForTesting(
+      encode([1, 2, 10, 10, 1, 10, 0, 1, 12, 2, 0, 0, 0]),
+    );
+
+    expect(strong, greaterThan(weak));
+    expect(weak, greaterThan(0));
+  });
 
   test('memory text search combines BM25 words with CJK fragments', () async {
     await DatabaseHelper.createSchemaForTesting(db);

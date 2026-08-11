@@ -36,38 +36,47 @@ class XaiService implements ApiAdapter {
     lastDiagnostics = <String, Object?>{};
   }
 
-  static Future<List<ModelInfo>> fetchModels(String apiKey) async {
-    final response = await http
-        .get(
-          Uri.parse(_modelsUrl),
-          headers: <String, String>{'Authorization': 'Bearer $apiKey'},
-        )
-        .timeout(const Duration(seconds: 20));
-    if (response.statusCode != 200) {
-      throw Exception('無法獲取 xAI 模型列表：${response.statusCode}');
+  static Future<List<ModelInfo>> fetchModels(
+    String apiKey, {
+    http.Client? client,
+  }) async {
+    final ownedClient = client == null ? http.Client() : null;
+    final activeClient = client ?? ownedClient!;
+    try {
+      final response = await activeClient
+          .get(
+            Uri.parse(_modelsUrl),
+            headers: <String, String>{'Authorization': 'Bearer $apiKey'},
+          )
+          .timeout(const Duration(seconds: 20));
+      if (response.statusCode != 200) {
+        throw Exception('無法獲取 xAI 模型列表：${response.statusCode}');
+      }
+      final decoded = jsonDecode(response.body);
+      final rawModels = decoded is Map ? decoded['models'] : null;
+      if (rawModels is! List) return const <ModelInfo>[];
+      final models = rawModels
+          .whereType<Map>()
+          .map((raw) {
+            final id = '${raw['id'] ?? ''}'.trim();
+            final aliases = raw['aliases'];
+            return ModelInfo(
+              id: id,
+              name: id,
+              inputModalities: _stringList(raw['input_modalities']),
+              outputModalities: _stringList(raw['output_modalities']),
+              supportedParameters: aliases is List
+                  ? aliases.map((value) => '$value').toList()
+                  : const <String>[],
+            );
+          })
+          .where((model) => model.id.isNotEmpty)
+          .toList();
+      models.sort((a, b) => a.id.compareTo(b.id));
+      return models;
+    } finally {
+      ownedClient?.close();
     }
-    final decoded = jsonDecode(response.body);
-    final rawModels = decoded is Map ? decoded['models'] : null;
-    if (rawModels is! List) return const <ModelInfo>[];
-    final models = rawModels
-        .whereType<Map>()
-        .map((raw) {
-          final id = '${raw['id'] ?? ''}'.trim();
-          final aliases = raw['aliases'];
-          return ModelInfo(
-            id: id,
-            name: id,
-            inputModalities: _stringList(raw['input_modalities']),
-            outputModalities: _stringList(raw['output_modalities']),
-            supportedParameters: aliases is List
-                ? aliases.map((value) => '$value').toList()
-                : const <String>[],
-          );
-        })
-        .where((model) => model.id.isNotEmpty)
-        .toList();
-    models.sort((a, b) => a.id.compareTo(b.id));
-    return models;
   }
 
   Future<Map<String, dynamic>> debugBuildBodyForTesting({

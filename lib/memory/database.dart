@@ -14,6 +14,7 @@ import '../utils/app_file_safety.dart';
 import '../utils/iso_week.dart';
 
 part 'database_schema.dart';
+part 'database_memory_search.dart';
 
 enum WebSearchUsageReservationResult {
   reserved,
@@ -96,6 +97,10 @@ class DatabaseHelper {
   static Future<void> ensureRuntimeSchemaForTesting(Database db) {
     return _DatabaseSchema._ensureRuntimeSchema(db);
   }
+
+  @visibleForTesting
+  static double bm25FromFts4MatchInfoForTesting(Uint8List matchInfo) =>
+      _MemorySearch.bm25FromMatchInfoForTesting(matchInfo);
 
   /// Installs an isolated database for repository tests. Production code never
   /// calls this; keeping it here lets tests exercise the public archive APIs
@@ -1412,167 +1417,25 @@ class DatabaseHelper {
     );
   }
 
-  // ═══════════════════════════════════
-  // ═══ FTS5 全文搜索 ═══
+  /// Rebuilds the derived full-text memory index after restore or repair.
+  static Future<void> rebuildMemoryFts() => _MemorySearch.rebuildIndex();
 
-  /// 重建 FTS5 全文索引。備份還原後必須呼叫。
-  static Future<void> rebuildMemoryFts() async {
-    final db = await database;
-    await _DatabaseSchema.rebuildMemoryFts(db);
-  }
+  /// Ensures same-version additions and derived indexes exist before export.
+  static Future<void> ensureAllSchemaTables() =>
+      _MemorySearch.ensureRuntimeSchema();
 
-  /// 確保所有 late-added schema 表存在。
-  ///
-  /// v39 加了 pending_memory_actions、v42 加了 web_search_usage_logs，
-  /// 但若 DB 已經是 v43 且表是在同版本號內後加的，migration 不會重跑。
-  /// 備份 export/import 前呼叫此方法，避免 _verifyTableManifest 因缺表而拒絕操作。
-  static Future<void> ensureAllSchemaTables() async {
-    final db = await database;
-    await _DatabaseSchema._ensureRuntimeSchema(db);
-  }
-
-  /// BM25 全文搜索記憶。返回按相關度排序的 Memory 列表。
-  /// [query] 為用戶輸入的原始文本，會被拆成搜索詞。
-  /// 只搜索指定角色 + 模式的 active 記憶。
+  /// Searches active memories using platform FTS plus bounded text fallback.
   static Future<List<Memory>> searchMemoriesByText(
     String query, {
     required String mode,
     String characterId = 'default',
     int limit = 20,
-  }) async {
-    if (query.trim().isEmpty) return [];
-    final db = await database;
-    final boundedLimit = limit.clamp(1, 100);
-
-    // unicode61 對拉丁詞有穩定的 BM25 排序，但會把連續 CJK 文本視為
-    // 一整個 token。CJK 另走短片段 fallback，避免把「海邊」錯拆成兩個
-    // 永遠命不中索引的單字。
-    final terms = _buildFtsQuery(query);
-    final results = <Memory>[];
-    final seenIds = <int>{};
-
-    if (terms.isNotEmpty) {
-      try {
-        final rows = await db.rawQuery(
-          '''
-        SELECT m.*, bm25(memories_fts, 1.0, 0.5) AS _rank
-        FROM memories_fts
-        JOIN memories m ON m.id = memories_fts.rowid
-        WHERE memories_fts MATCH ?
-          AND m.status = 'active'
-          AND m.mode = ?
-          AND m.character_id = ?
-        ORDER BY _rank
-        LIMIT ?
-        ''',
-          [terms, mode, characterId, boundedLimit],
-        );
-        for (final row in rows) {
-          final memory = Memory.fromMap(row);
-          if (memory.id == null || seenIds.add(memory.id!)) {
-            results.add(memory);
-          }
-        }
-      } catch (e) {
-        developer.log('FTS5 search failed', error: e, name: 'DatabaseHelper');
-      }
-    }
-
-    if (results.length < boundedLimit) {
-      final fragments = _buildLikeSearchFragments(query);
-      if (fragments.isNotEmpty) {
-        final clauses = List.filled(
-          fragments.length,
-          "(content LIKE ? ESCAPE '\\' OR triggers LIKE ? ESCAPE '\\')",
-        ).join(' OR ');
-        final args = <Object?>[mode, characterId];
-        for (final fragment in fragments) {
-          final pattern = _likeContains(fragment);
-          args
-            ..add(pattern)
-            ..add(pattern);
-        }
-        args.add(boundedLimit * 3);
-        final rows = await db.rawQuery('''
-          SELECT * FROM memories
-          WHERE mode = ? AND character_id = ? AND status = 'active'
-            AND ($clauses)
-          ORDER BY mention_count DESC, updated_at DESC
-          LIMIT ?
-          ''', args);
-        for (final row in rows) {
-          final memory = Memory.fromMap(row);
-          if (memory.id == null || seenIds.add(memory.id!)) {
-            results.add(memory);
-            if (results.length == boundedLimit) break;
-          }
-        }
-      }
-    }
-    return results;
-  }
-
-  /// 把用戶輸入轉成 FTS5 MATCH 表達式。
-  /// unicode61 的 CJK token 邊界不可靠，這裡只交付適合 BM25 的非 CJK
-  /// 詞；CJK 由 [_buildLikeSearchFragments] 補齊。
-  static String _buildFtsQuery(String input) {
-    final cjkRe = RegExp(r'[　-ヿ一-鿿＀-￯]');
-    final tokens = <String>{};
-
-    // 非 CJK 部分按空白拆詞
-    final nonCjk = input.replaceAll(cjkRe, ' ').trim();
-    if (nonCjk.isNotEmpty) {
-      for (final word in nonCjk.split(RegExp(r'\s+'))) {
-        final cleaned = word.replaceAll(RegExp(r'["\*\(\)\{\}\[\]:^~]'), '');
-        if (cleaned.length >= 2) tokens.add(cleaned);
-      }
-    }
-
-    if (tokens.isEmpty) return '';
-    return tokens.map((t) => '"$t"').join(' OR ');
-  }
-
-  static List<String> _buildLikeSearchFragments(String input) {
-    final cjkChar = RegExp(r'[　-ヿ一-鿿＀-￯]');
-    final fragments = <String>{};
-    var cjkRun = <String>[];
-
-    void flushCjkRun() {
-      if (cjkRun.isEmpty) return;
-      if (cjkRun.length <= 3) {
-        fragments.add(cjkRun.join());
-      } else {
-        for (var i = 0; i <= cjkRun.length - 3; i++) {
-          fragments.add(cjkRun.sublist(i, i + 3).join());
-          if (fragments.length >= 12) break;
-        }
-      }
-      cjkRun = <String>[];
-    }
-
-    for (final rune in input.runes) {
-      final char = String.fromCharCode(rune);
-      if (cjkChar.hasMatch(char)) {
-        cjkRun.add(char);
-      } else {
-        flushCjkRun();
-      }
-      if (fragments.length >= 12) break;
-    }
-    flushCjkRun();
-
-    if (fragments.length < 12) {
-      final nonCjk = input.replaceAll(cjkChar, ' ');
-      for (final rawWord in nonCjk.split(RegExp(r'\s+'))) {
-        final word = rawWord
-            .replaceAll(RegExp(r'["\*\(\)\{\}\[\]:\^~]'), '')
-            .trim();
-        if (word.length >= 3) fragments.add(word);
-        if (fragments.length >= 12) break;
-      }
-    }
-    return fragments.where((fragment) => fragment.isNotEmpty).toList();
-  }
+  }) => _MemorySearch.search(
+    query,
+    mode: mode,
+    characterId: characterId,
+    limit: limit,
+  );
 
   // 記憶操作（帶角色過濾）
   // ═══════════════════════════════════

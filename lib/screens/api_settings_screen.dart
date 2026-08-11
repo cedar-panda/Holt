@@ -5,9 +5,8 @@ import 'package:http/http.dart' as http;
 import '../theme/app_theme.dart';
 import '../services/locale_strings.dart';
 import '../services/openai_compatible_service.dart';
-import '../services/openrouter_service.dart';
 import '../services/model_info.dart';
-import '../services/xai_service.dart';
+import '../services/provider_model_catalog.dart';
 import '../services/thinking_machines_service.dart';
 import '../services/model_cost_policy.dart';
 import '../services/settings_manager.dart';
@@ -141,6 +140,7 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
   bool _isFetchingModels = false;
   bool _isTestingApi = false;
   String? _modelError;
+  String? _modelErrorProvider;
   bool _showModelSection = false;
   bool _obscureProviderKeys = true;
 
@@ -247,6 +247,10 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
         _fetchModels();
       } else if (_provider == 'xai' && xaiKey.isNotEmpty) {
         _fetchModels();
+      } else if (_provider == 'gemini' && gm.isNotEmpty) {
+        _fetchModels();
+      } else if (_provider == 'deepseek' && ds.isNotEmpty) {
+        _fetchModels();
       } else if (_provider == 'openai_compatible' && oaiBase.isNotEmpty) {
         _fetchModels();
       }
@@ -261,13 +265,32 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
   }
 
   Future<void> _fetchModels() async {
+    final provider = _provider;
     final requestGeneration = ++_modelFetchGeneration;
-    final isCompatible = _provider == 'openai_compatible';
-    final isXai = _provider == 'xai';
+    final isCompatible = provider == 'openai_compatible';
+    final isXai = provider == 'xai';
+    final isGemini = provider == 'gemini';
+    final isDeepSeek = provider == 'deepseek';
+    if (!ProviderModelCatalog.supports(provider)) {
+      if (mounted && requestGeneration == _modelFetchGeneration) {
+        setState(() {
+          _isFetchingModels = false;
+          _modelError = null;
+          _modelErrorProvider = null;
+          _models = const <ModelInfo>[];
+          _filteredModels = const <ModelInfo>[];
+        });
+      }
+      return;
+    }
     final apiKey = isCompatible
         ? _oaiCompatKeyCtrl.text.trim()
         : isXai
         ? _xaiKeyCtrl.text.trim()
+        : isGemini
+        ? _geminiKeyCtrl.text.trim()
+        : isDeepSeek
+        ? _deepseekKeyCtrl.text.trim()
         : _apiKeyController.text.trim();
     final baseUrl = _oaiCompatBaseUrlCtrl.text.trim();
     if ((!isCompatible && apiKey.isEmpty) ||
@@ -277,7 +300,12 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
           _isFetchingModels = false;
           _modelError = isCompatible
               ? L.pick(en: 'Enter a Base URL first', zhTW: '請先輸入 Base URL')
-              : L.get('settings_model_error_no_key');
+              : L.pick(
+                  en: 'Enter a ${ProviderModelCatalog.label(provider)} API key first',
+                  zhTW: '請先輸入 ${ProviderModelCatalog.label(provider)} API Key',
+                  zhCN: '请先输入 ${ProviderModelCatalog.label(provider)} API Key',
+                );
+          _modelErrorProvider = provider;
         });
       }
       return;
@@ -285,48 +313,60 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
     setState(() {
       _isFetchingModels = true;
       _modelError = null;
+      _modelErrorProvider = null;
     });
 
     try {
-      final models = isCompatible
-          ? await OpenAICompatibleService.fetchModels(
-              baseUrl: baseUrl,
-              apiKey: apiKey,
-            )
-          : isXai
-          ? await XaiService.fetchModels(apiKey)
-          : await OpenRouterService.fetchModels(apiKey);
-      if (mounted && requestGeneration == _modelFetchGeneration) {
+      final models = await ProviderModelCatalog.fetch(
+        provider: provider,
+        apiKey: apiKey,
+        baseUrl: baseUrl,
+      );
+      if (mounted &&
+          requestGeneration == _modelFetchGeneration &&
+          _provider == provider) {
         await ApiSettings.rememberStarredModelProviders(
           models.map((model) => model.id),
-          isCompatible ? 'openai_compatible' : (isXai ? 'xai' : 'openrouter'),
+          ProviderModelCatalog.providerTag(provider),
         );
         if (!mounted || requestGeneration != _modelFetchGeneration) return;
         setState(() {
           _models = models;
           _filteredModels = models;
           _isFetchingModels = false;
+          _modelErrorProvider = null;
           if (isCompatible) _showModelSection = true;
         });
       }
     } catch (e) {
-      if (mounted && requestGeneration == _modelFetchGeneration) {
+      if (mounted &&
+          requestGeneration == _modelFetchGeneration &&
+          _provider == provider) {
         setState(() {
           _isFetchingModels = false;
           _modelError = '${L.get('settings_model_error_fetch')}: $e';
+          _modelErrorProvider = provider;
         });
       }
     }
   }
 
-  void _scheduleModelFetch(String key) {
+  void _scheduleProviderModelFetch(String provider, String key) {
     _modelFetchTimer?.cancel();
-    if (!key.trim().startsWith('sk-or-')) {
+    final normalizedKey = key.trim();
+    final looksUsable = ProviderModelCatalog.looksUsableKey(
+      provider,
+      normalizedKey,
+    );
+    if (_provider != provider || !looksUsable) {
       _modelFetchGeneration++;
       if (mounted) {
         setState(() {
           _isFetchingModels = false;
-          _modelError = null;
+          if (_modelErrorProvider == provider) {
+            _modelError = null;
+            _modelErrorProvider = null;
+          }
         });
       }
       return;
@@ -341,18 +381,6 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
     _modelFetchTimer?.cancel();
     final uri = Uri.tryParse(baseUrl.trim());
     if (uri == null || !uri.hasScheme || uri.host.isEmpty) return;
-    _modelFetchTimer = Timer(
-      const Duration(milliseconds: 700),
-      () => unawaited(_fetchModels()),
-    );
-  }
-
-  void _scheduleXaiModelFetch(String key) {
-    _modelFetchTimer?.cancel();
-    if (key.trim().length < 8) {
-      _modelFetchGeneration++;
-      return;
-    }
     _modelFetchTimer = Timer(
       const Duration(milliseconds: 700),
       () => unawaited(_fetchModels()),
@@ -383,8 +411,9 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
         response = await http
             .get(
               Uri.parse(
-                'https://generativelanguage.googleapis.com/v1beta/models?key=$keyStr',
+                'https://generativelanguage.googleapis.com/v1beta/models',
               ),
+              headers: {'x-goog-api-key': keyStr},
             )
             .timeout(const Duration(seconds: 20));
       } else if (provider == 'deepseek') {
@@ -397,7 +426,9 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
       } else if (provider == 'qwen') {
         response = await http
             .get(
-              Uri.parse('https://dashscope.aliyuncs.com/api/v1/models'),
+              Uri.parse(
+                'https://dashscope.aliyuncs.com/api/v1/deployments/models?page_no=1&page_size=1&version=v1.0&model_source=base',
+              ),
               headers: {'Authorization': 'Bearer $keyStr'},
             )
             .timeout(const Duration(seconds: 20));
@@ -681,11 +712,7 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
             Row(
               children: [
                 Text(
-                  L.pick(
-                    en: 'Trigger after',
-                    zhTW: '累積',
-                    zhCN: '累积',
-                  ),
+                  L.pick(en: 'Trigger after', zhTW: '累積', zhCN: '累积'),
                   style: YanciTheme.bodySmall.copyWith(fontSize: 11),
                 ),
                 const SizedBox(width: 8),
@@ -720,11 +747,7 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
                 ),
                 const SizedBox(width: 8),
                 Text(
-                  L.pick(
-                    en: 'new memories',
-                    zhTW: '條新記憶後觸發',
-                    zhCN: '条新记忆后触发',
-                  ),
+                  L.pick(en: 'new memories', zhTW: '條新記憶後觸發', zhCN: '条新记忆后触发'),
                   style: YanciTheme.bodySmall.copyWith(fontSize: 11),
                 ),
               ],
@@ -1252,6 +1275,7 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
     VoidCallback onTap,
   ) {
     return GestureDetector(
+      key: const Key('api_settings_model_section_toggle'),
       onTap: onTap,
       behavior: HitTestBehavior.opaque,
       child: Padding(
@@ -1562,7 +1586,15 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
                                   if (v == null) return;
                                   _modelFetchTimer?.cancel();
                                   _modelFetchGeneration++;
-                                  setState(() => _provider = v);
+                                  setState(() {
+                                    _provider = v;
+                                    _models = const <ModelInfo>[];
+                                    _filteredModels = const <ModelInfo>[];
+                                    _modelSearchController.clear();
+                                    _modelError = null;
+                                    _modelErrorProvider = null;
+                                    _isFetchingModels = false;
+                                  });
                                   final savedModel =
                                       await ApiSettings.getModelForProvider(v);
                                   if (!mounted) return;
@@ -1575,6 +1607,8 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
                                     }
                                   });
                                   if (v == 'openrouter' ||
+                                      v == 'gemini' ||
+                                      v == 'deepseek' ||
                                       v == 'xai' ||
                                       v == 'openai_compatible') {
                                     _fetchModels();
@@ -1624,7 +1658,10 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
                                               ),
                                         ),
                                         onChanged: (v) {
-                                          _scheduleModelFetch(v);
+                                          _scheduleProviderModelFetch(
+                                            'openrouter',
+                                            v,
+                                          );
                                           _debouncedSave();
                                         },
                                       ),
@@ -1663,7 +1700,7 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
                                     fontSize: 13,
                                   ),
                                   onChanged: (value) {
-                                    _scheduleXaiModelFetch(value);
+                                    _scheduleProviderModelFetch('xai', value);
                                     _debouncedSave();
                                   },
                                   decoration: InputDecoration(
@@ -1763,15 +1800,24 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
                                   style: YanciTheme.bodyText.copyWith(
                                     fontSize: 13,
                                   ),
-                                  onChanged: (v) => _debouncedSave(),
+                                  onChanged: (v) {
+                                    _scheduleProviderModelFetch('gemini', v);
+                                    _debouncedSave();
+                                  },
                                   decoration: InputDecoration(
                                     hintText: 'Gemini API Key',
                                     hintStyle: YanciTheme.bodySmall.copyWith(
                                       color: YanciTheme.textSecondary
                                           .withValues(alpha: 0.4),
                                     ),
-                                    suffixIcon: _isTestingApi
-                                        ? const Padding(
+                                    suffixIconConstraints: const BoxConstraints(
+                                      minWidth: 88,
+                                    ),
+                                    suffixIcon: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        if (_isTestingApi)
+                                          const Padding(
                                             padding: EdgeInsets.all(12),
                                             child: SizedBox(
                                               width: 16,
@@ -1781,7 +1827,8 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
                                               ),
                                             ),
                                           )
-                                        : IconButton(
+                                        else
+                                          IconButton(
                                             icon: const Icon(
                                               Icons.wifi_protected_setup,
                                               size: 18,
@@ -1791,6 +1838,30 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
                                               _geminiKeyCtrl.text,
                                             ),
                                           ),
+                                        if (_isFetchingModels)
+                                          const Padding(
+                                            padding: EdgeInsets.all(12),
+                                            child: SizedBox(
+                                              width: 16,
+                                              height: 16,
+                                              child: CircularProgressIndicator(
+                                                strokeWidth: 2,
+                                              ),
+                                            ),
+                                          )
+                                        else
+                                          IconButton(
+                                            icon: const Icon(
+                                              Icons.refresh,
+                                              size: 18,
+                                            ),
+                                            tooltip: L.get(
+                                              'settings_model_refresh',
+                                            ),
+                                            onPressed: _fetchModels,
+                                          ),
+                                      ],
+                                    ),
                                     border: InputBorder.none,
                                     contentPadding: const EdgeInsets.symmetric(
                                       vertical: 12,
@@ -1807,15 +1878,24 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
                                   style: YanciTheme.bodyText.copyWith(
                                     fontSize: 13,
                                   ),
-                                  onChanged: (v) => _debouncedSave(),
+                                  onChanged: (v) {
+                                    _scheduleProviderModelFetch('deepseek', v);
+                                    _debouncedSave();
+                                  },
                                   decoration: InputDecoration(
                                     hintText: 'DeepSeek API Key',
                                     hintStyle: YanciTheme.bodySmall.copyWith(
                                       color: YanciTheme.textSecondary
                                           .withValues(alpha: 0.4),
                                     ),
-                                    suffixIcon: _isTestingApi
-                                        ? const Padding(
+                                    suffixIconConstraints: const BoxConstraints(
+                                      minWidth: 88,
+                                    ),
+                                    suffixIcon: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        if (_isTestingApi)
+                                          const Padding(
                                             padding: EdgeInsets.all(12),
                                             child: SizedBox(
                                               width: 16,
@@ -1825,7 +1905,8 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
                                               ),
                                             ),
                                           )
-                                        : IconButton(
+                                        else
+                                          IconButton(
                                             icon: const Icon(
                                               Icons.wifi_protected_setup,
                                               size: 18,
@@ -1835,6 +1916,30 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
                                               _deepseekKeyCtrl.text,
                                             ),
                                           ),
+                                        if (_isFetchingModels)
+                                          const Padding(
+                                            padding: EdgeInsets.all(12),
+                                            child: SizedBox(
+                                              width: 16,
+                                              height: 16,
+                                              child: CircularProgressIndicator(
+                                                strokeWidth: 2,
+                                              ),
+                                            ),
+                                          )
+                                        else
+                                          IconButton(
+                                            icon: const Icon(
+                                              Icons.refresh,
+                                              size: 18,
+                                            ),
+                                            tooltip: L.get(
+                                              'settings_model_refresh',
+                                            ),
+                                            onPressed: _fetchModels,
+                                          ),
+                                      ],
+                                    ),
                                     border: InputBorder.none,
                                     contentPadding: const EdgeInsets.symmetric(
                                       vertical: 12,
@@ -2144,13 +2249,15 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
                             ),
                             if (_showModelSection) ...[
                               const SizedBox(height: YanciTheme.spacingSm),
-                              if (_modelError != null)
+                              if (_modelError != null &&
+                                  _modelErrorProvider == _provider)
                                 Padding(
                                   padding: const EdgeInsets.only(
                                     bottom: YanciTheme.spacingSm,
                                   ),
                                   child: Text(
                                     _modelError!,
+                                    key: const Key('api_settings_model_error'),
                                     style: YanciTheme.bodySmall.copyWith(
                                       color: Colors.red[300],
                                     ),

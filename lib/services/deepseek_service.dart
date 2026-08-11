@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'api_adapter.dart';
+import 'model_info.dart';
 import 'sse_stream.dart';
 import 'stream_transport.dart';
 import 'system_context_debug.dart';
@@ -22,6 +23,44 @@ class DeepSeekService implements ApiAdapter {
   }
 
   DeepSeekService({required this.apiKey});
+
+  static Future<List<ModelInfo>> fetchModels(
+    String apiKey, {
+    http.Client? client,
+  }) async {
+    final ownedClient = client == null ? http.Client() : null;
+    final activeClient = client ?? ownedClient!;
+    try {
+      final response = await activeClient
+          .get(
+            Uri.parse('https://api.deepseek.com/models'),
+            headers: <String, String>{
+              'Authorization': 'Bearer ${apiKey.trim()}',
+            },
+          )
+          .timeout(const Duration(seconds: 20));
+      if (response.statusCode != 200) {
+        throw Exception('無法獲取 DeepSeek 模型列表：${response.statusCode}');
+      }
+      final decoded = jsonDecode(response.body);
+      final rawModels = decoded is Map ? decoded['data'] : null;
+      if (rawModels is! List) {
+        throw const FormatException('DeepSeek 模型列表格式不正確');
+      }
+      final models = rawModels
+          .whereType<Map>()
+          .map((raw) {
+            final id = raw['id']?.toString().trim() ?? '';
+            return ModelInfo(id: id, name: id);
+          })
+          .where((model) => model.id.isNotEmpty)
+          .toList();
+      models.sort((a, b) => a.id.compareTo(b.id));
+      return models;
+    } finally {
+      ownedClient?.close();
+    }
+  }
 
   Map<String, dynamic> debugBuildBodyForTesting({
     required List<Map<String, String>> messages,

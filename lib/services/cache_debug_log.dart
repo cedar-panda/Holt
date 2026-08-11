@@ -1,3 +1,10 @@
+import 'package:flutter/foundation.dart' show kDebugMode;
+
+const bool _developerDiagnosticsEnabled = bool.fromEnvironment(
+  'HOLT_ENABLE_DEVELOPER_DIAGNOSTICS',
+  defaultValue: kDebugMode,
+);
+
 /// 緩存診斷日誌（內存 ring buffer，不落盤）
 ///
 /// 每輪 OpenRouter 請求記一條指紋，開發者診斷頁「Cache Debug」讀取。
@@ -11,6 +18,7 @@ class CacheDebugLog {
   static const _cap = 30;
 
   static void add(Map<String, Object?> entry) {
+    if (!_developerDiagnosticsEnabled) return;
     final enriched = Map<String, Object?>.from(entry);
     final isMainRequest = enriched['internal'] != true;
     final sessionId = (enriched['session_id'] ?? '').toString();

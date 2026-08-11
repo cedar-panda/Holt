@@ -1,5 +1,12 @@
 part of 'home_screen.dart';
 
+const bool _showDeveloperDiagnostics = bool.fromEnvironment(
+  'HOLT_ENABLE_DEVELOPER_DIAGNOSTICS',
+  defaultValue:
+      !bool.fromEnvironment('dart.vm.product') &&
+      !bool.fromEnvironment('dart.vm.profile'),
+);
+
 extension _HomeProfileMethods on _HomeScreenState {
   Widget _buildGridTile({
     required String title,
@@ -486,34 +493,38 @@ extension _HomeProfileMethods on _HomeScreenState {
               rightOnTap: () => _showBackpackBottomSheet(context, 'user'),
               height: 76,
             ),
-            const SizedBox(height: 28),
-            // DeBug Bottom Button
-            GestureDetector(
-              onTap: () =>
-                  Navigator.of(context).pushNamed('/developer_diagnostics'),
-              behavior: HitTestBehavior.opaque,
-              child: SizedBox(
-                height: 60,
-                child: Center(
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(Icons.bug_report_outlined, color: YanciTheme.accent),
-                      const SizedBox(width: 8),
-                      Text(
-                        'DeBug',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                          color: YanciTheme.textPrimary,
-                          fontFamily: YanciTheme.fontFamily,
+            if (_showDeveloperDiagnostics) ...[
+              const SizedBox(height: 28),
+              GestureDetector(
+                onTap: () =>
+                    Navigator.of(context).pushNamed('/developer_diagnostics'),
+                behavior: HitTestBehavior.opaque,
+                child: SizedBox(
+                  height: 60,
+                  child: Center(
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(
+                          Icons.bug_report_outlined,
+                          color: YanciTheme.accent,
                         ),
-                      ),
-                    ],
+                        const SizedBox(width: 8),
+                        Text(
+                          'DeBug',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                            color: YanciTheme.textPrimary,
+                            fontFamily: YanciTheme.fontFamily,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),
-            ),
+            ],
             const SizedBox(height: 48), // Bottom padding
           ],
         ),

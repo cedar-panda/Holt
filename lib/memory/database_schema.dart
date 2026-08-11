@@ -1,5 +1,7 @@
 part of 'database.dart';
 
+enum _MemoryFtsBackend { fts5, fts4 }
+
 class _DatabaseSchema {
   static Future<void> _createVoiceTable(Database db) =>
       DatabaseHelper._createVoiceTable(db);
@@ -263,30 +265,92 @@ class _DatabaseSchema {
     );
   }
 
-  // ═══ FTS5 全文搜索索引 ═══
-  // 使用 contentless（content=''）模式：FTS 自存副本，不依賴 content table
-  // 的 rebuild 指令。好處是 rebuild 時可以只索引 active 記憶。
-  // tokenize=unicode61 對 CJK 逐字拆分——不完美但零依賴。
-  /// FTS5 可能在某些 Android 設備的系統 SQLite 中不可用。
-  /// 建表失敗時靜默降級——記憶搜尋走 LIKE fallback，不影響核心功能。
-  static Future<bool> _createMemoryFts(Database db) async {
+  // ═══ 全文搜索索引 ═══
+  // FTS5 使用 SQLite 原生 BM25。部分 Android 系統 SQLite 沒有編譯 FTS5，
+  // 但有 FTS4；此時保留同一份衍生索引契約，由 Dart 解析 matchinfo 計算
+  // BM25 排序。兩種表都只索引 active 記憶，備份仍不保存衍生索引。
+  static Future<_MemoryFtsBackend?> _createMemoryFts(Database db) async {
+    final existing = await _detectMemoryFtsBackend(db);
+    if (existing != null) {
+      await _tryCreateMemoryFtsTriggers(db, existing);
+      return existing;
+    }
+
+    // DROP TABLE 不會保證移除掛在 memories 上的舊 trigger。先清理後再依
+    // 實際 backend 建立，避免 FTS5 delete 指令被錯用到 FTS4。
+    await _dropMemoryFtsTriggers(db);
+
     try {
       await db.execute('''
-        CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts
+        CREATE VIRTUAL TABLE memories_fts
         USING fts5(content, triggers, content='', tokenize='unicode61')
       ''');
+      await _tryCreateMemoryFtsTriggers(db, _MemoryFtsBackend.fts5);
+      return _MemoryFtsBackend.fts5;
+    } catch (error) {
+      debugPrint('FTS5 unavailable; trying FTS4: $error');
+    }
 
-      // INSERT trigger：新記憶寫入時自動索引（只索引 active）
+    try {
       await db.execute('''
-        CREATE TRIGGER IF NOT EXISTS memories_fts_ai
-        AFTER INSERT ON memories WHEN NEW.status = 'active'
-        BEGIN
-          INSERT INTO memories_fts(rowid, content, triggers)
-          VALUES (NEW.id, NEW.content, NEW.triggers);
-        END
+        CREATE VIRTUAL TABLE memories_fts
+        USING fts4(content, triggers, tokenize=unicode61)
       ''');
+      await _tryCreateMemoryFtsTriggers(db, _MemoryFtsBackend.fts4);
+      return _MemoryFtsBackend.fts4;
+    } catch (error) {
+      debugPrint('FTS4 unavailable; using bounded text fallback: $error');
+      return null;
+    }
+  }
 
-      // 封存/刪除 trigger：status 從 active 變成其他時移除索引
+  static Future<_MemoryFtsBackend?> _detectMemoryFtsBackend(Database db) async {
+    final rows = await db.rawQuery(
+      "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?",
+      ['memories_fts'],
+    );
+    if (rows.isEmpty) return null;
+    final sql = (rows.first['sql'] as String? ?? '').toLowerCase();
+    if (sql.contains('using fts5')) return _MemoryFtsBackend.fts5;
+    if (sql.contains('using fts4')) return _MemoryFtsBackend.fts4;
+    return null;
+  }
+
+  static Future<void> _dropMemoryFtsTriggers(Database db) async {
+    for (final name in const <String>[
+      'memories_fts_ai',
+      'memories_fts_au_deactivate',
+      'memories_fts_au_activate',
+      'memories_fts_au_content',
+      'memories_fts_ad',
+    ]) {
+      await db.execute('DROP TRIGGER IF EXISTS $name');
+    }
+  }
+
+  static Future<void> _createMemoryFtsTriggers(
+    Database db,
+    _MemoryFtsBackend backend,
+  ) async {
+    await db.execute('''
+      CREATE TRIGGER IF NOT EXISTS memories_fts_ai
+      AFTER INSERT ON memories WHEN NEW.status = 'active'
+      BEGIN
+        INSERT INTO memories_fts(rowid, content, triggers)
+        VALUES (NEW.id, NEW.content, NEW.triggers);
+      END
+    ''');
+    await db.execute('''
+      CREATE TRIGGER IF NOT EXISTS memories_fts_au_activate
+      AFTER UPDATE OF status ON memories
+      WHEN OLD.status != 'active' AND NEW.status = 'active'
+      BEGIN
+        INSERT INTO memories_fts(rowid, content, triggers)
+        VALUES (NEW.id, NEW.content, NEW.triggers);
+      END
+    ''');
+
+    if (backend == _MemoryFtsBackend.fts5) {
       await db.execute('''
         CREATE TRIGGER IF NOT EXISTS memories_fts_au_deactivate
         AFTER UPDATE OF status ON memories
@@ -296,19 +360,17 @@ class _DatabaseSchema {
           VALUES ('delete', OLD.id, OLD.content, OLD.triggers);
         END
       ''');
-
-      // 恢復 trigger：status 從非 active 變回 active 時重新索引
       await db.execute('''
-        CREATE TRIGGER IF NOT EXISTS memories_fts_au_activate
-        AFTER UPDATE OF status ON memories
-        WHEN OLD.status != 'active' AND NEW.status = 'active'
+        CREATE TRIGGER IF NOT EXISTS memories_fts_au_content
+        AFTER UPDATE OF content, triggers ON memories
+        WHEN OLD.status = 'active' AND NEW.status = 'active'
         BEGIN
+          INSERT INTO memories_fts(memories_fts, rowid, content, triggers)
+          VALUES ('delete', OLD.id, OLD.content, OLD.triggers);
           INSERT INTO memories_fts(rowid, content, triggers)
           VALUES (NEW.id, NEW.content, NEW.triggers);
         END
       ''');
-
-      // 真正的 DELETE（極少發生，但防禦性加上）
       await db.execute('''
         CREATE TRIGGER IF NOT EXISTS memories_fts_ad
         AFTER DELETE ON memories WHEN OLD.status = 'active'
@@ -317,16 +379,53 @@ class _DatabaseSchema {
           VALUES ('delete', OLD.id, OLD.content, OLD.triggers);
         END
       ''');
-      return true;
-    } catch (e) {
-      debugPrint('FTS5 not available on this device, skipping: $e');
-      return false;
+      return;
+    }
+
+    await db.execute('''
+      CREATE TRIGGER IF NOT EXISTS memories_fts_au_deactivate
+      AFTER UPDATE OF status ON memories
+      WHEN OLD.status = 'active' AND NEW.status != 'active'
+      BEGIN
+        DELETE FROM memories_fts WHERE rowid = OLD.id;
+      END
+    ''');
+    await db.execute('''
+      CREATE TRIGGER IF NOT EXISTS memories_fts_au_content
+      AFTER UPDATE OF content, triggers ON memories
+      WHEN OLD.status = 'active' AND NEW.status = 'active'
+      BEGIN
+        DELETE FROM memories_fts WHERE rowid = OLD.id;
+        INSERT INTO memories_fts(rowid, content, triggers)
+        VALUES (NEW.id, NEW.content, NEW.triggers);
+      END
+    ''');
+    await db.execute('''
+      CREATE TRIGGER IF NOT EXISTS memories_fts_ad
+      AFTER DELETE ON memories WHEN OLD.status = 'active'
+      BEGIN
+        DELETE FROM memories_fts WHERE rowid = OLD.id;
+      END
+    ''');
+  }
+
+  static Future<void> _tryCreateMemoryFtsTriggers(
+    Database db,
+    _MemoryFtsBackend backend,
+  ) async {
+    try {
+      await _createMemoryFtsTriggers(db, backend);
+    } catch (error) {
+      // Some synthetic migration fixtures intentionally begin before the
+      // memories table exists. A later runtime repair will install triggers.
+      debugPrint('Memory FTS triggers pending schema completion: $error');
     }
   }
 
   static Future<void> _ensureMemoryFts(Database db) async {
-    final tableAlreadyExisted = await _tableExists(db, 'memories_fts');
-    if (!await _createMemoryFts(db) || tableAlreadyExisted) return;
+    final tableAlreadyExisted = await _detectMemoryFtsBackend(db) != null;
+    final backend = await _createMemoryFts(db);
+    if (backend == null || tableAlreadyExisted) return;
     try {
       await db.execute('''
         INSERT INTO memories_fts(rowid, content, triggers)
@@ -337,17 +436,20 @@ class _DatabaseSchema {
     }
   }
 
-  /// 重建 FTS5 索引：清空後從 memories 表重新填充所有 active 記憶。
+  /// 重建全文索引：清空後從 memories 表重新填充所有 active 記憶。
   /// 用於：migration 初始化、備份還原後、手動修復。
-  /// FTS5 不可用時靜默跳過。
+  /// FTS5/FTS4 均不可用時靜默跳過。
   static Future<void> rebuildMemoryFts(Database db) async {
-    // 先確保表和 trigger 存在；FTS5 不可用時直接返回
-    if (!await _createMemoryFts(db)) return;
+    final backend = await _createMemoryFts(db);
+    if (backend == null) return;
     try {
-      // 清空 FTS 索引
-      await db.execute(
-        "INSERT INTO memories_fts(memories_fts) VALUES ('delete-all')",
-      );
+      if (backend == _MemoryFtsBackend.fts5) {
+        await db.execute(
+          "INSERT INTO memories_fts(memories_fts) VALUES ('delete-all')",
+        );
+      } else {
+        await db.execute('DELETE FROM memories_fts');
+      }
       // 重新填充所有 active 記憶
       await db.execute('''
         INSERT INTO memories_fts(rowid, content, triggers)

@@ -157,7 +157,7 @@ class ApiSettings {
       return p.getString(_keyOaiCompatModel) ?? '';
     }
     if (provider == 'gemini') {
-      return p.getString(_keyGeminiModel) ?? 'gemini-2.0-flash';
+      return p.getString(_keyGeminiModel) ?? 'gemini-2.5-flash';
     }
     if (provider == 'bedrock') {
       return p.getString(_keyAwsModelId) ??
@@ -315,7 +315,7 @@ class ApiSettings {
 
   static Future<String> getGeminiModel() async {
     final p = await SharedPreferences.getInstance();
-    return p.getString(_keyGeminiModel) ?? 'gemini-2.0-flash';
+    return p.getString(_keyGeminiModel) ?? 'gemini-2.5-flash';
   }
 
   // ═══ DeepSeek ═══

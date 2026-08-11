@@ -45,49 +45,63 @@ class OpenAICompatibleService implements ApiAdapter {
   static Future<List<ModelInfo>> fetchModels({
     required String baseUrl,
     String apiKey = '',
+    http.Client? client,
   }) async {
     final base = Uri.tryParse(baseUrl.trim());
     if (base == null || !base.hasScheme || base.host.isEmpty) {
       throw const FormatException('Base URL 無效');
     }
 
-    final pricingUri = base.replace(path: '/api/pricing', query: null);
+    final ownedClient = client == null ? http.Client() : null;
+    final activeClient = client ?? ownedClient!;
     try {
-      final response = await http
-          .get(pricingUri)
-          .timeout(const Duration(seconds: 20));
-      if (response.statusCode == 200) {
-        final models = _parsePricingModels(response.body);
-        if (models.isNotEmpty) return models;
+      // New API / One API commonly expose a public pricing catalogue. The
+      // official OpenAI host does not, so go straight to its authenticated
+      // standard endpoint instead of issuing an unrelated probe first.
+      if (base.host.toLowerCase() != 'api.openai.com') {
+        final pricingUri = base.replace(path: '/api/pricing', query: null);
+        try {
+          final response = await activeClient
+              .get(pricingUri)
+              .timeout(const Duration(seconds: 20));
+          if (response.statusCode == 200) {
+            final models = _parsePricingModels(response.body);
+            if (models.isNotEmpty) return models;
+          }
+        } catch (_) {
+          // Not every compatible server exposes a pricing catalogue.
+        }
       }
-    } catch (_) {
-      // 並非所有 OpenAI 相容站都提供公開定價接口，繼續嘗試 /models。
-    }
 
-    final modelsUri = _modelsUri(base);
-    final response = await http
-        .get(
-          modelsUri,
-          headers: {
-            if (apiKey.trim().isNotEmpty)
-              'Authorization': 'Bearer ${apiKey.trim()}',
-          },
-        )
-        .timeout(const Duration(seconds: 20));
-    if (response.statusCode != 200) {
-      throw Exception('無法獲取模型列表：${response.statusCode}');
-    }
+      final modelsUri = _modelsUri(base);
+      final response = await activeClient
+          .get(
+            modelsUri,
+            headers: {
+              if (apiKey.trim().isNotEmpty)
+                'Authorization': 'Bearer ${apiKey.trim()}',
+            },
+          )
+          .timeout(const Duration(seconds: 20));
+      if (response.statusCode != 200) {
+        throw Exception('無法獲取模型列表：${response.statusCode}');
+      }
 
-    final decoded = jsonDecode(response.body);
-    final rawModels = decoded is Map<String, dynamic> ? decoded['data'] : null;
-    if (rawModels is! List) throw const FormatException('模型列表格式無效');
-    return _sortedUniqueModels(
-      rawModels.whereType<Map>().map((raw) {
-        final id = '${raw['id'] ?? ''}'.trim();
-        final name = '${raw['name'] ?? id}'.trim();
-        return ModelInfo(id: id, name: name.isEmpty ? id : name);
-      }),
-    );
+      final decoded = jsonDecode(response.body);
+      final rawModels = decoded is Map<String, dynamic>
+          ? decoded['data']
+          : null;
+      if (rawModels is! List) throw const FormatException('模型列表格式無效');
+      return _sortedUniqueModels(
+        rawModels.whereType<Map>().map((raw) {
+          final id = '${raw['id'] ?? ''}'.trim();
+          final name = '${raw['name'] ?? id}'.trim();
+          return ModelInfo(id: id, name: name.isEmpty ? id : name);
+        }),
+      );
+    } finally {
+      ownedClient?.close();
+    }
   }
 
   static Uri _modelsUri(Uri base) {

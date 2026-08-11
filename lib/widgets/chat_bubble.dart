@@ -481,15 +481,14 @@ class _ChatBubbleState extends State<ChatBubble>
         return (t.isEmpty ? null : t, text.replaceFirst(p, '').trim());
       }
     }
-    // 流式輸出中：開標籤存在但未閉合
-    if (widget.isStreaming) {
-      for (final tag in ['<think>', '<thinking>']) {
-        final idx = text.indexOf(tag);
-        if (idx >= 0) {
-          final before = text.substring(0, idx).trim();
-          final thinking = text.substring(idx + tag.length).trim();
-          return (thinking.isEmpty ? '……' : thinking, before);
-        }
+    // 開標籤存在但未閉合：可能仍在串流，也可能是模型在
+    // token 上限處正常結束。任何情況都不應把 <think> 原始標籤顯示為正文。
+    for (final tag in ['<think>', '<thinking>']) {
+      final idx = text.indexOf(tag);
+      if (idx >= 0) {
+        final before = text.substring(0, idx).trim();
+        final thinking = text.substring(idx + tag.length).trim();
+        return (thinking.isEmpty ? '……' : thinking, before);
       }
     }
     return (null, text);

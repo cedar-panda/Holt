@@ -68,35 +68,44 @@ class OpenRouterService implements ApiAdapter {
     );
   }
 
-  static Future<List<ModelInfo>> fetchModels(String apiKey) async {
-    final response = await http
-        .get(
-          Uri.parse(_modelsUrl),
-          headers: {'Authorization': 'Bearer $apiKey'},
-        )
-        .timeout(const Duration(seconds: 20));
+  static Future<List<ModelInfo>> fetchModels(
+    String apiKey, {
+    http.Client? client,
+  }) async {
+    final ownedClient = client == null ? http.Client() : null;
+    final activeClient = client ?? ownedClient!;
+    try {
+      final response = await activeClient
+          .get(
+            Uri.parse(_modelsUrl),
+            headers: {'Authorization': 'Bearer $apiKey'},
+          )
+          .timeout(const Duration(seconds: 20));
 
-    if (response.statusCode != 200) {
-      throw Exception('無法獲取模型列表：${response.statusCode}');
+      if (response.statusCode != 200) {
+        throw Exception('無法獲取模型列表：${response.statusCode}');
+      }
+
+      final data = jsonDecode(response.body);
+      final models = (data['data'] as List)
+          .map((m) {
+            final architecture = m['architecture'] as Map<String, dynamic>?;
+            return ModelInfo(
+              id: m['id'] ?? '',
+              name: m['name'] ?? m['id'] ?? '',
+              inputModalities: _stringList(architecture?['input_modalities']),
+              outputModalities: _stringList(architecture?['output_modalities']),
+              supportedParameters: _stringList(m['supported_parameters']),
+            );
+          })
+          .where((m) => m.id.isNotEmpty)
+          .toList();
+
+      models.sort((a, b) => a.name.compareTo(b.name));
+      return models;
+    } finally {
+      ownedClient?.close();
     }
-
-    final data = jsonDecode(response.body);
-    final models = (data['data'] as List)
-        .map((m) {
-          final architecture = m['architecture'] as Map<String, dynamic>?;
-          return ModelInfo(
-            id: m['id'] ?? '',
-            name: m['name'] ?? m['id'] ?? '',
-            inputModalities: _stringList(architecture?['input_modalities']),
-            outputModalities: _stringList(architecture?['output_modalities']),
-            supportedParameters: _stringList(m['supported_parameters']),
-          );
-        })
-        .where((m) => m.id.isNotEmpty)
-        .toList();
-
-    models.sort((a, b) => a.name.compareTo(b.name));
-    return models;
   }
 
   static List<String> _stringList(dynamic raw) {
