@@ -1644,7 +1644,6 @@ extension _ChatGenerationMethods on _ChatScreenState {
           data is WebSearchBatchResult) {
         _refreshChatState(() {
           _pendingWebSearchResult = data;
-          _webSearchActivity = null;
         });
         return;
       }
@@ -2288,7 +2287,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
     }
 
     final liveDynamicPart = SystemContextMarkdown.join(dynamicParts);
-    final structured = StructuredPrompt(
+    var structured = StructuredPrompt(
       staticPart: staticBundle.staticPart,
       profilePart: staticBundle.profilePart,
       windowPart: staticBundle.windowPart,
@@ -2296,6 +2295,26 @@ extension _ChatGenerationMethods on _ChatScreenState {
       liveStatePart: liveDynamicPart,
       cacheChannel: PromptCacheChannel.text,
     );
+
+    var preflightSearchExecuted = false;
+    final preflightExplicitQuery = webSearchEnabled && userMsgWithId.id != null
+        ? WebSearchIntentParser.explicitUserQuery(userMsgWithId.text)
+        : null;
+    if (preflightExplicitQuery != null) {
+      preflightSearchExecuted = true;
+      await _runWebSearchIntent(
+        query: preflightExplicitQuery,
+        userMessageId: userMsgWithId.id!,
+        generationSerial: generationSerial,
+      );
+      final preSearchResult = _pendingWebSearchResult;
+      if (preSearchResult != null) {
+        final evidence = WebSearchFollowUp.evidenceFor(preSearchResult);
+        if (evidence != null && evidence.isNotEmpty) {
+          structured = structured.copyWith(ephemeralEvidencePart: evidence);
+        }
+      }
+    }
 
     if (mounted) {
       _refreshChatState(() {
@@ -2818,7 +2837,12 @@ extension _ChatGenerationMethods on _ChatScreenState {
 
       processedText = _extractXPostAndStrip(processedText);
 
-      final webSearchQuery = webSearchIntent.query;
+      final webSearchQuery = !preflightSearchExecuted
+          ? (webSearchIntent.query ??
+              (webSearchEnabled
+                  ? WebSearchIntentParser.explicitUserQuery(userMsgWithId.text)
+                  : null))
+          : null;
       if (webSearchQuery != null && userMsgWithId.id != null) {
         if (mounted) {
           _refreshChatState(() => _streamingText = processedText);
@@ -2830,6 +2854,24 @@ extension _ChatGenerationMethods on _ChatScreenState {
           userMessageId: userMsgWithId.id!,
           generationSerial: generationSerial,
         );
+        final webSearchResult = _pendingWebSearchResult;
+        if (webSearchResult != null) {
+          final followUp = await _generateWebSearchFollowUp(
+            result: webSearchResult,
+            history: history,
+            adapter: adapter,
+            model: model,
+            structuredPrompt: structured,
+            providerName: providerName,
+            generationSerial: generationSerial,
+          );
+          if (followUp.isNotEmpty) processedText = followUp;
+          if (mounted) {
+            _refreshChatState(() => _webSearchActivity = null);
+          } else {
+            _webSearchActivity = null;
+          }
+        }
       }
 
       // ═══ 記憶過程日誌：只記寫入本地的操作 ═══

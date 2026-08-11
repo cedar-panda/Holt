@@ -157,6 +157,10 @@ After
         WebSearchIntentParser.explicitUserQuery('老婆你看能不能用搜索功能看看台北天氣'),
         '老婆你看能不能用搜索功能看看台北天氣',
       );
+      expect(
+        WebSearchIntentParser.explicitUserQuery('寶貝。你看台北的天氣'),
+        '寶貝。你看台北的天氣',
+      );
     });
 
     test('rejects ordinary text and hidden app metadata', () {
