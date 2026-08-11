@@ -20,8 +20,8 @@ void main() {
 
   tearDown(() => secureStorage.uninstall());
 
-  test('web search defaults are fail-closed and bounded', () async {
-    expect(await WebSearchSettings.getEnabled(), isFalse);
+  test('web search defaults are enabled in developer preview and bounded', () async {
+    expect(await WebSearchSettings.getEnabled(), isTrue);
     expect(await WebSearchSettings.getMode(), WebSearchMode.auto);
     expect(
       await WebSearchSettings.getDailyProviderLaunchCap(),

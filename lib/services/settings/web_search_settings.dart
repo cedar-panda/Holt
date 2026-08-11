@@ -54,7 +54,7 @@ class WebSearchSettings {
   static Future<bool> getEnabled() async {
     if (!webSearchLiveDeveloperPreviewEnabled) return false;
     final preferences = await SharedPreferences.getInstance();
-    return preferences.getBool(_keyEnabled) ?? false;
+    return preferences.getBool(_keyEnabled) ?? true;
   }
 
   static Future<void> saveEnabled(bool value) async {

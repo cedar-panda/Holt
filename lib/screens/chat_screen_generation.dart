@@ -2134,11 +2134,28 @@ extension _ChatGenerationMethods on _ChatScreenState {
     );
 
     var preflightSearchExecuted = false;
-    final preflightExplicitQuery = webSearchEnabled && userMsgWithId.id != null
+    String? preflightExplicitQuery = webSearchEnabled && userMsgWithId.id != null
         ? WebSearchIntentParser.explicitUserQuery(userMsgWithId.text)
         : null;
+
+    // 若當前訊息為短追問（如「有嗎有嗎」「查到了嗎」），從歷史對話向前尋找上一條明確的搜尋請求
+    if (webSearchEnabled && preflightExplicitQuery == null && userMsgWithId.id != null) {
+      final isShortFollowUp = RegExp(
+        r'^(?:有嗎|有吗|查到了嗎|查到了吗|結果呢|结果呢|怎麼樣了|怎么样了|找到了嗎|找到了吗|查出來了嗎|查出来了吗|有沒有|有没有|\?|？)+$',
+      ).hasMatch(userMsgWithId.text.trim());
+      if (isShortFollowUp) {
+        for (final m in workingMessages.reversed.skip(1)) {
+          if (m.isUser) {
+            preflightExplicitQuery = WebSearchIntentParser.explicitUserQuery(m.text);
+            if (preflightExplicitQuery != null) break;
+          }
+        }
+      }
+    }
+
     if (preflightExplicitQuery != null) {
       preflightSearchExecuted = true;
+      debugPrint('[WebSearch] Executing pre-flight search for: "$preflightExplicitQuery"');
       await _runWebSearchIntent(
         query: preflightExplicitQuery,
         userMessageId: userMsgWithId.id!,
