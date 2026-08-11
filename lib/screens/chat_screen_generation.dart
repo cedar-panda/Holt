@@ -1430,7 +1430,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
       final binding = WebSearchTurnBinding(
         conversationId: widget.conversationId,
         characterId: _activeCharacterId,
-        turnId: 'message:$userMessageId',
+        turnId: 'message:${userMessageId}_$generationSerial',
         generationSerial: generationSerial,
         query: query,
         locale: L.locale,
