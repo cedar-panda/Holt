@@ -18,6 +18,21 @@ abstract final class WebSearchIntentParser {
     r'[\x00-\x08\x0B\x0C\x0E-\x1F\x7F\u202A-\u202E\u2066-\u2069]',
     unicode: true,
   );
+  static final RegExp _explicitEnglishCue = RegExp(
+    r'\b(?:search|look\s+up|browse)\b.{0,24}\b(?:web|online|internet)\b|'
+    r'\b(?:web|online|internet)\b.{0,24}\b(?:search|look\s+up|browse)\b',
+    caseSensitive: false,
+    unicode: true,
+  );
+  static final RegExp _explicitChineseCue = RegExp(
+    r'(?:上網|上网|網路|网络|網頁|网页).{0,12}(?:查|搜)|'
+    r'(?:查|搜).{0,12}(?:上網|上网|網路|网络|網頁|网页)|'
+    r'(?:搜尋|搜索|網路|网络|網頁|网页|上網|上网).{0,12}(?:功能|工具|看看|一下|查|搜)|'
+    r'(?:用|使用|透過|透过|利用).{0,12}(?:搜尋|搜索|網路|网络)|'
+    r'(?:查查|查一下|搜一下|搜尋|搜索).{0,12}(?:天氣|天气|新聞|新闻|資料|资料|資訊|資訊|近況|近況|股價|股价)',
+    caseSensitive: false,
+    unicode: true,
+  );
 
   /// Returns a passive intent. Calling this method never starts a tool.
   static WebSearchIntent parse(String reply) {
@@ -81,6 +96,21 @@ abstract final class WebSearchIntentParser {
       query: query,
       visibleText: _removeSpans(reply, removalSpans).trim(),
     );
+  }
+
+  /// Fail-safe for a model that starts, but does not close, its search tag.
+  ///
+  /// This only accepts an explicit request in the real user's visible text.
+  /// The returned text still goes through the normal local secret/PII gates
+  /// and the exact-query confirmation dialog before any network request.
+  static String? explicitUserQuery(String userText) {
+    final query = _normalizeQuery(userText);
+    if (query == null || RegExp(r'[<>\[\]]').hasMatch(query)) return null;
+    if (!_explicitEnglishCue.hasMatch(query) &&
+        !_explicitChineseCue.hasMatch(query)) {
+      return null;
+    }
+    return query;
   }
 
   static String? _normalizeQuery(String rawQuery) {

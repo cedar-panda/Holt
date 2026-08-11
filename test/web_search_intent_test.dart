@@ -140,4 +140,33 @@ After
       expect(intent.visibleText, reply);
     });
   });
+
+  group('explicit user request fallback', () {
+    test('accepts clear English and Chinese web-search requests', () {
+      expect(
+        WebSearchIntentParser.explicitUserQuery(
+          'Please search the web for Taipei weather right now',
+        ),
+        'Please search the web for Taipei weather right now',
+      );
+      expect(
+        WebSearchIntentParser.explicitUserQuery('幫我查一下台北現在的天氣'),
+        '幫我查一下台北現在的天氣',
+      );
+      expect(
+        WebSearchIntentParser.explicitUserQuery('老婆你看能不能用搜索功能看看台北天氣'),
+        '老婆你看能不能用搜索功能看看台北天氣',
+      );
+    });
+
+    test('rejects ordinary text and hidden app metadata', () {
+      expect(WebSearchIntentParser.explicitUserQuery('我們來聊聊台北的天氣'), isNull);
+      expect(
+        WebSearchIntentParser.explicitUserQuery(
+          'Please search the web [gift:secret] for weather',
+        ),
+        isNull,
+      );
+    });
+  });
 }
