@@ -50,6 +50,7 @@ dependencies:
   audioplayers: ^6.7.0
   path_provider: ^2.1.5
   flutter_markdown: ^0.7.7+1
+  flutter_widget_from_html_core: ^0.17.2
   url_launcher: ^6.3.2
   app_links: ^6.4.1
   background_downloader: ^9.5.4

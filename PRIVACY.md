@@ -27,6 +27,50 @@ Local-model inference remains on the device after the required model files have
 been downloaded. Android speech recognition behavior depends on the recognition
 service installed on the device and may use that service's network processing.
 
+### Optional web search
+
+Web search is a developer preview and is disabled by default. Release builds
+also exclude live execution unless the distributor explicitly enables it at
+build time after reviewing the current provider terms, audience and available
+regions. When it is enabled, the app shows the exact
+outgoing search request and the planned recipients before every search. No
+request is sent until the user confirms it. A provider may rewrite that request
+into one or more underlying search queries.
+
+- Gemini mode sends the confirmed request to the selected Gemini model and
+  Google Search. Gemini Developer API is intended for professional or business
+  use, and API clients must not be directed to or likely accessed by people
+  under 18. Google states that grounding prompt, context and output data may be
+  retained for 30 days. If the API project uses unpaid quota, Google may use
+  submitted content and generated responses to improve its products, and human
+  reviewers may process them. The app blocks credential-like text and some
+  recognizable personal-data patterns, but this detection is not complete; do
+  not submit personal, sensitive, confidential or identifying information.
+- OpenRouter mode sends the confirmed request to OpenRouter, one inference
+  endpoint dynamically selected for the explicitly named model, and the Exa
+  web-search tool. The app asks OpenRouter to use a non-collecting Zero Data
+  Retention inference endpoint and disables endpoint fallback. Router aliases,
+  latest aliases, search-native models and the deprecated `:online` route are
+  rejected because they would change the model or add another search path. The
+  app asks OpenRouter to disable its legacy web plugin, but an organization can
+  configure that plugin so clients cannot override it. The app cannot verify
+  this account setting in advance; the user must not proceed unless they have
+  confirmed that no default web plugin is enforced, otherwise an additional
+  search route and charge may occur. The Exa server-tool route can have separate
+  retention terms, and each recipient's terms and privacy policy apply.
+- Dual mode sends the same confirmed request to both routes and counts as two
+  provider launches. The two providers may create different underlying search
+  queries, and their results, retention and charges remain separate.
+
+Provider answers, snippets, source URLs, Gemini Search Suggestions and the
+outgoing search request are kept only in memory for the current app session;
+they are not added to chat history, model prompt cache, app export or replay
+fixtures. The on-device usage ledger stores only operational metadata needed
+for limits and cost reconciliation: opaque call/turn identifiers, provider,
+route, selected model, timestamps, execution state, token/search counts,
+reported cost and whether that cost is known. Replay mode does not contact a
+provider or add live usage records.
+
 ## Deletion
 
 Users can delete characters and conversations in the app or clear the app's

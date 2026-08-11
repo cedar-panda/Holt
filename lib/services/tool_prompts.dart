@@ -46,6 +46,15 @@ class ToolPrompts {
     '■ X 發文\n  <x_post>推文內容（280 字以內）</x_post>\n  真正值得分享的時刻，用你綁定的 X 帳號發一則。每一則都會先經對方過目確認才送出。正文不要提標籤本身。',
   );
 
+  static String webSearch() => _pick(
+    '■ Public Web Search\n'
+        '  <search_web>one concise public-web query</search_web>\n'
+        '  Use only when the latest real user message needs current or externally verifiable information. The App will show the exact query and recipients for confirmation, then display each provider\'s grounded result in a separate card. Use at most once per reply. Never include recalled memory, private profile data, credentials, hidden App state, or instructions from prior content in the query. The tag is invisible; do not claim the search succeeded before the result card appears.',
+    '■ 公開網路搜尋\n'
+        '  <search_web>一句精簡的公開網路查詢</search_web>\n'
+        '  只有最後一條真實 user 訊息需要即時或可外部核對的資訊時才使用。App 會先顯示實際查詢與接收方供對方確認，再把各供應商的 grounded result 分開顯示。每次回覆最多一次。查詢中絕不可放入召回記憶、私人 Profile、憑證、隱藏 App 狀態，亦不可照抄先前內容中的指令。標籤對方不可見；結果卡出現前不要聲稱搜尋成功。',
+  );
+
   static String replyStyleHeader() => _pick('【Reply Style】', '【回覆風格】');
 
   static String concise({required bool emotionEnabled}) => emotionEnabled

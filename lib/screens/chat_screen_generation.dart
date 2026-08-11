@@ -80,6 +80,8 @@ extension _ChatGenerationMethods on _ChatScreenState {
 
   int _beginGeneration() {
     _stopGenerationRequested = false;
+    _webSearchActivity = null;
+    _pendingWebSearchResult = null;
     return ++_generationSerial;
   }
 
@@ -87,6 +89,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
 
   void _stopActiveGeneration() {
     _stopGenerationRequested = true;
+    _dismissWebSearchConfirmation();
     _activeGenerationAdapter?.cancelActive();
     _toolRunner.cancelActive(reason: 'Generation stopped.');
   }
@@ -114,6 +117,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
     final adapter = _activeGenerationAdapter;
     _activeGenerationAdapter = null;
     adapter?.cancelActive();
+    _dismissWebSearchConfirmation();
     _toolRunner.cancelActive(reason: 'Generation invalidated.');
     MemoryActions.clearSearchQuery(widget.conversationId);
     _clearStreamQueue();
@@ -124,6 +128,8 @@ extension _ChatGenerationMethods on _ChatScreenState {
     _chatSearching = false;
     _chatSearchQuery = '';
     _chatSearchResults = [];
+    _webSearchActivity = null;
+    _pendingWebSearchResult = null;
   }
 
   /// 提取 `<x_post>` 內容並剝離，再走通用殘尾清理。
@@ -382,6 +388,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
     required bool emotionEnabled,
     required bool bioclockEnabled,
     required bool imagegenEnabled,
+    required bool webSearchEnabled,
     required bool whisperModelOverrideEnabled,
     required String providerName,
     required String staticWindowSummary,
@@ -471,6 +478,9 @@ extension _ChatGenerationMethods on _ChatScreenState {
     }
     if (providerName == 'openrouter' && imagegenEnabled) {
       toolSections.add(ImageGenService.abilityPrompt());
+    }
+    if (webSearchEnabled) {
+      toolSections.add(ToolPrompts.webSearch());
     }
     // 商店（全語言/全模式；固定文本零緩存污染；清單走 two-pass 按需查詢）
     if (await ShopService.isEnabled()) {
@@ -944,6 +954,11 @@ extension _ChatGenerationMethods on _ChatScreenState {
       conversationId: conversationId,
       characterId: _activeCharacterId,
     );
+
+    // ═══ 做夢整理：對話累積後自動梳理記憶（不阻塞主流程）═══
+    unawaited(
+      DreamCurationService.maybeTrigger(characterId: _activeCharacterId),
+    );
   }
 
   Future<void> _maybeRunTokenTriggeredMaintenance({
@@ -986,6 +1001,8 @@ extension _ChatGenerationMethods on _ChatScreenState {
         _chatSearching = false;
         _chatSearchQuery = '';
         _chatSearchResults = [];
+        _webSearchActivity = null;
+        _pendingWebSearchResult = null;
       });
     } else {
       _clearStreamQueue();
@@ -993,6 +1010,8 @@ extension _ChatGenerationMethods on _ChatScreenState {
       _chatSearching = false;
       _chatSearchQuery = '';
       _chatSearchResults = [];
+      _webSearchActivity = null;
+      _pendingWebSearchResult = null;
     }
   }
 
@@ -1145,6 +1164,482 @@ extension _ChatGenerationMethods on _ChatScreenState {
         _refreshChatState(() => _sendSubmissionInProgress = false);
       } else {
         _sendSubmissionInProgress = false;
+      }
+    }
+  }
+
+  String _webSearchProviderLabel(ResolvedWebSearchProvider provider) {
+    return switch (provider.id) {
+      WebSearchProviderId.gemini => 'Gemini · ${provider.model}',
+      WebSearchProviderId.openRouter => 'OpenRouter · ${provider.model} · Exa',
+    };
+  }
+
+  void _dismissWebSearchConfirmation() {
+    final dialogContext = _webSearchConfirmationContext;
+    _webSearchConfirmationContext = null;
+    if (dialogContext == null || !dialogContext.mounted) return;
+    final navigator = Navigator.of(dialogContext);
+    if (navigator.canPop()) navigator.pop(false);
+  }
+
+  Future<void> _showWebSearchPrivacyNote(BuildContext dialogContext) async {
+    final text = await rootBundle.loadString('PRIVACY.md');
+    if (!dialogContext.mounted) return;
+    await showDialog<void>(
+      context: dialogContext,
+      builder: (privacyContext) => AlertDialog(
+        backgroundColor: YanciTheme.surfacePanel,
+        title: Text(
+          L.pick(en: 'Web-search privacy', zhTW: '網路搜尋隱私說明', zhCN: '网络搜索隐私说明'),
+          style: YanciTheme.headingMedium,
+        ),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: SingleChildScrollView(
+            child: SelectableText(text, style: YanciTheme.bodySmall),
+          ),
+        ),
+        actions: <Widget>[
+          TextButton(
+            style: TextButton.styleFrom(minimumSize: const Size(64, 48)),
+            onPressed: () => Navigator.of(privacyContext).pop(),
+            child: Text(L.pick(en: 'Close', zhTW: '關閉', zhCN: '关闭')),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<bool> _confirmWebSearchPlan({
+    required String query,
+    required ResolvedWebSearchPlan plan,
+    required int generationSerial,
+  }) async {
+    if (!mounted ||
+        !_isCurrentGeneration(generationSerial) ||
+        _stopGenerationRequested) {
+      return false;
+    }
+    final providerLabels = plan.providers
+        .map(_webSearchProviderLabel)
+        .toList(growable: false);
+    _refreshChatState(() {
+      _webSearchActivity = _WebSearchActivityState(
+        status: WebSearchActivityStatus.awaitingConfirmation,
+        query: query,
+        providers: providerLabels,
+      );
+    });
+    _scrollToBottom();
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      barrierDismissible: true,
+      builder: (dialogContext) {
+        _webSearchConfirmationContext = dialogContext;
+        final hasGemini = plan.providers.any(
+          (provider) => provider.id == WebSearchProviderId.gemini,
+        );
+        final hasOpenRouter = plan.providers.any(
+          (provider) => provider.id == WebSearchProviderId.openRouter,
+        );
+        return AlertDialog(
+          title: Text(
+            L.pick(en: 'Confirm web search', zhTW: '確認網路搜尋', zhCN: '确认网络搜索'),
+          ),
+          content: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 460),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Text(
+                    L.pick(
+                      en: 'This exact request will leave your device. Each provider may rewrite it into one or more search queries.',
+                      zhTW: '下列這段請求會離開裝置；供應商可能各自改寫成一個或多個搜尋詞。',
+                      zhCN: '下列这段请求会离开设备；供应商可能各自改写成一个或多个搜索词。',
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: YanciTheme.accent.withValues(alpha: 0.06),
+                      borderRadius: BorderRadius.circular(YanciTheme.radiusMd),
+                      border: Border.all(
+                        color: YanciTheme.accent.withValues(alpha: 0.16),
+                      ),
+                    ),
+                    child: SelectableText(
+                      query,
+                      style: YanciTheme.bodyText.copyWith(
+                        color: YanciTheme.textPrimary,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  for (final label in providerLabels)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 6),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: <Widget>[
+                          const Icon(Icons.public_rounded, size: 17),
+                          const SizedBox(width: 8),
+                          Expanded(child: Text(label)),
+                        ],
+                      ),
+                    ),
+                  if (hasGemini) ...<Widget>[
+                    const SizedBox(height: 4),
+                    Text(
+                      L.pick(
+                        en: 'Gemini Developer API is intended for professional or business use and for clients not accessible to under-18s. If your API project uses unpaid quota, Google may use inputs and outputs to improve products and human reviewers may process them. Do not continue with personal, sensitive, or confidential data. Grounding data may be retained for 30 days; its result and Search Suggestions are shown together unchanged and are not sent to another model.',
+                        zhTW:
+                            'Gemini Developer API 僅供專業或商業用途，且 Client 不得供未滿 18 歲者使用。若 API 專案使用免費額度，Google 可能使用輸入與輸出改善產品，並可能由人工審查；請勿繼續傳送個人、敏感或機密資料。Grounding 資料可留存 30 天；結果會連同 Search Suggestions 原樣獨立顯示，不再送給其他模型。',
+                        zhCN:
+                            'Gemini Developer API 仅供专业或商业用途，且 Client 不得供未满 18 岁者使用。若 API 项目使用免费额度，Google 可能使用输入与输出改进产品，并可能由人工审查；请勿继续发送个人、敏感或机密数据。Grounding 数据可保留 30 天；结果会连同 Search Suggestions 原样独立显示，不再发送给其他模型。',
+                      ),
+                      style: YanciTheme.bodySmall.copyWith(
+                        color: YanciTheme.textSecondary,
+                      ),
+                    ),
+                  ],
+                  if (hasOpenRouter) ...<Widget>[
+                    const SizedBox(height: 8),
+                    Text(
+                      L.pick(
+                        en: 'OpenRouter sends the request to OpenRouter, one dynamically selected ZDR inference endpoint for the explicit model, and Exa. Endpoint fallback is disabled. The App asks to disable the legacy web plugin, but an organization can prevent that override; do not continue unless you verified that your OpenRouter account enforces no default web plugin, or an extra search route may run. Exa still has separate retention terms.',
+                        zhTW:
+                            'OpenRouter 會把請求交給 OpenRouter、該明確模型下動態選出的一個 ZDR 推理端點，以及 Exa；端點備援已停用。App 會要求停用舊 Web Plugin，但組織可禁止覆寫；除非你已確認 OpenRouter 帳戶沒有強制預設 Web Plugin，否則請勿繼續，因為它可能再跑一條搜尋路線。Exa 仍有獨立留存規則。',
+                        zhCN:
+                            'OpenRouter 会把请求交给 OpenRouter、该明确模型下动态选出的一个 ZDR 推理端点，以及 Exa；端点回退已停用。App 会要求停用旧 Web Plugin，但组织可禁止覆盖；除非你已确认 OpenRouter 账户没有强制默认 Web Plugin，否则请勿继续，因为它可能再运行一条搜索路线。Exa 仍有独立保留规则。',
+                      ),
+                      style: YanciTheme.bodySmall.copyWith(
+                        color: YanciTheme.textSecondary,
+                      ),
+                    ),
+                  ],
+                  if (plan.providers.length == 2) ...<Widget>[
+                    const SizedBox(height: 8),
+                    Text(
+                      L.pick(
+                        en: 'Dual mode launches both providers, counts as two provider launches, and displays the results separately.',
+                        zhTW: '雙供應商模式會同時啟動兩家、計為兩次供應商發送，結果分開顯示。',
+                        zhCN: '双供应商模式会同时启动两家、计为两次供应商发送，结果分开显示。',
+                      ),
+                      style: YanciTheme.bodySmall.copyWith(
+                        color: YanciTheme.textSecondary,
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 8),
+                  Align(
+                    alignment: AlignmentDirectional.centerStart,
+                    child: TextButton.icon(
+                      style: TextButton.styleFrom(
+                        minimumSize: const Size(48, 48),
+                      ),
+                      onPressed: () =>
+                          unawaited(_showWebSearchPrivacyNote(dialogContext)),
+                      icon: const Icon(Icons.privacy_tip_outlined, size: 17),
+                      label: Text(
+                        L.pick(
+                          en: 'Read privacy details',
+                          zhTW: '閱讀隱私細節',
+                          zhCN: '阅读隐私细节',
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          actions: <Widget>[
+            TextButton(
+              style: TextButton.styleFrom(minimumSize: const Size(64, 48)),
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: Text(L.pick(en: 'Cancel', zhTW: '取消', zhCN: '取消')),
+            ),
+            FilledButton.icon(
+              style: FilledButton.styleFrom(minimumSize: const Size(96, 48)),
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              icon: const Icon(Icons.public_rounded, size: 18),
+              label: Text(L.pick(en: 'Search', zhTW: '搜尋', zhCN: '搜索')),
+            ),
+          ],
+        );
+      },
+    );
+    _webSearchConfirmationContext = null;
+    if (!mounted ||
+        !_isCurrentGeneration(generationSerial) ||
+        _stopGenerationRequested) {
+      return false;
+    }
+    if (confirmed != true) {
+      _refreshChatState(() => _webSearchActivity = null);
+      return false;
+    }
+    return true;
+  }
+
+  WebSearchTurnPlan _webSearchTurnPlan(ResolvedWebSearchPlan resolved) {
+    WebSearchProviderRoute routeFor(ResolvedWebSearchProvider provider) {
+      final route = switch (provider.id) {
+        WebSearchProviderId.gemini => WebSearchProviderRoute.geminiGoogleSearch(
+          provider.model,
+        ),
+        WebSearchProviderId.openRouter => WebSearchProviderRoute.openRouterExa(
+          provider.model,
+        ),
+      };
+      if (route.route != provider.route) {
+        throw const WebSearchProviderException(
+          code: WebSearchFailureCode.notConfigured,
+          safeMessage: 'The web-search provider route changed unexpectedly.',
+          costCertainty: WebSearchCostCertainty.known,
+        );
+      }
+      return route;
+    }
+
+    final routes = resolved.providers.map(routeFor).toList(growable: false);
+    return routes.length == 2
+        ? WebSearchTurnPlan.dual(routes[0], routes[1])
+        : WebSearchTurnPlan.single(routes.single);
+  }
+
+  void _setWebSearchFailure({
+    required int generationSerial,
+    required String query,
+    required List<String> providers,
+    required String safeMessage,
+  }) {
+    if (!mounted || !_isCurrentGeneration(generationSerial)) return;
+    final activity = _WebSearchActivityState(
+      status: WebSearchActivityStatus.failed,
+      query: query,
+      providers: providers,
+      safeMessage: safeMessage,
+    );
+    _refreshChatState(() => _webSearchActivity = activity);
+    _scrollToBottom();
+    Future<void>.delayed(const Duration(seconds: 10), () {
+      if (!mounted || !identical(_webSearchActivity, activity)) return;
+      _refreshChatState(() => _webSearchActivity = null);
+    });
+  }
+
+  Future<void> _runWebSearchIntent({
+    required String query,
+    required int userMessageId,
+    required int generationSerial,
+  }) async {
+    if (!_isCurrentGeneration(generationSerial) || _stopGenerationRequested) {
+      return;
+    }
+
+    // Credential/format detection happens locally before settings, consent,
+    // ToolRunner permission, or any provider code sees the query.
+    try {
+      WebSearchRequest(
+        query: query,
+        locale: L.locale,
+        sensitiveQueryConfirmed: true,
+      );
+    } on WebSearchProviderException catch (error) {
+      _setWebSearchFailure(
+        generationSerial: generationSerial,
+        query: error.code == WebSearchFailureCode.secretDetected
+            ? L.pick(
+                en: 'Blocked sensitive query',
+                zhTW: '已攔截敏感查詢',
+                zhCN: '已拦截敏感查询',
+              )
+            : query,
+        providers: const <String>[],
+        safeMessage: error.safeMessage,
+      );
+      return;
+    }
+
+    ResolvedWebSearchPlan resolvedPlan;
+    int dailyProviderLaunchCap;
+    try {
+      final settings = await Future.wait<Object>(<Future<Object>>[
+        WebSearchSettings.getEnabled(),
+        WebSearchSettings.getMode(),
+        WebSearchSettings.getDailyProviderLaunchCap(),
+      ]);
+      if (settings[0] != true) return;
+      resolvedPlan = await _webSearchService.resolvePlan(
+        settings[1] as WebSearchMode,
+      );
+      dailyProviderLaunchCap = settings[2] as int;
+    } on WebSearchProviderException catch (error) {
+      _setWebSearchFailure(
+        generationSerial: generationSerial,
+        query: query,
+        providers: const <String>[],
+        safeMessage: error.safeMessage,
+      );
+      return;
+    }
+
+    final providerLabels = resolvedPlan.providers
+        .map(_webSearchProviderLabel)
+        .toList(growable: false);
+    if (resolvedPlan.providers.any(
+      (provider) => provider.id == WebSearchProviderId.gemini,
+    )) {
+      try {
+        // Google disallows personal/sensitive data in unpaid API traffic. The
+        // App cannot reliably determine the billing state of a BYOK project,
+        // so detected PII is blocked for every Gemini grounding request.
+        WebSearchRequest(
+          query: query,
+          locale: L.locale,
+          sensitiveQueryConfirmed: false,
+        );
+      } on WebSearchProviderException catch (error) {
+        if (error.code !=
+            WebSearchFailureCode.sensitiveQueryConfirmationRequired) {
+          rethrow;
+        }
+        _setWebSearchFailure(
+          generationSerial: generationSerial,
+          query: L.pick(
+            en: 'Blocked personal-data query',
+            zhTW: '已攔截個人資料查詢',
+            zhCN: '已拦截个人数据查询',
+          ),
+          providers: providerLabels,
+          safeMessage: L.pick(
+            en: 'Gemini web search is not allowed to send a query that appears to contain personal data. Edit the request and try again.',
+            zhTW: 'Gemini 網路搜尋不會送出疑似包含個人資料的查詢。請修改搜尋請求後再試。',
+            zhCN: 'Gemini 网络搜索不会发送疑似包含个人数据的查询。请修改搜索请求后重试。',
+          ),
+        );
+        return;
+      }
+    }
+    final confirmed = await _confirmWebSearchPlan(
+      query: query,
+      plan: resolvedPlan,
+      generationSerial: generationSerial,
+    );
+    if (!confirmed ||
+        !_isCurrentGeneration(generationSerial) ||
+        _stopGenerationRequested) {
+      return;
+    }
+
+    WebSearchTurnGrant? grant;
+    var toolStarted = false;
+    try {
+      final binding = WebSearchTurnBinding(
+        conversationId: widget.conversationId,
+        characterId: _activeCharacterId,
+        turnId: 'message:$userMessageId',
+        generationSerial: generationSerial,
+        query: query,
+        locale: L.locale,
+        maxResults: 5,
+        plan: _webSearchTurnPlan(resolvedPlan),
+      );
+      grant = await _webSearchTurnCoordinator.issueGrant(
+        binding: binding,
+        dailyProviderLaunchCap: dailyProviderLaunchCap,
+      );
+      if (!mounted ||
+          !_isCurrentGeneration(generationSerial) ||
+          _stopGenerationRequested) {
+        await _webSearchTurnCoordinator.revokeGrant(grant.id);
+        return;
+      }
+      _refreshChatState(() {
+        _webSearchActivity = _WebSearchActivityState(
+          status: WebSearchActivityStatus.searching,
+          query: binding.query,
+          providers: providerLabels,
+        );
+      });
+      _scrollToBottom();
+
+      final call = ToolCall.create(
+        name: WebSearchToolBridge.toolName,
+        arguments: <String, Object?>{'query': binding.query},
+      );
+      toolStarted = true;
+      final result = await _toolRunner.run(
+        call: call,
+        context: ToolContext(
+          mode: ToolRunMode.live,
+          conversationId: widget.conversationId,
+          characterId: _activeCharacterId,
+          metadata: grant.toContextMetadata(),
+        ),
+      );
+      if (!mounted ||
+          !_isCurrentGeneration(generationSerial) ||
+          _stopGenerationRequested ||
+          result.status == ToolResultStatus.cancelled) {
+        return;
+      }
+      final data = result.data;
+      if (result.status == ToolResultStatus.success &&
+          data is WebSearchBatchResult) {
+        _refreshChatState(() {
+          _pendingWebSearchResult = data;
+          _webSearchActivity = null;
+        });
+        return;
+      }
+      _setWebSearchFailure(
+        generationSerial: generationSerial,
+        query: binding.query,
+        providers: providerLabels,
+        safeMessage:
+            result.failure?.message ??
+            L.pick(
+              en: 'Web search was not completed. The normal reply was kept.',
+              zhTW: '網路搜尋未完成，已保留原本的回覆。',
+              zhCN: '网络搜索未完成，已保留原本的回复。',
+            ),
+      );
+    } on WebSearchTurnCoordinatorException catch (error) {
+      _setWebSearchFailure(
+        generationSerial: generationSerial,
+        query: query,
+        providers: providerLabels,
+        safeMessage: error.safeMessage,
+      );
+    } on WebSearchProviderException catch (error) {
+      _setWebSearchFailure(
+        generationSerial: generationSerial,
+        query: query,
+        providers: providerLabels,
+        safeMessage: error.safeMessage,
+      );
+    } catch (_) {
+      _setWebSearchFailure(
+        generationSerial: generationSerial,
+        query: query,
+        providers: providerLabels,
+        safeMessage: L.pick(
+          en: 'Web search was not completed. The normal reply was kept.',
+          zhTW: '網路搜尋未完成，已保留原本的回覆。',
+          zhCN: '网络搜索未完成，已保留原本的回复。',
+        ),
+      );
+    } finally {
+      if (grant != null && !toolStarted) {
+        await _webSearchTurnCoordinator.revokeGrant(grant.id);
       }
     }
   }
@@ -1397,6 +1892,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
     final conciseOnF = ApiSettings.getConciseMode();
     final freeformOnF = ApiSettings.getFreeformMode();
     final thinkingEnabledF = ApiSettings.getThinkingChain();
+    final webSearchEnabledF = WebSearchSettings.getEnabled();
     final enableVibrationF = UserSettings.getEnableVibration();
     final charDataF = DatabaseHelper.getCharacter(charId);
     final isSpiderWebEnabledF = charDataF.then(
@@ -1448,6 +1944,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
     final conciseOn = await conciseOnF;
     final freeformOn = await freeformOnF;
     final thinkingEnabled = await thinkingEnabledF;
+    final webSearchEnabled = await webSearchEnabledF;
 
     final staticBundle = await _buildCommonStaticParts(
       characterId: charId,
@@ -1462,6 +1959,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
       emotionEnabled: emotionEnabled,
       bioclockEnabled: bioclockEnabled,
       imagegenEnabled: imagegenEnabled,
+      webSearchEnabled: webSearchEnabled,
       whisperModelOverrideEnabled:
           (charData?['whisper_model_override'] as int? ?? 1) == 1,
       providerName: providerName,
@@ -1766,6 +2264,17 @@ extension _ChatGenerationMethods on _ChatScreenState {
       await turnEffects.commit();
       final replyText = rawReply.toString();
       if (!_isCurrentGeneration(generationSerial)) return;
+      final webSearchIntent = WebSearchIntentParser.parse(replyText);
+      final replyTextWithoutWebSearch = webSearchIntent.visibleText;
+      if (mounted) {
+        _refreshChatState(() {
+          _clearStreamQueue();
+          _streamingText = replyTextWithoutWebSearch;
+        });
+      } else {
+        _clearStreamQueue();
+        _streamingText = replyTextWithoutWebSearch;
+      }
 
       // ═══ 記錄真實 API 用量（不再用估算，避免雙重計算）═══
       await _tokenTracker.recordRealUsage(
@@ -1781,13 +2290,13 @@ extension _ChatGenerationMethods on _ChatScreenState {
       // ═══ 模型自主記憶：開啟時才執行 <memo>/<persona_note> 落庫 ═══
       var processedText = (memoryWriteEnabled || isSpiderWebEnabled)
           ? await MemoryActions.processReply(
-              replyText,
+              replyTextWithoutWebSearch,
               characterId: _activeCharacterId,
               mode: await _memoryBucket(),
               windowId: widget.conversationId,
             )
           : MemoryActions.stripReply(
-              replyText,
+              replyTextWithoutWebSearch,
               windowId: widget.conversationId,
             );
 
@@ -2214,6 +2723,20 @@ extension _ChatGenerationMethods on _ChatScreenState {
 
       processedText = _extractXPostAndStrip(processedText);
 
+      final webSearchQuery = webSearchIntent.query;
+      if (webSearchQuery != null && userMsgWithId.id != null) {
+        if (mounted) {
+          _refreshChatState(() => _streamingText = processedText);
+        } else {
+          _streamingText = processedText;
+        }
+        await _runWebSearchIntent(
+          query: webSearchQuery,
+          userMessageId: userMsgWithId.id!,
+          generationSerial: generationSerial,
+        );
+      }
+
       // ═══ 記憶過程日誌：只記寫入本地的操作 ═══
       // （注入給模型的內容不顯示——那是給她看的，不是給你看的）
       final memLogLines = <String>[
@@ -2260,6 +2783,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
         imagePath: aiMsg.imagePath,
         memoryLog: aiMsg.memoryLog,
       );
+      final completedWebSearchResult = _pendingWebSearchResult;
 
       // 記錄命中的 messageId
       if (cacheRead > 0 && mounted) {
@@ -2269,10 +2793,15 @@ extension _ChatGenerationMethods on _ChatScreenState {
       if (mounted) {
         _refreshChatState(() {
           _messages.add(aiMsgWithId);
+          if (completedWebSearchResult != null) {
+            _webSearchResultsByMessageId[insertedId] = completedWebSearchResult;
+          }
+          _pendingWebSearchResult = null;
           _clearStreamQueue();
           _setGenerating(false);
         });
       } else {
+        _pendingWebSearchResult = null;
         _clearStreamQueue();
         _setGenerating(false);
       }
@@ -2570,6 +3099,9 @@ extension _ChatGenerationMethods on _ChatScreenState {
       emotionEnabled: emotionEnabled,
       bioclockEnabled: imgBioclockEnabled,
       imagegenEnabled: imgImagegenEnabled,
+      // Image/call paths do not execute web.search in v1. Keep the capability
+      // out of their static prompt so a tag is never silently ignored.
+      webSearchEnabled: false,
       whisperModelOverrideEnabled:
           (charDataImg?['whisper_model_override'] as int? ?? 1) == 1,
       providerName: imgProviderName,

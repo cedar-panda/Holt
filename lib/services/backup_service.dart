@@ -1107,6 +1107,9 @@ class BackupService {
     // 這兩組表由功能服務懶建立；先確保存在，才能做完整快照／交易還原。
     await EmotionCoordinates.activePoints('__backup_schema__');
     await CharacterTimelineService.getStates('__backup_schema__');
+    // v39 pending_memory_actions、v42 web_search_usage_logs 若在同版本號內
+    // 後加入 _onCreate，已有的 DB 不會重跑 migration，必須在這裡補建。
+    await DatabaseHelper.ensureAllSchemaTables();
   }
 
   static Future<void> _verifyTableManifest(Database db) async {

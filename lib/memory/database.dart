@@ -872,6 +872,20 @@ class DatabaseHelper {
     await db.update('conversations', updates, where: 'id = ?', whereArgs: [id]);
   }
 
+  /// 修正對話的角色綁定（角色 ID 失效時的恢復路徑）
+  static Future<void> updateConversationCharacter(
+    String conversationId,
+    String characterId,
+  ) async {
+    final db = await database;
+    await db.update(
+      'conversations',
+      {'character_id': characterId},
+      where: 'id = ?',
+      whereArgs: [conversationId],
+    );
+  }
+
   /// 星標 / 取消星標
   static Future<void> toggleStarConversation(String id, bool starred) async {
     final db = await database;
@@ -1397,6 +1411,17 @@ class DatabaseHelper {
   static Future<void> rebuildMemoryFts() async {
     final db = await database;
     await _DatabaseSchema.rebuildMemoryFts(db);
+  }
+
+  /// 確保所有 late-added schema 表存在。
+  ///
+  /// v39 加了 pending_memory_actions、v42 加了 web_search_usage_logs，
+  /// 但若 DB 已經是 v43 且表是在同版本號內後加的，migration 不會重跑。
+  /// 備份 export/import 前呼叫此方法，避免 _verifyTableManifest 因缺表而拒絕操作。
+  static Future<void> ensureAllSchemaTables() async {
+    final db = await database;
+    await _DatabaseSchema._createPendingMemoryActionsTable(db);
+    await _DatabaseSchema._createWebSearchUsageTable(db);
   }
 
   /// BM25 全文搜索記憶。返回按相關度排序的 Memory 列表。

@@ -12,6 +12,7 @@ import '../services/thinking_machines_service.dart';
 import '../services/model_cost_policy.dart';
 import '../services/settings_manager.dart';
 import '../services/token_estimator.dart';
+import '../services/web_search_service.dart';
 import '../widgets/gradient_background.dart';
 import '../widgets/api_advanced_settings.dart';
 
@@ -123,6 +124,14 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
   String _selectedModel = '';
   String _summaryProvider = MemorySettings.defaultSummaryProvider;
   String _summaryModel = MemorySettings.defaultSummaryModel;
+  bool _dreamCurationEnabled = false;
+  int _dreamCurationThreshold = MemorySettings.defaultDreamThreshold;
+  bool _webSearchEnabled = false;
+  WebSearchMode _webSearchMode = WebSearchMode.auto;
+  int _webSearchDailyProviderLaunchCap =
+      WebSearchSettings.defaultDailyProviderLaunchCap;
+  String _webSearchOpenRouterModel = '';
+  String _webSearchGeminiModel = '';
   List<ModelInfo> _models = [];
   List<ModelInfo> _filteredModels = [];
   Set<String> _starredModels = {};
@@ -163,6 +172,16 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
     final thinkingMachinesModel = await ApiSettings.getThinkingMachinesModel();
     final thinkingMachinesEffort =
         await ApiSettings.getThinkingMachinesEffort();
+    final webSearchEnabled = await WebSearchSettings.getEnabled();
+    final webSearchMode = await WebSearchSettings.getMode();
+    final webSearchDailyProviderLaunchCap =
+        await WebSearchSettings.getDailyProviderLaunchCap();
+    final webSearchOpenRouterModel = await ApiSettings.getModelForProvider(
+      'openrouter',
+    );
+    final webSearchGeminiModel = await ApiSettings.getModelForProvider(
+      'gemini',
+    );
 
     final starred = await ApiSettings.getStarredModels();
     var starredProviders = await ApiSettings.getStarredModelProviders();
@@ -179,6 +198,8 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
         summaryModel,
       );
     }
+    final dreamEnabled = await MemorySettings.getDreamCurationEnabled();
+    final dreamThreshold = await MemorySettings.getDreamCurationThreshold();
     final savedModel = await ApiSettings.getModelForProvider(provider);
 
     if (mounted) {
@@ -209,6 +230,13 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
         _selectedModel = savedModel;
         _summaryProvider = summaryProvider;
         _summaryModel = summaryModel;
+        _dreamCurationEnabled = dreamEnabled;
+        _dreamCurationThreshold = dreamThreshold;
+        _webSearchEnabled = webSearchEnabled;
+        _webSearchMode = webSearchMode;
+        _webSearchDailyProviderLaunchCap = webSearchDailyProviderLaunchCap;
+        _webSearchOpenRouterModel = webSearchOpenRouterModel;
+        _webSearchGeminiModel = webSearchGeminiModel;
         _lastPolicySelectionWasClaude = TokenEstimator.isClaudePromptCacheModel(
           provider: provider,
           model: savedModel,
@@ -609,6 +637,419 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
     );
   }
 
+  Widget _buildDreamCurationCard() {
+    return _buildGlassCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  L.pick(en: 'Dream Curation', zhTW: '做夢整理', zhCN: '做梦整理'),
+                  style: YanciTheme.bodyText.copyWith(fontSize: 13),
+                ),
+              ),
+              SizedBox(
+                height: 24,
+                child: Switch.adaptive(
+                  value: _dreamCurationEnabled,
+                  activeThumbColor: YanciTheme.accent,
+                  activeTrackColor: YanciTheme.accent.withValues(alpha: 0.3),
+                  onChanged: (v) {
+                    setState(() => _dreamCurationEnabled = v);
+                    _debouncedSave();
+                  },
+                ),
+              ),
+            ],
+          ),
+          if (_dreamCurationEnabled) ...[
+            const SizedBox(height: 6),
+            Text(
+              L.pick(
+                en: 'Automatically organizes memories after conversations accumulate. Uses the summary model. Consumes a small amount of tokens.',
+                zhTW: '對話累積後自動梳理記憶，使用摘要模型，需消耗少量 tokens。',
+                zhCN: '对话累积后自动梳理记忆，使用摘要模型，需消耗少量 tokens。',
+              ),
+              style: YanciTheme.bodySmall.copyWith(
+                fontSize: 10,
+                color: YanciTheme.textSecondary.withValues(alpha: 0.65),
+              ),
+            ),
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                Text(
+                  L.pick(
+                    en: 'Trigger after',
+                    zhTW: '累積',
+                    zhCN: '累积',
+                  ),
+                  style: YanciTheme.bodySmall.copyWith(fontSize: 11),
+                ),
+                const SizedBox(width: 8),
+                SizedBox(
+                  width: 48,
+                  child: TextField(
+                    controller: TextEditingController(
+                      text: '$_dreamCurationThreshold',
+                    ),
+                    keyboardType: TextInputType.number,
+                    textAlign: TextAlign.center,
+                    style: YanciTheme.bodyText.copyWith(fontSize: 12),
+                    decoration: const InputDecoration(
+                      isDense: true,
+                      contentPadding: EdgeInsets.symmetric(
+                        vertical: 4,
+                        horizontal: 4,
+                      ),
+                      border: UnderlineInputBorder(),
+                    ),
+                    onChanged: (v) {
+                      final n = int.tryParse(v);
+                      if (n != null) {
+                        _dreamCurationThreshold = n.clamp(
+                          MemorySettings.minDreamThreshold,
+                          MemorySettings.maxDreamThreshold,
+                        );
+                        _debouncedSave();
+                      }
+                    },
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  L.pick(
+                    en: 'new memories',
+                    zhTW: '條新記憶後觸發',
+                    zhCN: '条新记忆后触发',
+                  ),
+                  style: YanciTheme.bodySmall.copyWith(fontSize: 11),
+                ),
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  String _webSearchModeLabel(WebSearchMode mode) => switch (mode) {
+    WebSearchMode.auto => L.pick(en: 'Auto', zhTW: '自動選擇'),
+    WebSearchMode.gemini => 'Gemini',
+    WebSearchMode.openRouter => 'OpenRouter',
+    WebSearchMode.dual => L.pick(
+      en: 'Two providers (shown separately)',
+      zhTW: '雙供應商（分開顯示）',
+    ),
+  };
+
+  String _webSearchModeDescription(WebSearchMode mode) => switch (mode) {
+    WebSearchMode.auto => L.pick(
+      en: 'After confirmation, one provider is selected from the current chat source and the API keys saved on this device.',
+      zhTW: '確認後，會依目前聊天來源與此裝置已保存的 API 金鑰選擇一家供應商。',
+    ),
+    WebSearchMode.gemini => L.pick(
+      en: 'Developer preview for professional/business, 18+ use only. The confirmed request is sent only to Gemini; detected personal data is blocked. Gemini may rewrite it into multiple search queries, and its billing and retention terms apply.',
+      zhTW:
+          '開發者預覽：僅供專業／商業及 18 歲以上用途。經確認的請求只會送往 Gemini，偵測到個人資料時會攔截；Gemini 可能自行改寫成多個搜尋詞，費用與留存依其規則計算。',
+    ),
+    WebSearchMode.openRouter => L.pick(
+      en: 'Developer preview. Uses an explicit model and Exa. OpenRouter may select one ZDR endpoint; fallback is disabled. Router/search-native models are blocked. Verify the account has no enforced default web plugin, because an organization can prevent the App from disabling it.',
+      zhTW:
+          '開發者預覽。使用明確模型與 Exa；OpenRouter 可選一個 ZDR 端點，且已停用備援。Router／原生搜尋模型會被攔截。請先確認帳戶沒有強制預設 Web Plugin，因為組織可禁止 App 停用它。',
+    ),
+    WebSearchMode.dual => L.pick(
+      en: 'Developer preview; Gemini restrictions above apply. The same confirmed request is sent to Gemini and OpenRouter, and results are shown in separate provider cards. Each may rewrite it into multiple search queries; billing and retention are calculated separately.',
+      zhTW:
+          '開發者預覽，並適用上述 Gemini 限制。同一段經確認的請求會送往 Gemini 與 OpenRouter，兩家結果使用獨立卡片顯示；兩家都可能自行改寫成多個搜尋詞，費用與留存分別計算。',
+    ),
+  };
+
+  Widget _buildWebSearchProviderStatus({
+    required String provider,
+    required bool hasApiKey,
+    required String model,
+  }) {
+    final normalizedModel = model.trim().toLowerCase();
+    final needsExplicitOpenRouterModel =
+        provider == 'OpenRouter' &&
+        !isExplicitOpenRouterWebSearchModel(normalizedModel);
+    final needsCurrentGeminiModel =
+        provider == 'Gemini' &&
+        !isSupportedGeminiWebSearchModel(normalizedModel);
+    final ready =
+        hasApiKey && !needsExplicitOpenRouterModel && !needsCurrentGeminiModel;
+    final keyStatus = !hasApiKey
+        ? L.pick(en: 'No API key', zhTW: '尚未輸入 API 金鑰')
+        : needsExplicitOpenRouterModel || needsCurrentGeminiModel
+        ? L.pick(
+            en: needsCurrentGeminiModel
+                ? 'Select a current model'
+                : 'Select an explicit model',
+            zhTW: needsCurrentGeminiModel ? '請選擇目前支援的模型' : '請選擇明確模型',
+            zhCN: needsCurrentGeminiModel ? '请选择目前支持的模型' : '请选择明确模型',
+          )
+        : L.pick(en: 'Ready', zhTW: '已就緒', zhCN: '已就绪');
+    final modelLabel = model.trim().isEmpty
+        ? L.pick(en: 'No model selected', zhTW: '尚未選擇模型')
+        : model.trim();
+    final semanticLabel = L.pick(
+      en: '$provider, $keyStatus, model $modelLabel',
+      zhTW: '$provider，$keyStatus，模型 $modelLabel',
+    );
+
+    return Semantics(
+      container: true,
+      label: semanticLabel,
+      child: ExcludeSemantics(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minHeight: 48),
+          child: Row(
+            children: [
+              Icon(
+                ready ? Icons.check_circle_outline_rounded : Icons.info_outline,
+                size: 18,
+                color: ready ? YanciTheme.accent : YanciTheme.textSecondary,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '$provider · $keyStatus',
+                      style: YanciTheme.bodySmall.copyWith(
+                        color: YanciTheme.textPrimary,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      modelLabel,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: YanciTheme.bodySmall.copyWith(
+                        fontSize: 11,
+                        color: YanciTheme.textSecondary,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildWebSearchSettingsCard() {
+    return AnimatedBuilder(
+      animation: Listenable.merge([_apiKeyController, _geminiKeyCtrl]),
+      builder: (context, _) {
+        final selectedModeLabel = _webSearchModeLabel(_webSearchMode);
+        return _buildGlassCard(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Material(
+                color: Colors.transparent,
+                child: SwitchListTile.adaptive(
+                  contentPadding: EdgeInsets.zero,
+                  title: Text(
+                    L.pick(en: 'Native web search', zhTW: '原生網路搜尋'),
+                    style: YanciTheme.bodyText.copyWith(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: YanciTheme.textPrimary,
+                    ),
+                  ),
+                  subtitle: Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: Text(
+                      L.pick(
+                        en: webSearchLiveDeveloperPreviewEnabled
+                            ? 'Developer preview. Lets chat request public-web searches. The exact query and recipients still require confirmation before any provider request is sent.'
+                            : 'Developer preview is not included in this build. Release distributors must opt in explicitly after reviewing provider terms and audience restrictions.',
+                        zhTW: webSearchLiveDeveloperPreviewEnabled
+                            ? '開發者預覽。允許聊天提出公開網頁搜尋；實際送往供應商前，仍需確認完整查詢內容與接收方。'
+                            : '此版本未包含開發者預覽。Release 發布者須先審核供應商條款與受眾限制，再於建置時明確啟用。',
+                      ),
+                      style: YanciTheme.bodySmall.copyWith(
+                        fontSize: 11,
+                        height: 1.45,
+                        color: YanciTheme.textSecondary,
+                      ),
+                    ),
+                  ),
+                  value: _webSearchEnabled,
+                  activeThumbColor: YanciTheme.accent,
+                  activeTrackColor: YanciTheme.accent.withValues(alpha: 0.3),
+                  onChanged: webSearchLiveDeveloperPreviewEnabled
+                      ? (value) {
+                          setState(() => _webSearchEnabled = value);
+                          _debouncedSave();
+                        }
+                      : null,
+                ),
+              ),
+              if (_webSearchEnabled) ...[
+                Divider(
+                  color: YanciTheme.textSecondary.withValues(alpha: 0.12),
+                  height: 1,
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  L.pick(en: 'Provider mode', zhTW: '供應商模式'),
+                  style: YanciTheme.bodySmall.copyWith(
+                    color: YanciTheme.textSecondary,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                Semantics(
+                  label: L.pick(
+                    en: 'Web search provider mode',
+                    zhTW: '網路搜尋供應商模式',
+                  ),
+                  value: selectedModeLabel,
+                  child: DropdownButton<WebSearchMode>(
+                    value: _webSearchMode,
+                    isExpanded: true,
+                    underline: const SizedBox(),
+                    dropdownColor: YanciTheme.isDark
+                        ? const Color(0xF0302830)
+                        : Colors.white,
+                    style: YanciTheme.bodyText.copyWith(
+                      fontSize: 13,
+                      color: YanciTheme.textPrimary,
+                    ),
+                    items: [
+                      for (final mode in WebSearchMode.values)
+                        DropdownMenuItem<WebSearchMode>(
+                          value: mode,
+                          child: Text(
+                            _webSearchModeLabel(mode),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                    ],
+                    onChanged: (value) {
+                      if (value == null) return;
+                      setState(() => _webSearchMode = value);
+                      _debouncedSave();
+                    },
+                  ),
+                ),
+                Text(
+                  _webSearchModeDescription(_webSearchMode),
+                  style: YanciTheme.bodySmall.copyWith(
+                    fontSize: 11,
+                    height: 1.45,
+                    color: YanciTheme.textSecondary,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Divider(
+                  color: YanciTheme.textSecondary.withValues(alpha: 0.12),
+                  height: 1,
+                ),
+                _buildWebSearchProviderStatus(
+                  provider: 'Gemini',
+                  hasApiKey: _geminiKeyCtrl.text.trim().isNotEmpty,
+                  model: _webSearchGeminiModel,
+                ),
+                Divider(
+                  color: YanciTheme.textSecondary.withValues(alpha: 0.12),
+                  height: 1,
+                ),
+                _buildWebSearchProviderStatus(
+                  provider: 'OpenRouter',
+                  hasApiKey: _apiKeyController.text.trim().isNotEmpty,
+                  model: _webSearchOpenRouterModel,
+                ),
+                Divider(
+                  color: YanciTheme.textSecondary.withValues(alpha: 0.12),
+                  height: 1,
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        L.pick(
+                          en: 'Daily provider-launch cap',
+                          zhTW: '每日供應商啟動上限',
+                        ),
+                        style: YanciTheme.bodySmall.copyWith(
+                          color: YanciTheme.textPrimary,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ),
+                    Text(
+                      L.pick(
+                        en: '$_webSearchDailyProviderLaunchCap / day',
+                        zhTW: '$_webSearchDailyProviderLaunchCap 次／日',
+                      ),
+                      style: YanciTheme.bodySmall.copyWith(
+                        color: YanciTheme.accent,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+                Semantics(
+                  label: L.pick(
+                    en: 'Daily provider-launch cap',
+                    zhTW: '每日供應商啟動上限',
+                  ),
+                  value: '$_webSearchDailyProviderLaunchCap',
+                  child: Slider.adaptive(
+                    value: _webSearchDailyProviderLaunchCap.toDouble(),
+                    min: WebSearchSettings.minDailyProviderLaunchCap.toDouble(),
+                    max: WebSearchSettings.maxDailyProviderLaunchCap.toDouble(),
+                    divisions:
+                        WebSearchSettings.maxDailyProviderLaunchCap -
+                        WebSearchSettings.minDailyProviderLaunchCap,
+                    label: '$_webSearchDailyProviderLaunchCap',
+                    activeColor: YanciTheme.accent,
+                    onChanged: (value) {
+                      setState(
+                        () => _webSearchDailyProviderLaunchCap = value.round(),
+                      );
+                      _debouncedSave();
+                    },
+                    semanticFormatterCallback: (value) => L.pick(
+                      en: '${value.round()} provider launches per day',
+                      zhTW: '每日 ${value.round()} 次供應商啟動',
+                    ),
+                  ),
+                ),
+                Text(
+                  L.pick(
+                    en: 'Each provider launch counts once. Dual mode uses two launches for one confirmed request. A provider may then rewrite it into multiple search queries; actual billing is separate from this cap.',
+                    zhTW:
+                        '每啟動一家供應商計 1 次；雙供應商模式下，同一段確認請求會使用 2 次啟動額度。供應商可能再改寫成多個搜尋詞，實際計費與此上限分開計算。',
+                  ),
+                  style: YanciTheme.bodySmall.copyWith(
+                    fontSize: 11,
+                    height: 1.45,
+                    color: YanciTheme.textSecondary,
+                  ),
+                ),
+                const SizedBox(height: 8),
+              ],
+            ],
+          ),
+        );
+      },
+    );
+  }
+
   void _showCostPolicyNotice(ModelCostPolicyNotice notice) {
     if (!mounted || notice == ModelCostPolicyNotice.none) return;
     final message = switch (notice) {
@@ -656,6 +1097,11 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
   Future<void> _selectModel(String modelId) async {
     setState(() {
       _selectedModel = modelId;
+      if (_provider == 'openrouter') {
+        _webSearchOpenRouterModel = modelId;
+      } else if (_provider == 'gemini') {
+        _webSearchGeminiModel = modelId;
+      }
       if (_provider == 'openai_compatible') {
         _oaiCompatModelCtrl.text = modelId;
       }
@@ -694,6 +1140,11 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
     final thinkingMachinesEffort = _thinkingMachinesEffort;
     final summaryProvider = _summaryProvider;
     final summaryModel = _summaryModel;
+    final dreamCurationEnabled = _dreamCurationEnabled;
+    final dreamCurationThreshold = _dreamCurationThreshold;
+    final webSearchEnabled = _webSearchEnabled;
+    final webSearchMode = _webSearchMode;
+    final webSearchDailyProviderLaunchCap = _webSearchDailyProviderLaunchCap;
 
     await ApiSettings.saveOpenRouterApiKey(openRouterKey);
     await ApiSettings.saveXaiApiKey(xaiKey);
@@ -711,10 +1162,17 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
     await ApiSettings.saveThinkingMachinesApiKey(thinkingMachinesKey);
     await ApiSettings.saveThinkingMachinesModel(thinkingMachinesModel);
     await ApiSettings.saveThinkingMachinesEffort(thinkingMachinesEffort);
+    await WebSearchSettings.saveEnabled(webSearchEnabled);
+    await WebSearchSettings.saveMode(webSearchMode);
+    await WebSearchSettings.saveDailyProviderLaunchCap(
+      webSearchDailyProviderLaunchCap,
+    );
     await MemorySettings.saveSummarySelection(
       provider: summaryProvider,
       model: summaryModel,
     );
+    await MemorySettings.saveDreamCurationEnabled(dreamCurationEnabled);
+    await MemorySettings.saveDreamCurationThreshold(dreamCurationThreshold);
     if (provider == 'thinking_machines' && thinkingMachinesKey.isNotEmpty) {
       await _applyCostPolicy(
         provider: provider,
@@ -1108,7 +1566,14 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
                                   final savedModel =
                                       await ApiSettings.getModelForProvider(v);
                                   if (!mounted) return;
-                                  setState(() => _selectedModel = savedModel);
+                                  setState(() {
+                                    _selectedModel = savedModel;
+                                    if (v == 'openrouter') {
+                                      _webSearchOpenRouterModel = savedModel;
+                                    } else if (v == 'gemini') {
+                                      _webSearchGeminiModel = savedModel;
+                                    }
+                                  });
                                   if (v == 'openrouter' ||
                                       v == 'xai' ||
                                       v == 'openai_compatible') {
@@ -1837,9 +2302,17 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
                                 ),
                             ],
                             const SizedBox(height: YanciTheme.spacingLg),
+                            _buildSectionTitle(
+                              L.pick(en: 'Web search', zhTW: '網路搜尋'),
+                            ),
+                            const SizedBox(height: YanciTheme.spacingSm),
+                            _buildWebSearchSettingsCard(),
+                            const SizedBox(height: YanciTheme.spacingLg),
                             _buildSectionTitle(L.get('settings_summary_model')),
                             const SizedBox(height: YanciTheme.spacingSm),
                             _buildSummaryModelCard(),
+                            const SizedBox(height: YanciTheme.spacingSm),
+                            _buildDreamCurationCard(),
                             const SizedBox(height: YanciTheme.spacingLg),
                             const ApiAdvancedSettings(),
                             const SizedBox(height: YanciTheme.spacingLg),

@@ -258,69 +258,82 @@ class _DatabaseSchema {
   // 使用 contentless（content=''）模式：FTS 自存副本，不依賴 content table
   // 的 rebuild 指令。好處是 rebuild 時可以只索引 active 記憶。
   // tokenize=unicode61 對 CJK 逐字拆分——不完美但零依賴。
-  static Future<void> _createMemoryFts(Database db) async {
-    await db.execute('''
-      CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts
-      USING fts5(content, triggers, content='', tokenize='unicode61')
-    ''');
+  /// FTS5 可能在某些 Android 設備的系統 SQLite 中不可用。
+  /// 建表失敗時靜默降級——記憶搜尋走 LIKE fallback，不影響核心功能。
+  static Future<bool> _createMemoryFts(Database db) async {
+    try {
+      await db.execute('''
+        CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts
+        USING fts5(content, triggers, content='', tokenize='unicode61')
+      ''');
 
-    // INSERT trigger：新記憶寫入時自動索引（只索引 active）
-    await db.execute('''
-      CREATE TRIGGER IF NOT EXISTS memories_fts_ai
-      AFTER INSERT ON memories WHEN NEW.status = 'active'
-      BEGIN
-        INSERT INTO memories_fts(rowid, content, triggers)
-        VALUES (NEW.id, NEW.content, NEW.triggers);
-      END
-    ''');
+      // INSERT trigger：新記憶寫入時自動索引（只索引 active）
+      await db.execute('''
+        CREATE TRIGGER IF NOT EXISTS memories_fts_ai
+        AFTER INSERT ON memories WHEN NEW.status = 'active'
+        BEGIN
+          INSERT INTO memories_fts(rowid, content, triggers)
+          VALUES (NEW.id, NEW.content, NEW.triggers);
+        END
+      ''');
 
-    // 封存/刪除 trigger：status 從 active 變成其他時移除索引
-    await db.execute('''
-      CREATE TRIGGER IF NOT EXISTS memories_fts_au_deactivate
-      AFTER UPDATE OF status ON memories
-      WHEN OLD.status = 'active' AND NEW.status != 'active'
-      BEGIN
-        INSERT INTO memories_fts(memories_fts, rowid, content, triggers)
-        VALUES ('delete', OLD.id, OLD.content, OLD.triggers);
-      END
-    ''');
+      // 封存/刪除 trigger：status 從 active 變成其他時移除索引
+      await db.execute('''
+        CREATE TRIGGER IF NOT EXISTS memories_fts_au_deactivate
+        AFTER UPDATE OF status ON memories
+        WHEN OLD.status = 'active' AND NEW.status != 'active'
+        BEGIN
+          INSERT INTO memories_fts(memories_fts, rowid, content, triggers)
+          VALUES ('delete', OLD.id, OLD.content, OLD.triggers);
+        END
+      ''');
 
-    // 恢復 trigger：status 從非 active 變回 active 時重新索引
-    await db.execute('''
-      CREATE TRIGGER IF NOT EXISTS memories_fts_au_activate
-      AFTER UPDATE OF status ON memories
-      WHEN OLD.status != 'active' AND NEW.status = 'active'
-      BEGIN
-        INSERT INTO memories_fts(rowid, content, triggers)
-        VALUES (NEW.id, NEW.content, NEW.triggers);
-      END
-    ''');
+      // 恢復 trigger：status 從非 active 變回 active 時重新索引
+      await db.execute('''
+        CREATE TRIGGER IF NOT EXISTS memories_fts_au_activate
+        AFTER UPDATE OF status ON memories
+        WHEN OLD.status != 'active' AND NEW.status = 'active'
+        BEGIN
+          INSERT INTO memories_fts(rowid, content, triggers)
+          VALUES (NEW.id, NEW.content, NEW.triggers);
+        END
+      ''');
 
-    // 真正的 DELETE（極少發生，但防禦性加上）
-    await db.execute('''
-      CREATE TRIGGER IF NOT EXISTS memories_fts_ad
-      AFTER DELETE ON memories WHEN OLD.status = 'active'
-      BEGIN
-        INSERT INTO memories_fts(memories_fts, rowid, content, triggers)
-        VALUES ('delete', OLD.id, OLD.content, OLD.triggers);
-      END
-    ''');
+      // 真正的 DELETE（極少發生，但防禦性加上）
+      await db.execute('''
+        CREATE TRIGGER IF NOT EXISTS memories_fts_ad
+        AFTER DELETE ON memories WHEN OLD.status = 'active'
+        BEGIN
+          INSERT INTO memories_fts(memories_fts, rowid, content, triggers)
+          VALUES ('delete', OLD.id, OLD.content, OLD.triggers);
+        END
+      ''');
+      return true;
+    } catch (e) {
+      debugPrint('FTS5 not available on this device, skipping: $e');
+      return false;
+    }
   }
 
   /// 重建 FTS5 索引：清空後從 memories 表重新填充所有 active 記憶。
   /// 用於：migration 初始化、備份還原後、手動修復。
+  /// FTS5 不可用時靜默跳過。
   static Future<void> rebuildMemoryFts(Database db) async {
-    // 先確保表和 trigger 存在
-    await _createMemoryFts(db);
-    // 清空 FTS 索引
-    await db.execute(
-      "INSERT INTO memories_fts(memories_fts) VALUES ('delete-all')",
-    );
-    // 重新填充所有 active 記憶
-    await db.execute('''
-      INSERT INTO memories_fts(rowid, content, triggers)
-      SELECT id, content, triggers FROM memories WHERE status = 'active'
-    ''');
+    // 先確保表和 trigger 存在；FTS5 不可用時直接返回
+    if (!await _createMemoryFts(db)) return;
+    try {
+      // 清空 FTS 索引
+      await db.execute(
+        "INSERT INTO memories_fts(memories_fts) VALUES ('delete-all')",
+      );
+      // 重新填充所有 active 記憶
+      await db.execute('''
+        INSERT INTO memories_fts(rowid, content, triggers)
+        SELECT id, content, triggers FROM memories WHERE status = 'active'
+      ''');
+    } catch (e) {
+      debugPrint('FTS5 rebuild failed: $e');
+    }
   }
 
   /// 所有 fresh install 與 migration 最終都會走到這裡，確保查詢規劃一致。

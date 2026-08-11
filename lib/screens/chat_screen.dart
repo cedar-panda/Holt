@@ -36,6 +36,10 @@ import '../utils/text_safety.dart';
 import '../services/marriage_service.dart';
 import '../services/tool_prompts.dart';
 import '../services/tool_runner.dart';
+import '../services/web_search_intent.dart';
+import '../services/web_search_service.dart';
+import '../services/web_search_tool_bridge.dart';
+import '../services/web_search_turn_coordinator.dart';
 import '../services/x_post_service.dart';
 import '../services/x_post_settings.dart';
 import '../services/character_timeline_service.dart';
@@ -56,10 +60,13 @@ import '../widgets/sticker_preview_quality.dart';
 import '../widgets/long_screenshot_options_sheet.dart';
 import '../widgets/chat_model_picker.dart';
 import '../widgets/memory_review_tab.dart';
+import '../widgets/web_search_activity_card.dart';
+import '../widgets/web_search_result_card.dart';
 import 'call_screen.dart';
 import 'manual_summary_clean_screen.dart';
 import '../services/call_audio_pipeline.dart';
 import '../services/chat_long_screenshot_service.dart';
+import '../services/dream_curation_service.dart';
 
 part 'chat_screen_generation.dart';
 part 'chat_screen_actions.dart';
@@ -67,7 +74,9 @@ part 'chat_screen_actions.dart';
 const String _chatSearchToolName = 'chat.search';
 
 class _ChatToolPermissionPolicy implements ToolPermissionPolicy {
-  const _ChatToolPermissionPolicy();
+  const _ChatToolPermissionPolicy(this.webSearchToolBridge);
+
+  final WebSearchToolBridge webSearchToolBridge;
 
   @override
   Future<ToolPermissionDecision> requestPermission({
@@ -82,13 +91,17 @@ class _ChatToolPermissionPolicy implements ToolPermissionPolicy {
         definition.permissionForMode(context.mode) ==
             ToolPermissionRequirement.sensitiveRead &&
         context.mode == ToolRunMode.local;
-    return isExistingLocalChatSearch
-        ? ToolPermissionDecision.allow
-        : ToolPermissionDecision.deny;
+    if (isExistingLocalChatSearch) return ToolPermissionDecision.allow;
+    return webSearchToolBridge.requestPermission(
+      call: call,
+      definition: definition,
+      context: context,
+      cancellationToken: cancellationToken,
+    );
   }
 }
 
-ToolRunner _createChatToolRunner() {
+ToolRunner _createChatToolRunner(WebSearchToolBridge webSearchToolBridge) {
   final registry = ToolRegistry()
     ..register(
       ToolDefinition(
@@ -119,10 +132,11 @@ ToolRunner _createChatToolRunner() {
           return rows;
         },
       ),
-    );
+    )
+    ..register(webSearchToolBridge.createDefinition());
   return ToolRunner(
     registry: registry,
-    permissionPolicy: const _ChatToolPermissionPolicy(),
+    permissionPolicy: _ChatToolPermissionPolicy(webSearchToolBridge),
   );
 }
 
@@ -158,6 +172,20 @@ class _StaticPromptBundle {
   });
 }
 
+class _WebSearchActivityState {
+  const _WebSearchActivityState({
+    required this.status,
+    required this.query,
+    required this.providers,
+    this.safeMessage,
+  });
+
+  final WebSearchActivityStatus status;
+  final String query;
+  final List<String> providers;
+  final String? safeMessage;
+}
+
 class _ChatScreenState extends State<ChatScreen> {
   void _refreshChatState(VoidCallback callback) => setState(callback);
 
@@ -191,6 +219,7 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _isLoading = true;
   bool _isChatReady = false;
   bool _initializationFailed = false;
+  String _initializationError = '';
   String _streamingText = '';
   String _currentModel = '';
   String _activeCharacterId = 'default';
@@ -241,8 +270,18 @@ class _ChatScreenState extends State<ChatScreen> {
   List<Map<String, dynamic>> _chatSearchResults = [];
   int _generationSerial = 0;
   ApiAdapter? _activeGenerationAdapter;
+  final HybridWebSearchService _webSearchService =
+      const HybridWebSearchService();
+  final WebSearchTurnCoordinator _webSearchTurnCoordinator =
+      WebSearchTurnCoordinator();
+  late final WebSearchToolBridge _webSearchToolBridge;
   late final ToolRunner _toolRunner;
   bool _stopGenerationRequested = false;
+  _WebSearchActivityState? _webSearchActivity;
+  BuildContext? _webSearchConfirmationContext;
+  WebSearchBatchResult? _pendingWebSearchResult;
+  final Map<int, WebSearchBatchResult> _webSearchResultsByMessageId =
+      <int, WebSearchBatchResult>{};
 
   // ═══ 流式標籤實時剝離 ═══
   // 在流式輸出時隱藏內部標籤，避免 <emo>/<memo>/<draw> 等閃現
@@ -257,13 +296,13 @@ class _ChatScreenState extends State<ChatScreen> {
     caseSensitive: false,
   );
   static final _completedTagRe = RegExp(
-    r'<(emo|emo_resolve|memo|memo_del|memo_merge|memo_update|memo_link|force_recall|persona_note|draw|clock|clock_keep|clock_update|clock_del|life_fix|home|whisper|search_chat|call|scratch|transfer|transfer_accept|transfer_decline|x_post|pack_star)\b[^>]*>'
+    r'<(emo|emo_resolve|memo|memo_del|memo_merge|memo_update|memo_link|force_recall|persona_note|draw|clock|clock_keep|clock_update|clock_del|life_fix|home|whisper|search_chat|search_web|call|scratch|transfer|transfer_accept|transfer_decline|x_post|pack_star)\b[^>]*>'
     r'[\s\S]*?'
     r'</\1>',
     multiLine: true,
   );
   static final _openTagRe = RegExp(
-    r'<(emo|emo_resolve|memo|memo_del|memo_merge|memo_update|memo_link|force_recall|persona_note|draw|clock|clock_keep|clock_update|clock_del|life_fix|home|whisper|search_chat|call|scratch|transfer|transfer_accept|transfer_decline|buy|x_post|shop_view|pack_star|sign_marriage|propose_marriage)\b[\s\S]*$',
+    r'<(emo|emo_resolve|memo|memo_del|memo_merge|memo_update|memo_link|force_recall|persona_note|draw|clock|clock_keep|clock_update|clock_del|life_fix|home|whisper|search_chat|search_web|call|scratch|transfer|transfer_accept|transfer_decline|buy|x_post|shop_view|pack_star|sign_marriage|propose_marriage)\b[\s\S]*$',
   );
 
   static final _scratchTagRe = RegExp(
@@ -337,7 +376,11 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void initState() {
     super.initState();
-    _toolRunner = _createChatToolRunner();
+    _webSearchToolBridge = WebSearchToolBridge(
+      service: _webSearchService,
+      coordinator: _webSearchTurnCoordinator,
+    );
+    _toolRunner = _createChatToolRunner(_webSearchToolBridge);
     _manualSummarySelecting = widget.startManualSummarySelection;
     // 窗口短號重置：模型視角的記憶編號按本窗注入順序從 1 重編
     Retriever.resetWindowIds(widget.conversationId);
@@ -408,6 +451,7 @@ class _ChatScreenState extends State<ChatScreen> {
         _isChatReady = false;
         _isLoading = false;
         _initializationFailed = true;
+        _initializationError = '$error';
       });
     }
   }
@@ -418,6 +462,7 @@ class _ChatScreenState extends State<ChatScreen> {
       _isLoading = true;
       _isChatReady = false;
       _initializationFailed = false;
+      _initializationError = '';
       _messages.clear();
       _cacheHitIndices.clear();
       _scratchDataMap.clear();
@@ -454,12 +499,31 @@ class _ChatScreenState extends State<ChatScreen> {
     if (uAvatar.isNotEmpty) _userAvatarPath = uAvatar;
 
     // 角色頭像與蛛網背景引擎
-    final char = await DatabaseHelper.getCharacter(_activeCharacterId);
+    var char = await DatabaseHelper.getCharacter(_activeCharacterId);
     if (char == null) {
-      throw StateError(
-        'Character $_activeCharacterId for conversation '
-        '${conversation.id} does not exist',
+      // 角色 ID 失效（可能是 'default' 或已刪除）→ 嘗試恢復到第一個角色
+      debugPrint(
+        'Character $_activeCharacterId not found for conversation '
+        '${conversation.id}, attempting recovery…',
       );
+      final allChars = await DatabaseHelper.getCharacters();
+      if (allChars.isEmpty) {
+        throw StateError(
+          'No characters exist. Character $_activeCharacterId for '
+          'conversation ${conversation.id} could not be resolved.',
+        );
+      }
+      final fallbackChar = allChars.first;
+      final fallbackId = fallbackChar['id'] as String;
+      // 修正對話的角色綁定 + 全域偏好
+      await DatabaseHelper.updateConversationCharacter(
+        conversation.id,
+        fallbackId,
+      );
+      await UserSettings.saveActiveCharacterId(fallbackId);
+      _activeCharacterId = fallbackId;
+      char = fallbackChar;
+      debugPrint('Recovered to character $fallbackId');
     }
     _characterName = char['name'] as String? ?? '';
     _charAvatarPath = char['avatar_path'] as String?;
@@ -734,6 +798,7 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void dispose() {
     _clearStreamQueue();
+    _dismissWebSearchConfirmation();
     _toolRunner.cancelActive(reason: 'Chat screen disposed.');
     // 關窗口：觸發窗口摘要（fire-and-forget）
     final convId = widget.conversationId;
@@ -924,6 +989,27 @@ class _ChatScreenState extends State<ChatScreen> {
               textAlign: TextAlign.center,
               style: TextStyle(color: YanciTheme.textSecondary, fontSize: 12),
             ),
+            if (_initializationError.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: YanciTheme.isDark
+                      ? Colors.white.withValues(alpha: 0.05)
+                      : Colors.black.withValues(alpha: 0.04),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  _initializationError,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: YanciTheme.textSecondary,
+                    fontSize: 11,
+                    fontFamily: 'monospace',
+                  ),
+                ),
+              ),
+            ],
             const SizedBox(height: 18),
             Row(
               mainAxisSize: MainAxisSize.min,
@@ -1576,6 +1662,9 @@ class _ChatScreenState extends State<ChatScreen> {
                   !msg.isUser &&
                   (msg.cacheHit || _cacheHitIndices.contains(i)),
               incomplete: isLast && msg.isIncomplete,
+              webSearchResult: isLast && msg.id != null
+                  ? _webSearchResultsByMessageId[msg.id]
+                  : null,
               // 她遞的證書卡跟在拆分回覆的最後一段
               hasMarriageCert: isLast && splitHasCert,
               certFromChar: isLast && splitHasCert,
@@ -1604,6 +1693,9 @@ class _ChatScreenState extends State<ChatScreen> {
                 msg.id != null &&
                 (_pendingMemoryActionCounts[msg.id]?.unread ?? 0) > 0,
             incomplete: msg.isIncomplete,
+            webSearchResult: !msg.isUser && msg.id != null
+                ? _webSearchResultsByMessageId[msg.id]
+                : null,
             giftName: giftMatch?.group(1)?.trim(),
             giftAccepted: giftMatch != null && charReplyAfter[srcIdx],
             hasMarriageCert:
@@ -1637,6 +1729,7 @@ class _ChatScreenState extends State<ChatScreen> {
     }
 
     final hasSearchCard = _chatSearchQuery.isNotEmpty;
+    final hasWebSearchActivity = _webSearchActivity != null;
     final itemCount =
         (hasOlderButton ? 1 : 0) +
         displayItems.length +
@@ -1644,6 +1737,7 @@ class _ChatScreenState extends State<ChatScreen> {
             ? (_splitReply ? _streamingSplitParts().length : 1)
             : 0) +
         (hasSearchCard ? 1 : 0) +
+        (hasWebSearchActivity ? 1 : 0) +
         (showAtom ? 1 : 0);
 
     return NotificationListener<ScrollNotification>(
@@ -1800,7 +1894,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   _manualSummarySelecting &&
                   item.dbMessageId != null &&
                   item.text.trim().isNotEmpty;
-              return ChatBubble(
+              final bubble = ChatBubble(
                 text: item.text,
                 isUser: item.isUser,
                 timestamp: item.timestamp,
@@ -1862,6 +1956,16 @@ class _ChatScreenState extends State<ChatScreen> {
                     ? null
                     : () => _toggleManualSummaryMessage(item.dbMessageId!),
               );
+              final webSearchResult = item.webSearchResult;
+              if (webSearchResult == null) return bubble;
+              return Column(
+                key: ValueKey<String>('${item.messageId}_with_web_search'),
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: <Widget>[
+                  bubble,
+                  WebSearchResultCard(result: webSearchResult),
+                ],
+              );
             } else if (showAtom && index == displayItems.length) {
               return Padding(
                 padding: const EdgeInsets.symmetric(
@@ -1882,6 +1986,19 @@ class _ChatScreenState extends State<ChatScreen> {
                   displayItems.length + (showAtom ? 1 : 0) + streamSlots;
               if (hasSearchCard && index == searchCardIdx) {
                 return _buildSearchCard();
+              }
+              final webSearchActivityIdx =
+                  searchCardIdx + (hasSearchCard ? 1 : 0);
+              final webSearchActivity = _webSearchActivity;
+              if (hasWebSearchActivity &&
+                  webSearchActivity != null &&
+                  index == webSearchActivityIdx) {
+                return WebSearchActivityCard(
+                  status: webSearchActivity.status,
+                  query: webSearchActivity.query,
+                  providers: webSearchActivity.providers,
+                  safeMessage: webSearchActivity.safeMessage,
+                );
               }
               // ═══ 流式氣泡（拆分回覆時按段落拆）═══
               if (_splitReply) {
@@ -2381,6 +2498,9 @@ class _DisplayItem {
   final int pendingMemoryActionCount;
   final bool hasUnreadMemoryActions;
 
+  /// 短生命週期的結構化網搜結果；只掛在本次 session 的最後一個角色氣泡。
+  final WebSearchBatchResult? webSearchResult;
+
   /// 非空 → 這項渲染成居中分割線（通話已結束等），不渲染氣泡
   final String? callDivider;
 
@@ -2410,6 +2530,7 @@ class _DisplayItem {
     this.memoryLog = '',
     this.pendingMemoryActionCount = 0,
     this.hasUnreadMemoryActions = false,
+    this.webSearchResult,
     this.showToolbar = true,
     this.cacheHit = false,
     this.incomplete = false,

@@ -987,6 +987,7 @@ extension _ChatActionMethods on _ChatScreenState {
         emotionEnabled: emotionEnabled,
         bioclockEnabled: bioclockEnabled,
         imagegenEnabled: imagegenEnabled,
+        webSearchEnabled: false,
         whisperModelOverrideEnabled:
             (charData?['whisper_model_override'] as int? ?? 1) == 1,
         providerName: providerName,

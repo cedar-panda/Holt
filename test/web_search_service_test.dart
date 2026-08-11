@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:project_yanci/services/tool_runner.dart';
 import 'package:project_yanci/services/web_search_service.dart';
+import 'package:project_yanci/services/settings/web_search_settings.dart';
 
 void main() {
   group('OpenRouter web search provider', () {
@@ -18,6 +19,16 @@ void main() {
         final body = jsonDecode(request.body) as Map<String, dynamic>;
         expect(body['model'], 'anthropic/claude-sonnet-4');
         expect(body['max_tool_calls'], 1);
+        expect(body, isNot(contains('temperature')));
+        expect(body['provider'], <String, dynamic>{
+          'allow_fallbacks': false,
+          'require_parameters': true,
+          'data_collection': 'deny',
+          'zdr': true,
+        });
+        expect(body['plugins'], <Map<String, dynamic>>[
+          <String, dynamic>{'id': 'web', 'enabled': false},
+        ]);
         final messages = body['messages'] as List;
         expect(messages, hasLength(2));
         expect(messages.last['content'], 'Taipei weather today');
@@ -26,6 +37,7 @@ void main() {
         final tool = tools.single as Map<String, dynamic>;
         expect(tool['type'], 'openrouter:web_search');
         final parameters = tool['parameters'] as Map<String, dynamic>;
+        expect(parameters['engine'], 'exa');
         expect(parameters['max_uses'], 1);
         expect(parameters['max_results'], 5);
         expect(parameters['max_total_results'], 5);
@@ -82,6 +94,52 @@ void main() {
       expect(result.usage.costCertainty, WebSearchCostCertainty.known);
     });
 
+    test('auto models fail before creating a client or sending HTTP', () async {
+      for (final model in const <String>[
+        'auto',
+        'openrouter/auto',
+        'openrouter/auto-beta',
+        'openrouter/free',
+        'openrouter/bodybuilder',
+        '~anthropic/claude-sonnet-latest',
+        'openai/gpt-5-mini:online',
+        'perplexity/sonar-pro',
+        'openai/o3-deep-research',
+        'model-without-provider',
+      ]) {
+        var clientsCreated = 0;
+        var requestsSent = 0;
+        final provider = OpenRouterWebSearchProvider(
+          apiKey: 'or-key',
+          model: model,
+          clientFactory: () {
+            clientsCreated++;
+            return MockClient((_) async {
+              requestsSent++;
+              return http.Response('{}', 200);
+            });
+          },
+        );
+
+        await expectLater(
+          provider.search(
+            WebSearchRequest(query: 'safe query'),
+            ToolCancellationController().token,
+          ),
+          throwsA(
+            isA<WebSearchProviderException>().having(
+              (error) => error.code,
+              'code',
+              WebSearchFailureCode.unsupportedModel,
+            ),
+          ),
+          reason: model,
+        );
+        expect(clientsCreated, 0, reason: model);
+        expect(requestsSent, 0, reason: model);
+      }
+    });
+
     test('rejects redirects without forwarding authorization', () async {
       var calls = 0;
       final client = MockClient((request) async {
@@ -95,7 +153,7 @@ void main() {
       });
       final provider = OpenRouterWebSearchProvider(
         apiKey: 'or-secret-key',
-        model: 'openrouter/auto',
+        model: 'anthropic/claude-sonnet-4',
         clientFactory: () => client,
       );
 
@@ -151,7 +209,7 @@ void main() {
       ];
       final provider = OpenRouterWebSearchProvider(
         apiKey: 'key',
-        model: 'openrouter/auto',
+        model: 'anthropic/claude-sonnet-4',
         clientFactory: () => MockClient(
           (_) async => http.Response(
             jsonEncode(<String, dynamic>{
@@ -181,7 +239,7 @@ void main() {
     test('rejects an answer with no safe structured source', () async {
       final provider = OpenRouterWebSearchProvider(
         apiKey: 'key',
-        model: 'openrouter/auto',
+        model: 'anthropic/claude-sonnet-4',
         clientFactory: () => MockClient(
           (_) async => http.Response(
             jsonEncode(<String, dynamic>{
@@ -219,7 +277,7 @@ void main() {
     test('caps the provider response before JSON decoding', () async {
       final provider = OpenRouterWebSearchProvider(
         apiKey: 'key',
-        model: 'openrouter/auto',
+        model: 'anthropic/claude-sonnet-4',
         clientFactory: () => MockClient(
           (_) async => http.Response(
             List<String>.filled(1024 * 1024 + 1, 'x').join(),
@@ -247,7 +305,7 @@ void main() {
       const secret = 'sk-super-secret-provider-body';
       final provider = OpenRouterWebSearchProvider(
         apiKey: 'key',
-        model: 'openrouter/auto',
+        model: 'anthropic/claude-sonnet-4',
         clientFactory: () =>
             MockClient((_) async => http.Response('{"error":"$secret"}', 401)),
       );
@@ -316,12 +374,6 @@ void main() {
                           'title': 'UEFA',
                         },
                       },
-                      <String, dynamic>{
-                        'web': <String, String>{
-                          'uri': 'https://localhost/private',
-                          'title': 'bad',
-                        },
-                      },
                     ],
                     'groundingSupports': <Map<String, dynamic>>[
                       <String, dynamic>{
@@ -329,7 +381,7 @@ void main() {
                           'startIndex': 0,
                           'endIndex': 5,
                         },
-                        'groundingChunkIndices': <int>[0, 1, 99],
+                        'groundingChunkIndices': <int>[0, 99],
                       },
                     ],
                   },
@@ -370,6 +422,143 @@ void main() {
         expect(result.text, isNot(contains('script')));
       },
     );
+
+    test('preserves a valid Grounded Result character-for-character', () async {
+      const original = '  第一行。\nSecond\tline 🦊.  ';
+      final provider = GeminiWebSearchProvider(
+        apiKey: 'gem-key',
+        model: 'gemini-2.5-flash',
+        clientFactory: () => MockClient(
+          (_) async => http.Response.bytes(
+            utf8.encode(
+              jsonEncode(
+                _geminiResponse(
+                  queries: const <String>['safe query'],
+                  text: original,
+                ),
+              ),
+            ),
+            200,
+            headers: const <String, String>{
+              'content-type': 'application/json; charset=utf-8',
+            },
+          ),
+        ),
+      );
+
+      final result = await provider.search(
+        WebSearchRequest(query: 'safe query'),
+        ToolCancellationController().token,
+      );
+
+      expect(result.text, original);
+      expect(result.text.codeUnits, original.codeUnits);
+    });
+
+    test(
+      'maps UTF-8 citation bytes across response parts to Dart indices',
+      () async {
+        final response = _geminiResponse(queries: const <String>['safe query']);
+        final candidate =
+            (response['candidates'] as List).single as Map<String, dynamic>;
+        final content = candidate['content'] as Map<String, dynamic>;
+        content['parts'] = <Map<String, String>>[
+          <String, String>{'text': '甲'},
+          <String, String>{'text': '前😀後'},
+        ];
+        final metadata = candidate['groundingMetadata'] as Map<String, dynamic>;
+        metadata['groundingSupports'] = <Map<String, dynamic>>[
+          <String, dynamic>{
+            'segment': <String, dynamic>{
+              'partIndex': 1,
+              'startIndex': 3,
+              'endIndex': 7,
+              'text': '😀',
+            },
+            'groundingChunkIndices': <int>[0],
+          },
+          <String, dynamic>{
+            'segment': <String, dynamic>{
+              'partIndex': 1,
+              'startIndex': 4,
+              'endIndex': 7,
+            },
+            'groundingChunkIndices': <int>[0],
+          },
+        ];
+        final provider = GeminiWebSearchProvider(
+          apiKey: 'gem-key',
+          model: 'gemini-2.5-flash',
+          clientFactory: () => MockClient(
+            (_) async => http.Response.bytes(
+              utf8.encode(jsonEncode(response)),
+              200,
+              headers: const <String, String>{
+                'content-type': 'application/json; charset=utf-8',
+              },
+            ),
+          ),
+        );
+
+        final result = await provider.search(
+          WebSearchRequest(query: 'safe query'),
+          ToolCancellationController().token,
+        );
+
+        expect(result.text, '甲前😀後');
+        expect(result.citations, hasLength(1));
+        expect(result.citations.single.startIndex, 2);
+        expect(result.citations.single.endIndex, 4);
+        expect(
+          result.text.substring(
+            result.citations.single.startIndex,
+            result.citations.single.endIndex,
+          ),
+          '😀',
+        );
+      },
+    );
+
+    test('rejects unsafe Grounded Result controls without rewriting', () async {
+      var requestsSent = 0;
+      final provider = GeminiWebSearchProvider(
+        apiKey: 'gem-key',
+        model: 'gemini-2.5-flash',
+        clientFactory: () => MockClient((_) async {
+          requestsSent++;
+          return http.Response(
+            jsonEncode(
+              _geminiResponse(
+                queries: const <String>['safe query'],
+                text: 'Grounded\u0000answer.',
+              ),
+            ),
+            200,
+          );
+        }),
+      );
+
+      await expectLater(
+        provider.search(
+          WebSearchRequest(query: 'safe query'),
+          ToolCancellationController().token,
+        ),
+        throwsA(
+          isA<WebSearchProviderException>()
+              .having(
+                (error) => error.code,
+                'code',
+                WebSearchFailureCode.invalidResponse,
+              )
+              .having(
+                (error) => error.costCertainty,
+                'cost certainty',
+                WebSearchCostCertainty.unknown,
+              ),
+        ),
+      );
+      expect(requestsSent, 1);
+    });
 
     test('Gemini 3 counts unique non-empty search queries', () async {
       final provider = GeminiWebSearchProvider(
@@ -457,18 +646,54 @@ void main() {
       );
     });
 
-    test('caps grounded sources to the requested result limit', () async {
+    test(
+      'fails closed rather than dropping Grounded Result links over the limit',
+      () async {
+        final response = _geminiResponse(queries: const <String>['safe query']);
+        final candidate =
+            (response['candidates'] as List).single as Map<String, dynamic>;
+        final metadata = candidate['groundingMetadata'] as Map<String, dynamic>;
+        final chunks =
+            metadata['groundingChunks'] as List<Map<String, dynamic>>;
+        chunks.add(<String, dynamic>{
+          'web': <String, String>{
+            'uri': 'https://second.example/source',
+            'title': 'Second source',
+          },
+        });
+        final provider = GeminiWebSearchProvider(
+          apiKey: 'gem-key',
+          model: 'gemini-2.5-flash',
+          clientFactory: () =>
+              MockClient((_) async => http.Response(jsonEncode(response), 200)),
+        );
+
+        await expectLater(
+          provider.search(
+            WebSearchRequest(query: 'safe query', maxResults: 1),
+            ToolCancellationController().token,
+          ),
+          throwsA(
+            isA<WebSearchProviderException>().having(
+              (error) => error.code,
+              'code',
+              WebSearchFailureCode.invalidResponse,
+            ),
+          ),
+        );
+      },
+    );
+
+    test('fails closed on a Grounded Result link that is unsafe', () async {
       final response = _geminiResponse(queries: const <String>['safe query']);
       final candidate =
           (response['candidates'] as List).single as Map<String, dynamic>;
       final metadata = candidate['groundingMetadata'] as Map<String, dynamic>;
       final chunks = metadata['groundingChunks'] as List<Map<String, dynamic>>;
-      chunks.add(<String, dynamic>{
-        'web': <String, String>{
-          'uri': 'https://second.example/source',
-          'title': 'Second source',
-        },
-      });
+      chunks.single['web'] = <String, String>{
+        'uri': 'https://localhost/private',
+        'title': 'Unsafe source',
+      };
       final provider = GeminiWebSearchProvider(
         apiKey: 'gem-key',
         model: 'gemini-2.5-flash',
@@ -476,13 +701,58 @@ void main() {
             MockClient((_) async => http.Response(jsonEncode(response), 200)),
       );
 
-      final result = await provider.search(
-        WebSearchRequest(query: 'safe query', maxResults: 1),
-        ToolCancellationController().token,
+      await expectLater(
+        provider.search(
+          WebSearchRequest(query: 'safe query'),
+          ToolCancellationController().token,
+        ),
+        throwsA(
+          isA<WebSearchProviderException>().having(
+            (error) => error.code,
+            'code',
+            WebSearchFailureCode.invalidResponse,
+          ),
+        ),
       );
-
-      expect(result.sources, hasLength(1));
     });
+
+    test(
+      'fails closed on conflicting labels for one Grounded Result link',
+      () async {
+        final response = _geminiResponse(queries: const <String>['safe query']);
+        final candidate =
+            (response['candidates'] as List).single as Map<String, dynamic>;
+        final metadata = candidate['groundingMetadata'] as Map<String, dynamic>;
+        final chunks =
+            metadata['groundingChunks'] as List<Map<String, dynamic>>;
+        chunks.add(<String, dynamic>{
+          'web': <String, String>{
+            'uri': 'https://safe.example/source',
+            'title': 'Conflicting source label',
+          },
+        });
+        final provider = GeminiWebSearchProvider(
+          apiKey: 'gem-key',
+          model: 'gemini-2.5-flash',
+          clientFactory: () =>
+              MockClient((_) async => http.Response(jsonEncode(response), 200)),
+        );
+
+        await expectLater(
+          provider.search(
+            WebSearchRequest(query: 'safe query'),
+            ToolCancellationController().token,
+          ),
+          throwsA(
+            isA<WebSearchProviderException>().having(
+              (error) => error.code,
+              'code',
+              WebSearchFailureCode.invalidResponse,
+            ),
+          ),
+        );
+      },
+    );
 
     test('fails closed when required Search attribution is missing', () async {
       final response = _geminiResponse(queries: const <String>['safe query']);
@@ -512,31 +782,39 @@ void main() {
       );
     });
 
-    test('unsupported model fails before an HTTP client is created', () async {
-      var clientsCreated = 0;
-      final provider = GeminiWebSearchProvider(
-        apiKey: 'gem-key',
-        model: 'gemini-1.5-flash',
-        clientFactory: () {
-          clientsCreated++;
-          return MockClient((_) async => http.Response('{}', 200));
-        },
-      );
+    test('unsupported models fail before an HTTP client is created', () async {
+      for (final model in const <String>[
+        'gemini-1.5-flash',
+        'gemini-2.0-flash',
+        'gemini-flash-latest',
+        'gemini-3.1-flash-image',
+      ]) {
+        var clientsCreated = 0;
+        final provider = GeminiWebSearchProvider(
+          apiKey: 'gem-key',
+          model: model,
+          clientFactory: () {
+            clientsCreated++;
+            return MockClient((_) async => http.Response('{}', 200));
+          },
+        );
 
-      await expectLater(
-        provider.search(
-          WebSearchRequest(query: 'safe query'),
-          ToolCancellationController().token,
-        ),
-        throwsA(
-          isA<WebSearchProviderException>().having(
-            (error) => error.code,
-            'code',
-            WebSearchFailureCode.unsupportedModel,
+        await expectLater(
+          provider.search(
+            WebSearchRequest(query: 'safe query'),
+            ToolCancellationController().token,
           ),
-        ),
-      );
-      expect(clientsCreated, 0);
+          throwsA(
+            isA<WebSearchProviderException>().having(
+              (error) => error.code,
+              'code',
+              WebSearchFailureCode.unsupportedModel,
+            ),
+          ),
+          reason: model,
+        );
+        expect(clientsCreated, 0, reason: model);
+      }
     });
   });
 
@@ -634,6 +912,148 @@ void main() {
   });
 
   group('hybrid provider selection', () {
+    test('resolves an immutable automatic plan before permission', () async {
+      final service = HybridWebSearchService(
+        configurationSource: _StaticConfigurationSource(
+          _configuration(current: 'openrouter'),
+        ),
+      );
+
+      final plan = await service.resolvePlan(WebSearchMode.auto);
+
+      expect(plan.mode, WebSearchMode.auto);
+      expect(plan.providerLaunches, 1);
+      expect(plan.providers.single.id, WebSearchProviderId.openRouter);
+      expect(plan.providers.single.model, 'anthropic/claude-sonnet-4');
+      expect(
+        plan.providers.single.route,
+        'openrouter:web_search:exa:zdr-no-fallback',
+      );
+      expect(
+        plan.providers.single.fingerprint,
+        contains('anthropic/claude-sonnet-4'),
+      );
+    });
+
+    test('dual plan requires both providers before permission', () async {
+      final service = HybridWebSearchService(
+        configurationSource: _StaticConfigurationSource(
+          WebSearchConfiguration(
+            currentChatProvider: 'gemini',
+            providers: const <WebSearchProviderConfig>[
+              WebSearchProviderConfig(
+                id: WebSearchProviderId.gemini,
+                apiKey: 'gem-key',
+                model: 'gemini-2.5-flash',
+              ),
+              WebSearchProviderConfig(
+                id: WebSearchProviderId.openRouter,
+                apiKey: '',
+                model: 'anthropic/claude-sonnet-4',
+              ),
+            ],
+          ),
+        ),
+      );
+
+      await expectLater(
+        service.resolvePlan(WebSearchMode.dual),
+        throwsA(
+          isA<WebSearchProviderException>().having(
+            (error) => error.code,
+            'code',
+            WebSearchFailureCode.notConfigured,
+          ),
+        ),
+      );
+    });
+
+    test(
+      'resolved plan fails closed when the selected model changes',
+      () async {
+        final configurationSource = _MutableConfigurationSource(
+          _configuration(current: 'openrouter'),
+        );
+        final openRouter = _RecordingProvider(WebSearchProviderId.openRouter);
+        final service = HybridWebSearchService(
+          configurationSource: configurationSource,
+          providerFactory: _RecordingProviderFactory(
+            <WebSearchProviderId, _RecordingProvider>{
+              WebSearchProviderId.openRouter: openRouter,
+            },
+          ),
+        );
+        final plan = await service.resolvePlan(WebSearchMode.openRouter);
+        configurationSource.configuration = WebSearchConfiguration(
+          currentChatProvider: 'openrouter',
+          providers: const <WebSearchProviderConfig>[
+            WebSearchProviderConfig(
+              id: WebSearchProviderId.openRouter,
+              apiKey: 'or-key',
+              model: 'different/model',
+            ),
+            WebSearchProviderConfig(
+              id: WebSearchProviderId.gemini,
+              apiKey: 'gem-key',
+              model: 'gemini-2.5-flash',
+            ),
+          ],
+        );
+
+        await expectLater(
+          service.searchResolvedPlan(
+            WebSearchRequest(
+              query: 'safe query',
+              allowedProviders: plan.allowedProviders,
+            ),
+            ToolCancellationController().token,
+            plan: plan,
+          ),
+          throwsA(
+            isA<WebSearchProviderException>().having(
+              (error) => error.code,
+              'code',
+              WebSearchFailureCode.notConfigured,
+            ),
+          ),
+        );
+        expect(openRouter.calls, 0);
+      },
+    );
+
+    test('resolved plan records dispatch before provider I/O', () async {
+      final openRouter = _RecordingProvider(WebSearchProviderId.openRouter);
+      final service = HybridWebSearchService(
+        configurationSource: _StaticConfigurationSource(
+          _configuration(current: 'openrouter'),
+        ),
+        providerFactory: _RecordingProviderFactory(
+          <WebSearchProviderId, _RecordingProvider>{
+            WebSearchProviderId.openRouter: openRouter,
+          },
+        ),
+      );
+      final plan = await service.resolvePlan(WebSearchMode.openRouter);
+      final dispatches = <String>[];
+
+      final batch = await service.searchResolvedPlan(
+        WebSearchRequest(
+          query: 'safe query',
+          allowedProviders: plan.allowedProviders,
+        ),
+        ToolCancellationController().token,
+        plan: plan,
+        beforeProviderDispatch: (provider) async {
+          expect(openRouter.calls, 0);
+          dispatches.add(provider.fingerprint);
+        },
+      );
+
+      expect(dispatches, <String>[plan.providers.single.fingerprint]);
+      expect(openRouter.calls, 1);
+      expect(batch.successes, hasLength(1));
+    });
+
     test('requires provider consent before loading keys or settings', () async {
       final configurationSource = _CountingConfigurationSource();
       final service = HybridWebSearchService(
@@ -919,7 +1339,7 @@ void main() {
           WebSearchProviderConfig(
             id: WebSearchProviderId.openRouter,
             apiKey: 'or-key',
-            model: 'openrouter/auto',
+            model: 'anthropic/claude-sonnet-4',
           ),
         ],
       );
@@ -982,6 +1402,168 @@ void main() {
         WebSearchProviderId.openRouter,
       ]);
       expect(openRouter.calls, 2);
+    });
+
+    test(
+      'dual providers start independently and keep results separate',
+      () async {
+        final release = Completer<void>();
+        final gemini = _BarrierProvider(
+          WebSearchProviderId.gemini,
+          release: release.future,
+        );
+        final openRouter = _BarrierProvider(
+          WebSearchProviderId.openRouter,
+          release: release.future,
+        );
+        final service = HybridWebSearchService(
+          configurationSource: _StaticConfigurationSource(
+            _configuration(current: 'gemini'),
+          ),
+          providerFactory:
+              _BarrierProviderFactory(<WebSearchProviderId, _BarrierProvider>{
+                WebSearchProviderId.gemini: gemini,
+                WebSearchProviderId.openRouter: openRouter,
+              }),
+        );
+        final future = service.searchProviders(
+          WebSearchRequest(
+            query: 'dual query',
+            allowedProviders: const <WebSearchProviderId>{
+              WebSearchProviderId.gemini,
+              WebSearchProviderId.openRouter,
+            },
+          ),
+          ToolCancellationController().token,
+          providers: const <WebSearchProviderId>[
+            WebSearchProviderId.gemini,
+            WebSearchProviderId.openRouter,
+          ],
+        );
+
+        await Future.wait<void>(<Future<void>>[
+          gemini.started.future,
+          openRouter.started.future,
+        ]).timeout(const Duration(seconds: 1));
+        release.complete();
+        final batch = await future;
+
+        expect(batch.requestedQuery, 'dual query');
+        expect(batch.outcomes.map((outcome) => outcome.provider), <Object?>[
+          WebSearchProviderId.gemini,
+          WebSearchProviderId.openRouter,
+        ]);
+        expect(batch.successes, hasLength(2));
+        expect(batch.failures, isEmpty);
+        expect(batch.isPartial, isFalse);
+        expect(batch.successes[0].text, 'gemini result');
+        expect(batch.successes[1].text, 'openRouter result');
+      },
+    );
+
+    test(
+      'dual reports one provider failure without rewriting the success',
+      () async {
+        final gemini = _RecordingProvider(
+          WebSearchProviderId.gemini,
+          failures: <WebSearchProviderException>[
+            const WebSearchProviderException(
+              code: WebSearchFailureCode.rateLimited,
+              safeMessage: 'Gemini rate limited.',
+              retryable: true,
+              costCertainty: WebSearchCostCertainty.unknown,
+              statusCode: 429,
+            ),
+          ],
+        );
+        final openRouter = _RecordingProvider(WebSearchProviderId.openRouter);
+        final service = HybridWebSearchService(
+          configurationSource: _StaticConfigurationSource(
+            _configuration(current: 'gemini'),
+          ),
+          providerFactory: _RecordingProviderFactory(
+            <WebSearchProviderId, _RecordingProvider>{
+              WebSearchProviderId.gemini: gemini,
+              WebSearchProviderId.openRouter: openRouter,
+            },
+          ),
+        );
+
+        final batch = await service.searchProviders(
+          WebSearchRequest(
+            query: 'dual query',
+            allowedProviders: const <WebSearchProviderId>{
+              WebSearchProviderId.gemini,
+              WebSearchProviderId.openRouter,
+            },
+          ),
+          ToolCancellationController().token,
+          providers: const <WebSearchProviderId>[
+            WebSearchProviderId.gemini,
+            WebSearchProviderId.openRouter,
+          ],
+        );
+
+        expect(batch.isPartial, isTrue);
+        expect(batch.successes.single.provider, WebSearchProviderId.openRouter);
+        expect(batch.successes.single.text, 'openRouter result');
+        expect(batch.failures.single.provider, WebSearchProviderId.gemini);
+        expect(batch.failures.single.code, WebSearchFailureCode.rateLimited);
+        expect(batch.failures.single.safeMessage, 'Gemini rate limited.');
+        expect(batch.failures.single.statusCode, 429);
+      },
+    );
+
+    test('dual preflights the complete plan before starting network', () async {
+      final openRouter = _RecordingProvider(WebSearchProviderId.openRouter);
+      final configuration = WebSearchConfiguration(
+        currentChatProvider: 'openrouter',
+        providers: const <WebSearchProviderConfig>[
+          WebSearchProviderConfig(
+            id: WebSearchProviderId.openRouter,
+            apiKey: 'or-key',
+            model: 'anthropic/claude-sonnet-4',
+          ),
+          WebSearchProviderConfig(
+            id: WebSearchProviderId.gemini,
+            apiKey: '',
+            model: 'gemini-2.5-flash',
+          ),
+        ],
+      );
+      final service = HybridWebSearchService(
+        configurationSource: _StaticConfigurationSource(configuration),
+        providerFactory: _RecordingProviderFactory(
+          <WebSearchProviderId, _RecordingProvider>{
+            WebSearchProviderId.openRouter: openRouter,
+          },
+        ),
+      );
+
+      await expectLater(
+        service.searchProviders(
+          WebSearchRequest(
+            query: 'dual query',
+            allowedProviders: const <WebSearchProviderId>{
+              WebSearchProviderId.gemini,
+              WebSearchProviderId.openRouter,
+            },
+          ),
+          ToolCancellationController().token,
+          providers: const <WebSearchProviderId>[
+            WebSearchProviderId.openRouter,
+            WebSearchProviderId.gemini,
+          ],
+        ),
+        throwsA(
+          isA<WebSearchProviderException>().having(
+            (error) => error.code,
+            'code',
+            WebSearchFailureCode.notConfigured,
+          ),
+        ),
+      );
+      expect(openRouter.calls, 0);
     });
   });
 
@@ -1145,7 +1727,7 @@ void main() {
       final fixtureRequest = WebSearchRequest(query: 'bad fixture');
       final fixture = WebSearchResult(
         provider: WebSearchProviderId.openRouter,
-        model: 'openrouter/auto',
+        model: 'anthropic/claude-sonnet-4',
         requestedQuery: 'bad fixture',
         text: 'Ungrounded fixture',
         sources: const <WebSearchSource>[
@@ -1500,7 +2082,7 @@ void main() {
       final pendingClient = _ClosablePendingClient();
       final provider = OpenRouterWebSearchProvider(
         apiKey: 'key',
-        model: 'openrouter/auto',
+        model: 'anthropic/claude-sonnet-4',
         clientFactory: () => pendingClient,
       );
       final controller = ToolCancellationController();
@@ -1532,13 +2114,16 @@ Map<String, dynamic> _openRouterAnnotation(String url, String title) {
   };
 }
 
-Map<String, dynamic> _geminiResponse({required List<String> queries}) {
+Map<String, dynamic> _geminiResponse({
+  required List<String> queries,
+  String text = 'Grounded answer.',
+}) {
   return <String, dynamic>{
     'candidates': <Map<String, dynamic>>[
       <String, dynamic>{
         'content': <String, dynamic>{
           'parts': <Map<String, String>>[
-            <String, String>{'text': 'Grounded answer.'},
+            <String, String>{'text': text},
           ],
         },
         'groundingMetadata': <String, dynamic>{
@@ -1567,7 +2152,7 @@ WebSearchConfiguration _configuration({required String current}) {
       WebSearchProviderConfig(
         id: WebSearchProviderId.openRouter,
         apiKey: 'or-key',
-        model: 'openrouter/auto',
+        model: 'anthropic/claude-sonnet-4',
       ),
       WebSearchProviderConfig(
         id: WebSearchProviderId.gemini,
@@ -1586,7 +2171,7 @@ WebSearchResult _result(
     provider: provider,
     model: provider == WebSearchProviderId.gemini
         ? 'gemini-2.5-flash'
-        : 'openrouter/auto',
+        : 'anthropic/claude-sonnet-4',
     requestedQuery: 'safe query',
     text: '${provider.name} result',
     sources: const <WebSearchSource>[
@@ -1615,6 +2200,15 @@ class _StaticConfigurationSource implements WebSearchConfigurationSource {
   const _StaticConfigurationSource(this.configuration);
 
   final WebSearchConfiguration configuration;
+
+  @override
+  Future<WebSearchConfiguration> load() async => configuration;
+}
+
+class _MutableConfigurationSource implements WebSearchConfigurationSource {
+  _MutableConfigurationSource(this.configuration);
+
+  WebSearchConfiguration configuration;
 
   @override
   Future<WebSearchConfiguration> load() async => configuration;
@@ -1666,6 +2260,37 @@ class _RecordingProvider implements WebSearchProvider {
     onSearch?.call();
     cancellationToken.throwIfCancelled();
     if (_failures.isNotEmpty) throw _failures.removeAt(0);
+    return _result(id);
+  }
+}
+
+class _BarrierProviderFactory implements WebSearchProviderFactory {
+  const _BarrierProviderFactory(this.providers);
+
+  final Map<WebSearchProviderId, _BarrierProvider> providers;
+
+  @override
+  WebSearchProvider create(WebSearchProviderConfig config) {
+    return providers[config.id]!;
+  }
+}
+
+class _BarrierProvider implements WebSearchProvider {
+  _BarrierProvider(this.id, {required this.release});
+
+  @override
+  final WebSearchProviderId id;
+  final Future<void> release;
+  final Completer<void> started = Completer<void>();
+
+  @override
+  Future<WebSearchResult> search(
+    WebSearchRequest request,
+    ToolCancellationToken cancellationToken,
+  ) async {
+    if (!started.isCompleted) started.complete();
+    await release;
+    cancellationToken.throwIfCancelled();
     return _result(id);
   }
 }

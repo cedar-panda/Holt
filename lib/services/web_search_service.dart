@@ -6,6 +6,7 @@ import 'dart:typed_data';
 import 'package:http/http.dart' as http;
 
 import 'settings/api_settings.dart';
+import 'settings/web_search_settings.dart';
 import 'tool_runner.dart';
 
 enum WebSearchProviderId { openRouter, gemini }
@@ -156,6 +157,117 @@ class WebSearchResult {
   }
 }
 
+/// One provider's safe, public failure state inside a multi-provider run.
+///
+/// Raw exceptions and response bodies deliberately do not cross this boundary.
+class WebSearchProviderFailure {
+  const WebSearchProviderFailure({
+    required this.provider,
+    required this.code,
+    required this.safeMessage,
+    required this.retryable,
+    required this.costCertainty,
+    this.statusCode,
+  });
+
+  factory WebSearchProviderFailure.fromException(
+    WebSearchProviderId provider,
+    WebSearchProviderException error,
+  ) {
+    return WebSearchProviderFailure(
+      provider: provider,
+      code: error.code,
+      safeMessage: error.safeMessage,
+      retryable: error.retryable,
+      costCertainty: error.costCertainty,
+      statusCode: error.statusCode,
+    );
+  }
+
+  final WebSearchProviderId provider;
+  final WebSearchFailureCode code;
+  final String safeMessage;
+  final bool retryable;
+  final WebSearchCostCertainty costCertainty;
+  final int? statusCode;
+}
+
+/// A provider outcome remains separate so Google-grounded content is never
+/// silently merged with another provider's answer.
+class WebSearchProviderOutcome {
+  const WebSearchProviderOutcome._({
+    required this.provider,
+    this.result,
+    this.failure,
+  }) : assert((result == null) != (failure == null));
+
+  factory WebSearchProviderOutcome.success(WebSearchResult result) {
+    return WebSearchProviderOutcome._(
+      provider: result.provider,
+      result: result,
+    );
+  }
+
+  factory WebSearchProviderOutcome.failure(WebSearchProviderFailure failure) {
+    return WebSearchProviderOutcome._(
+      provider: failure.provider,
+      failure: failure,
+    );
+  }
+
+  final WebSearchProviderId provider;
+  final WebSearchResult? result;
+  final WebSearchProviderFailure? failure;
+
+  bool get isSuccess => result != null;
+}
+
+/// Results of one logical search request sent to one or two providers.
+///
+/// [outcomes] preserves the authorized provider order. Dual mode intentionally
+/// has no `mergedText`: callers must render the two grounded results as
+/// distinct cards unless the applicable provider terms explicitly permit a
+/// later synthesis step.
+class WebSearchBatchResult {
+  WebSearchBatchResult({
+    required this.requestedQuery,
+    required List<WebSearchProviderOutcome> outcomes,
+  }) : outcomes = List<WebSearchProviderOutcome>.unmodifiable(outcomes) {
+    if (this.outcomes.isEmpty || this.outcomes.length > 2) {
+      throw ArgumentError.value(
+        outcomes,
+        'outcomes',
+        'A web search batch must contain one or two provider outcomes.',
+      );
+    }
+    final providers = this.outcomes.map((outcome) => outcome.provider).toSet();
+    if (providers.length != this.outcomes.length) {
+      throw ArgumentError.value(
+        outcomes,
+        'outcomes',
+        'A web search batch cannot repeat a provider.',
+      );
+    }
+  }
+
+  final String requestedQuery;
+  final List<WebSearchProviderOutcome> outcomes;
+
+  List<WebSearchResult> get successes => List<WebSearchResult>.unmodifiable(
+    outcomes.map((outcome) => outcome.result).whereType<WebSearchResult>(),
+  );
+
+  List<WebSearchProviderFailure> get failures =>
+      List<WebSearchProviderFailure>.unmodifiable(
+        outcomes
+            .map((outcome) => outcome.failure)
+            .whereType<WebSearchProviderFailure>(),
+      );
+
+  bool get isPartial => successes.isNotEmpty && failures.isNotEmpty;
+  bool get allFailed => successes.isEmpty;
+}
+
 class WebSearchRequest {
   WebSearchRequest({
     required String query,
@@ -292,6 +404,8 @@ abstract interface class WebSearchProvider {
 }
 
 typedef WebSearchHttpClientFactory = http.Client Function();
+typedef WebSearchBeforeProviderDispatch =
+    Future<void> Function(ResolvedWebSearchProvider provider);
 
 class OpenRouterWebSearchProvider implements WebSearchProvider {
   OpenRouterWebSearchProvider({
@@ -325,16 +439,26 @@ class OpenRouterWebSearchProvider implements WebSearchProvider {
       );
     }
     final selectedModel = model.trim();
-    if (selectedModel.isEmpty || _looksLikeLocalModel(selectedModel)) {
+    if (!isExplicitOpenRouterWebSearchModel(selectedModel)) {
       throw const WebSearchProviderException(
         code: WebSearchFailureCode.unsupportedModel,
-        safeMessage: 'The selected OpenRouter web-search model is invalid.',
+        safeMessage:
+            'Web search requires an explicit OpenRouter model; automatic model routing is not supported.',
         costCertainty: WebSearchCostCertainty.known,
       );
     }
 
     final body = <String, Object?>{
       'model': selectedModel,
+      // The exact model slug is fixed by the one-shot grant. OpenRouter may
+      // still choose an inference endpoint for that model, so constrain that
+      // endpoint to non-collecting ZDR routes and do not retry a second one.
+      'provider': <String, Object?>{
+        'allow_fallbacks': false,
+        'require_parameters': true,
+        'data_collection': 'deny',
+        'zdr': true,
+      },
       'messages': <Map<String, String>>[
         <String, String>{
           'role': 'system',
@@ -347,7 +471,10 @@ class OpenRouterWebSearchProvider implements WebSearchProvider {
         <String, Object?>{
           'type': 'openrouter:web_search',
           'parameters': <String, Object?>{
-            'engine': 'auto',
+            // Keep the search route deterministic. `auto` may silently select
+            // a native grounding provider with different display/storage
+            // terms, which cannot be authorized accurately in the App UI.
+            'engine': 'exa',
             'max_uses': 1,
             'max_results': request.maxResults,
             'max_total_results': request.maxResults,
@@ -355,9 +482,13 @@ class OpenRouterWebSearchProvider implements WebSearchProvider {
           },
         },
       ],
+      // Disable an account-level legacy web plugin so the explicit, budgeted
+      // server tool above remains the only search path for this request.
+      'plugins': <Map<String, Object?>>[
+        <String, Object?>{'id': 'web', 'enabled': false},
+      ],
       'max_tool_calls': 1,
       'max_tokens': 1200,
-      'temperature': 0,
     };
 
     final decoded = await _postJson(
@@ -408,7 +539,7 @@ class GeminiWebSearchProvider implements WebSearchProvider {
       );
     }
     final selectedModel = _normalizeGeminiModel(model);
-    if (!_supportsGeminiGoogleSearch(selectedModel)) {
+    if (!isSupportedGeminiWebSearchModel(selectedModel)) {
       throw const WebSearchProviderException(
         code: WebSearchFailureCode.unsupportedModel,
         safeMessage:
@@ -439,10 +570,7 @@ class GeminiWebSearchProvider implements WebSearchProvider {
       'tools': <Map<String, Object?>>[
         <String, Object?>{'google_search': <String, Object?>{}},
       ],
-      'generationConfig': <String, Object?>{
-        'maxOutputTokens': 1200,
-        'temperature': 0,
-      },
+      'generationConfig': <String, Object?>{'maxOutputTokens': 1200},
     };
 
     final decoded = await _postJson(
@@ -482,6 +610,52 @@ class WebSearchProviderConfig {
       'WebSearchProviderConfig(id: ${id.name}, model: $model, apiKey: <redacted>)';
 }
 
+/// Provider identity disclosed to the user before a network permission grant.
+/// API keys never enter this value.
+class ResolvedWebSearchProvider {
+  const ResolvedWebSearchProvider({
+    required this.id,
+    required this.model,
+    required this.route,
+  });
+
+  final WebSearchProviderId id;
+  final String model;
+  final String route;
+
+  String get fingerprint => '${id.name}|$route|$model';
+}
+
+/// Immutable provider plan used by confirmation, budget reservation and
+/// execution. A settings/model change after confirmation makes execution fail
+/// closed instead of silently sending the query somewhere else.
+class ResolvedWebSearchPlan {
+  ResolvedWebSearchPlan({
+    required this.mode,
+    required List<ResolvedWebSearchProvider> providers,
+  }) : providers = List<ResolvedWebSearchProvider>.unmodifiable(providers) {
+    final expectedCount = mode == WebSearchMode.dual ? 2 : 1;
+    if (this.providers.length != expectedCount ||
+        this.providers.map((provider) => provider.id).toSet().length !=
+            this.providers.length) {
+      throw ArgumentError.value(
+        providers,
+        'providers',
+        'Resolved web search plan does not match its mode.',
+      );
+    }
+  }
+
+  final WebSearchMode mode;
+  final List<ResolvedWebSearchProvider> providers;
+
+  int get providerLaunches => providers.length;
+  Set<WebSearchProviderId> get allowedProviders =>
+      Set<WebSearchProviderId>.unmodifiable(
+        providers.map((provider) => provider.id),
+      );
+}
+
 class WebSearchConfiguration {
   WebSearchConfiguration({
     required this.currentChatProvider,
@@ -502,6 +676,23 @@ class ApiSettingsWebSearchConfigurationSource
 
   @override
   Future<WebSearchConfiguration> load() async {
+    if (!webSearchLiveDeveloperPreviewEnabled) {
+      return WebSearchConfiguration(
+        currentChatProvider: '',
+        providers: const <WebSearchProviderConfig>[
+          WebSearchProviderConfig(
+            id: WebSearchProviderId.openRouter,
+            apiKey: '',
+            model: '',
+          ),
+          WebSearchProviderConfig(
+            id: WebSearchProviderId.gemini,
+            apiKey: '',
+            model: '',
+          ),
+        ],
+      );
+    }
     final values = await Future.wait<String>(<Future<String>>[
       ApiSettings.getApiProvider(),
       ApiSettings.getOpenRouterApiKey(),
@@ -509,21 +700,21 @@ class ApiSettingsWebSearchConfigurationSource
       ApiSettings.getGeminiApiKey(),
       ApiSettings.getModelForProvider('gemini'),
     ]);
-    final openRouterModel = _looksLikeLocalModel(values[2])
-        ? 'openrouter/auto'
-        : values[2].trim();
+    final openRouterModel = values[2].trim();
     return WebSearchConfiguration(
       currentChatProvider: values[0],
       providers: <WebSearchProviderConfig>[
         WebSearchProviderConfig(
           id: WebSearchProviderId.openRouter,
           apiKey: values[1],
-          model: openRouterModel.isEmpty ? 'openrouter/auto' : openRouterModel,
+          model: openRouterModel,
         ),
         WebSearchProviderConfig(
           id: WebSearchProviderId.gemini,
           apiKey: values[3],
-          model: values[4].trim().isEmpty ? 'gemini-2.0-flash' : values[4],
+          // Consent and the execution claim bind the exact selected model.
+          // Never silently substitute another recipient here.
+          model: values[4].trim(),
         ),
       ],
     );
@@ -560,6 +751,54 @@ class HybridWebSearchService {
 
   final WebSearchConfigurationSource configurationSource;
   final WebSearchProviderFactory providerFactory;
+
+  /// Resolves the exact provider/model/routes before the App asks for consent.
+  Future<ResolvedWebSearchPlan> resolvePlan(WebSearchMode mode) async {
+    final configuration = await configurationSource.load();
+    final available = <WebSearchProviderId, WebSearchProviderConfig>{
+      for (final config in configuration.providers)
+        if (config.isConfigured && _supportsConfig(config)) config.id: config,
+    };
+
+    WebSearchProviderConfig requireProvider(WebSearchProviderId id) {
+      final config = available[id];
+      if (config == null) {
+        throw WebSearchProviderException(
+          code: WebSearchFailureCode.notConfigured,
+          safeMessage: '${_providerLabel(id)} web search is not configured.',
+          costCertainty: WebSearchCostCertainty.known,
+        );
+      }
+      return config;
+    }
+
+    final selected = switch (mode) {
+      WebSearchMode.gemini => <WebSearchProviderConfig>[
+        requireProvider(WebSearchProviderId.gemini),
+      ],
+      WebSearchMode.openRouter => <WebSearchProviderConfig>[
+        requireProvider(WebSearchProviderId.openRouter),
+      ],
+      WebSearchMode.dual => <WebSearchProviderConfig>[
+        requireProvider(WebSearchProviderId.gemini),
+        requireProvider(WebSearchProviderId.openRouter),
+      ],
+      WebSearchMode.auto => <WebSearchProviderConfig>[
+        _resolveAutomaticProvider(configuration, available),
+      ],
+    };
+    return ResolvedWebSearchPlan(
+      mode: mode,
+      providers: <ResolvedWebSearchProvider>[
+        for (final config in selected)
+          ResolvedWebSearchProvider(
+            id: config.id,
+            model: config.model.trim(),
+            route: _providerRoute(config.id),
+          ),
+      ],
+    );
+  }
 
   Future<WebSearchResult> search(
     WebSearchRequest request,
@@ -615,6 +854,245 @@ class HybridWebSearchService {
         );
   }
 
+  /// Executes an already-authorized one- or two-provider plan.
+  ///
+  /// Every requested provider is fully preflighted before the first network
+  /// request. In dual mode both requests start independently and neither
+  /// provider receives the other provider's result. Provider failures are
+  /// returned as safe structured outcomes so usage settlement can remain
+  /// per-provider; cancellation still aborts the whole logical call.
+  Future<WebSearchBatchResult> searchProviders(
+    WebSearchRequest request,
+    ToolCancellationToken cancellationToken, {
+    required List<WebSearchProviderId> providers,
+  }) async {
+    cancellationToken.throwIfCancelled();
+    final requestedProviders = List<WebSearchProviderId>.unmodifiable(
+      providers,
+    );
+    if (requestedProviders.isEmpty || requestedProviders.length > 2) {
+      throw const WebSearchProviderException(
+        code: WebSearchFailureCode.invalidQuery,
+        safeMessage: 'Web search requires one or two providers.',
+        costCertainty: WebSearchCostCertainty.known,
+      );
+    }
+    if (requestedProviders.toSet().length != requestedProviders.length) {
+      throw const WebSearchProviderException(
+        code: WebSearchFailureCode.invalidQuery,
+        safeMessage: 'Web search provider plan contains a duplicate.',
+        costCertainty: WebSearchCostCertainty.known,
+      );
+    }
+    if (requestedProviders.any(
+      (provider) => !request.allowedProviders.contains(provider),
+    )) {
+      throw const WebSearchProviderException(
+        code: WebSearchFailureCode.providerConsentRequired,
+        safeMessage:
+            'Web search provider plan is outside the authorized provider set.',
+        costCertainty: WebSearchCostCertainty.known,
+      );
+    }
+
+    final configuration = await configurationSource.load();
+    cancellationToken.throwIfCancelled();
+    final configsById = <WebSearchProviderId, WebSearchProviderConfig>{
+      for (final config in configuration.providers) config.id: config,
+    };
+    final selectedConfigs = <WebSearchProviderConfig>[];
+    for (final provider in requestedProviders) {
+      final config = configsById[provider];
+      if (config == null || !config.isConfigured || !_supportsConfig(config)) {
+        throw WebSearchProviderException(
+          code: WebSearchFailureCode.notConfigured,
+          safeMessage:
+              '${_providerLabel(provider)} web search is not configured.',
+          costCertainty: WebSearchCostCertainty.known,
+        );
+      }
+      selectedConfigs.add(config);
+    }
+
+    // Provider construction is part of preflight. Do it for the complete plan
+    // before starting either request so dual never silently degrades to one.
+    final selectedProviders = <WebSearchProvider>[];
+    for (final config in selectedConfigs) {
+      selectedProviders.add(providerFactory.create(config));
+    }
+    cancellationToken.throwIfCancelled();
+
+    Future<WebSearchProviderOutcome> execute(WebSearchProvider provider) async {
+      try {
+        final result = await provider.search(request, cancellationToken);
+        cancellationToken.throwIfCancelled();
+        return WebSearchProviderOutcome.success(
+          result.withAttemptedProviders(<WebSearchProviderId>[provider.id]),
+        );
+      } on ToolCancelledException {
+        rethrow;
+      } on WebSearchProviderException catch (error) {
+        cancellationToken.throwIfCancelled();
+        return WebSearchProviderOutcome.failure(
+          WebSearchProviderFailure.fromException(provider.id, error),
+        );
+      } catch (_) {
+        cancellationToken.throwIfCancelled();
+        return WebSearchProviderOutcome.failure(
+          WebSearchProviderFailure(
+            provider: provider.id,
+            code: WebSearchFailureCode.unavailable,
+            safeMessage:
+                '${_providerLabel(provider.id)} web search failed safely.',
+            retryable: false,
+            costCertainty: WebSearchCostCertainty.unknown,
+          ),
+        );
+      }
+    }
+
+    final outcomes = await Future.wait<WebSearchProviderOutcome>(
+      <Future<WebSearchProviderOutcome>>[
+        for (final provider in selectedProviders) execute(provider),
+      ],
+    );
+    cancellationToken.throwIfCancelled();
+    return WebSearchBatchResult(
+      requestedQuery: request.query,
+      outcomes: outcomes,
+    );
+  }
+
+  /// Executes the exact plan that the user saw and the budget ledger reserved.
+  Future<WebSearchBatchResult> searchResolvedPlan(
+    WebSearchRequest request,
+    ToolCancellationToken cancellationToken, {
+    required ResolvedWebSearchPlan plan,
+    WebSearchBeforeProviderDispatch? beforeProviderDispatch,
+  }) async {
+    cancellationToken.throwIfCancelled();
+    if (!request.allowedProviders.containsAll(plan.allowedProviders) ||
+        request.allowedProviders.length != plan.allowedProviders.length) {
+      throw const WebSearchProviderException(
+        code: WebSearchFailureCode.providerConsentRequired,
+        safeMessage:
+            'Web search execution plan does not match the authorized providers.',
+        costCertainty: WebSearchCostCertainty.known,
+      );
+    }
+    final configuration = await configurationSource.load();
+    cancellationToken.throwIfCancelled();
+    final configsById = <WebSearchProviderId, WebSearchProviderConfig>{
+      for (final config in configuration.providers) config.id: config,
+    };
+    final providers =
+        <({ResolvedWebSearchProvider plan, WebSearchProvider provider})>[];
+    for (final planned in plan.providers) {
+      final config = configsById[planned.id];
+      if (config == null ||
+          !config.isConfigured ||
+          !_supportsConfig(config) ||
+          config.model.trim() != planned.model ||
+          _providerRoute(config.id) != planned.route) {
+        throw WebSearchProviderException(
+          code: WebSearchFailureCode.notConfigured,
+          safeMessage:
+              '${_providerLabel(planned.id)} search settings changed before execution.',
+          costCertainty: WebSearchCostCertainty.known,
+        );
+      }
+      providers.add((plan: planned, provider: providerFactory.create(config)));
+    }
+    cancellationToken.throwIfCancelled();
+    final outcomes = await Future.wait<WebSearchProviderOutcome>(
+      <Future<WebSearchProviderOutcome>>[
+        for (final entry in providers)
+          _executeProviderOutcome(
+            entry.provider,
+            request,
+            cancellationToken,
+            plannedProvider: entry.plan,
+            beforeProviderDispatch: beforeProviderDispatch,
+          ),
+      ],
+    );
+    cancellationToken.throwIfCancelled();
+    return WebSearchBatchResult(
+      requestedQuery: request.query,
+      outcomes: outcomes,
+    );
+  }
+
+  WebSearchProviderConfig _resolveAutomaticProvider(
+    WebSearchConfiguration configuration,
+    Map<WebSearchProviderId, WebSearchProviderConfig> available,
+  ) {
+    final current = switch (configuration.currentChatProvider.toLowerCase()) {
+      'gemini' => WebSearchProviderId.gemini,
+      'openrouter' => WebSearchProviderId.openRouter,
+      _ => null,
+    };
+    if (current != null && available[current] != null) {
+      return available[current]!;
+    }
+    return available[WebSearchProviderId.gemini] ??
+        available[WebSearchProviderId.openRouter] ??
+        (throw const WebSearchProviderException(
+          code: WebSearchFailureCode.notConfigured,
+          safeMessage:
+              'Web search needs a configured OpenRouter or Gemini API key.',
+          costCertainty: WebSearchCostCertainty.known,
+        ));
+  }
+
+  Future<WebSearchProviderOutcome> _executeProviderOutcome(
+    WebSearchProvider provider,
+    WebSearchRequest request,
+    ToolCancellationToken cancellationToken, {
+    ResolvedWebSearchProvider? plannedProvider,
+    WebSearchBeforeProviderDispatch? beforeProviderDispatch,
+  }) async {
+    try {
+      cancellationToken.throwIfCancelled();
+      if (beforeProviderDispatch != null) {
+        final planned = plannedProvider;
+        if (planned == null || planned.id != provider.id) {
+          throw const WebSearchProviderException(
+            code: WebSearchFailureCode.invalidResponse,
+            safeMessage: 'Web search dispatch plan is invalid.',
+            costCertainty: WebSearchCostCertainty.known,
+          );
+        }
+        await beforeProviderDispatch(planned);
+        cancellationToken.throwIfCancelled();
+      }
+      final result = await provider.search(request, cancellationToken);
+      cancellationToken.throwIfCancelled();
+      return WebSearchProviderOutcome.success(
+        result.withAttemptedProviders(<WebSearchProviderId>[provider.id]),
+      );
+    } on ToolCancelledException {
+      rethrow;
+    } on WebSearchProviderException catch (error) {
+      cancellationToken.throwIfCancelled();
+      return WebSearchProviderOutcome.failure(
+        WebSearchProviderFailure.fromException(provider.id, error),
+      );
+    } catch (_) {
+      cancellationToken.throwIfCancelled();
+      return WebSearchProviderOutcome.failure(
+        WebSearchProviderFailure(
+          provider: provider.id,
+          code: WebSearchFailureCode.unavailable,
+          safeMessage:
+              '${_providerLabel(provider.id)} web search failed safely.',
+          retryable: false,
+          costCertainty: WebSearchCostCertainty.unknown,
+        ),
+      );
+    }
+  }
+
   List<WebSearchProviderConfig> _orderedProviderConfigs(
     WebSearchConfiguration configuration,
     WebSearchRequest request,
@@ -651,8 +1129,10 @@ class HybridWebSearchService {
 
   bool _supportsConfig(WebSearchProviderConfig config) {
     return switch (config.id) {
-      WebSearchProviderId.openRouter => !_looksLikeLocalModel(config.model),
-      WebSearchProviderId.gemini => _supportsGeminiGoogleSearch(
+      WebSearchProviderId.openRouter => isExplicitOpenRouterWebSearchModel(
+        config.model,
+      ),
+      WebSearchProviderId.gemini => isSupportedGeminiWebSearchModel(
         _normalizeGeminiModel(config.model),
       ),
     };
@@ -728,7 +1208,7 @@ ToolDefinition createWebSearchToolDefinition({
       }
       return null;
     },
-    liveHandler: enableLive
+    liveHandler: enableLive && webSearchLiveDeveloperPreviewEnabled
         ? (call, context, cancellationToken) async {
             try {
               final query = call.arguments['query']! as String;
@@ -841,7 +1321,7 @@ WebSearchAuthorization? _webSearchAuthorization(Map<String, Object?> metadata) {
 }
 
 String _providerRoute(WebSearchProviderId provider) => switch (provider) {
-  WebSearchProviderId.openRouter => 'openrouter:web_search:auto',
+  WebSearchProviderId.openRouter => 'openrouter:web_search:exa:zdr-no-fallback',
   WebSearchProviderId.gemini => 'gemini:google_search',
 };
 
@@ -1184,17 +1664,28 @@ WebSearchResult _parseGeminiResponse(
   final content = candidate['content'];
   final parts = content is Map ? content['parts'] : null;
   final textParts = <String>[];
+  final textByPartIndex = <int, String>{};
+  final partGlobalCodeUnitStart = <int, int>{};
+  var totalTextCodeUnits = 0;
   if (parts is List) {
-    for (final part in parts) {
+    for (var partIndex = 0; partIndex < parts.length; partIndex++) {
+      final part = parts[partIndex];
       if (part is Map && part['text'] is String) {
-        textParts.add(part['text'] as String);
+        final partText = part['text'] as String;
+        textByPartIndex[partIndex] = partText;
+        partGlobalCodeUnitStart[partIndex] = totalTextCodeUnits;
+        textParts.add(partText);
+        totalTextCodeUnits += partText.length;
       }
     }
   }
-  final text = _sanitizeAnswer(textParts.join(), _maxAnswerRunes);
+  final text = _validateUnmodifiedGeminiAnswer(textParts.join());
   final metadata = candidate['groundingMetadata'];
   final chunks = metadata is Map ? metadata['groundingChunks'] : null;
-  final accumulator = _SourceAccumulator(maxSources: request.maxResults);
+  final accumulator = _SourceAccumulator(
+    maxSources: request.maxResults,
+    requireVerbatim: true,
+  );
   final chunkToSource = <int, int>{};
   if (chunks is List) {
     for (var i = 0; i < chunks.length; i++) {
@@ -1214,15 +1705,36 @@ WebSearchResult _parseGeminiResponse(
     for (final support in supports) {
       if (support is! Map) continue;
       final segment = support['segment'];
-      final start = segment is Map ? _asInt(segment['startIndex']) : null;
-      final end = segment is Map ? _asInt(segment['endIndex']) : null;
+      final partIndex = segment is Map
+          ? _asInt(segment['partIndex']) ?? 0
+          : null;
+      final startByte = segment is Map ? _asInt(segment['startIndex']) : null;
+      final endByte = segment is Map ? _asInt(segment['endIndex']) : null;
       final indices = support['groundingChunkIndices'];
-      if (start == null ||
+      final partText = partIndex == null ? null : textByPartIndex[partIndex];
+      final globalStart = partIndex == null
+          ? null
+          : partGlobalCodeUnitStart[partIndex];
+      final start = partText == null || startByte == null
+          ? null
+          : _utf8ByteOffsetToCodeUnitIndex(partText, startByte);
+      final end = partText == null || endByte == null
+          ? null
+          : _utf8ByteOffsetToCodeUnitIndex(partText, endByte);
+      if (globalStart == null ||
+          start == null ||
           end == null ||
-          start < 0 ||
+          startByte! < 0 ||
+          endByte! < startByte ||
           end < start ||
-          end > text.length ||
           indices is! List) {
+        continue;
+      }
+      final citationStart = globalStart + start;
+      final citationEnd = globalStart + end;
+      final segmentText = segment is Map ? segment['text'] : null;
+      if (segmentText is String &&
+          segmentText != partText!.substring(start, end)) {
         continue;
       }
       for (final rawIndex in indices) {
@@ -1231,8 +1743,8 @@ WebSearchResult _parseGeminiResponse(
         citations.add(
           WebSearchCitation(
             sourceIndex: sourceIndex,
-            startIndex: start,
-            endIndex: end,
+            startIndex: citationStart,
+            endIndex: citationEnd,
           ),
         );
       }
@@ -1299,9 +1811,10 @@ WebSearchResult _parseGeminiResponse(
 }
 
 class _SourceAccumulator {
-  _SourceAccumulator({required this.maxSources});
+  _SourceAccumulator({required this.maxSources, this.requireVerbatim = false});
 
   final int maxSources;
+  final bool requireVerbatim;
   final List<WebSearchSource> _sources = <WebSearchSource>[];
   final Map<String, int> _indexByUrl = <String, int>{};
   var _totalSnippetRunes = 0;
@@ -1311,10 +1824,43 @@ class _SourceAccumulator {
 
   int? add({required String url, required String title, String snippet = ''}) {
     final safeUrl = _safeSourceUrl(url);
+    if (requireVerbatim && (safeUrl == null || safeUrl != url)) {
+      throw const WebSearchProviderException(
+        code: WebSearchFailureCode.invalidResponse,
+        safeMessage:
+            'Gemini returned a Grounded Result link that cannot be displayed unchanged.',
+        costCertainty: WebSearchCostCertainty.unknown,
+      );
+    }
     if (safeUrl == null) return null;
     final existing = _indexByUrl[safeUrl];
-    if (existing != null) return existing;
-    if (_sources.length >= maxSources) return null;
+    if (existing != null) {
+      if (requireVerbatim) {
+        final existingSource = _sources[existing];
+        if (existingSource.url != url ||
+            existingSource.title != title ||
+            existingSource.snippet != snippet) {
+          throw const WebSearchProviderException(
+            code: WebSearchFailureCode.invalidResponse,
+            safeMessage:
+                'Gemini returned conflicting labels for one Grounded Result link.',
+            costCertainty: WebSearchCostCertainty.unknown,
+          );
+        }
+      }
+      return existing;
+    }
+    if (_sources.length >= maxSources) {
+      if (requireVerbatim) {
+        throw const WebSearchProviderException(
+          code: WebSearchFailureCode.invalidResponse,
+          safeMessage:
+              'Gemini returned more Grounded Result links than can be displayed unchanged.',
+          costCertainty: WebSearchCostCertainty.unknown,
+        );
+      }
+      return null;
+    }
     final safeTitle = _sanitizeText(title, _maxTitleRunes);
     final remaining = _maxTotalSnippetRunes - _totalSnippetRunes;
     final safeSnippet = remaining <= 0
@@ -1323,6 +1869,15 @@ class _SourceAccumulator {
             snippet,
             remaining < _maxSnippetRunes ? remaining : _maxSnippetRunes,
           );
+    if (requireVerbatim &&
+        (safeTitle.isEmpty || safeTitle != title || safeSnippet != snippet)) {
+      throw const WebSearchProviderException(
+        code: WebSearchFailureCode.invalidResponse,
+        safeMessage:
+            'Gemini returned a Grounded Result label that cannot be displayed unchanged.',
+        costCertainty: WebSearchCostCertainty.unknown,
+      );
+    }
     _totalSnippetRunes += safeSnippet.runes.length;
     final index = _sources.length;
     _sources.add(
@@ -1381,6 +1936,16 @@ String? _safeSourceUrl(String raw) {
     return null;
   }
   return uri.toString();
+}
+
+/// Revalidates a provider citation immediately before a UI opens it.
+///
+/// Provider parsers already apply the same filter, but keeping this public
+/// boundary lets native citation widgets defend against forged replay/test
+/// objects and future persistence bugs without duplicating URL rules.
+Uri? safeWebSearchSourceUri(String raw) {
+  final safe = _safeSourceUrl(raw);
+  return safe == null ? null : Uri.parse(safe);
 }
 
 bool _isPrivateHost(String host) {
@@ -1525,13 +2090,73 @@ String _sanitizeAnswer(String value, int maxRunes) {
   return '${String.fromCharCodes(runes.take(maxRunes))}…';
 }
 
+/// Google Grounded Results must be displayed without modification. Reject a
+/// response that would require control-character replacement or truncation
+/// instead of silently changing Google's text before rendering it.
+String _validateUnmodifiedGeminiAnswer(String value) {
+  if (value.trim().isEmpty ||
+      value.runes.length > _maxAnswerRunes ||
+      RegExp(
+        r'[\x00-\x08\x0B\x0C\x0E-\x1F\x7F\u202A-\u202E\u2066-\u2069]',
+      ).hasMatch(value)) {
+    throw const WebSearchProviderException(
+      code: WebSearchFailureCode.invalidResponse,
+      safeMessage:
+          'Gemini returned a Grounded Result that cannot be displayed unchanged.',
+      costCertainty: WebSearchCostCertainty.unknown,
+    );
+  }
+  return value;
+}
+
 int? _asInt(Object? value) => value is num ? value.toInt() : null;
+
+/// Gemini grounding segments use UTF-8 byte offsets inside one response Part,
+/// while Dart widgets and [String.substring] use UTF-16 code-unit indices.
+/// Return null for an offset in the middle of a UTF-8 sequence.
+int? _utf8ByteOffsetToCodeUnitIndex(String value, int byteOffset) {
+  if (byteOffset < 0) return null;
+  if (byteOffset == 0) return 0;
+  var bytes = 0;
+  var codeUnits = 0;
+  for (final rune in value.runes) {
+    bytes += rune <= 0x7F
+        ? 1
+        : rune <= 0x7FF
+        ? 2
+        : rune <= 0xFFFF
+        ? 3
+        : 4;
+    codeUnits += rune > 0xFFFF ? 2 : 1;
+    if (bytes == byteOffset) return codeUnits;
+    if (bytes > byteOffset) return null;
+  }
+  return null;
+}
 
 bool _looksLikeLocalModel(String model) {
   final normalized = model.trim().toLowerCase();
   return normalized.isEmpty ||
       normalized.startsWith('local:') ||
       normalized.startsWith(ApiSettings.localApiModelPrefix);
+}
+
+/// Whether [model] identifies one concrete OpenRouter model rather than a
+/// router, rolling alias, local endpoint, or an implicit second search path.
+bool isExplicitOpenRouterWebSearchModel(String model) {
+  final normalized = model.trim().toLowerCase();
+  final dynamic =
+      normalized == 'auto' ||
+      normalized.startsWith('openrouter/') ||
+      normalized.startsWith('~') ||
+      normalized.contains(':online') ||
+      normalized.startsWith('perplexity/') ||
+      RegExp(
+        r'(?:^|[/_.-])(?:search|deep-research|sonar)(?:$|[_.:-])',
+      ).hasMatch(normalized);
+  return !dynamic &&
+      !_looksLikeLocalModel(normalized) &&
+      RegExp(r'^[a-z0-9._-]+/[a-z0-9._:-]+$').hasMatch(normalized);
 }
 
 String _normalizeGeminiModel(String model) {
@@ -1552,9 +2177,14 @@ String _normalizeLocale(String locale) {
   ].join('-');
 }
 
-bool _supportsGeminiGoogleSearch(String model) {
-  final normalized = model.toLowerCase();
-  return RegExp(r'^gemini-(?:2(?:\.0|\.5)|3(?:\.|-|$))').hasMatch(normalized);
+/// Conservative offline capability gate for Gemini Google Search.
+bool isSupportedGeminiWebSearchModel(String model) {
+  final normalized = _normalizeGeminiModel(model).toLowerCase();
+  // Gemini 2.0 was shut down on 2026-06-01. Accept current 2.5/3.x
+  // text-model families and let the provider return a structured capability
+  // error for an individual model that does not expose Google Search.
+  return RegExp(r'^gemini-(?:2\.5|3(?:\.|-|$))').hasMatch(normalized) &&
+      !RegExp(r'(?:image|tts|live|embedding)').hasMatch(normalized);
 }
 
 bool _isGemini3Model(String model) =>

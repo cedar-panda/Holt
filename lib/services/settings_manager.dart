@@ -2,6 +2,7 @@
 ///
 /// 所有設定已拆分為獨立模組：
 ///   ApiSettings      → settings/api_settings.dart      （API 供應商、Key、模型、buildAdapter）
+///   WebSearchSettings → settings/web_search_settings.dart（原生網搜、來源模式、每日上限）
 ///   MemorySettings   → settings/memory_settings.dart   （窗口摘要、Token 預算、Caching）
 ///   TtsSettings      → settings/tts_settings.dart      （TTS 語音）
 ///   ThemeSettings    → settings/theme_settings.dart    （主題、氣泡、星光、字體）
@@ -21,6 +22,7 @@
 library;
 
 export 'settings/api_settings.dart';
+export 'settings/web_search_settings.dart';
 export 'settings/memory_settings.dart';
 export 'settings/tts_settings.dart';
 export 'settings/theme_settings.dart';
