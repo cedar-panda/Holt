@@ -119,6 +119,9 @@ class ChatBubble extends StatefulWidget {
 
 class _ChatBubbleState extends State<ChatBubble>
     with SingleTickerProviderStateMixin {
+  static String? _checkedChatBackgroundPath;
+  static bool _checkedChatBackgroundExists = false;
+
   bool _thinkingExpanded = false;
   bool _memLogExpanded = false;
   bool _isSaved = false;
@@ -748,13 +751,16 @@ class _ChatBubbleState extends State<ChatBubble>
                               crossAxisAlignment: CrossAxisAlignment.stretch,
                               children: [
                                 if (hasContextTree)
-                                  _buildContextTree(
-                                    thinking: widget.includeThinkingDetails
-                                        ? thinking
-                                        : null,
-                                    memoryLog: visibleMemoryLog,
-                                    emotionLog: visibleEmotionLog,
-                                    emotionCoordinate: visibleEmotionCoordinate,
+                                  _buildContextSurface(
+                                    _buildContextTree(
+                                      thinking: widget.includeThinkingDetails
+                                          ? thinking
+                                          : null,
+                                      memoryLog: visibleMemoryLog,
+                                      emotionLog: visibleEmotionLog,
+                                      emotionCoordinate:
+                                          visibleEmotionCoordinate,
+                                    ),
                                   ),
                                 if (hasBubbleContent)
                                   Builder(
@@ -1200,6 +1206,34 @@ class _ChatBubbleState extends State<ChatBubble>
 
   Color _thinkingTreeBodyColor() =>
       Color.lerp(YanciTheme.textSecondary, YanciTheme.textPrimary, 0.34)!;
+
+  bool _hasCustomChatBackground() {
+    final path = YanciTheme.chatBackgroundImagePath;
+    if (path == _checkedChatBackgroundPath) {
+      return _checkedChatBackgroundExists;
+    }
+    _checkedChatBackgroundPath = path;
+    _checkedChatBackgroundExists = path.isNotEmpty && File(path).existsSync();
+    return _checkedChatBackgroundExists;
+  }
+
+  Widget _buildContextSurface(Widget child) {
+    if (!_hasCustomChatBackground()) return child;
+
+    return Container(
+      key: const ValueKey('context-tree-image-surface'),
+      margin: const EdgeInsets.only(bottom: 4),
+      decoration: BoxDecoration(
+        color: YanciTheme.surfacePanel.withValues(alpha: 0.88),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: YanciTheme.glassBorder.withValues(alpha: 0.64),
+          width: 0.6,
+        ),
+      ),
+      child: child,
+    );
+  }
 
   Widget _buildThinkingMarkdown(String text, {Key? key}) {
     final bodyColor = _thinkingTreeBodyColor();

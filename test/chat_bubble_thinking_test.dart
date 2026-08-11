@@ -1,8 +1,12 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:project_yanci/services/locale_strings.dart';
+import 'package:project_yanci/theme/app_theme.dart';
+import 'package:project_yanci/theme/theme_presets.dart';
 import 'package:project_yanci/widgets/chat_bubble.dart';
 import 'package:project_yanci/widgets/bubble_action_glyph.dart';
 
@@ -40,6 +44,10 @@ void main() {
     expect(find.byIcon(Icons.bubble_chart_outlined), findsNothing);
     expect(find.byIcon(Icons.psychology_outlined), findsNothing);
     expect(find.text('Thinking'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('context-tree-image-surface')),
+      findsNothing,
+    );
 
     final thinkingContainer = tester.widget<Container>(
       find.byKey(const ValueKey('thinking-chain-container')),
@@ -61,6 +69,115 @@ void main() {
       0.25,
     );
     expect(find.text('正常回覆'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('all preset themes keep context metadata transparent', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    await L.setLocale('zh_TW');
+    final originalPreset = YanciTheme.presetId;
+    final originalPath = YanciTheme.chatBackgroundImagePath;
+    addTearDown(() {
+      YanciTheme.setPreset(originalPreset);
+      YanciTheme.chatBackgroundImagePath = originalPath;
+    });
+
+    YanciTheme.chatBackgroundImagePath = '';
+    for (final preset in presets) {
+      YanciTheme.setPreset(preset.id);
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: Scaffold(
+            body: ChatBubble(
+              text: '<think>正在整理想法</think>正常回覆',
+              isUser: false,
+              captureMode: true,
+            ),
+          ),
+        ),
+      );
+      expect(
+        find.byKey(const ValueKey('context-tree-image-surface')),
+        findsNothing,
+        reason: '${preset.id} should preserve the transparent treatment',
+      );
+    }
+  });
+
+  testWidgets('valid custom image gives context metadata a readable surface', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    await L.setLocale('zh_TW');
+    final originalPath = YanciTheme.chatBackgroundImagePath;
+    final tempDir = Directory.systemTemp.createTempSync(
+      'holt_chat_background_test_',
+    );
+    final background = File('${tempDir.path}/background.jpg')
+      ..writeAsBytesSync(const <int>[1, 2, 3]);
+    addTearDown(() {
+      YanciTheme.chatBackgroundImagePath = originalPath;
+      tempDir.deleteSync(recursive: true);
+    });
+
+    YanciTheme.chatBackgroundImagePath = background.path;
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: ChatBubble(
+            text: '<think>正在整理想法</think>正常回覆',
+            isUser: false,
+            captureMode: true,
+            thinkingExpandedOverride: true,
+            memoryLog: '讀取相關記憶\nDone',
+          ),
+        ),
+      ),
+    );
+
+    final surfaceFinder = find.byKey(
+      const ValueKey('context-tree-image-surface'),
+    );
+    expect(surfaceFinder, findsOneWidget);
+    final surface = tester.widget<Container>(surfaceFinder);
+    final decoration = surface.decoration! as BoxDecoration;
+    expect(decoration.color, isNotNull);
+    expect(decoration.color!.a, closeTo(0.88, 0.001));
+    expect(decoration.border, isNotNull);
+    expect(decoration.borderRadius, isNotNull);
+    expect(find.text('Thinking'), findsOneWidget);
+    expect(find.text('Memory'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('missing custom image keeps context metadata transparent', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    await L.setLocale('zh_TW');
+    final originalPath = YanciTheme.chatBackgroundImagePath;
+    addTearDown(() => YanciTheme.chatBackgroundImagePath = originalPath);
+
+    YanciTheme.chatBackgroundImagePath =
+        '${Directory.systemTemp.path}/holt_missing_chat_background.jpg';
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: ChatBubble(
+            text: '<think>正在整理想法</think>正常回覆',
+            isUser: false,
+            captureMode: true,
+          ),
+        ),
+      ),
+    );
+
+    expect(
+      find.byKey(const ValueKey('context-tree-image-surface')),
+      findsNothing,
+    );
     expect(tester.takeException(), isNull);
   });
 
