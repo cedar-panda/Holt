@@ -129,8 +129,9 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
   WebSearchMode _webSearchMode = WebSearchMode.auto;
   int _webSearchDailyProviderLaunchCap =
       WebSearchSettings.defaultDailyProviderLaunchCap;
-  String _webSearchOpenRouterModel = '';
   String _webSearchGeminiModel = '';
+  String _wsSearchOrModelOverride = '';
+  String _wsSearchGeminiModelOverride = '';
   List<ModelInfo> _models = [];
   List<ModelInfo> _filteredModels = [];
   Set<String> _starredModels = {};
@@ -176,12 +177,13 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
     final webSearchMode = await WebSearchSettings.getMode();
     final webSearchDailyProviderLaunchCap =
         await WebSearchSettings.getDailyProviderLaunchCap();
-    final webSearchOpenRouterModel = await ApiSettings.getModelForProvider(
-      'openrouter',
-    );
     final webSearchGeminiModel = await ApiSettings.getModelForProvider(
       'gemini',
     );
+    final wsSearchOrOverride =
+        await WebSearchSettings.getOpenRouterSearchModel();
+    final wsSearchGeminiOverride =
+        await WebSearchSettings.getGeminiSearchModel();
 
     final starred = await ApiSettings.getStarredModels();
     var starredProviders = await ApiSettings.getStarredModelProviders();
@@ -235,8 +237,9 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
         _webSearchEnabled = webSearchEnabled;
         _webSearchMode = webSearchMode;
         _webSearchDailyProviderLaunchCap = webSearchDailyProviderLaunchCap;
-        _webSearchOpenRouterModel = webSearchOpenRouterModel;
         _webSearchGeminiModel = webSearchGeminiModel;
+        _wsSearchOrModelOverride = wsSearchOrOverride;
+        _wsSearchGeminiModelOverride = wsSearchGeminiOverride;
         _lastPolicySelectionWasClaude = TokenEstimator.isClaudePromptCacheModel(
           provider: provider,
           model: savedModel,
@@ -790,81 +793,137 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
     ),
   };
 
-  Widget _buildWebSearchProviderStatus({
-    required String provider,
-    required bool hasApiKey,
-    required String model,
-  }) {
-    final normalizedModel = model.trim().toLowerCase();
-    final needsExplicitOpenRouterModel =
-        provider == 'OpenRouter' &&
-        !isExplicitOpenRouterWebSearchModel(normalizedModel);
-    final needsCurrentGeminiModel =
-        provider == 'Gemini' &&
-        !isSupportedGeminiWebSearchModel(normalizedModel);
-    final ready =
-        hasApiKey && !needsExplicitOpenRouterModel && !needsCurrentGeminiModel;
-    final keyStatus = !hasApiKey
-        ? L.pick(en: 'No API key', zhTW: '尚未輸入 API 金鑰')
-        : needsExplicitOpenRouterModel || needsCurrentGeminiModel
-        ? L.pick(
-            en: needsCurrentGeminiModel
-                ? 'Select a current model'
-                : 'Select an explicit model',
-            zhTW: needsCurrentGeminiModel ? '請選擇目前支援的模型' : '請選擇明確模型',
-            zhCN: needsCurrentGeminiModel ? '请选择目前支持的模型' : '请选择明确模型',
-          )
-        : L.pick(en: 'Ready', zhTW: '已就緒', zhCN: '已就绪');
-    final modelLabel = model.trim().isEmpty
-        ? L.pick(en: 'No model selected', zhTW: '尚未選擇模型')
-        : model.trim();
-    final semanticLabel = L.pick(
-      en: '$provider, $keyStatus, model $modelLabel',
-      zhTW: '$provider，$keyStatus，模型 $modelLabel',
-    );
 
-    return Semantics(
-      container: true,
-      label: semanticLabel,
-      child: ExcludeSemantics(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(minHeight: 48),
-          child: Row(
+
+  /// 搜尋模型選擇器：從星標模型中過濾出符合供應商的模型，
+  /// 加上一個「自動（使用預設）」選項。
+  Widget _buildWebSearchSearchModelPicker({
+    required String providerLabel,
+    required String filterProvider,
+    required String currentOverride,
+    required String fallbackModel,
+    required bool hasApiKey,
+    required ValueChanged<String> onChanged,
+  }) {
+    // 過濾出當前 provider 的星標模型。
+    final candidates = <String>[];
+    for (final modelId in _starredModels) {
+      final p = _starredModelProviders[modelId] ?? '';
+      if (p == filterProvider) candidates.add(modelId);
+    }
+    candidates.sort();
+
+    // 有效模型 = override 如果非空，否則 fallback。
+    final effectiveModel =
+        currentOverride.isNotEmpty ? currentOverride : fallbackModel;
+
+    // 確保 currentOverride 在候選清單裡（即使已取消星標）。
+    if (currentOverride.isNotEmpty && !candidates.contains(currentOverride)) {
+      candidates.insert(0, currentOverride);
+    }
+
+    final ready = hasApiKey && effectiveModel.isNotEmpty;
+    final statusText = !hasApiKey
+        ? L.pick(en: 'No API key', zhTW: '尚未輸入 API 金鑰')
+        : ready
+        ? L.pick(en: 'Ready', zhTW: '已就緒', zhCN: '已就绪')
+        : L.pick(en: 'No model selected', zhTW: '尚未選擇模型');
+
+    return ConstrainedBox(
+      constraints: const BoxConstraints(minHeight: 48),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const SizedBox(height: 8),
+          Row(
             children: [
               Icon(
-                ready ? Icons.check_circle_outline_rounded : Icons.info_outline,
+                ready
+                    ? Icons.check_circle_outline_rounded
+                    : Icons.info_outline,
                 size: 18,
                 color: ready ? YanciTheme.accent : YanciTheme.textSecondary,
               ),
               const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      '$provider · $keyStatus',
-                      style: YanciTheme.bodySmall.copyWith(
-                        color: YanciTheme.textPrimary,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      modelLabel,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: YanciTheme.bodySmall.copyWith(
-                        fontSize: 11,
-                        color: YanciTheme.textSecondary,
-                      ),
-                    ),
-                  ],
+              Text(
+                '$providerLabel · $statusText',
+                style: YanciTheme.bodySmall.copyWith(
+                  color: YanciTheme.textPrimary,
+                  fontWeight: FontWeight.w500,
                 ),
               ),
             ],
           ),
-        ),
+          const SizedBox(height: 4),
+          Semantics(
+            label: L.pick(
+              en: '$providerLabel search model',
+              zhTW: '$providerLabel 搜尋模型',
+            ),
+            value: effectiveModel,
+            child: DropdownButton<String>(
+              value: currentOverride,
+              isExpanded: true,
+              underline: const SizedBox(),
+              dropdownColor: YanciTheme.isDark
+                  ? const Color(0xF0302830)
+                  : Colors.white,
+              style: YanciTheme.bodyText.copyWith(
+                fontSize: 12,
+                color: YanciTheme.textPrimary,
+              ),
+              items: [
+                // 「自動」選項 = 空字串 override
+                DropdownMenuItem<String>(
+                  value: '',
+                  child: Text(
+                    L.pick(
+                      en: 'Auto · $fallbackModel',
+                      zhTW: '自動 · $fallbackModel',
+                      zhCN: '自动 · $fallbackModel',
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: YanciTheme.bodyText.copyWith(
+                      fontSize: 12,
+                      color: YanciTheme.textSecondary,
+                    ),
+                  ),
+                ),
+                for (final modelId in candidates)
+                  DropdownMenuItem<String>(
+                    value: modelId,
+                    child: Text(
+                      modelId,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: YanciTheme.bodyText.copyWith(fontSize: 12),
+                    ),
+                  ),
+              ],
+              onChanged: (value) {
+                if (value == null) return;
+                onChanged(value);
+              },
+            ),
+          ),
+          if (candidates.isEmpty)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 4),
+              child: Text(
+                L.pick(
+                  en: 'Star a $providerLabel model above to add it here.',
+                  zhTW: '在上方替 $providerLabel 模型加星即可加入選單。',
+                  zhCN: '在上方为 $providerLabel 模型加星即可加入选单。',
+                ),
+                style: YanciTheme.bodySmall.copyWith(
+                  fontSize: 10,
+                  color: YanciTheme.textSecondary.withValues(alpha: 0.65),
+                ),
+              ),
+            ),
+        ],
       ),
     );
   }
@@ -980,19 +1039,31 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
                   color: YanciTheme.textSecondary.withValues(alpha: 0.12),
                   height: 1,
                 ),
-                _buildWebSearchProviderStatus(
-                  provider: 'Gemini',
-                  hasApiKey: _geminiKeyCtrl.text.trim().isNotEmpty,
-                  model: _webSearchGeminiModel,
+                _buildWebSearchSearchModelPicker(
+                  providerLabel: 'OpenRouter',
+                  filterProvider: 'openrouter',
+                  currentOverride: _wsSearchOrModelOverride,
+                  fallbackModel: openRouterWebSearchPreviewModel,
+                  hasApiKey: _apiKeyController.text.trim().isNotEmpty,
+                  onChanged: (value) {
+                    setState(() => _wsSearchOrModelOverride = value);
+                    _debouncedSave();
+                  },
                 ),
                 Divider(
                   color: YanciTheme.textSecondary.withValues(alpha: 0.12),
                   height: 1,
                 ),
-                _buildWebSearchProviderStatus(
-                  provider: 'OpenRouter',
-                  hasApiKey: _apiKeyController.text.trim().isNotEmpty,
-                  model: _webSearchOpenRouterModel,
+                _buildWebSearchSearchModelPicker(
+                  providerLabel: 'Gemini',
+                  filterProvider: 'gemini',
+                  currentOverride: _wsSearchGeminiModelOverride,
+                  fallbackModel: _webSearchGeminiModel,
+                  hasApiKey: _geminiKeyCtrl.text.trim().isNotEmpty,
+                  onChanged: (value) {
+                    setState(() => _wsSearchGeminiModelOverride = value);
+                    _debouncedSave();
+                  },
                 ),
                 Divider(
                   color: YanciTheme.textSecondary.withValues(alpha: 0.12),
@@ -1120,9 +1191,9 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
   Future<void> _selectModel(String modelId) async {
     setState(() {
       _selectedModel = modelId;
-      if (_provider == 'openrouter') {
-        _webSearchOpenRouterModel = modelId;
-      } else if (_provider == 'gemini') {
+      // 只更新顯示用主模型；搜尋模型由專屬選擇器獨立管理。
+      // 當搜尋模型 override 為空時，Gemini 搜尋仍會降級到主模型。
+      if (_provider == 'gemini') {
         _webSearchGeminiModel = modelId;
       }
       if (_provider == 'openai_compatible') {
@@ -1168,6 +1239,8 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
     final webSearchEnabled = _webSearchEnabled;
     final webSearchMode = _webSearchMode;
     final webSearchDailyProviderLaunchCap = _webSearchDailyProviderLaunchCap;
+    final wsSearchOrOverride = _wsSearchOrModelOverride;
+    final wsSearchGeminiOverride = _wsSearchGeminiModelOverride;
 
     await ApiSettings.saveOpenRouterApiKey(openRouterKey);
     await ApiSettings.saveXaiApiKey(xaiKey);
@@ -1190,6 +1263,8 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
     await WebSearchSettings.saveDailyProviderLaunchCap(
       webSearchDailyProviderLaunchCap,
     );
+    await WebSearchSettings.saveOpenRouterSearchModel(wsSearchOrOverride);
+    await WebSearchSettings.saveGeminiSearchModel(wsSearchGeminiOverride);
     await MemorySettings.saveSummarySelection(
       provider: summaryProvider,
       model: summaryModel,
@@ -1600,9 +1675,8 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
                                   if (!mounted) return;
                                   setState(() {
                                     _selectedModel = savedModel;
-                                    if (v == 'openrouter') {
-                                      _webSearchOpenRouterModel = savedModel;
-                                    } else if (v == 'gemini') {
+                                    // 只更新顯示用主模型；搜尋模型由專屬選擇器獨立管理。
+                                    if (v == 'gemini') {
                                       _webSearchGeminiModel = savedModel;
                                     }
                                   });

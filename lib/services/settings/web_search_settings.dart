@@ -34,13 +34,18 @@ enum WebSearchMode {
 
 /// 原生網路搜尋的本機偏好。
 ///
-/// API Key 與模型仍由 `ApiSettings` 管理；這裡只保存是否啟用、供應商策略與
-/// 每日 provider launch 上限，避免出現第二份憑證或模型來源。
+/// API Key 仍由 `ApiSettings` 管理；這裡保存是否啟用、供應商策略、
+/// 每日 provider launch 上限，以及各供應商的搜尋專用模型選擇。
+/// 搜尋模型為空時降級到原有預設行為（OpenRouter = 內建預覽模型、
+/// Gemini = 目前主 Gemini 模型）。
 class WebSearchSettings {
   static const String _keyEnabled = 'web_search_enabled_v1';
   static const String _keyMode = 'web_search_mode_v1';
   static const String _keyDailyProviderLaunchCap =
       'web_search_daily_provider_launch_cap_v1';
+  static const String _keyOpenRouterSearchModel =
+      'web_search_openrouter_model_v1';
+  static const String _keyGeminiSearchModel = 'web_search_gemini_model_v1';
 
   static const int minDailyProviderLaunchCap = 1;
   static const int maxDailyProviderLaunchCap = 100;
@@ -84,5 +89,29 @@ class WebSearchSettings {
       _keyDailyProviderLaunchCap,
       value.clamp(minDailyProviderLaunchCap, maxDailyProviderLaunchCap),
     );
+  }
+
+  // ═══ 搜尋專用模型（獨立於主聊天模型） ═══
+
+  /// OpenRouter 搜尋模型。空字串代表降級到內建預設模型。
+  static Future<String> getOpenRouterSearchModel() async {
+    final preferences = await SharedPreferences.getInstance();
+    return preferences.getString(_keyOpenRouterSearchModel) ?? '';
+  }
+
+  static Future<void> saveOpenRouterSearchModel(String value) async {
+    final preferences = await SharedPreferences.getInstance();
+    await preferences.setString(_keyOpenRouterSearchModel, value.trim());
+  }
+
+  /// Gemini 搜尋模型。空字串代表降級到目前主 Gemini 模型。
+  static Future<String> getGeminiSearchModel() async {
+    final preferences = await SharedPreferences.getInstance();
+    return preferences.getString(_keyGeminiSearchModel) ?? '';
+  }
+
+  static Future<void> saveGeminiSearchModel(String value) async {
+    final preferences = await SharedPreferences.getInstance();
+    await preferences.setString(_keyGeminiSearchModel, value.trim());
   }
 }

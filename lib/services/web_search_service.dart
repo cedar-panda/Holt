@@ -11,6 +11,14 @@ import 'tool_runner.dart';
 
 enum WebSearchProviderId { openRouter, gemini }
 
+/// Search-only model for the private OpenRouter/Exa developer preview.
+///
+/// GPT-5/o-series models expose native-search routes and repeatedly resolve to
+/// no eligible endpoint when combined with the explicit Exa + ZDR +
+/// no-fallback plan. Keep search routing separate from the user's chat model;
+/// the resolved plan and confirmation dialog still disclose this exact model.
+const String openRouterWebSearchPreviewModel = 'openai/gpt-oss-20b';
+
 enum WebSearchFailureCode {
   invalidQuery,
   sensitiveQueryConfirmationRequired,
@@ -488,7 +496,10 @@ class OpenRouterWebSearchProvider implements WebSearchProvider {
         <String, Object?>{'id': 'web', 'enabled': false},
       ],
       'max_tool_calls': 1,
-      'max_tokens': 1200,
+      if (_usesOpenRouterMaxCompletionTokens(selectedModel))
+        'max_completion_tokens': 1200
+      else
+        'max_tokens': 1200,
     };
 
     final decoded = await _postJson(
@@ -696,25 +707,31 @@ class ApiSettingsWebSearchConfigurationSource
     final values = await Future.wait<String>(<Future<String>>[
       ApiSettings.getApiProvider(),
       ApiSettings.getOpenRouterApiKey(),
-      ApiSettings.getModelForProvider('openrouter'),
       ApiSettings.getGeminiApiKey(),
       ApiSettings.getModelForProvider('gemini'),
+      WebSearchSettings.getOpenRouterSearchModel(),
+      WebSearchSettings.getGeminiSearchModel(),
     ]);
-    final openRouterModel = values[2].trim();
+    final orSearchModel = values[4].trim();
+    final geminiSearchModel = values[5].trim();
     return WebSearchConfiguration(
       currentChatProvider: values[0],
       providers: <WebSearchProviderConfig>[
         WebSearchProviderConfig(
           id: WebSearchProviderId.openRouter,
           apiKey: values[1],
-          model: openRouterModel,
+          model: orSearchModel.isNotEmpty
+              ? orSearchModel
+              : openRouterWebSearchPreviewModel,
         ),
         WebSearchProviderConfig(
           id: WebSearchProviderId.gemini,
-          apiKey: values[3],
+          apiKey: values[2],
           // Consent and the execution claim bind the exact selected model.
           // Never silently substitute another recipient here.
-          model: values[4].trim(),
+          model: geminiSearchModel.isNotEmpty
+              ? geminiSearchModel
+              : values[3].trim(),
         ),
       ],
     );
@@ -1459,7 +1476,7 @@ Future<Map<String, dynamic>> _postJson({
       );
     }
     if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw _httpFailure(provider, response.statusCode);
+      throw _httpFailure(provider, response.statusCode, responseBody);
     }
     final decoded = jsonDecode(responseBody);
     if (decoded is! Map) {
@@ -1523,6 +1540,7 @@ Future<String> _readResponseBody(Stream<List<int>> stream) async {
 WebSearchProviderException _httpFailure(
   WebSearchProviderId provider,
   int statusCode,
+  String responseBody,
 ) {
   final label = _providerLabel(provider);
   if (statusCode == 401 || statusCode == 403) {
@@ -1555,12 +1573,65 @@ WebSearchProviderException _httpFailure(
       statusCode: statusCode,
     );
   }
+  if (provider == WebSearchProviderId.openRouter) {
+    final safeReason = _openRouterSafeErrorReason(responseBody);
+    if (safeReason != null) {
+      return WebSearchProviderException(
+        code: WebSearchFailureCode.unavailable,
+        safeMessage: safeReason,
+        retryable: statusCode >= 500,
+        statusCode: statusCode,
+      );
+    }
+  }
   return WebSearchProviderException(
     code: WebSearchFailureCode.unavailable,
     safeMessage: '$label rejected the web search request.',
     retryable: statusCode >= 500,
     statusCode: statusCode,
   );
+}
+
+/// Converts OpenRouter's structured error envelope into a small allowlist of
+/// user-safe diagnostics. Raw provider text, metadata and request data never
+/// cross the provider boundary.
+String? _openRouterSafeErrorReason(String responseBody) {
+  if (responseBody.length > 16 * 1024) return null;
+  try {
+    final decoded = jsonDecode(responseBody);
+    if (decoded is! Map) return null;
+    final error = decoded['error'];
+    if (error is! Map) return null;
+    final metadata = error['metadata'];
+    final errorType = metadata is Map
+        ? metadata['error_type']?.toString().trim().toLowerCase()
+        : null;
+    final message = error['message']?.toString().trim().toLowerCase() ?? '';
+    if (message.contains('no endpoints found') ||
+        message.contains('no available endpoints')) {
+      return 'OpenRouter has no endpoint that meets the current web-search and privacy requirements.';
+    }
+    if (message.contains('server tool') && message.contains('not found')) {
+      return 'OpenRouter web search is not available for this request.';
+    }
+    if (message.contains('plugin') && message.contains('not found')) {
+      return 'OpenRouter rejected the web-search compatibility setting.';
+    }
+    if (message.contains('model') && message.contains('not found')) {
+      return 'OpenRouter could not find the selected search model.';
+    }
+    return switch (errorType) {
+      'not_found' =>
+        'OpenRouter could not find a required web-search resource.',
+      'invalid_request' =>
+        'OpenRouter rejected one of the web-search parameters.',
+      'provider_unavailable' || 'provider_overloaded' =>
+        'OpenRouter has no available endpoint for this web search.',
+      _ => null,
+    };
+  } on FormatException {
+    return null;
+  }
 }
 
 WebSearchResult _parseOpenRouterResponse(
@@ -2157,6 +2228,16 @@ bool isExplicitOpenRouterWebSearchModel(String model) {
   return !dynamic &&
       !_looksLikeLocalModel(normalized) &&
       RegExp(r'^[a-z0-9._-]+/[a-z0-9._:-]+$').hasMatch(normalized);
+}
+
+/// OpenRouter's ZDR endpoints for newer OpenAI reasoning families advertise
+/// `max_completion_tokens`, not the legacy `max_tokens`.
+bool _usesOpenRouterMaxCompletionTokens(String model) {
+  final normalized = model.trim().toLowerCase();
+  if (!normalized.startsWith('openai/')) return false;
+  final slug = normalized.substring('openai/'.length);
+  return slug.startsWith('gpt-5') ||
+      RegExp(r'^o(?:1|3|4)(?:[_.-]|$)').hasMatch(slug);
 }
 
 String _normalizeGeminiModel(String model) {
