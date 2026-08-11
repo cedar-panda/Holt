@@ -28,13 +28,6 @@ void main() {
         expect(body['model'], 'anthropic/claude-sonnet-4');
         expect(body['max_tool_calls'], 1);
         expect(body, isNot(contains('temperature')));
-        expect(body['provider'], <String, dynamic>{
-          'allow_fallbacks': false,
-          'require_parameters': true,
-        });
-        expect(body['plugins'], <Map<String, dynamic>>[
-          <String, dynamic>{'id': 'web', 'enabled': false},
-        ]);
         final messages = body['messages'] as List;
         expect(messages, hasLength(2));
         expect(messages.last['content'], 'Taipei weather today');
@@ -43,7 +36,7 @@ void main() {
         final tool = tools.single as Map<String, dynamic>;
         expect(tool['type'], 'openrouter:web_search');
         final parameters = tool['parameters'] as Map<String, dynamic>;
-        expect(parameters['engine'], 'exa');
+        expect(parameters['engine'], 'auto');
         expect(parameters['max_uses'], 1);
         expect(parameters['max_results'], 5);
         expect(parameters['max_total_results'], 5);
@@ -109,6 +102,7 @@ void main() {
         'openrouter/bodybuilder',
         '~anthropic/claude-sonnet-latest',
         'openai/gpt-5-mini:online',
+        'openai/o1:batch',
         'perplexity/sonar-pro',
         'openai/o3-deep-research',
         'model-without-provider',

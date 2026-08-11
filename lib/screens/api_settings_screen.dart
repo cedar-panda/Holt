@@ -805,11 +805,13 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
     required bool hasApiKey,
     required ValueChanged<String> onChanged,
   }) {
-    // 過濾出當前 provider 的星標模型。
+    // 過濾出當前 provider 的星標模型（排除不支援即時 API 的 :batch 模型）。
     final candidates = <String>[];
     for (final modelId in _starredModels) {
       final p = _starredModelProviders[modelId] ?? '';
-      if (p == filterProvider) candidates.add(modelId);
+      if (p == filterProvider && !modelId.toLowerCase().contains(':batch')) {
+        candidates.add(modelId);
+      }
     }
     candidates.sort();
 

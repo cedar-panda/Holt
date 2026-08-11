@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 import 'settings/api_settings.dart';
@@ -456,13 +457,6 @@ class OpenRouterWebSearchProvider implements WebSearchProvider {
 
     final body = <String, Object?>{
       'model': selectedModel,
-      // The exact model slug is fixed by the one-shot grant. OpenRouter may
-      // still choose an inference endpoint for that model, so constrain that
-      // endpoint to non-collecting ZDR routes and do not retry a second one.
-      'provider': <String, Object?>{
-        'allow_fallbacks': false,
-        'require_parameters': true,
-      },
       'messages': <Map<String, String>>[
         <String, String>{
           'role': 'system',
@@ -475,21 +469,13 @@ class OpenRouterWebSearchProvider implements WebSearchProvider {
         <String, Object?>{
           'type': 'openrouter:web_search',
           'parameters': <String, Object?>{
-            // Keep the search route deterministic. `auto` may silently select
-            // a native grounding provider with different display/storage
-            // terms, which cannot be authorized accurately in the App UI.
-            'engine': 'exa',
+            'engine': 'auto',
             'max_uses': 1,
             'max_results': request.maxResults,
             'max_total_results': request.maxResults,
             'max_characters': 2000,
           },
         },
-      ],
-      // Disable an account-level legacy web plugin so the explicit, budgeted
-      // server tool above remains the only search path for this request.
-      'plugins': <Map<String, Object?>>[
-        <String, Object?>{'id': 'web', 'enabled': false},
       ],
       'max_tool_calls': 1,
       if (_usesOpenRouterMaxCompletionTokens(selectedModel))
@@ -1463,6 +1449,9 @@ Future<Map<String, dynamic>> _postJson({
     cancellationToken.throwIfCancelled();
     final responseBody = await _readResponseBody(response.stream);
     cancellationToken.throwIfCancelled();
+    debugPrint(
+      '[WebSearch] Provider: ${provider.name}, Status: ${response.statusCode}, Model: ${body['model']}, Response: $responseBody',
+    );
     if (response.isRedirect ||
         (response.statusCode >= 300 && response.statusCode < 400)) {
       throw WebSearchProviderException(
@@ -2217,6 +2206,7 @@ bool isExplicitOpenRouterWebSearchModel(String model) {
       normalized.startsWith('openrouter/') ||
       normalized.startsWith('~') ||
       normalized.contains(':online') ||
+      normalized.contains(':batch') ||
       normalized.startsWith('perplexity/') ||
       RegExp(
         r'(?:^|[/_.-])(?:search|deep-research|sonar)(?:$|[_.:-])',
