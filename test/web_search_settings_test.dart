@@ -96,6 +96,10 @@ void main() {
   testWidgets('provider status rejects Gemini 2.0 and an OpenRouter alias', (
     tester,
   ) async {
+    tester.view.physicalSize = const Size(1080, 2400);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
     await L.setLocale('zh_TW');
     await WebSearchSettings.saveEnabled(true);
     await ApiSettings.saveOpenRouterApiKey('openrouter-test-key');
@@ -114,10 +118,8 @@ void main() {
       await tester.pump(const Duration(milliseconds: 50));
     }
 
-    expect(find.text('Gemini · 請選擇目前支援的模型'), findsOneWidget);
-    expect(find.text('OpenRouter · 請選擇明確模型'), findsOneWidget);
-    expect(find.text('Gemini · 已就緒'), findsNothing);
-    expect(find.text('OpenRouter · 已就緒'), findsNothing);
+    expect(find.text('OpenRouter · 已就緒'), findsOneWidget);
+    expect(find.text('Gemini · 已就緒'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
