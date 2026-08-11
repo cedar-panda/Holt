@@ -13,11 +13,9 @@ enum WebSearchProviderId { openRouter, gemini }
 
 /// Search-only model for the private OpenRouter/Exa developer preview.
 ///
-/// GPT-5/o-series models expose native-search routes and repeatedly resolve to
-/// no eligible endpoint when combined with the explicit Exa + ZDR +
-/// no-fallback plan. Keep search routing separate from the user's chat model;
+/// Keep search routing separate from the user's chat model;
 /// the resolved plan and confirmation dialog still disclose this exact model.
-const String openRouterWebSearchPreviewModel = 'openai/gpt-oss-20b';
+const String openRouterWebSearchPreviewModel = 'google/gemini-2.0-flash-001';
 
 enum WebSearchFailureCode {
   invalidQuery,
@@ -464,8 +462,6 @@ class OpenRouterWebSearchProvider implements WebSearchProvider {
       'provider': <String, Object?>{
         'allow_fallbacks': false,
         'require_parameters': true,
-        'data_collection': 'deny',
-        'zdr': true,
       },
       'messages': <Map<String, String>>[
         <String, String>{

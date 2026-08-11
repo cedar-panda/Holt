@@ -10,6 +10,14 @@ import 'package:project_yanci/services/settings/web_search_settings.dart';
 
 void main() {
   group('OpenRouter web search provider', () {
+    test('developer preview uses an explicit non-native search model', () {
+      expect(openRouterWebSearchPreviewModel, 'google/gemini-2.0-flash-001');
+      expect(
+        isExplicitOpenRouterWebSearchModel(openRouterWebSearchPreviewModel),
+        isTrue,
+      );
+    });
+
     test('sends bounded server-tool request and parses citations', () async {
       final client = MockClient((request) async {
         expect(request.method, 'POST');
@@ -23,8 +31,6 @@ void main() {
         expect(body['provider'], <String, dynamic>{
           'allow_fallbacks': false,
           'require_parameters': true,
-          'data_collection': 'deny',
-          'zdr': true,
         });
         expect(body['plugins'], <Map<String, dynamic>>[
           <String, dynamic>{'id': 'web', 'enabled': false},
@@ -138,6 +144,41 @@ void main() {
         expect(clientsCreated, 0, reason: model);
         expect(requestsSent, 0, reason: model);
       }
+    });
+
+    test('uses the token limit accepted by GPT-5 ZDR endpoints', () async {
+      final provider = OpenRouterWebSearchProvider(
+        apiKey: 'key',
+        model: 'openai/gpt-5-mini',
+        clientFactory: () => MockClient((request) async {
+          final body = jsonDecode(request.body) as Map<String, dynamic>;
+          expect(body['max_completion_tokens'], 1200);
+          expect(body, isNot(contains('max_tokens')));
+          return http.Response(
+            jsonEncode(<String, dynamic>{
+              'choices': <Map<String, dynamic>>[
+                <String, dynamic>{
+                  'message': <String, dynamic>{
+                    'content': 'Grounded answer.',
+                    'annotations': <Map<String, dynamic>>[
+                      _openRouterAnnotation(
+                        'https://weather.example/taipei',
+                        'Weather source',
+                      ),
+                    ],
+                  },
+                },
+              ],
+            }),
+            200,
+          );
+        }),
+      );
+
+      await provider.search(
+        WebSearchRequest(query: 'Taipei weather'),
+        ToolCancellationController().token,
+      );
     });
 
     test('rejects redirects without forwarding authorization', () async {
@@ -330,6 +371,48 @@ void main() {
         ),
       );
     });
+
+    test(
+      'classifies a no-endpoint error without exposing raw details',
+      () async {
+        const secret = 'sk-private-response-value';
+        final provider = OpenRouterWebSearchProvider(
+          apiKey: 'key',
+          model: 'openai/gpt-5-mini',
+          clientFactory: () => MockClient(
+            (_) async => http.Response(
+              jsonEncode(<String, Object?>{
+                'error': <String, Object?>{
+                  'message': 'No endpoints found for $secret',
+                  'metadata': <String, Object?>{'error_type': 'not_found'},
+                },
+              }),
+              404,
+            ),
+          ),
+        );
+
+        await expectLater(
+          provider.search(
+            WebSearchRequest(query: 'safe query'),
+            ToolCancellationController().token,
+          ),
+          throwsA(
+            isA<WebSearchProviderException>()
+                .having(
+                  (error) => error.safeMessage,
+                  'safe message',
+                  contains('current web-search and privacy requirements'),
+                )
+                .having(
+                  (error) => error.safeMessage,
+                  'redacted',
+                  isNot(contains(secret)),
+                ),
+          ),
+        );
+      },
+    );
   });
 
   group('Gemini web search provider', () {
