@@ -139,6 +139,111 @@ void main() {
     },
   );
 
+  test(
+    'runtime schema repair recreates and backfills missing memory FTS',
+    () async {
+      await DatabaseHelper.createSchemaForTesting(db);
+      await db.insert('memories', {
+        'character_id': 'char-a',
+        'mode': 'normal',
+        'category': 'fact',
+        'content': 'recoverable memory',
+        'created_at': '2026-08-11T00:00:00.000Z',
+        'updated_at': '2026-08-11T00:00:00.000Z',
+        'status': 'active',
+        'triggers': 'recoverable',
+      });
+      await db.execute('DROP TABLE memories_fts');
+
+      await DatabaseHelper.ensureRuntimeSchemaForTesting(db);
+
+      expect(await _objectNames(db, 'table'), contains('memories_fts'));
+      final rows = await db.rawQuery(
+        'SELECT rowid FROM memories_fts WHERE memories_fts MATCH ?',
+        ['recoverable'],
+      );
+      expect(rows, hasLength(1));
+    },
+  );
+
+  test('memory text search combines BM25 words with CJK fragments', () async {
+    await DatabaseHelper.createSchemaForTesting(db);
+    final now = DateTime(2026, 8, 11).toIso8601String();
+    await db.insert('memories', {
+      'character_id': 'char-a',
+      'mode': 'normal',
+      'category': 'fact',
+      'content': 'We watched the lighthouse together.',
+      'created_at': now,
+      'updated_at': now,
+      'status': 'active',
+      'triggers': 'lighthouse',
+    });
+    await db.insert('memories', {
+      'character_id': 'char-a',
+      'mode': 'normal',
+      'category': 'event',
+      'content': '昭昭曾和 tata 一起去海邊散步',
+      'created_at': now,
+      'updated_at': now,
+      'status': 'active',
+      'triggers': '海邊',
+    });
+
+    final english = await DatabaseHelper.searchMemoriesByText(
+      'lighthouse',
+      mode: 'normal',
+      characterId: 'char-a',
+    );
+    final chinese = await DatabaseHelper.searchMemoriesByText(
+      '你還記得我們一起去海邊嗎',
+      mode: 'normal',
+      characterId: 'char-a',
+    );
+
+    expect(
+      english.map((memory) => memory.content),
+      contains('We watched the lighthouse together.'),
+    );
+    expect(
+      chinese.map((memory) => memory.content),
+      contains('昭昭曾和 tata 一起去海邊散步'),
+    );
+  });
+
+  test('BM25 search remains responsive with a few thousand memories', () async {
+    await DatabaseHelper.createSchemaForTesting(db);
+    final batch = db.batch();
+    for (var i = 0; i < 3000; i++) {
+      batch.insert('memories', {
+        'character_id': 'char-a',
+        'mode': 'normal',
+        'category': 'fact',
+        'content': i == 1777
+            ? 'the unique lighthouse needle memory'
+            : 'ordinary synthetic memory number $i',
+        'created_at': '2026-08-11T00:00:00.000Z',
+        'updated_at': '2026-08-11T00:00:00.000Z',
+        'status': 'active',
+        'triggers': '',
+      });
+    }
+    await batch.commit(noResult: true);
+
+    final stopwatch = Stopwatch()..start();
+    final results = await DatabaseHelper.searchMemoriesByText(
+      'lighthouse needle',
+      mode: 'normal',
+      characterId: 'char-a',
+      limit: 10,
+    );
+    stopwatch.stop();
+
+    expect(results, isNotEmpty);
+    expect(results.first.content, contains('lighthouse'));
+    expect(stopwatch.elapsed, lessThan(const Duration(seconds: 1)));
+  });
+
   test('v41 adds per-character whisper fields with safe defaults', () async {
     await db.execute('''
       CREATE TABLE characters (

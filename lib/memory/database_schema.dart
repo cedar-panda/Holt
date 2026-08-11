@@ -64,6 +64,15 @@ class _DatabaseSchema {
     await _createMemoryFts(db);
   }
 
+  /// Repairs schema objects that may be absent even when user_version already
+  /// matches the app. This covers same-version additions and backups that
+  /// intentionally omit derived FTS tables.
+  static Future<void> _ensureRuntimeSchema(Database db) async {
+    await _createPendingMemoryActionsTable(db);
+    await _createWebSearchUsageTable(db);
+    await _ensureMemoryFts(db);
+  }
+
   /// 用量記錄表
   static Future<void> _createUsageTable(Database db) async {
     await db.execute('''
@@ -312,6 +321,19 @@ class _DatabaseSchema {
     } catch (e) {
       debugPrint('FTS5 not available on this device, skipping: $e');
       return false;
+    }
+  }
+
+  static Future<void> _ensureMemoryFts(Database db) async {
+    final tableAlreadyExisted = await _tableExists(db, 'memories_fts');
+    if (!await _createMemoryFts(db) || tableAlreadyExisted) return;
+    try {
+      await db.execute('''
+        INSERT INTO memories_fts(rowid, content, triggers)
+        SELECT id, content, triggers FROM memories WHERE status = 'active'
+      ''');
+    } catch (e) {
+      debugPrint('FTS5 repair failed: $e');
     }
   }
 

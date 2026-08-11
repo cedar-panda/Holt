@@ -87,6 +87,19 @@ extension _ChatGenerationMethods on _ChatScreenState {
 
   bool _isCurrentGeneration(int serial) => serial == _generationSerial;
 
+  Future<void> _stopKeepAliveBeforeFirstMessage() async {
+    try {
+      await KeepAliveService.instance.stop().timeout(
+        const Duration(seconds: 5),
+      );
+    } on TimeoutException {
+      // stop() clears the in-memory lease before its first await. Platform
+      // cleanup may finish in the background, but it must not leave the send
+      // button disabled indefinitely.
+      debugPrint('Keep-alive cleanup timed out; continuing first send.');
+    }
+  }
+
   void _stopActiveGeneration() {
     _stopGenerationRequested = true;
     _dismissWebSearchConfirmation();
@@ -993,6 +1006,10 @@ extension _ChatGenerationMethods on _ChatScreenState {
   }
 
   void _finishFailedGeneration() {
+    final adapter = _activeGenerationAdapter;
+    _activeGenerationAdapter = null;
+    adapter?.cancelActive();
+    _toolRunner.cancelActive(reason: 'Generation failed.');
     MemoryActions.clearSearchQuery(widget.conversationId);
     if (mounted) {
       _refreshChatState(() {
@@ -1157,14 +1174,38 @@ extension _ChatGenerationMethods on _ChatScreenState {
     } else {
       _sendSubmissionInProgress = true;
     }
+    final generationSerialBefore = _generationSerial;
     try {
       await retry();
+    } catch (error) {
+      _recoverEscapedGenerationFailure(
+        error,
+        generationSerialBefore: generationSerialBefore,
+        retry: retry,
+      );
     } finally {
       if (mounted) {
         _refreshChatState(() => _sendSubmissionInProgress = false);
       } else {
         _sendSubmissionInProgress = false;
       }
+    }
+  }
+
+  void _recoverEscapedGenerationFailure(
+    Object error, {
+    required int generationSerialBefore,
+    required Future<void> Function() retry,
+  }) {
+    // A send either fails before _beginGeneration or during that one new
+    // generation. If the serial moved further, edit/stop/dispose already
+    // invalidated this work and it must not reset a newer turn.
+    final serialDelta = _generationSerial - generationSerialBefore;
+    if (serialDelta < 0 || serialDelta > 1) return;
+    final wasStopped = _stopGenerationRequested;
+    _finishFailedGeneration();
+    if (!wasStopped) {
+      _showRetryableFailure(error, () => _runMessageRetry(retry));
     }
   }
 
@@ -1655,6 +1696,12 @@ extension _ChatGenerationMethods on _ChatScreenState {
       return;
     }
 
+    final generationSerialBefore = _generationSerial;
+    final existingUserMessageIds = _messages
+        .where((message) => message.isUser && message.id != null)
+        .map((message) => message.id!)
+        .toSet();
+
     if (mounted) {
       _refreshChatState(() => _sendSubmissionInProgress = true);
     } else {
@@ -1665,6 +1712,47 @@ extension _ChatGenerationMethods on _ChatScreenState {
         text,
         composerDraft: text,
         clearComposerOnAccept: clearComposerOnAccept,
+      );
+    } catch (error) {
+      Message? acceptedUserMessage;
+      for (final message in _messages.reversed) {
+        if (message.isUser &&
+            message.id != null &&
+            !existingUserMessageIds.contains(message.id)) {
+          acceptedUserMessage = message;
+          break;
+        }
+      }
+
+      final Future<void> Function() retry;
+      if (acceptedUserMessage?.imagePath != null) {
+        final accepted = acceptedUserMessage!;
+        retry = () => _sendImageLocked(
+          accepted.imagePath!,
+          caption: accepted.text,
+          composerDraft: '',
+          clearComposerOnAccept: false,
+          retryUserMessage: accepted,
+        );
+      } else if (acceptedUserMessage != null) {
+        final accepted = acceptedUserMessage;
+        retry = () => _sendMessageLocked(
+          accepted.text,
+          composerDraft: '',
+          clearComposerOnAccept: false,
+          retryUserMessage: accepted,
+        );
+      } else {
+        retry = () => _sendMessageLocked(
+          text,
+          composerDraft: text,
+          clearComposerOnAccept: clearComposerOnAccept,
+        );
+      }
+      _recoverEscapedGenerationFailure(
+        error,
+        generationSerialBefore: generationSerialBefore,
+        retry: retry,
       );
     } finally {
       if (mounted) {
@@ -1685,7 +1773,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
     final conversationId = widget.conversationId;
     // 新窗口第一句話 → 停止舊窗口保活 + 切換緩存會話
     if (_messages.where((m) => m.isUser).isEmpty) {
-      await KeepAliveService.instance.stop();
+      await _stopKeepAliveBeforeFirstMessage();
       if (!mounted) return;
       CacheSession.conversationId = conversationId;
     }
@@ -2925,7 +3013,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
     if (!_isChatReady) return;
     final conversationId = widget.conversationId;
     if (_messages.where((m) => m.isUser).isEmpty) {
-      await KeepAliveService.instance.stop();
+      await _stopKeepAliveBeforeFirstMessage();
       if (!mounted) return;
       CacheSession.conversationId = conversationId;
     }

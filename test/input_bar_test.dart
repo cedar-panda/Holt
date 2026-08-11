@@ -59,6 +59,72 @@ void main() {
     controller.dispose();
   });
 
+  testWidgets('InputBar unlocks an existing draft without leaving the screen', (
+    tester,
+  ) async {
+    final controller = TextEditingController(text: 'send after recovery');
+    var blocked = true;
+    var calls = 0;
+    late StateSetter updateHost;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: StatefulBuilder(
+            builder: (context, setState) {
+              updateHost = setState;
+              return InputBar(
+                externalController: controller,
+                isSendBlocked: blocked,
+                onSend: (_) => calls++,
+              );
+            },
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.byKey(const ValueKey('input_bar_send_button')));
+    expect(calls, 0);
+
+    updateHost(() => blocked = false);
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('input_bar_send_button')));
+
+    expect(calls, 1);
+    expect(controller.text, 'send after recovery');
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    controller.dispose();
+  });
+
+  testWidgets('InputBar follows a replaced external controller', (
+    tester,
+  ) async {
+    final first = TextEditingController();
+    final second = TextEditingController(text: 'replacement draft');
+    var submitted = '';
+
+    Widget build(TextEditingController controller) => MaterialApp(
+      home: Scaffold(
+        body: InputBar(
+          externalController: controller,
+          onSend: (text) => submitted = text,
+        ),
+      ),
+    );
+
+    await tester.pumpWidget(build(first));
+    await tester.pumpWidget(build(second));
+    await tester.tap(find.byKey(const ValueKey('input_bar_send_button')));
+
+    expect(submitted, 'replacement draft');
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    first.dispose();
+    second.dispose();
+  });
+
   testWidgets('InputBar exposes a stop button during response streaming', (
     tester,
   ) async {

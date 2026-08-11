@@ -59,7 +59,10 @@ class DatabaseHelper {
       },
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
-      onOpen: _deduplicateAllStoredSelfNotes,
+      onOpen: (db) async {
+        await _DatabaseSchema._ensureRuntimeSchema(db);
+        await _deduplicateAllStoredSelfNotes(db);
+      },
     );
   }
 
@@ -87,6 +90,11 @@ class DatabaseHelper {
   @visibleForTesting
   static Future<void> upgradeSchemaForTesting(Database db, int oldVersion) {
     return _onUpgrade(db, oldVersion, _dbVersion);
+  }
+
+  @visibleForTesting
+  static Future<void> ensureRuntimeSchemaForTesting(Database db) {
+    return _DatabaseSchema._ensureRuntimeSchema(db);
   }
 
   /// Installs an isolated database for repository tests. Production code never
@@ -1420,8 +1428,7 @@ class DatabaseHelper {
   /// 備份 export/import 前呼叫此方法，避免 _verifyTableManifest 因缺表而拒絕操作。
   static Future<void> ensureAllSchemaTables() async {
     final db = await database;
-    await _DatabaseSchema._createPendingMemoryActionsTable(db);
-    await _DatabaseSchema._createWebSearchUsageTable(db);
+    await _DatabaseSchema._ensureRuntimeSchema(db);
   }
 
   /// BM25 全文搜索記憶。返回按相關度排序的 Memory 列表。
@@ -1435,15 +1442,19 @@ class DatabaseHelper {
   }) async {
     if (query.trim().isEmpty) return [];
     final db = await database;
+    final boundedLimit = limit.clamp(1, 100);
 
-    // 將用戶輸入拆成獨立搜索詞，用 OR 連接（任一詞命中即可）。
-    // FTS5 的 unicode61 tokenizer 會把 CJK 逐字拆分。
+    // unicode61 對拉丁詞有穩定的 BM25 排序，但會把連續 CJK 文本視為
+    // 一整個 token。CJK 另走短片段 fallback，避免把「海邊」錯拆成兩個
+    // 永遠命不中索引的單字。
     final terms = _buildFtsQuery(query);
-    if (terms.isEmpty) return [];
+    final results = <Memory>[];
+    final seenIds = <int>{};
 
-    try {
-      final rows = await db.rawQuery(
-        '''
+    if (terms.isNotEmpty) {
+      try {
+        final rows = await db.rawQuery(
+          '''
         SELECT m.*, bm25(memories_fts, 1.0, 0.5) AS _rank
         FROM memories_fts
         JOIN memories m ON m.id = memories_fts.rowid
@@ -1454,29 +1465,59 @@ class DatabaseHelper {
         ORDER BY _rank
         LIMIT ?
         ''',
-        [terms, mode, characterId, limit],
-      );
-      return rows.map(Memory.fromMap).toList();
-    } catch (e) {
-      // FTS5 不可用時（極罕見）靜默降級，不阻塞主流程
-      developer.log('FTS5 search failed', error: e, name: 'DatabaseHelper');
-      return [];
+          [terms, mode, characterId, boundedLimit],
+        );
+        for (final row in rows) {
+          final memory = Memory.fromMap(row);
+          if (memory.id == null || seenIds.add(memory.id!)) {
+            results.add(memory);
+          }
+        }
+      } catch (e) {
+        developer.log('FTS5 search failed', error: e, name: 'DatabaseHelper');
+      }
     }
+
+    if (results.length < boundedLimit) {
+      final fragments = _buildLikeSearchFragments(query);
+      if (fragments.isNotEmpty) {
+        final clauses = List.filled(
+          fragments.length,
+          "(content LIKE ? ESCAPE '\\' OR triggers LIKE ? ESCAPE '\\')",
+        ).join(' OR ');
+        final args = <Object?>[mode, characterId];
+        for (final fragment in fragments) {
+          final pattern = _likeContains(fragment);
+          args
+            ..add(pattern)
+            ..add(pattern);
+        }
+        args.add(boundedLimit * 3);
+        final rows = await db.rawQuery('''
+          SELECT * FROM memories
+          WHERE mode = ? AND character_id = ? AND status = 'active'
+            AND ($clauses)
+          ORDER BY mention_count DESC, updated_at DESC
+          LIMIT ?
+          ''', args);
+        for (final row in rows) {
+          final memory = Memory.fromMap(row);
+          if (memory.id == null || seenIds.add(memory.id!)) {
+            results.add(memory);
+            if (results.length == boundedLimit) break;
+          }
+        }
+      }
+    }
+    return results;
   }
 
   /// 把用戶輸入轉成 FTS5 MATCH 表達式。
-  /// CJK 字符逐字拆開，其他按空白分詞，用 OR 連接。
-  /// 過濾掉太短的非 CJK token 和 FTS5 保留字元。
+  /// unicode61 的 CJK token 邊界不可靠，這裡只交付適合 BM25 的非 CJK
+  /// 詞；CJK 由 [_buildLikeSearchFragments] 補齊。
   static String _buildFtsQuery(String input) {
     final cjkRe = RegExp(r'[　-ヿ一-鿿＀-￯]');
     final tokens = <String>{};
-
-    for (final char in input.runes) {
-      final s = String.fromCharCode(char);
-      if (cjkRe.hasMatch(s)) {
-        tokens.add(s);
-      }
-    }
 
     // 非 CJK 部分按空白拆詞
     final nonCjk = input.replaceAll(cjkRe, ' ').trim();
@@ -1489,6 +1530,48 @@ class DatabaseHelper {
 
     if (tokens.isEmpty) return '';
     return tokens.map((t) => '"$t"').join(' OR ');
+  }
+
+  static List<String> _buildLikeSearchFragments(String input) {
+    final cjkChar = RegExp(r'[　-ヿ一-鿿＀-￯]');
+    final fragments = <String>{};
+    var cjkRun = <String>[];
+
+    void flushCjkRun() {
+      if (cjkRun.isEmpty) return;
+      if (cjkRun.length <= 3) {
+        fragments.add(cjkRun.join());
+      } else {
+        for (var i = 0; i <= cjkRun.length - 3; i++) {
+          fragments.add(cjkRun.sublist(i, i + 3).join());
+          if (fragments.length >= 12) break;
+        }
+      }
+      cjkRun = <String>[];
+    }
+
+    for (final rune in input.runes) {
+      final char = String.fromCharCode(rune);
+      if (cjkChar.hasMatch(char)) {
+        cjkRun.add(char);
+      } else {
+        flushCjkRun();
+      }
+      if (fragments.length >= 12) break;
+    }
+    flushCjkRun();
+
+    if (fragments.length < 12) {
+      final nonCjk = input.replaceAll(cjkChar, ' ');
+      for (final rawWord in nonCjk.split(RegExp(r'\s+'))) {
+        final word = rawWord
+            .replaceAll(RegExp(r'["\*\(\)\{\}\[\]:\^~]'), '')
+            .trim();
+        if (word.length >= 3) fragments.add(word);
+        if (fragments.length >= 12) break;
+      }
+    }
+    return fragments.where((fragment) => fragment.isNotEmpty).toList();
   }
 
   // 記憶操作（帶角色過濾）

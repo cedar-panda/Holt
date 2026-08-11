@@ -79,11 +79,10 @@ class InputBar extends StatefulWidget {
 }
 
 class _InputBarState extends State<InputBar> with TickerProviderStateMixin {
-  late final TextEditingController _controller;
+  late TextEditingController _controller;
   final FocusNode _focusNode = FocusNode();
   bool _ownsController = false;
   final ImagePicker _picker = ImagePicker();
-  bool _hasText = false;
   bool _menuOpen = false;
 
   // ═══ 葉子動效 ═══
@@ -105,9 +104,6 @@ class _InputBarState extends State<InputBar> with TickerProviderStateMixin {
       _controller = TextEditingController();
       _ownsController = true;
     }
-    _hasText = _controller.text.trim().isNotEmpty;
-    _controller.addListener(_handleControllerChanged);
-
     // 待機搖擺：持續循環
     _swayCtrl = AnimationController(
       vsync: this,
@@ -205,21 +201,29 @@ class _InputBarState extends State<InputBar> with TickerProviderStateMixin {
   }
 
   @override
+  void didUpdateWidget(covariant InputBar oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (identical(oldWidget.externalController, widget.externalController)) {
+      return;
+    }
+
+    if (_ownsController) _controller.dispose();
+    if (widget.externalController != null) {
+      _controller = widget.externalController!;
+      _ownsController = false;
+    } else {
+      _controller = TextEditingController();
+      _ownsController = true;
+    }
+  }
+
+  @override
   void dispose() {
-    _controller.removeListener(_handleControllerChanged);
     if (_ownsController) _controller.dispose();
     _focusNode.dispose();
     _swayCtrl.dispose();
     _sendCtrl.dispose();
     super.dispose();
-  }
-
-  void _handleControllerChanged() {
-    if (!mounted) return;
-    final hasText = _controller.text.trim().isNotEmpty;
-    if (hasText != _hasText) {
-      setState(() => _hasText = hasText);
-    }
   }
 
   void _handleSend() {
@@ -565,92 +569,105 @@ class _InputBarState extends State<InputBar> with TickerProviderStateMixin {
                               ),
                             )
                           else
-                            GestureDetector(
-                              key: const ValueKey('input_bar_send_button'),
-                              onTap:
-                                  (_hasText || widget.hasPendingContent) &&
-                                      !widget.isSendBlocked
-                                  ? _handleSend
-                                  : null,
-                              child: AnimatedBuilder(
-                                animation: Listenable.merge([
-                                  _swayCtrl,
-                                  _sendCtrl,
-                                ]),
-                                builder: (_, _) {
-                                  final isSending = _sendCtrl.isAnimating;
-                                  final showBtn =
-                                      (_hasText || widget.hasPendingContent) &&
-                                      !widget.isSendBlocked;
-                                  return AnimatedOpacity(
-                                    opacity: showBtn ? 1.0 : 0.4,
-                                    duration: const Duration(milliseconds: 200),
-                                    child: Transform.translate(
-                                      offset: isSending
-                                          ? _sendOffset.value
-                                          : Offset.zero,
-                                      child: Opacity(
-                                        opacity: isSending
-                                            ? _sendOpacity.value
-                                            : 1.0,
-                                        child: Transform.rotate(
-                                          angle: isSending
-                                              ? _sendRotation.value
-                                              : _swayAnim.value,
-                                          child: Transform.scale(
-                                            scale: isSending
-                                                ? _sendScale.value
+                            AnimatedBuilder(
+                              animation: Listenable.merge([
+                                _controller,
+                                _swayCtrl,
+                                _sendCtrl,
+                              ]),
+                              builder: (_, _) {
+                                final hasText = _controller.text
+                                    .trim()
+                                    .isNotEmpty;
+                                return GestureDetector(
+                                  key: const ValueKey('input_bar_send_button'),
+                                  onTap:
+                                      (hasText || widget.hasPendingContent) &&
+                                          !widget.isSendBlocked
+                                      ? _handleSend
+                                      : null,
+                                  child: Builder(
+                                    builder: (_) {
+                                      final isSending = _sendCtrl.isAnimating;
+                                      final showBtn =
+                                          (hasText ||
+                                              widget.hasPendingContent) &&
+                                          !widget.isSendBlocked;
+                                      return AnimatedOpacity(
+                                        opacity: showBtn ? 1.0 : 0.4,
+                                        duration: const Duration(
+                                          milliseconds: 200,
+                                        ),
+                                        child: Transform.translate(
+                                          offset: isSending
+                                              ? _sendOffset.value
+                                              : Offset.zero,
+                                          child: Opacity(
+                                            opacity: isSending
+                                                ? _sendOpacity.value
                                                 : 1.0,
-                                            child: Container(
-                                              width: 45,
-                                              height: 45,
-                                              margin: const EdgeInsets.only(
-                                                bottom: 1,
-                                              ),
-                                              decoration: BoxDecoration(
-                                                color: YanciTheme.accent
-                                                    .withValues(
-                                                      alpha: showBtn
-                                                          ? 0.85
-                                                          : 0.3,
-                                                    ),
-                                                shape: BoxShape.circle,
-                                                boxShadow: showBtn
-                                                    ? [
-                                                        BoxShadow(
-                                                          color: YanciTheme
-                                                              .accent
-                                                              .withValues(
-                                                                alpha: 0.2,
-                                                              ),
-                                                          blurRadius: 8,
-                                                          offset: const Offset(
-                                                            0,
-                                                            2,
-                                                          ),
+                                            child: Transform.rotate(
+                                              angle: isSending
+                                                  ? _sendRotation.value
+                                                  : _swayAnim.value,
+                                              child: Transform.scale(
+                                                scale: isSending
+                                                    ? _sendScale.value
+                                                    : 1.0,
+                                                child: Container(
+                                                  width: 45,
+                                                  height: 45,
+                                                  margin: const EdgeInsets.only(
+                                                    bottom: 1,
+                                                  ),
+                                                  decoration: BoxDecoration(
+                                                    color: YanciTheme.accent
+                                                        .withValues(
+                                                          alpha: showBtn
+                                                              ? 0.85
+                                                              : 0.3,
                                                         ),
-                                                      ]
-                                                    : null,
-                                              ),
-                                              child: Center(
-                                                child: Image.asset(
-                                                  widget.sendStyle ==
-                                                          SendButtonStyle.leaf
-                                                      ? 'assets/images/send_leaf.png'
-                                                      : 'assets/images/send_paw.png',
-                                                  width: 32,
-                                                  height: 32,
-                                                  fit: BoxFit.contain,
+                                                    shape: BoxShape.circle,
+                                                    boxShadow: showBtn
+                                                        ? [
+                                                            BoxShadow(
+                                                              color: YanciTheme
+                                                                  .accent
+                                                                  .withValues(
+                                                                    alpha: 0.2,
+                                                                  ),
+                                                              blurRadius: 8,
+                                                              offset:
+                                                                  const Offset(
+                                                                    0,
+                                                                    2,
+                                                                  ),
+                                                            ),
+                                                          ]
+                                                        : null,
+                                                  ),
+                                                  child: Center(
+                                                    child: Image.asset(
+                                                      widget.sendStyle ==
+                                                              SendButtonStyle
+                                                                  .leaf
+                                                          ? 'assets/images/send_leaf.png'
+                                                          : 'assets/images/send_paw.png',
+                                                      width: 32,
+                                                      height: 32,
+                                                      fit: BoxFit.contain,
+                                                    ),
+                                                  ),
                                                 ),
                                               ),
                                             ),
                                           ),
                                         ),
-                                      ),
-                                    ),
-                                  );
-                                },
-                              ),
+                                      );
+                                    },
+                                  ),
+                                );
+                              },
                             ),
                         ],
                       ),
