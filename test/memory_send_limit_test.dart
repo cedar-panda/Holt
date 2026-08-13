@@ -7,7 +7,7 @@ void main() {
 
   setUp(() => SharedPreferences.setMockInitialValues({}));
 
-  test('memory send limit defaults to 10 and clamps to 1..500', () async {
+  test('memory send limit defaults to 5 and clamps to 1..500', () async {
     expect(
       await MemorySettings.getMemorySendLimit(),
       MemorySettings.defaultMemorySendLimit,

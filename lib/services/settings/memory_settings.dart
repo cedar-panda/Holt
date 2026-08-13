@@ -185,7 +185,7 @@ class MemorySettings {
 
   // ═══ 每輪記憶發送條數上限 ═══
   static const String _keyMemorySendLimit = 'memory_send_limit_v1';
-  static const int defaultMemorySendLimit = 10;
+  static const int defaultMemorySendLimit = 5;
   static const int maxMemorySendLimit = 500;
 
   static Future<int> getMemorySendLimit() async {

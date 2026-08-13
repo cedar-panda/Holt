@@ -560,7 +560,7 @@ class _MemoryScreenState extends State<MemoryScreen>
                 ),
                 Wrap(
                   spacing: 8,
-                  children: [10, 25, 50, 100, 500]
+                  children: [10, 25, 50, 100]
                       .map(
                         (preset) => ChoiceChip(
                           label: Text('$preset'),
