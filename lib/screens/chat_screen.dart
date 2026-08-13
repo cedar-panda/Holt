@@ -1567,8 +1567,11 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Widget _buildMessageList() {
-    final hasStreamingBubble = _streamingText.isNotEmpty;
     final hasWebSearchActivity = _webSearchActivity != null;
+    // Search owns the pending assistant surface. The model's tool-call preface
+    // must not appear as a second bubble above Thinking/search status.
+    final hasStreamingBubble =
+        _streamingText.isNotEmpty && !hasWebSearchActivity;
     final pendingWebSearchTrace = _pendingWebSearchResult?.toDisplayTrace();
     // Web search owns the active Thinking surface. Avoid rendering the generic
     // atom above it, which otherwise looks like an empty assistant bubble.
