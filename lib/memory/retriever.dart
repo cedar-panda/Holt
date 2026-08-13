@@ -75,7 +75,7 @@ class Retriever {
       '情绪' ||
       'long-term emotion' ||
       'long term emotion' ||
-      'emotion' => L.pick(en: 'Long-term Emotion', zhTW: '長期情緒'),
+      'emotion' => L.pick(en: 'Important Event', zhTW: '重要事件'),
       '偏好' => L.pick(en: 'Preference', zhTW: '偏好'),
       '約定' || '约定' || 'promise' => L.pick(en: 'Promise', zhTW: '約定'),
       '重要事件' ||
@@ -330,9 +330,7 @@ class Retriever {
         if (mem.id != null && seen.contains(mem.id)) continue;
         if (tryInject(mem)) {
           ftsInjected++;
-          injectionLog.add(
-            '🔎 全文命中 #${mem.id} [${mem.category}]',
-          );
+          injectionLog.add('🔎 全文命中 #${mem.id} [${mem.category}]');
         }
       }
       if (ftsInjected > 0) {

@@ -441,9 +441,9 @@ class _ChatScreenState extends State<ChatScreen> {
         _isLoading = false;
         _initializationFailed = false;
       });
-      _scrollToBottom();
+      _scrollToBottom(force: true);
       Future.delayed(const Duration(milliseconds: 100), () {
-        if (mounted) _scrollToBottom();
+        if (mounted) _scrollToBottom(force: true);
       });
       // 分支對話：帶進來的編輯文本自動發出（走完整管線）
       final autoSend = widget.initialAutoSendText?.trim();
@@ -1831,10 +1831,10 @@ class _ChatScreenState extends State<ChatScreen> {
       child: RawScrollbar(
         controller: _scrollController,
         interactive: true,
-        thickness: 5,
-        minThumbLength: 72.0,
-        radius: const Radius.circular(8),
-        thumbColor: YanciTheme.accent.withValues(alpha: 0.38),
+        thickness: 8,
+        minThumbLength: 96.0,
+        radius: const Radius.circular(10),
+        thumbColor: YanciTheme.accent.withValues(alpha: 0.55),
         child: ListView.builder(
           controller: _scrollController,
           physics: const ClampingScrollPhysics(

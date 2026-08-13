@@ -55,30 +55,24 @@ void main() {
     expect(point('戏谑').type, '戲謔');
   });
 
-  test(
-    'memo prompts distinguish long-term emotion from emotion points',
-    () async {
-      await L.setLocale('zh_TW');
-      final memoryPrompt = MemoryActions.abilityPrompt();
-      final spiderPrompt = await SpiderWebService.abilityPrompt(
-        userNickname: '昭昭',
-        characterId: 'char',
-        characterName: '晏辭',
-      );
+  test('memo prompts omit the retired long-term emotion label', () async {
+    await L.setLocale('zh_TW');
+    final memoryPrompt = MemoryActions.abilityPrompt();
+    final spiderPrompt = await SpiderWebService.abilityPrompt(
+      userNickname: '昭昭',
+      characterId: 'char',
+      characterName: '晏辭',
+    );
 
-      for (final prompt in [memoryPrompt, spiderPrompt]) {
-        expect(prompt, contains('類別：長期情緒'));
-        expect(prompt, contains('長期情緒只記錄「這種感受在未來仍然重要」的內容'));
-      }
-      expect(spiderPrompt, contains('情緒打點不是長期記憶'));
+    for (final prompt in [memoryPrompt, spiderPrompt]) {
+      expect(prompt, isNot(contains('類別：長期情緒')));
+      expect(prompt, isNot(contains('長期情緒只記錄')));
+    }
+    expect(spiderPrompt, contains('情緒打點不是長期記憶'));
 
-      await L.setLocale('en');
-      final englishPrompt = MemoryActions.abilityPrompt();
-      expect(englishPrompt, contains('Categories: Long-term Emotion'));
-      expect(
-        englishPrompt,
-        contains('this feeling will still matter in the future'),
-      );
-    },
-  );
+    await L.setLocale('en');
+    final englishPrompt = MemoryActions.abilityPrompt();
+    expect(englishPrompt, isNot(contains('Categories: Long-term Emotion')));
+    expect(englishPrompt, isNot(contains('this feeling will still matter')));
+  });
 }

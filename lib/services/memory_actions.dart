@@ -127,8 +127,7 @@ class MemoryActions {
     if (L.locale == 'en') {
       return '''■ Memory
   <memo>[Category] Content @trigger1,trigger2</memo>
-  Categories: Long-term Emotion | Preference | Promise | Important Event
-  Long-term Emotion only records content where "this feeling will still matter in the future." Do not use it for passing reactions from the current turn.
+      Categories: Preference | Promise | Important Event
   Preference: Only record truly meaningful preferences.
   Write in third person: use your character name and "$name". Example: "$name kissed $charName yesterday".
   Max 2 triggers, pick the most relevant words.
@@ -149,8 +148,7 @@ class MemoryActions {
       zhTW:
           '''■ 記憶
   <memo>[類別] 內容 @觸發詞1,觸發詞2</memo>
-  類別：長期情緒｜偏好｜約定｜重要事件
-  長期情緒只記錄「這種感受在未來仍然重要」的內容。當輪的短暫反應不要寫成長期情緒。
+  類別：偏好｜約定｜重要事件
   偏好：只記真正有意義的偏好。
   建議用第三人稱記錄，如「$name昨天親了$charName」。
   觸發詞最多 2 個，選關聯性最高的詞。
@@ -415,7 +413,7 @@ class MemoryActions {
       '长期情绪' ||
       '情绪' ||
       '長期情緒' ||
-      '情緒' => '長期情緒',
+      '情緒' => '重要事件',
       'preference' => '偏好',
       'promise' || '约定' => '約定',
       'important event' || '重要事件' => '重要事件',

@@ -16,6 +16,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
         if (!mounted || !_isGenerating) return;
         _streamSurfaceVisible = true;
         _refreshChatState(() {});
+        _scrollToBottom();
         _startStreamPopTimer();
       });
       _generationForegroundEndTimer?.cancel();
