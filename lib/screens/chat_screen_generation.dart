@@ -1977,6 +1977,9 @@ extension _ChatGenerationMethods on _ChatScreenState {
       );
     }
 
+    // 每輪動態注入，避免改動角色靜態 prompt 與既有 provider cache。
+    dynamicParts.add(EmailDraftTool.runtimeInstruction());
+
     // 情緒狀態（已提前發射）
     final emoState = await emoStateF;
     if (emoState.isNotEmpty) dynamicParts.add(emoState);
@@ -2699,6 +2702,9 @@ extension _ChatGenerationMethods on _ChatScreenState {
         }
       }
 
+      var emailDraftExtraction = EmailDraftTool.extract(processedText);
+      EmailDraft? pendingEmailDraft = emailDraftExtraction.draft;
+      processedText = emailDraftExtraction.visibleText;
       processedText = _extractXPostAndStrip(processedText);
 
       final webSearchQuery = !preflightSearchExecuted
@@ -2735,6 +2741,11 @@ extension _ChatGenerationMethods on _ChatScreenState {
         }
       }
 
+      // 搜尋後的二次回覆也可產生草稿，並保證協議標籤不進聊天文字。
+      emailDraftExtraction = EmailDraftTool.extract(processedText);
+      pendingEmailDraft = emailDraftExtraction.draft ?? pendingEmailDraft;
+      processedText = emailDraftExtraction.visibleText;
+
       // ═══ 記憶過程日誌：只記寫入本地的操作 ═══
       // （注入給模型的內容不顯示——那是給她看的，不是給你看的）
       final memLogLines = <String>[
@@ -2762,6 +2773,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
         cacheHit: cacheRead > 0,
         memoryLog: memLog,
         webSearchTrace: completedWebSearchTrace,
+        emailDraft: pendingEmailDraft,
       );
       final insertedId = await DatabaseHelper.insertMessage(aiMsg);
       await _bindMemoryProposalsToMessage(insertedId);
@@ -2785,6 +2797,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
         imagePath: aiMsg.imagePath,
         memoryLog: aiMsg.memoryLog,
         webSearchTrace: aiMsg.webSearchTrace,
+        emailDraft: aiMsg.emailDraft,
       );
 
       // 記錄命中的 messageId
@@ -3123,6 +3136,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
         content: _timePrompt(now),
       ),
     ];
+    dynamicParts.add(EmailDraftTool.runtimeInstruction());
     final controlParts = <String>[];
     final turnEffects = DeferredPromptBatch()..add(memoryPrompt);
     if (memoryPrompt.isNotEmpty) {
@@ -3609,6 +3623,9 @@ extension _ChatGenerationMethods on _ChatScreenState {
         drawPrompt = drawMatch.group(1)!.trim();
       }
 
+      final emailDraftExtraction = EmailDraftTool.extract(processedText);
+      final pendingEmailDraft = emailDraftExtraction.draft;
+      processedText = emailDraftExtraction.visibleText;
       processedText = _extractXPostAndStrip(processedText);
 
       // ═══ 記憶過程日誌：只記寫入本地的操作 ═══
@@ -3631,6 +3648,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
         splitMode: _splitReply,
         cacheHit: imgCacheRead > 0,
         memoryLog: memLog,
+        emailDraft: pendingEmailDraft,
       );
       final imgAiId = await DatabaseHelper.insertMessage(aiMsg);
       await _bindMemoryProposalsToMessage(imgAiId);
@@ -3652,6 +3670,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
         createdAt: aiMsg.createdAt,
         imagePath: aiMsg.imagePath,
         memoryLog: aiMsg.memoryLog,
+        emailDraft: aiMsg.emailDraft,
       );
 
       if (imgCacheRead > 0 && mounted) {

@@ -25,6 +25,21 @@ lib/widgets/web_search_thinking_node.dart        ← Thinking > Web Search 狀�
 搜尋證據只存在於單次 request，不加入 prompt cache、聊天歷史或本地資料庫；
 來源列只顯示標題與網域，不提供展開、預覽或開啟網站的操作。
 
+本機郵件草稿同樣拆檔，避免繼續堆高聊天室主檔：
+
+```text
+lib/models/email_draft.dart                   ← 草稿資料、清理與序列化
+lib/services/email_draft_tool.dart            ← 動態提示與模型標籤解析
+lib/services/email_draft_repository.dart      ← 草稿隨訊息本機持久化
+lib/services/email_draft_launcher.dart        ← mailto 交接系統郵件 App
+lib/screens/chat_screen_email_drafts.dart      ← 編輯、刪除、打開與狀態同步
+lib/widgets/email_draft_card.dart              ← 聊天氣泡下方的草稿卡與編輯器
+```
+
+郵件工具提示每輪放在動態區，不改既有靜態 prompt cache；草稿欄位是訊息 UI
+metadata，`Message.toPromptHistoryEntry()` 明確不會把它帶回模型。App 不接觸
+Gmail 帳號或 OAuth，也不會自行寄送；只有用戶點擊後才以 `mailto:` 打開郵件 App。
+
 `database_memory_search.dart` 從超過 3000 行的 `database.dart` 拆出全文搜尋；
 支援 FTS5 的平台使用 SQLite 原生 BM25，Android 系統缺少 FTS5 時改用 FTS4
 統計計算 BM25，不需要更換主資料庫或複製業務 CRUD。

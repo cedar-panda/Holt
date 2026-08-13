@@ -39,6 +39,7 @@ class _DatabaseSchema {
         split_mode INTEGER DEFAULT 0,
         memory_log TEXT DEFAULT '',
         web_search_trace_json TEXT DEFAULT '',
+        email_draft_json TEXT DEFAULT '',
         cache_hit INTEGER DEFAULT 0,
         status TEXT NOT NULL DEFAULT '',
         created_at TEXT NOT NULL,
@@ -78,6 +79,12 @@ class _DatabaseSchema {
         db,
         'messages',
         'web_search_trace_json',
+        "TEXT DEFAULT ''",
+      );
+      await _safeAddColumn(
+        db,
+        'messages',
+        'email_draft_json',
         "TEXT DEFAULT ''",
       );
     }
@@ -1037,6 +1044,14 @@ class _DatabaseSchema {
         db,
         'messages',
         'web_search_trace_json',
+        "TEXT DEFAULT ''",
+      );
+    }
+    if (oldVersion < 46 && await _tableExists(db, 'messages')) {
+      await _safeAddColumn(
+        db,
+        'messages',
+        'email_draft_json',
         "TEXT DEFAULT ''",
       );
     }

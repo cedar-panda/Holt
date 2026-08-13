@@ -30,6 +30,7 @@ import '../services/sticker_service.dart';
 import '../services/image_service.dart';
 import '../memory/database.dart';
 import '../models/web_search_trace.dart';
+import '../models/email_draft.dart';
 import '../memory/retriever.dart';
 import '../services/bio_clock_service.dart';
 import '../services/shop_service.dart';
@@ -42,6 +43,9 @@ import '../services/web_search_follow_up.dart';
 import '../services/web_search_service.dart';
 import '../services/web_search_tool_bridge.dart';
 import '../services/web_search_turn_coordinator.dart';
+import '../services/email_draft_launcher.dart';
+import '../services/email_draft_repository.dart';
+import '../services/email_draft_tool.dart';
 import '../services/x_post_service.dart';
 import '../services/x_post_settings.dart';
 import '../services/character_timeline_service.dart';
@@ -65,6 +69,7 @@ import '../widgets/memory_review_tab.dart';
 import '../widgets/web_search_activity_card.dart';
 import '../widgets/web_search_result_card.dart';
 import '../widgets/web_search_thinking_node.dart';
+import '../widgets/email_draft_card.dart';
 import 'call_screen.dart';
 import 'manual_summary_clean_screen.dart';
 import '../services/call_audio_pipeline.dart';
@@ -74,6 +79,7 @@ import '../services/dream_curation_service.dart';
 part 'chat_screen_generation.dart';
 part 'chat_screen_actions.dart';
 part 'chat_screen_web_search_follow_up.dart';
+part 'chat_screen_email_drafts.dart';
 
 const String _chatSearchToolName = 'chat.search';
 
@@ -301,13 +307,13 @@ class _ChatScreenState extends State<ChatScreen> {
     caseSensitive: false,
   );
   static final _completedTagRe = RegExp(
-    r'<(emo|emo_resolve|memo|memo_del|memo_merge|memo_update|memo_link|force_recall|persona_note|draw|clock|clock_keep|clock_update|clock_del|life_fix|home|whisper|search_chat|search_web|call|scratch|transfer|transfer_accept|transfer_decline|x_post|pack_star)\b[^>]*>'
+    r'<(emo|emo_resolve|memo|memo_del|memo_merge|memo_update|memo_link|force_recall|persona_note|draw|clock|clock_keep|clock_update|clock_del|life_fix|home|whisper|search_chat|search_web|call|scratch|transfer|transfer_accept|transfer_decline|x_post|pack_star|email_draft)\b[^>]*>'
     r'[\s\S]*?'
     r'</\1>',
     multiLine: true,
   );
   static final _openTagRe = RegExp(
-    r'<(emo|emo_resolve|memo|memo_del|memo_merge|memo_update|memo_link|force_recall|persona_note|draw|clock|clock_keep|clock_update|clock_del|life_fix|home|whisper|search_chat|search_web|call|scratch|transfer|transfer_accept|transfer_decline|buy|x_post|shop_view|pack_star|sign_marriage|propose_marriage)\b[\s\S]*$',
+    r'<(emo|emo_resolve|memo|memo_del|memo_merge|memo_update|memo_link|force_recall|persona_note|draw|clock|clock_keep|clock_update|clock_del|life_fix|home|whisper|search_chat|search_web|call|scratch|transfer|transfer_accept|transfer_decline|buy|x_post|shop_view|pack_star|sign_marriage|propose_marriage|email_draft)\b[\s\S]*$',
   );
 
   static final _scratchTagRe = RegExp(
@@ -1676,6 +1682,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   ? _webSearchResultsByMessageId[msg.id]
                   : null,
               webSearchTrace: isLast ? msg.webSearchTrace : null,
+              emailDraft: isLast ? msg.emailDraft : null,
               // 她遞的證書卡跟在拆分回覆的最後一段
               hasMarriageCert: isLast && splitHasCert,
               certFromChar: isLast && splitHasCert,
@@ -1708,6 +1715,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 ? _webSearchResultsByMessageId[msg.id]
                 : null,
             webSearchTrace: msg.isUser ? null : msg.webSearchTrace,
+            emailDraft: msg.isUser ? null : msg.emailDraft,
             giftName: giftMatch?.group(1)?.trim(),
             giftAccepted: giftMatch != null && charReplyAfter[srcIdx],
             hasMarriageCert:
@@ -1973,14 +1981,32 @@ class _ChatScreenState extends State<ChatScreen> {
                   : WebSearchFollowUp.geminiDisplayResultFor(
                       item.webSearchResult!,
                     );
-              if (geminiDisplayResult == null) return bubble;
+              final attachments = <Widget>[];
+              final emailDraft = item.emailDraft;
+              if (emailDraft != null && item.dbMessageId != null) {
+                attachments.add(
+                  EmailDraftCard(
+                    draft: emailDraft,
+                    showAvatar: _showChatAvatar,
+                    onEdit: () => unawaited(
+                      _editEmailDraft(item.dbMessageId!, emailDraft),
+                    ),
+                    onOpen: () => unawaited(_openEmailDraft(emailDraft)),
+                    onDelete: () =>
+                        unawaited(_deleteEmailDraft(item.dbMessageId!)),
+                  ),
+                );
+              }
+              if (geminiDisplayResult != null) {
+                attachments.add(
+                  WebSearchResultCard(result: geminiDisplayResult),
+                );
+              }
+              if (attachments.isEmpty) return bubble;
               return Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: <Widget>[
-                  bubble,
-                  WebSearchResultCard(result: geminiDisplayResult),
-                ],
+                children: <Widget>[bubble, ...attachments],
               );
             } else if (showAtom && index == displayItems.length) {
               return Padding(
@@ -2524,6 +2550,9 @@ class _DisplayItem {
   /// 可持久化的最小顯示紀錄；重新進入對話後仍能重建 Thinking。
   final WebSearchDisplayTrace? webSearchTrace;
 
+  /// 模型產生、用戶可編輯的本機郵件草稿；永不進提示詞。
+  final EmailDraft? emailDraft;
+
   /// 非空 → 這項渲染成居中分割線（通話已結束等），不渲染氣泡
   final String? callDivider;
 
@@ -2555,6 +2584,7 @@ class _DisplayItem {
     this.hasUnreadMemoryActions = false,
     this.webSearchResult,
     this.webSearchTrace,
+    this.emailDraft,
     this.showToolbar = true,
     this.cacheHit = false,
     this.incomplete = false,

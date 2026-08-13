@@ -1,3 +1,4 @@
+import 'email_draft.dart';
 import 'web_search_trace.dart';
 
 /// 訊息資料模型（帶角色綁定）
@@ -27,6 +28,7 @@ class Message {
   /// 記憶過程日誌（本輪注入/寫入/刪除/合併的可視記錄）
   final String memoryLog;
   final WebSearchDisplayTrace? webSearchTrace;
+  final EmailDraft? emailDraft;
   final DateTime createdAt;
 
   Message({
@@ -41,6 +43,7 @@ class Message {
     this.status = statusComplete,
     this.memoryLog = '',
     this.webSearchTrace,
+    this.emailDraft,
     DateTime? createdAt,
   }) : createdAt = createdAt ?? DateTime.now();
 
@@ -57,6 +60,7 @@ class Message {
       'status': status,
       'memory_log': memoryLog,
       'web_search_trace_json': webSearchTrace?.encode() ?? '',
+      'email_draft_json': emailDraft?.encode() ?? '',
       'created_at': createdAt.toIso8601String(),
     };
   }
@@ -76,6 +80,7 @@ class Message {
       webSearchTrace: WebSearchDisplayTrace.decode(
         map['web_search_trace_json'] as String?,
       ),
+      emailDraft: EmailDraft.decode(map['email_draft_json'] as String?),
       createdAt: DateTime.parse(map['created_at'] as String),
     );
   }

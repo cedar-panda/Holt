@@ -32,12 +32,13 @@ void main() {
     () async {
       await DatabaseHelper.createSchemaForTesting(db);
 
-      expect(DatabaseHelper.schemaVersionForTesting, 45);
+      expect(DatabaseHelper.schemaVersionForTesting, 46);
       expect(await _columnNames(db, 'messages'), contains('status'));
       expect(
         await _columnNames(db, 'messages'),
         contains('web_search_trace_json'),
       );
+      expect(await _columnNames(db, 'messages'), contains('email_draft_json'));
       expect(await _columnNames(db, 'characters'), contains('bio_clock'));
       expect(
         await _columnNames(db, 'characters'),
@@ -351,6 +352,23 @@ void main() {
       expect(row['web_search_trace_json'], '');
     },
   );
+
+  test('v46 adds local email drafts without rewriting existing rows', () async {
+    await db.execute('''
+      CREATE TABLE messages (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        text TEXT NOT NULL
+      )
+    ''');
+    await db.insert('messages', <String, Object?>{'text': 'legacy reply'});
+
+    await DatabaseHelper.upgradeSchemaForTesting(db, 45);
+
+    expect(await _columnNames(db, 'messages'), contains('email_draft_json'));
+    final row = (await db.query('messages')).single;
+    expect(row['text'], 'legacy reply');
+    expect(row['email_draft_json'], '');
+  });
 
   test('v38 backfills the automatic summary message cursor', () async {
     await DatabaseHelper.createSchemaForTesting(db);

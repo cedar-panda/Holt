@@ -28,7 +28,7 @@ class DatabaseHelper {
   static Future<Database>? _dbInitFuture;
   static Future<Database> Function() _databaseInitializer = _initDatabase;
   static const String _dbName = 'yanci.db';
-  static const int _dbVersion = 45;
+  static const int _dbVersion = 46;
   static final Random _windowIdRandom = Random.secure();
 
   static Future<Database> get database async {
