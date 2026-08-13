@@ -233,7 +233,11 @@ class _InputBarState extends State<InputBar> with TickerProviderStateMixin {
     _sendCtrl.forward(from: 0.0);
     widget.onSend(text);
     if (widget.sendStyle == SendButtonStyle.leaf) {
-      _focusNode.unfocus();
+      // Let the send callback commit its first UI frame before the IME hide
+      // animation starts; doing both synchronously causes a frame spike.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _focusNode.unfocus();
+      });
     }
   }
 
