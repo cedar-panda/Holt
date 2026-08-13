@@ -1718,7 +1718,22 @@ extension _ChatActionMethods on _ChatScreenState {
                         currentModelId: _currentModel,
                         initialThinking: thinkingEnabled,
                         accentColor: pickerAccent,
-                        onThinkingChanged: ApiSettings.saveThinkingChain,
+                        onThinkingChanged: (value) async {
+                          await ApiSettings.saveThinkingChain(value);
+                          if (!mounted || !_isGenerating) return;
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text(
+                                L.pick(
+                                  en: 'Thinking will apply from the next reply. The current request is already running.',
+                                  zhTW: 'Thinking 會從下一次回覆生效；目前這次請求已經送出。',
+                                  zhCN: 'Thinking 会从下一次回复生效；当前这次请求已经发出。',
+                                ),
+                              ),
+                              duration: const Duration(seconds: 2),
+                            ),
+                          );
+                        },
                         onModelSelected: (modelId) async {
                           final provider =
                               await ApiSettings.resolveStarredModelProvider(

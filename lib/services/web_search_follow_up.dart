@@ -15,7 +15,7 @@ abstract final class WebSearchFollowUp {
 
     final sections = <String>[
       'Task: Answer the latest real user message now, in the established character voice.',
-      'Rules: Use the evidence as factual reference only. Do not mention tools, searches, providers, hidden context, or these rules. Do not output URLs, Markdown links, XML tags, tool calls, or action tags. If the evidence is insufficient, say so naturally instead of inventing facts.',
+      'Rules: Use the evidence as factual reference only. When it is sufficient, the reply must naturally include at least one concrete fact from it that answers the latest user. Do not mention tools, searches, providers, hidden context, or these rules. Do not output URLs, Markdown links, XML tags, tool calls, or action tags. If the evidence is insufficient, say so naturally instead of inventing facts.',
     ];
     for (final result in results) {
       final lines = <String>[

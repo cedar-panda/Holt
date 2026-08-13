@@ -232,12 +232,11 @@ class _ChatBubbleState extends State<ChatBubble>
       ),
     );
 
-    if (widget.captureMode) {
-      _entryCtrl.value = 1;
-    } else {
-      _entryCtrl.forward();
-      _checkSaved();
-    }
+    // Keep the expensive message subtree settled. The lightweight outer
+    // transition in build animates only opacity/translation and reuses it as
+    // a child instead of rebuilding Markdown, images and avatars every frame.
+    _entryCtrl.value = 1;
+    if (!widget.captureMode) _checkSaved();
   }
 
   Future<void> _checkSaved() async {
@@ -698,7 +697,7 @@ class _ChatBubbleState extends State<ChatBubble>
       return const SizedBox.shrink();
     }
 
-    return AnimatedBuilder(
+    final settledContent = AnimatedBuilder(
       animation: _entryCtrl,
       builder: (context, _) {
         final origin = widget.isUser
@@ -1155,6 +1154,24 @@ class _ChatBubbleState extends State<ChatBubble>
           ),
         );
       },
+    );
+    if (widget.captureMode) return settledContent;
+
+    final reduceMotion = MediaQuery.disableAnimationsOf(context);
+    return TweenAnimationBuilder<double>(
+      tween: Tween<double>(begin: 0, end: 1),
+      duration: reduceMotion
+          ? Duration.zero
+          : const Duration(milliseconds: 180),
+      curve: Curves.easeOutCubic,
+      child: RepaintBoundary(child: settledContent),
+      builder: (context, value, child) => Opacity(
+        opacity: value,
+        child: Transform.translate(
+          offset: Offset(0, (1 - value) * 6),
+          child: child,
+        ),
+      ),
     );
   }
 

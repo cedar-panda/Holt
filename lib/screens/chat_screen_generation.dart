@@ -7,9 +7,25 @@ extension _ChatGenerationMethods on _ChatScreenState {
     if (_isGenerating == v) return;
     _isGenerating = v;
     if (v) {
-      unawaited(GenerationForegroundGuard.begin());
+      _generationForegroundEndTimer?.cancel();
+      _generationForegroundStartTimer?.cancel();
+      // Starting the Android foreground isolate is expensive. Let the IME and
+      // outgoing-bubble transition finish before doing that work.
+      _generationForegroundStartTimer = Timer(
+        const Duration(milliseconds: 600),
+        () {
+          if (_isGenerating) unawaited(GenerationForegroundGuard.begin());
+        },
+      );
     } else {
-      unawaited(GenerationForegroundGuard.end());
+      _generationForegroundStartTimer?.cancel();
+      _generationForegroundEndTimer?.cancel();
+      // Likewise, do not tear down the service in the same frame that inserts
+      // the completed assistant bubble.
+      _generationForegroundEndTimer = Timer(
+        const Duration(milliseconds: 220),
+        () => unawaited(GenerationForegroundGuard.end()),
+      );
     }
   }
 
@@ -2220,6 +2236,11 @@ extension _ChatGenerationMethods on _ChatScreenState {
       }
     }
 
+    // An autonomous search tag is only known after the first model pass. Hold
+    // that pass off-screen so its preface cannot appear before Search/Thinking.
+    final deferInitialStreamForSearchDecision =
+        webSearchEnabled && !preflightSearchExecuted;
+
     if (mounted) {
       _refreshChatState(() {
         _setGenerating(true);
@@ -2272,7 +2293,9 @@ extension _ChatGenerationMethods on _ChatScreenState {
         if (!_isCurrentGeneration(generationSerial)) return;
         await turnEffects.commit();
         rawReply.write(chunk);
-        if (mounted) _onStreamChunk(chunk);
+        if (mounted && !deferInitialStreamForSearchDecision) {
+          _onStreamChunk(chunk);
+        }
       }
       streamCompleted = true;
       await turnEffects.commit();
@@ -2283,14 +2306,17 @@ extension _ChatGenerationMethods on _ChatScreenState {
       if (!_isCurrentGeneration(generationSerial)) return;
       final webSearchIntent = WebSearchIntentParser.parse(replyText);
       final replyTextWithoutWebSearch = webSearchIntent.visibleText;
+      final visibleInitialText = webSearchIntent.query == null
+          ? replyTextWithoutWebSearch
+          : '';
       if (mounted) {
         _refreshChatState(() {
           _clearStreamQueue();
-          _streamingText = replyTextWithoutWebSearch;
+          _streamingText = visibleInitialText;
         });
       } else {
         _clearStreamQueue();
-        _streamingText = replyTextWithoutWebSearch;
+        _streamingText = visibleInitialText;
       }
 
       // ═══ 記錄真實 API 用量（不再用估算，避免雙重計算）═══

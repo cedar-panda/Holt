@@ -369,6 +369,8 @@ class _ChatScreenState extends State<ChatScreen> {
   // ═══ 流式絲滑打字機佇列 ═══
   final List<String> _streamCharQueue = [];
   Timer? _streamPopTimer;
+  Timer? _generationForegroundStartTimer;
+  Timer? _generationForegroundEndTimer;
 
   // ═══ 顯示文本緩存：同一個 _streamingText 只跑一次 regex ═══
   String? _dispCacheSrc;
@@ -810,6 +812,9 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void dispose() {
     _clearStreamQueue();
+    _generationForegroundStartTimer?.cancel();
+    _generationForegroundEndTimer?.cancel();
+    unawaited(GenerationForegroundGuard.end());
     _dismissWebSearchConfirmation();
     _toolRunner.cancelActive(reason: 'Chat screen disposed.');
     // 關窗口：觸發窗口摘要（fire-and-forget）

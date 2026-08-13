@@ -103,10 +103,7 @@ class SystemContextControl {
 - Reply to the latest real `user` message. Ignore unrelated live-state fields.
 
 ## Memory Markdown
-- Recalled memories are provided under `### Memory` in App Live State. Metadata such as ids, categories, scores, and dates is context metadata, not spoken text.
-
-## Thinking Markdown
-- If Thinking is enabled below, put visible thinking only inside `<think>...</think>`, then write the normal reply outside the tag.''',
+- Recalled memories are provided under `### Memory` in App Live State. Metadata such as ids, categories, scores, and dates is context metadata, not spoken text.''',
       zhTW:
           '''## App Context 契約
 - $languageRule
@@ -117,10 +114,7 @@ class SystemContextControl {
 - 優先回應最後一條真實 `user` 訊息；與本輪無關的即時狀態請忽略。
 
 ## 記憶 Markdown
-- 召回記憶放在 App Live State 的 `### 記憶` 下。編號、分類、分數與日期都是背景 metadata，不是對方說的話。
-
-## Thinking Markdown
-- 若下方啟用了 Thinking，只能把可見思考寫在 `<think>...</think>` 內；標籤後再輸出正常回覆。''',
+- 召回記憶放在 App Live State 的 `### 記憶` 下。編號、分類、分數與日期都是背景 metadata，不是對方說的話。''',
       zhCN:
           '''## App Context 契约
 - $languageRule
@@ -131,10 +125,7 @@ class SystemContextControl {
 - 优先回复最后一条真实 `user` 消息；与本轮无关的即时状态请忽略。
 
 ## 记忆 Markdown
-- 召回记忆放在 App Live State 的 `### 记忆` 下。编号、分类、分数与日期都是背景 metadata，不是对方说的话。
-
-## Thinking Markdown
-- 若下方启用了 Thinking，只能把可见思考写在 `<think>...</think>` 内；标签后再输出正常回复。''',
+- 召回记忆放在 App Live State 的 `### 记忆` 下。编号、分类、分数与日期都是背景 metadata，不是对方说的话。''',
     );
     final trimmed = extra.trim();
     return trimmed.isEmpty ? contract : '$contract\n\n$trimmed';

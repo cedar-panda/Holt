@@ -24,6 +24,7 @@ void main() {
     );
 
     expect(prompt.cacheableParts.join('\n'), isNot(contains('Thinking Mode')));
+    expect(prompt.cacheableParts.join('\n'), isNot(contains('<think>')));
     expect(prompt.requestOnlyPart, contains('Thinking Mode is off'));
   });
 
