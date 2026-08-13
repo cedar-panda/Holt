@@ -824,7 +824,7 @@ class _ChatScreenState extends State<ChatScreen> {
       'conversation:${widget.conversationId}:tokensSinceSummary';
 
   String get _timelineMenstrualScanCursorKey =>
-      'conversation:${widget.conversationId}:timelineMenstrualScanCursor';
+      'conversation:${widget.conversationId}:timelineMenstrualScanCursor:v2';
 
   /// 本地時間線補掃游標：每個對話只查上次成功掃描後的新消息。
   /// 這是 SQLite/SharedPreferences 狀態，不是 prompt cache。

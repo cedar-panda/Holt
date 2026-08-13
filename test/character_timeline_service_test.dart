@@ -262,6 +262,36 @@ void main() {
     },
   );
 
+  test('plain menstrual wording is accepted by the local scanner', () async {
+    final messages = <Message>[
+      Message(
+        id: 72,
+        conversationId: 'conv-a',
+        characterId: 'char-a',
+        text: '昨天來的生理期',
+        isUser: false,
+        createdAt: DateTime(2026, 7, 18, 20),
+      ),
+      Message(
+        id: 73,
+        conversationId: 'conv-a',
+        characterId: 'char-a',
+        text: '今天生理期第二天',
+        isUser: false,
+        createdAt: DateTime(2026, 7, 18, 21),
+      ),
+    ];
+
+    final changed =
+        await CharacterTimelineService.storeExplicitMenstrualMessages(
+          characterId: 'char-a',
+          messages: messages,
+        );
+    expect(changed, 2);
+    expect(await CharacterTimelineService.getStates('char-a'), hasLength(1));
+    expect(await CharacterTimelineService.getEvents('char-a'), hasLength(1));
+  });
+
   test(
     'period day derives character state and start while nickname is rejected',
     () async {
