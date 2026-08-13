@@ -161,6 +161,94 @@ class CharacterTimelineService {
     });
   }
 
+  /// 即時記錄明確的生理週期語句，不等待窗口摘要達到 token 門檻。
+  /// 只處理可由原文和消息時間直接驗證的句子，仍共用摘要候選的本地
+  /// 驗證、日期推算、狀態覆蓋與事件去重；不發起額外模型請求。
+  static Future<int> storeExplicitMenstrualMessages({
+    required String characterId,
+    required List<Message> messages,
+  }) async {
+    final candidates = <TimelineEventCandidate>[];
+    for (final message in messages) {
+      if (message.id == null) continue;
+      final evidence = _extractMenstrualEvidence(message.text);
+      if (evidence == null) continue;
+
+      final day = _menstrualDayFromText(evidence);
+      final ended = _hasMenstrualEndCue(evidence);
+      final active = _hasCurrentMenstrualCue(evidence);
+      final started = _hasMenstrualStartCue(evidence);
+      if (day == null && !ended && !active && !started) continue;
+
+      final basis = _dateBasisFromEvidence(evidence) ?? 'message_time';
+      final local = message.createdAt.isUtc
+          ? message.createdAt.toLocal()
+          : message.createdAt;
+      final date = switch (basis) {
+        'relative' => _relativeDateFromEvidence(evidence, local),
+        'explicit' => _explicitDateFromEvidence(evidence, local),
+        _ => DateTime(local.year, local.month, local.day),
+      };
+      if (date == null) continue;
+
+      final value = day != null
+          ? '生理期第$day天'
+          : ended
+          ? '生理期結束'
+          : started
+          ? '生理期開始'
+          : '生理期中';
+      candidates.add(
+        TimelineEventCandidate(
+          type: ended ? 'event' : 'state',
+          subject: 'character',
+          sourceMessageIds: [message.id!],
+          occurredOn: _dateOnly(date),
+          dateBasis: basis,
+          key: ended ? null : '生理週期',
+          value: value,
+          evidence: evidence,
+        ),
+      );
+    }
+    if (candidates.isEmpty) return 0;
+    return storeSummaryCandidates(
+      characterId: characterId,
+      candidates: candidates,
+      sourceMessages: messages,
+    );
+  }
+
+  static String? _extractMenstrualEvidence(String text) {
+    if (!_hasExplicitMenstrualCue(text)) return null;
+    final segments = text
+        .split(RegExp(r'(?<=[。！？!?；;\n])'))
+        .map((segment) => segment.trim())
+        .where((segment) => segment.isNotEmpty);
+    for (final segment in segments) {
+      if (_hasExplicitMenstrualCue(segment)) {
+        return segment.length <= 240
+            ? segment
+            : segment.substring(0, 240).trim();
+      }
+    }
+    final term = RegExp(
+      r'生理期|生理週期|生理周期|經期|经期|月經|月经|'
+      r'\bperiod\b|\bmenstrual\b|\bmenstruation\b',
+      caseSensitive: false,
+    ).firstMatch(text);
+    if (term == null) return null;
+    final start = text.lastIndexOf(RegExp(r'[。！？!?；;\n]'), term.start);
+    final endMatch = RegExp(
+      r'[。！？!?；;\n]',
+    ).firstMatch(text.substring(term.end));
+    final end = endMatch == null ? text.length : term.end + endMatch.start;
+    final evidence = text.substring(start < 0 ? 0 : start + 1, end).trim();
+    return evidence.length <= 240
+        ? evidence
+        : evidence.substring(0, 240).trim();
+  }
+
   static _ValidatedTimelineEntry? _validateCandidate(
     TimelineEventCandidate candidate,
     Map<int, Message> sourceById,
@@ -631,6 +719,8 @@ class CharacterTimelineService {
       '生理期开始',
       '來生理期',
       '来生理期',
+      '來的生理期',
+      '来的生理期',
       '月經來了',
       '月经来了',
       '經期開始',
@@ -641,6 +731,30 @@ class CharacterTimelineService {
     ];
     return cues.any(normalized.contains);
   }
+
+  static bool _hasExplicitMenstrualCue(String text) {
+    final normalized = text.toLowerCase();
+    if (!_hasMenstrualTerm(normalized) || _isMenstrualQuestion(normalized)) {
+      return false;
+    }
+    return RegExp(
+      r'第?\s*[0-9一二三四五六七八九十兩两]+\s*天|'
+      r'開始|开始|來了|来了|來生理期|来生理期|來的生理期|来的生理期|'
+      r'結束|结束|完了|已完|沒了|没了|停了|'
+      r'今天.{0,8}(?:還是|还是|仍是|仍在|還在|还在|正在)?\s*(?:生理期|生理週期|生理周期|經期|经期|月經|月经)|'
+      r'(?:還是|还是|仍是|仍在|還在|还在|正在).{0,8}(?:生理期|生理週期|生理周期|經期|经期|月經|月经)|'
+      r'\bday\s*\d{1,2}\b|\bstarted\b|\bbegan\b|'
+      r'\bended\b|\bfinished\b|\bis over\b|'
+      r'\b(?:still|currently)\s+(?:on\s+)?(?:her\s+|your\s+)?period\b',
+      caseSensitive: false,
+    ).hasMatch(normalized);
+  }
+
+  static bool _hasMenstrualTerm(String text) => RegExp(
+    r'生理期|生理週期|生理周期|經期|经期|月經|月经|'
+    r'\bperiod\b|\bmenstrual\b|\bmenstruation\b',
+    caseSensitive: false,
+  ).hasMatch(text);
 
   static bool _hasMenstrualEndCue(String text) {
     final normalized = text.toLowerCase();

@@ -223,6 +223,46 @@ void main() {
   );
 
   test(
+    'explicit menstrual messages are recorded without waiting for summary',
+    () async {
+      final messages = <Message>[
+        Message(
+          id: 69,
+          conversationId: 'conv-a',
+          characterId: 'char-a',
+          text: '昨天來的生理期。',
+          isUser: false,
+          createdAt: DateTime(2026, 7, 18, 20),
+        ),
+        Message(
+          id: 70,
+          conversationId: 'conv-a',
+          characterId: 'char-a',
+          text: '今天是生理期第二天。',
+          isUser: false,
+          createdAt: DateTime(2026, 7, 18, 21),
+        ),
+      ];
+
+      final changed =
+          await CharacterTimelineService.storeExplicitMenstrualMessages(
+            characterId: 'char-a',
+            messages: messages,
+          );
+
+      expect(changed, 2);
+      expect(
+        (await CharacterTimelineService.getStates('char-a')).single['value'],
+        '生理期第2天（推算；開始於2026-07-17）',
+      );
+      expect(
+        (await CharacterTimelineService.getEvents('char-a')).single['value'],
+        '生理期開始（推算）',
+      );
+    },
+  );
+
+  test(
     'period day derives character state and start while nickname is rejected',
     () async {
       final messages = <Message>[

@@ -52,6 +52,26 @@ void main() {
     );
   });
 
+  test('clock tags survive a thinking block when Thinking is off', () {
+    final normalized = ThinkingModePolicy.moveProtocolTagsOutsideThinking(
+      '<think>記錄作息 <clock>08:00 早餐 @早餐</clock></think>早安',
+    );
+    expect(
+      ThinkingModePolicy.sanitizeVisibleReply(normalized, enabled: false),
+      '<clock>08:00 早餐 @早餐</clock>早安',
+    );
+  });
+
+  test('clock tags survive truncated thinking output', () {
+    final normalized = ThinkingModePolicy.moveProtocolTagsOutsideThinking(
+      '<think>記錄作息 <clock>08:00 早餐 @早餐</clock>',
+    );
+    expect(
+      ThinkingModePolicy.sanitizeVisibleReply(normalized, enabled: false),
+      '<clock>08:00 早餐 @早餐</clock>',
+    );
+  });
+
   test('OpenRouter sends Thinking as a top-level request policy', () async {
     final offBody =
         await OpenRouterService(

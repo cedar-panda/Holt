@@ -714,6 +714,17 @@ class _ChatScreenState extends State<ChatScreen> {
 
     // 非同步還原 _tokensSinceSummary，防止退出窗口導致 token 重新歸零
     await _restoreTokensSinceSummary();
+
+    // 舊消息可能已經完成摘要但被模型漏掉生理週期候選；開窗時用本地
+    // 明確證據補記，讓既有對話也能修復，不新增摘要模型請求。
+    try {
+      await CharacterTimelineService.storeExplicitMenstrualMessages(
+        characterId: _activeCharacterId,
+        messages: messages,
+      );
+    } catch (error) {
+      debugPrint('開窗補記生理期時間線失敗：$error');
+    }
   }
 
   Future<void> _refreshPendingMemoryActionCounts({bool notify = true}) async {
@@ -1575,13 +1586,20 @@ class _ChatScreenState extends State<ChatScreen> {
     final hasWebSearchActivity = _webSearchActivity != null;
     // Search owns the pending assistant surface. The model's tool-call preface
     // must not appear as a second bubble above Thinking/search status.
+    // 建立生成任務時就掛上流式氣泡，而不是等第一個可見字元到達後才插入。
+    // 各來源首包大小不同，但都共用同一個 ChatBubble，因而能走一致的 QQ
+    // 彈彈入場動畫；內容仍由既有 stream queue 逐字填入。
     final hasStreamingBubble =
-        _streamingText.isNotEmpty && !hasWebSearchActivity;
+        _isGenerating && !_isGeneratingImage && !hasWebSearchActivity;
     final pendingWebSearchTrace = _pendingWebSearchResult?.toDisplayTrace();
     // Web search owns the active Thinking surface. Avoid rendering the generic
     // atom above it, which otherwise looks like an empty assistant bubble.
+    // 文字生成使用上方的 QQ 流式氣泡；原子動畫只保留給圖片生成。
     final showAtom =
-        _isGenerating && _streamingText.isEmpty && !hasWebSearchActivity;
+        _isGenerating &&
+        _isGeneratingImage &&
+        _streamingText.isEmpty &&
+        !hasWebSearchActivity;
 
     // 構建顯示列表（拆分回覆時 AI 消息按段落拆開）
     // 渲染窗：只掛 _renderFrom 起的消息；i 保持全量索引（editMessage 等依賴）

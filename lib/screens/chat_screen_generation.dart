@@ -99,7 +99,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
       text = text.substring(0, partialTagMatch.start);
     }
     return ThinkingModePolicy.sanitizeVisibleReply(
-      text.trim(),
+      ThinkingModePolicy.moveProtocolTagsOutsideThinking(text.trim()),
       enabled: _generationThinkingEnabled,
     );
   }
@@ -987,6 +987,24 @@ extension _ChatGenerationMethods on _ChatScreenState {
       model: model,
       provider: provider,
     );
+
+    // 明確的生理週期語句不必等窗口摘要模型；本地驗證後立即寫入時間線。
+    // 這條路徑不改 prompt/cache，也不增加模型請求。
+    try {
+      final cursor = await DatabaseHelper.getConversationSummaryCursor(
+        conversationId,
+      );
+      final pendingMessages = await DatabaseHelper.getMessagesAfterId(
+        conversationId,
+        cursor,
+      );
+      await CharacterTimelineService.storeExplicitMenstrualMessages(
+        characterId: _activeCharacterId,
+        messages: pendingMessages,
+      );
+    } catch (error) {
+      debugPrint('即時生理期時間線記錄失敗：$error');
+    }
 
     await _maybeRunTokenTriggeredMaintenance(
       conversationId: conversationId,
@@ -2300,7 +2318,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
       streamCompleted = true;
       await turnEffects.commit();
       final replyText = ThinkingModePolicy.sanitizeVisibleReply(
-        rawReply.toString(),
+        ThinkingModePolicy.moveProtocolTagsOutsideThinking(rawReply.toString()),
         enabled: _generationThinkingEnabled,
       );
       if (!_isCurrentGeneration(generationSerial)) return;
@@ -3479,7 +3497,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
       streamCompleted = true;
       await turnEffects.commit();
       final replyText = ThinkingModePolicy.sanitizeVisibleReply(
-        rawReply.toString(),
+        ThinkingModePolicy.moveProtocolTagsOutsideThinking(rawReply.toString()),
         enabled: thinkingOn,
       );
       if (!_isCurrentGeneration(generationSerial) || _stopGenerationRequested) {

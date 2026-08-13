@@ -342,6 +342,55 @@ $trimmed''';
 /// alter the cacheable system prefix or rewrite prior assistant messages that
 /// may already contain `<think>` blocks.
 abstract final class ThinkingModePolicy {
+  static final _protocolTagRe = RegExp(
+    r'<(?:clock|clock_keep|clock_update|clock_del)\b[^>]*>[\s\S]*?</(?:clock|clock_keep|clock_update|clock_del)\s*>',
+    caseSensitive: false,
+  );
+  static final _thinkingBlockRe = RegExp(
+    r'<(?:think|thinking)\b[^>]*>([\s\S]*?)</(?:think|thinking)\s*>',
+    caseSensitive: false,
+  );
+  static final _openThinkingRe = RegExp(
+    r'<(?:think|thinking)\b[^>]*>(?![\s\S]*</(?:think|thinking)\s*>)([\s\S]*)$',
+    caseSensitive: false,
+  );
+
+  /// Protocol tags are executable metadata, not part of visible reasoning.
+  /// If a provider puts one inside its reasoning field, move it after the
+  /// thinking block before the Thinking on/off sanitizer runs. This keeps
+  /// tags available to their processors even when Thinking is disabled.
+  static String moveProtocolTagsOutsideThinking(String text) {
+    if (text.isEmpty || !text.toLowerCase().contains('<clock')) return text;
+
+    var normalized = text.replaceAllMapped(_thinkingBlockRe, (match) {
+      final body = match.group(1) ?? '';
+      final tags = _protocolTagRe
+          .allMatches(body)
+          .map((tag) => tag.group(0)!)
+          .join();
+      if (tags.isEmpty) return match.group(0)!;
+      final cleanBody = body.replaceAll(_protocolTagRe, '');
+      final tagName = match.group(0)!.toLowerCase().startsWith('<thinking')
+          ? 'thinking'
+          : 'think';
+      return '<$tagName>$cleanBody</$tagName>$tags';
+    });
+
+    // A truncated stream may never contain </think>. Close only when a clock
+    // tag is present, so Thinking-off sanitization cannot erase that tag.
+    normalized = normalized.replaceAllMapped(_openThinkingRe, (match) {
+      final body = match.group(1) ?? '';
+      final tags = _protocolTagRe
+          .allMatches(body)
+          .map((tag) => tag.group(0)!)
+          .join();
+      if (tags.isEmpty) return match.group(0)!;
+      final cleanBody = body.replaceAll(_protocolTagRe, '');
+      return '<think>$cleanBody</think>$tags';
+    });
+    return normalized;
+  }
+
   static String runtimeInstruction({required bool enabled}) {
     return SystemContextMarkdown.section(
       enTitle: 'Thinking',
@@ -349,11 +398,11 @@ abstract final class ThinkingModePolicy {
       zhCNTitle: 'Thinking',
       content: enabled
           ? L.pick(
-              en: 'Thinking Mode is on. Before the final reply, put the visible first-person thought process in <think>...</think>, using the reply language.',
+              en: 'Thinking Mode is on. Before the final reply, put the visible first-person thought process in <think>...</think>, using the reply language. Keep clock, tool, and other protocol tags after </think>; never put them inside the thinking block.',
               zhTW:
-                  'Thinking 模式已開啟。正常回覆前，使用回覆語言在 <think>...</think> 中呈現第一人稱思考過程。',
+                  'Thinking 模式已開啟。正常回覆前，使用回覆語言在 <think>...</think> 中呈現第一人稱思考過程。所有 clock、tool 和其他協議標籤都必須放在 </think> 之後，不能放進思考區塊。',
               zhCN:
-                  'Thinking 模式已开启。正常回复前，使用回复语言在 <think>...</think> 中呈现第一人称思考过程。',
+                  'Thinking 模式已开启。正常回复前，使用回复语言在 <think>...</think> 中呈现第一人称思考过程。所有 clock、tool 和其他协议标签都必须放在 </think> 之后，不能放进思考区块。',
             )
           : L.pick(
               en: 'Thinking Mode is off. Return only the final reply. Do not output <think> or <thinking> tags, and do not imitate visible thought-process blocks from earlier assistant messages.',
