@@ -1,5 +1,4 @@
 import 'dart:io';
-import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
@@ -924,15 +923,8 @@ class _ChatBubbleState extends State<ChatBubble>
                                                             !widget.isUser,
                                                       ),
                                                     ),
-                                                    if (widget.isStreaming) ...[
-                                                      const SizedBox(width: 4),
-                                                      _TypingIndicator(),
-                                                    ],
                                                   ],
                                                 ),
-                                              if (displayText.isEmpty &&
-                                                  widget.isStreaming)
-                                                _TypingIndicator(),
                                             ],
                                           ),
                                         ),
@@ -2172,63 +2164,5 @@ class _MarkdownBlock extends StatelessWidget {
     if (!selectable) return body;
 
     return SelectionArea(child: body);
-  }
-}
-
-class _TypingIndicator extends StatefulWidget {
-  @override
-  State<_TypingIndicator> createState() => _TypingIndicatorState();
-}
-
-class _TypingIndicatorState extends State<_TypingIndicator>
-    with SingleTickerProviderStateMixin {
-  late AnimationController _controller;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 900),
-    )..repeat();
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: _controller,
-      builder: (_, _) => Row(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: List<Widget>.generate(3, (index) {
-          final phase = (_controller.value + index * 0.18) % 1.0;
-          final lift = math.sin(phase * math.pi * 2) * 3.2;
-          final opacity = 0.45 + (math.sin(phase * math.pi * 2) + 1) * 0.25;
-          return Padding(
-            padding: EdgeInsets.only(right: index == 2 ? 0 : 3),
-            child: Transform.translate(
-              offset: Offset(0, -lift),
-              child: Opacity(
-                opacity: opacity.clamp(0.35, 1.0),
-                child: Container(
-                  width: 4,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: YanciTheme.accent,
-                    shape: BoxShape.circle,
-                  ),
-                ),
-              ),
-            ),
-          );
-        }),
-      ),
-    );
   }
 }
