@@ -1,4 +1,5 @@
 import 'dart:math';
+import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart' show Ticker;
 import '../theme/app_theme.dart';
@@ -33,6 +34,7 @@ class _NeuralFieldWidgetState extends State<NeuralFieldWidget>
   final ValueNotifier<double> _t = ValueNotifier(0);
   late List<_Node> _nodes;
   final Random _rng = Random(7);
+  bool _reduceMotion = false;
 
   @override
   void initState() {
@@ -53,7 +55,21 @@ class _NeuralFieldWidgetState extends State<NeuralFieldWidget>
     );
     _ticker = createTicker((elapsed) {
       _t.value = elapsed.inMicroseconds / 1e6;
-    })..start();
+    });
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final reduceMotion = MediaQuery.disableAnimationsOf(context);
+    if (_reduceMotion == reduceMotion && _ticker.isActive) return;
+    _reduceMotion = reduceMotion;
+    if (reduceMotion) {
+      _ticker.stop();
+      _t.value = 0;
+    } else if (!_ticker.isActive) {
+      _ticker.start();
+    }
   }
 
   @override
@@ -65,12 +81,11 @@ class _NeuralFieldWidgetState extends State<NeuralFieldWidget>
 
   @override
   Widget build(BuildContext context) {
-    return ValueListenableBuilder<double>(
-      valueListenable: _t,
-      builder: (_, seconds, _) => CustomPaint(
+    return RepaintBoundary(
+      child: CustomPaint(
         painter: _NeuralPainter(
           nodes: _nodes,
-          seconds: seconds,
+          clock: _t,
           isDark: YanciTheme.isDark,
           color: YanciTheme.starColor,
           glowColor: YanciTheme.starGlow,
@@ -98,7 +113,7 @@ class _Node {
 
 class _NeuralPainter extends CustomPainter {
   final List<_Node> nodes;
-  final double seconds; // 連續秒數，不循環
+  final ValueListenable<double> clock;
   final bool isDark;
   final Color color;
   final Color glowColor;
@@ -106,15 +121,16 @@ class _NeuralPainter extends CustomPainter {
 
   _NeuralPainter({
     required this.nodes,
-    required this.seconds,
+    required this.clock,
     required this.isDark,
     required this.color,
     required this.glowColor,
     required this.accent,
-  });
+  }) : super(repaint: clock);
 
   @override
   void paint(Canvas canvas, Size size) {
+    final seconds = clock.value; // 連續秒數，不循環
     // 對齊舊版速度：progress(0-1/20s)*20 == seconds；呼吸相位同理 ÷20
     final drift = seconds;
     final t = seconds / 20 * 2 * pi;
@@ -204,9 +220,9 @@ class _NeuralPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _NeuralPainter old) =>
-      old.seconds != seconds ||
       old.isDark != isDark ||
       old.color != color ||
       old.glowColor != glowColor ||
-      old.accent != accent;
+      old.accent != accent ||
+      !identical(old.nodes, nodes);
 }

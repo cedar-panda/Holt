@@ -36,6 +36,7 @@ class _StarfieldWidgetState extends State<StarfieldWidget>
   late AnimationController _controller;
   late List<_Star> _stars;
   final Random _random = Random();
+  bool _reduceMotion = false;
 
   @override
   void initState() {
@@ -44,7 +45,21 @@ class _StarfieldWidgetState extends State<StarfieldWidget>
     _controller = AnimationController(
       vsync: this,
       duration: const Duration(seconds: 10),
-    )..repeat();
+    );
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final reduceMotion = MediaQuery.disableAnimationsOf(context);
+    if (_reduceMotion == reduceMotion && _controller.isAnimating) return;
+    _reduceMotion = reduceMotion;
+    if (reduceMotion) {
+      _controller.stop();
+      _controller.value = 0;
+    } else if (!_controller.isAnimating) {
+      _controller.repeat();
+    }
   }
 
   List<_Star> _generateStars() {
@@ -71,32 +86,28 @@ class _StarfieldWidgetState extends State<StarfieldWidget>
 
   @override
   Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: _controller,
-      builder: (context, child) {
-        return CustomPaint(
-          painter: _StarfieldPainter(
-            stars: _stars,
-            progress: _controller.value,
-          ),
-          size: Size.infinite,
-        );
-      },
+    return RepaintBoundary(
+      child: CustomPaint(
+        painter: _StarfieldPainter(stars: _stars, progress: _controller),
+        size: Size.infinite,
+      ),
     );
   }
 }
 
 class _StarfieldPainter extends CustomPainter {
   final List<_Star> stars;
-  final double progress;
+  final Animation<double> progress;
 
-  _StarfieldPainter({required this.stars, required this.progress});
+  _StarfieldPainter({required this.stars, required this.progress})
+    : super(repaint: progress);
 
   @override
   void paint(Canvas canvas, Size size) {
+    final animationValue = progress.value;
     for (final star in stars) {
       // 呼吸閃爍效果
-      final breathe = sin(progress * 2 * pi * star.speed + star.phase);
+      final breathe = sin(animationValue * 2 * pi * star.speed + star.phase);
       final currentOpacity = (star.opacity + breathe * 0.3).clamp(0.05, 0.9);
 
       final paint = Paint()
@@ -132,6 +143,6 @@ class _StarfieldPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _StarfieldPainter oldDelegate) {
-    return oldDelegate.progress != progress;
+    return !identical(oldDelegate.stars, stars);
   }
 }

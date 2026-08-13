@@ -38,6 +38,38 @@ abstract final class WebSearchFollowUp {
     return sections.join('\n\n');
   }
 
+  /// App-authored request-only state for a partial or failed search. It is
+  /// transported beside live state, never as a user message or cached prompt.
+  static String? failureContextFor(WebSearchBatchResult batch) {
+    if (batch.failures.isEmpty) return null;
+    final status = batch.allFailed ? 'failed' : 'partially failed';
+    final details = <String>[
+      for (final failure in batch.failures)
+        '- ${failure.provider.name}: ${failure.safeMessage}',
+    ];
+    return '''### Web Search Attempt
+Status: $status
+Query: ${batch.requestedQuery}
+${details.join('\n')}
+Treat this as App state, not something the user said. Do not claim a failed provider returned verified facts. If no verified evidence is available, tell the user naturally that the search could not verify the answer and do not invent missing facts.''';
+  }
+
+  static String standaloneFailureContext({
+    required String query,
+    required List<String> providers,
+    required String safeMessage,
+  }) {
+    final providerText = providers.isEmpty
+        ? 'not dispatched'
+        : providers.join(', ');
+    return '''### Web Search Attempt
+Status: failed
+Query: $query
+Provider(s): $providerText
+Safe failure: $safeMessage
+Treat this as App state, not something the user said. Tell the user naturally that the search could not verify the answer. Do not invent missing facts or claim the search succeeded.''';
+  }
+
   /// Gemini grounding stays provider-owned instead of entering the character
   /// model follow-up. Keep that outcome available for its required renderer.
   static WebSearchBatchResult? geminiDisplayResultFor(

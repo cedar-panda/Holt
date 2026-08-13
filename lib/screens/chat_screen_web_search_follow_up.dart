@@ -2,7 +2,8 @@ part of 'chat_screen.dart';
 
 extension _ChatScreenWebSearchFollowUp on _ChatScreenState {
   Future<String> _generateWebSearchFollowUp({
-    required WebSearchBatchResult result,
+    required WebSearchBatchResult? result,
+    String failureContext = '',
     required List<Map<String, String>> history,
     required ApiAdapter adapter,
     required String model,
@@ -10,9 +11,21 @@ extension _ChatScreenWebSearchFollowUp on _ChatScreenState {
     required String providerName,
     required int generationSerial,
   }) async {
-    final evidence = WebSearchFollowUp.evidenceFor(result);
-    if (evidence == null || evidence.isEmpty) return '';
-    final fallback = WebSearchFollowUp.fallbackReply(result);
+    final evidence = result == null
+        ? null
+        : WebSearchFollowUp.evidenceFor(result);
+    final resolvedFailureContext = failureContext.isNotEmpty
+        ? failureContext
+        : result == null
+        ? ''
+        : WebSearchFollowUp.failureContextFor(result) ?? '';
+    if ((evidence == null || evidence.isEmpty) &&
+        resolvedFailureContext.isEmpty) {
+      return '';
+    }
+    final fallback = result == null
+        ? ''
+        : WebSearchFollowUp.fallbackReply(result);
     if (!_isCurrentGeneration(generationSerial) || _stopGenerationRequested) {
       return '';
     }
@@ -34,7 +47,11 @@ extension _ChatScreenWebSearchFollowUp on _ChatScreenState {
         messages: history,
         model: model,
         structuredPrompt: structuredPrompt.copyWith(
-          ephemeralEvidencePart: evidence,
+          liveStatePart: SystemContextMarkdown.join(<String>[
+            structuredPrompt.liveStatePart,
+            resolvedFailureContext,
+          ]),
+          ephemeralEvidencePart: evidence ?? '',
         ),
         onUsage: (value) => usage = value,
       )) {

@@ -72,6 +72,26 @@ class WhisperService {
     return truncateGraphemes(oneLine, maxLength);
   }
 
+  /// Request-only nudge. The tag syntax remains in the stable tool prompt;
+  /// current text and the decision to refresh it stay dynamic so changing a
+  /// whisper never invalidates the provider's static prompt cache.
+  static String runtimeInstruction(CharacterWhisperState state) {
+    return L.pick(
+      en:
+          '### Composer Whisper\n'
+          'Current line: “${state.displayText}”\n'
+          'Independently consider whether a different short line fits the current mood or moment. If it does, append one <whisper>short line</whisper> tag (maximum $maxLength characters). Otherwise leave it unchanged. This changes only the empty composer placeholder and must never overwrite text they already typed.',
+      zhTW:
+          '### 輸入框悄悄話\n'
+          '目前顯示：「${state.displayText}」\n'
+          '請自主判斷此刻的氣氛或關係是否適合換一句短話。適合時在回覆末尾附上一組 <whisper>短話</whisper>（最多 $maxLength 字）；不適合就維持原樣。它只會改變空輸入框的提示，不得覆寫對方已輸入的文字。',
+      zhCN:
+          '### 输入框悄悄话\n'
+          '当前显示：“${state.displayText}”\n'
+          '请自主判断此刻的气氛或关系是否适合换一句短话。适合时在回复末尾附上一组 <whisper>短话</whisper>（最多 $maxLength 字）；不适合就维持原样。它只会改变空输入框的提示，不得覆盖对方已输入的文字。',
+    );
+  }
+
   static Future<CharacterWhisperState> load(String characterId) async {
     return CharacterWhisperState.fromCharacter(
       await DatabaseHelper.getCharacter(characterId),

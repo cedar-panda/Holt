@@ -77,4 +77,22 @@ void main() {
       expect(withoutUser.displayText, '模型最後一句');
     },
   );
+
+  test(
+    'runtime instruction exposes current placeholder without cache state',
+    () {
+      const state = CharacterWhisperState(
+        userText: '',
+        modelText: '靠近一點說',
+        source: 'model',
+        modelOverrideEnabled: true,
+      );
+
+      final instruction = WhisperService.runtimeInstruction(state);
+
+      expect(instruction, contains('靠近一點說'));
+      expect(instruction, contains('<whisper>'));
+      expect(instruction, contains('${WhisperService.maxLength}'));
+    },
+  );
 }

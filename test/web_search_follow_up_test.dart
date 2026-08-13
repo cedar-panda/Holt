@@ -106,4 +106,49 @@ void main() {
       expect(body.toString(), contains('Taipei is warm today.'));
     },
   );
+
+  test(
+    'failed search becomes request-only App state, never user content',
+    () async {
+      final failedBatch = WebSearchBatchResult(
+        requestedQuery: 'latest private launch date',
+        outcomes: <WebSearchProviderOutcome>[
+          WebSearchProviderOutcome.failure(
+            const WebSearchProviderFailure(
+              provider: WebSearchProviderId.openRouter,
+              code: WebSearchFailureCode.invalidResponse,
+              safeMessage: 'No grounded search result was returned.',
+              retryable: false,
+              costCertainty: WebSearchCostCertainty.known,
+            ),
+          ),
+        ],
+      );
+      final failureContext = WebSearchFollowUp.failureContextFor(failedBatch)!;
+      final prompt = StructuredPrompt(
+        staticPart: 'STATIC',
+        liveStatePart: failureContext,
+      );
+
+      expect(prompt.cacheableParts.join('\n'), isNot(contains(failureContext)));
+      final body = await ThinkingMachinesService(apiKey: 'test')
+          .debugBuildBodyForTesting(
+            messages: const <Map<String, String>>[
+              <String, String>{'role': 'assistant', 'content': 'previous'},
+              <String, String>{'role': 'user', 'content': '幫我查最新日期'},
+            ],
+            model: ThinkingMachinesService.defaultModel,
+            structuredPrompt: prompt,
+          );
+      final messages = (body['messages'] as List).cast<Map>();
+      final user = messages.lastWhere((message) => message['role'] == 'user');
+
+      expect(user['content'], '幫我查最新日期');
+      expect(
+        body.toString(),
+        contains('No grounded search result was returned.'),
+      );
+      expect(body.toString(), contains('App Live State'));
+    },
+  );
 }

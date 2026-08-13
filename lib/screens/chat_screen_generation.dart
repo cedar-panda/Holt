@@ -41,7 +41,8 @@ extension _ChatGenerationMethods on _ChatScreenState {
       // Keep the same avatar + Thinking surface between search completion and
       // the first streamed response. Remove it in the same frame that real
       // response content appears, so the generic atom loader never flashes.
-      if (_webSearchActivity?.status == WebSearchActivityStatus.completed) {
+      if (_webSearchActivity?.status == WebSearchActivityStatus.completed ||
+          _webSearchActivity?.status == WebSearchActivityStatus.failed) {
         _webSearchActivity = null;
       }
       _refreshChatState(() {});
@@ -91,6 +92,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
     _stopGenerationRequested = false;
     _webSearchActivity = null;
     _pendingWebSearchResult = null;
+    _pendingWebSearchFailureContext = '';
     return ++_generationSerial;
   }
 
@@ -152,6 +154,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
     _chatSearchResults = [];
     _webSearchActivity = null;
     _pendingWebSearchResult = null;
+    _pendingWebSearchFailureContext = '';
   }
 
   /// 提取 `<x_post>` 內容並剝離，再走通用殘尾清理。
@@ -1026,6 +1029,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
         _chatSearchResults = [];
         _webSearchActivity = null;
         _pendingWebSearchResult = null;
+        _pendingWebSearchFailureContext = '';
       });
     } else {
       _clearStreamQueue();
@@ -1035,6 +1039,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
       _chatSearchResults = [];
       _webSearchActivity = null;
       _pendingWebSearchResult = null;
+      _pendingWebSearchFailureContext = '';
     }
   }
 
@@ -1314,7 +1319,15 @@ extension _ChatGenerationMethods on _ChatScreenState {
       providers: providers,
       safeMessage: safeMessage,
     );
-    _refreshChatState(() => _webSearchActivity = activity);
+    _refreshChatState(() {
+      _pendingWebSearchFailureContext =
+          WebSearchFollowUp.standaloneFailureContext(
+            query: query,
+            providers: providers,
+            safeMessage: safeMessage,
+          );
+      _webSearchActivity = activity;
+    });
     _scrollToBottom();
     Future<void>.delayed(const Duration(seconds: 10), () {
       if (!mounted || !identical(_webSearchActivity, activity)) return;
@@ -1481,15 +1494,23 @@ extension _ChatGenerationMethods on _ChatScreenState {
       final data = result.data;
       if (result.status == ToolResultStatus.success &&
           data is WebSearchBatchResult) {
+        final failureContext = WebSearchFollowUp.failureContextFor(data) ?? '';
+        final allFailed = data.allFailed;
         _refreshChatState(() {
           _pendingWebSearchResult = data;
+          _pendingWebSearchFailureContext = failureContext;
           // Preserve one visual surface while the model starts composing from
           // the search evidence. It hands off directly to the first streamed
           // response instead of briefly falling back to the generic loader.
           _webSearchActivity = _WebSearchActivityState(
-            status: WebSearchActivityStatus.completed,
+            status: allFailed
+                ? WebSearchActivityStatus.failed
+                : WebSearchActivityStatus.completed,
             query: binding.query,
             providers: providerLabels,
+            safeMessage: allFailed && data.failures.isNotEmpty
+                ? data.failures.first.safeMessage
+                : '',
           );
         });
         return;
@@ -1979,6 +2000,10 @@ extension _ChatGenerationMethods on _ChatScreenState {
 
     // 每輪動態注入，避免改動角色靜態 prompt 與既有 provider cache。
     dynamicParts.add(EmailDraftTool.runtimeInstruction());
+    final whisperState = CharacterWhisperState.fromCharacter(charData);
+    if (whisperState.modelOverrideEnabled) {
+      dynamicParts.add(WhisperService.runtimeInstruction(whisperState));
+    }
 
     // 情緒狀態（已提前發射）
     final emoState = await emoStateF;
@@ -2181,6 +2206,14 @@ extension _ChatGenerationMethods on _ChatScreenState {
         if (evidence != null && evidence.isNotEmpty) {
           structured = structured.copyWith(ephemeralEvidencePart: evidence);
         }
+      }
+      if (_pendingWebSearchFailureContext.isNotEmpty) {
+        structured = structured.copyWith(
+          liveStatePart: SystemContextMarkdown.join(<String>[
+            structured.liveStatePart,
+            _pendingWebSearchFailureContext,
+          ]),
+        );
       }
     }
 
@@ -2727,9 +2760,11 @@ extension _ChatGenerationMethods on _ChatScreenState {
           generationSerial: generationSerial,
         );
         final webSearchResult = _pendingWebSearchResult;
-        if (webSearchResult != null) {
+        if (webSearchResult != null ||
+            _pendingWebSearchFailureContext.isNotEmpty) {
           final followUp = await _generateWebSearchFollowUp(
             result: webSearchResult,
+            failureContext: _pendingWebSearchFailureContext,
             history: history,
             adapter: adapter,
             model: model,
@@ -2812,12 +2847,14 @@ extension _ChatGenerationMethods on _ChatScreenState {
             _webSearchResultsByMessageId[insertedId] = completedWebSearchResult;
           }
           _pendingWebSearchResult = null;
+          _pendingWebSearchFailureContext = '';
           _webSearchActivity = null;
           _clearStreamQueue();
           _setGenerating(false);
         });
       } else {
         _pendingWebSearchResult = null;
+        _pendingWebSearchFailureContext = '';
         _webSearchActivity = null;
         _clearStreamQueue();
         _setGenerating(false);
@@ -3137,6 +3174,10 @@ extension _ChatGenerationMethods on _ChatScreenState {
       ),
     ];
     dynamicParts.add(EmailDraftTool.runtimeInstruction());
+    final imgWhisperState = CharacterWhisperState.fromCharacter(charDataImg);
+    if (imgWhisperState.modelOverrideEnabled) {
+      dynamicParts.add(WhisperService.runtimeInstruction(imgWhisperState));
+    }
     final controlParts = <String>[];
     final turnEffects = DeferredPromptBatch()..add(memoryPrompt);
     if (memoryPrompt.isNotEmpty) {

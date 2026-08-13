@@ -291,6 +291,7 @@ class _ChatScreenState extends State<ChatScreen> {
   _WebSearchActivityState? _webSearchActivity;
   BuildContext? _webSearchConfirmationContext;
   WebSearchBatchResult? _pendingWebSearchResult;
+  String _pendingWebSearchFailureContext = '';
   final Map<int, WebSearchBatchResult> _webSearchResultsByMessageId =
       <int, WebSearchBatchResult>{};
 
