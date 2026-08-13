@@ -139,14 +139,15 @@ class _ChatBubbleState extends State<ChatBubble>
   late Animation<double> _scaleX;
   late Animation<double> _contentOpacity;
   late Animation<double> _avatarOpacity; // 頭像原地漸顯，不參與氣泡縮放
+  bool _didStartEntryAnimation = false;
 
   @override
   void initState() {
     super.initState();
     _entryCtrl = AnimationController(
       vsync: this,
-      // 650ms 太拖——全 app 過渡統一 200ms 檔，入場敘事壓到 320ms
-      duration: const Duration(milliseconds: 320),
+      // 短促 QQ 彈跳；避免把生成中的大內容長時間鎖在入場動效裡。
+      duration: const Duration(milliseconds: 240),
     );
 
     // ① 氣泡淡入（一瞬）
@@ -232,11 +233,19 @@ class _ChatBubbleState extends State<ChatBubble>
       ),
     );
 
-    // Keep the expensive message subtree settled. The lightweight outer
-    // transition in build animates only opacity/translation and reuses it as
-    // a child instead of rebuilding Markdown, images and avatars every frame.
-    _entryCtrl.value = 1;
-    if (!widget.captureMode) _checkSaved();
+    _checkSaved();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_didStartEntryAnimation) return;
+    _didStartEntryAnimation = true;
+    if (widget.captureMode || MediaQuery.disableAnimationsOf(context)) {
+      _entryCtrl.value = 1;
+    } else {
+      _entryCtrl.forward();
+    }
   }
 
   Future<void> _checkSaved() async {
@@ -697,7 +706,7 @@ class _ChatBubbleState extends State<ChatBubble>
       return const SizedBox.shrink();
     }
 
-    final settledContent = AnimatedBuilder(
+    return AnimatedBuilder(
       animation: _entryCtrl,
       builder: (context, _) {
         final origin = widget.isUser
@@ -1154,24 +1163,6 @@ class _ChatBubbleState extends State<ChatBubble>
           ),
         );
       },
-    );
-    if (widget.captureMode) return settledContent;
-
-    final reduceMotion = MediaQuery.disableAnimationsOf(context);
-    return TweenAnimationBuilder<double>(
-      tween: Tween<double>(begin: 0, end: 1),
-      duration: reduceMotion
-          ? Duration.zero
-          : const Duration(milliseconds: 180),
-      curve: Curves.easeOutCubic,
-      child: RepaintBoundary(child: settledContent),
-      builder: (context, value, child) => Opacity(
-        opacity: value,
-        child: Transform.translate(
-          offset: Offset(0, (1 - value) * 6),
-          child: child,
-        ),
-      ),
     );
   }
 

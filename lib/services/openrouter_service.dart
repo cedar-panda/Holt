@@ -133,6 +133,16 @@ class OpenRouterService implements ApiAdapter {
         normalized.startsWith('grok-');
   }
 
+  static String _reasoningTextFromDetails(dynamic raw) {
+    if (raw is! List) return '';
+    return raw
+        .whereType<Map>()
+        .map((detail) => detail['text'] ?? detail['content'] ?? '')
+        .whereType<String>()
+        .where((text) => text.isNotEmpty)
+        .join();
+  }
+
   /// Claude 在工具與動態背景很長時，偶爾會把上一輪當成當前任務。
   /// 這兩個標記只包在 request-only runtime sidecar 中：不改 static prompt、
   /// 不移動 rolling breakpoint，也不寫回 messages/history。
@@ -219,7 +229,18 @@ class OpenRouterService implements ApiAdapter {
           ApiUsage.fromStats(stats, diagnostics: requestDiagnostics),
         );
       }
-      return message is Map ? '${message['content'] ?? ''}' : '';
+      if (message is! Map) return '';
+      final content = '${message['content'] ?? ''}';
+      final hiddenReasoning =
+          message['reasoning'] ??
+          message['reasoning_content'] ??
+          _reasoningTextFromDetails(message['reasoning_details']);
+      if (!thinkingEnabled ||
+          hiddenReasoning is! String ||
+          hiddenReasoning.isEmpty) {
+        return content;
+      }
+      return '<think>$hiddenReasoning</think>$content';
     } finally {
       if (identical(_activeClient, client)) _activeClient = null;
       client.close();
@@ -270,6 +291,7 @@ class OpenRouterService implements ApiAdapter {
       Map<String, dynamic>? finalUsageData;
       final reasoningDetails = <dynamic>[];
       final reasoning = StringBuffer();
+      var reasoningTagOpen = false;
       final streamDiagnostics = SseStreamDiagnostics();
       await for (final data in SseStream.data(
         response.stream,
@@ -289,13 +311,32 @@ class OpenRouterService implements ApiAdapter {
           if (delta is Map) {
             final details = delta['reasoning_details'];
             if (details is List) reasoningDetails.addAll(details);
-            final hidden = delta['reasoning'] ?? delta['reasoning_content'];
-            if (hidden is String && hidden.isNotEmpty) reasoning.write(hidden);
+            final hidden =
+                delta['reasoning'] ??
+                delta['reasoning_content'] ??
+                _reasoningTextFromDetails(delta['reasoning_details']);
+            if (hidden is String && hidden.isNotEmpty) {
+              reasoning.write(hidden);
+              if (thinkingEnabled) {
+                if (!reasoningTagOpen) {
+                  reasoningTagOpen = true;
+                  yield '<think>';
+                }
+                yield hidden;
+              }
+            }
             final content = delta['content'];
-            if (content is String && content.isNotEmpty) yield content;
+            if (content is String && content.isNotEmpty) {
+              if (reasoningTagOpen) {
+                reasoningTagOpen = false;
+                yield '</think>';
+              }
+              yield content;
+            }
           }
         } catch (_) {}
       }
+      if (reasoningTagOpen) yield '</think>';
       requestDiagnostics['malformed_utf8_replacements'] =
           streamDiagnostics.malformedUtf8Replacements;
       if (_isXaiModel(model)) {

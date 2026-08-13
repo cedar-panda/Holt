@@ -1720,6 +1720,11 @@ extension _ChatActionMethods on _ChatScreenState {
                         accentColor: pickerAccent,
                         onThinkingChanged: (value) async {
                           await ApiSettings.saveThinkingChain(value);
+                          if (mounted) {
+                            _refreshChatState(
+                              () => _generationThinkingEnabled = value,
+                            );
+                          }
                           if (!mounted || !_isGenerating) return;
                           ScaffoldMessenger.of(context).showSnackBar(
                             SnackBar(

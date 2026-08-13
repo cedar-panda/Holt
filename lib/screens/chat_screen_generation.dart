@@ -2301,7 +2301,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
       await turnEffects.commit();
       final replyText = ThinkingModePolicy.sanitizeVisibleReply(
         rawReply.toString(),
-        enabled: thinkingEnabled,
+        enabled: _generationThinkingEnabled,
       );
       if (!_isCurrentGeneration(generationSerial)) return;
       final webSearchIntent = WebSearchIntentParser.parse(replyText);
