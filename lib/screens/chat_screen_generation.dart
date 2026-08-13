@@ -7,6 +7,17 @@ extension _ChatGenerationMethods on _ChatScreenState {
     if (_isGenerating == v) return;
     _isGenerating = v;
     if (v) {
+      _streamSurfaceDelayTimer?.cancel();
+      _streamSurfaceVisible = false;
+      // Let the sent user bubble settle before revealing the assistant
+      // avatar/bubble. The stream queue keeps incoming chunks meanwhile.
+      final delay = 180 + _streamSurfaceRandom.nextInt(220);
+      _streamSurfaceDelayTimer = Timer(Duration(milliseconds: delay), () {
+        if (!mounted || !_isGenerating) return;
+        _streamSurfaceVisible = true;
+        _refreshChatState(() {});
+        _startStreamPopTimer();
+      });
       _generationForegroundEndTimer?.cancel();
       _generationForegroundStartTimer?.cancel();
       // Starting the Android foreground isolate is expensive. Let the IME and
@@ -18,6 +29,8 @@ extension _ChatGenerationMethods on _ChatScreenState {
         },
       );
     } else {
+      _streamSurfaceDelayTimer?.cancel();
+      _streamSurfaceVisible = false;
       _generationForegroundStartTimer?.cancel();
       _generationForegroundEndTimer?.cancel();
       // Likewise, do not tear down the service in the same frame that inserts
@@ -38,6 +51,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
   }
 
   void _startStreamPopTimer() {
+    if (!_streamSurfaceVisible) return;
     if (_streamPopTimer?.isActive == true) return;
     _streamPopTimer = Timer.periodic(const Duration(milliseconds: 30), (timer) {
       if (!mounted || _streamCharQueue.isEmpty) {
@@ -988,20 +1002,9 @@ extension _ChatGenerationMethods on _ChatScreenState {
       provider: provider,
     );
 
-    // 明確的生理週期語句不必等窗口摘要模型；本地驗證後立即寫入時間線。
-    // 這條路徑不改 prompt/cache，也不增加模型請求。
+    // 明確的生理週期語句不必等窗口摘要模型；本地游標只掃新增消息。
     try {
-      final cursor = await DatabaseHelper.getConversationSummaryCursor(
-        conversationId,
-      );
-      final pendingMessages = await DatabaseHelper.getMessagesAfterId(
-        conversationId,
-        cursor,
-      );
-      await CharacterTimelineService.storeExplicitMenstrualMessages(
-        characterId: _activeCharacterId,
-        messages: pendingMessages,
-      );
+      await _scanExplicitMenstrualTimeline();
     } catch (error) {
       debugPrint('即時生理期時間線記錄失敗：$error');
     }

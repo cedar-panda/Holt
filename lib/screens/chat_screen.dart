@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
@@ -223,6 +224,7 @@ class _ChatScreenState extends State<ChatScreen> {
   final TokenTracker _tokenTracker = TokenTracker();
   bool _isGenerating = false;
   bool _isGeneratingImage = false;
+  bool _streamSurfaceVisible = false;
   bool _isCapturingLongScreenshot = false;
 
   bool _sendSubmissionInProgress = false;
@@ -369,6 +371,8 @@ class _ChatScreenState extends State<ChatScreen> {
   // ═══ 流式絲滑打字機佇列 ═══
   final List<String> _streamCharQueue = [];
   Timer? _streamPopTimer;
+  Timer? _streamSurfaceDelayTimer;
+  final Random _streamSurfaceRandom = Random();
   Timer? _generationForegroundStartTimer;
   Timer? _generationForegroundEndTimer;
 
@@ -716,12 +720,9 @@ class _ChatScreenState extends State<ChatScreen> {
     await _restoreTokensSinceSummary();
 
     // 舊消息可能已經完成摘要但被模型漏掉生理週期候選；開窗時用本地
-    // 明確證據補記，讓既有對話也能修復，不新增摘要模型請求。
+    // 游標補掃一次，之後只查新增消息，不新增摘要模型請求。
     try {
-      await CharacterTimelineService.storeExplicitMenstrualMessages(
-        characterId: _activeCharacterId,
-        messages: messages,
-      );
+      await _scanExplicitMenstrualTimeline();
     } catch (error) {
       debugPrint('開窗補記生理期時間線失敗：$error');
     }
@@ -820,9 +821,34 @@ class _ChatScreenState extends State<ChatScreen> {
   String get _tokensSinceSummaryKey =>
       'conversation:${widget.conversationId}:tokensSinceSummary';
 
+  String get _timelineMenstrualScanCursorKey =>
+      'conversation:${widget.conversationId}:timelineMenstrualScanCursor';
+
+  /// 本地時間線補掃游標：每個對話只查上次成功掃描後的新消息。
+  /// 這是 SQLite/SharedPreferences 狀態，不是 prompt cache。
+  Future<void> _scanExplicitMenstrualTimeline() async {
+    final prefs = await SharedPreferences.getInstance();
+    final cursor = prefs.getInt(_timelineMenstrualScanCursorKey) ?? 0;
+    final messages = await DatabaseHelper.getMessagesAfterId(
+      widget.conversationId,
+      cursor,
+    );
+    if (messages.isEmpty) return;
+
+    final maxId = messages
+        .map((message) => message.id ?? 0)
+        .fold<int>(cursor, (max, id) => id > max ? id : max);
+    await CharacterTimelineService.storeExplicitMenstrualMessages(
+      characterId: _activeCharacterId,
+      messages: messages,
+    );
+    await prefs.setInt(_timelineMenstrualScanCursorKey, maxId);
+  }
+
   @override
   void dispose() {
     _clearStreamQueue();
+    _streamSurfaceDelayTimer?.cancel();
     _generationForegroundStartTimer?.cancel();
     _generationForegroundEndTimer?.cancel();
     unawaited(GenerationForegroundGuard.end());
@@ -1590,7 +1616,10 @@ class _ChatScreenState extends State<ChatScreen> {
     // 各來源首包大小不同，但都共用同一個 ChatBubble，因而能走一致的 QQ
     // 彈彈入場動畫；內容仍由既有 stream queue 逐字填入。
     final hasStreamingBubble =
-        _isGenerating && !_isGeneratingImage && !hasWebSearchActivity;
+        _isGenerating &&
+        _streamSurfaceVisible &&
+        !_isGeneratingImage &&
+        !hasWebSearchActivity;
     final pendingWebSearchTrace = _pendingWebSearchResult?.toDisplayTrace();
     // Web search owns the active Thinking surface. Avoid rendering the generic
     // atom above it, which otherwise looks like an empty assistant bubble.
