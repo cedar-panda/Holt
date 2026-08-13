@@ -16,6 +16,7 @@ import 'system_context_debug.dart';
 class GeminiService implements ApiAdapter {
   final String apiKey;
   final String modelId;
+  bool thinkingEnabled;
   http.Client? _activeClient;
   static const String _baseUrl =
       'https://generativelanguage.googleapis.com/v1beta';
@@ -35,7 +36,11 @@ class GeminiService implements ApiAdapter {
 
   static const Duration _cacheTtl = Duration(hours: 1);
 
-  GeminiService({required this.apiKey, this.modelId = 'gemini-2.5-flash'});
+  GeminiService({
+    required this.apiKey,
+    this.modelId = 'gemini-2.5-flash',
+    this.thinkingEnabled = false,
+  });
 
   /// Loads concrete Gemini models that accept `generateContent` requests.
   ///
@@ -161,7 +166,7 @@ class GeminiService implements ApiAdapter {
       onUsage?.call(
         ApiUsage.fromStats(requestStats, cacheReadKey: 'cached_tokens'),
       );
-      return data['candidates']?[0]?['content']?['parts']?[0]?['text'] ?? '';
+      return _replyText(data['candidates']?[0]?['content']);
     } finally {
       if (identical(_activeClient, client)) _activeClient = null;
       client.close();
@@ -214,6 +219,7 @@ class GeminiService implements ApiAdapter {
       }
 
       final diagnostics = SseStreamDiagnostics();
+      var reasoningOpen = false;
       await for (final data in SseStream.data(
         response.stream,
         diagnostics: diagnostics,
@@ -225,11 +231,31 @@ class GeminiService implements ApiAdapter {
           if (json['usageMetadata'] != null) {
             requestStats = _extractUsage(json, base: requestStats);
           }
-          final text =
-              json['candidates']?[0]?['content']?['parts']?[0]?['text'];
-          if (text != null && text.isNotEmpty) yield text;
+          final parts = json['candidates']?[0]?['content']?['parts'];
+          if (parts is List) {
+            for (final part in parts) {
+              if (part is! Map) continue;
+              final text = part['text'];
+              if (text is! String || text.isEmpty) continue;
+              final isThought = part['thought'] == true;
+              if (isThought && thinkingEnabled) {
+                if (!reasoningOpen) {
+                  reasoningOpen = true;
+                  yield '<think>';
+                }
+                yield text;
+              } else if (!isThought) {
+                if (reasoningOpen) {
+                  reasoningOpen = false;
+                  yield '</think>';
+                }
+                yield text;
+              }
+            }
+          }
         } catch (_) {}
       }
+      if (reasoningOpen) yield '</think>';
       onUsage?.call(
         ApiUsage.fromStats(
           requestStats,
@@ -434,7 +460,14 @@ class GeminiService implements ApiAdapter {
       }
     }
 
-    body['generationConfig'] = {'maxOutputTokens': 4096};
+    body['generationConfig'] = <String, dynamic>{
+      'maxOutputTokens': 4096,
+      // Gemini 2.5 exposes hidden thoughts by default. Explicitly disable
+      // that budget when Thinking is off; leaving it absent preserves the
+      // provider's normal dynamic budget when Thinking is on.
+      if (!thinkingEnabled && _supportsThinkingBudget(modelId))
+        'thinkingConfig': <String, int>{'thinkingBudget': 0},
+    };
 
     if (structuredPrompt != null) {
       SystemContextDebug.recordChatRequest(
@@ -463,6 +496,28 @@ class GeminiService implements ApiAdapter {
 
     return body;
   }
+
+  String _replyText(dynamic content) {
+    final parts = content is Map ? content['parts'] : null;
+    if (parts is! List) return '';
+    final reasoning = StringBuffer();
+    final answer = StringBuffer();
+    for (final part in parts) {
+      if (part is! Map || part['text'] is! String) continue;
+      if (part['thought'] == true) {
+        reasoning.write(part['text']);
+      } else {
+        answer.write(part['text']);
+      }
+    }
+    if (thinkingEnabled && reasoning.isNotEmpty) {
+      return '<think>$reasoning</think>$answer';
+    }
+    return answer.toString();
+  }
+
+  static bool _supportsThinkingBudget(String model) =>
+      model.toLowerCase().contains('gemini-2.5');
 
   Map<String, int> _extractUsage(
     Map<String, dynamic> data, {

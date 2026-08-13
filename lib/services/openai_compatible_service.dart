@@ -16,6 +16,7 @@ class OpenAICompatibleService implements ApiAdapter {
   final String apiKey;
   final String baseUrl; // 例：https://api.openai.com/v1
   final String modelPrefixToStrip;
+  final bool thinkingEnabled;
   http.Client? _activeClient;
   static Map<String, int> lastUsageStats = <String, int>{};
 
@@ -23,6 +24,7 @@ class OpenAICompatibleService implements ApiAdapter {
     required this.apiKey,
     required this.baseUrl,
     this.modelPrefixToStrip = '',
+    this.thinkingEnabled = false,
   });
 
   Future<Map<String, dynamic>> debugBuildBodyForTesting({
@@ -196,7 +198,15 @@ class OpenAICompatibleService implements ApiAdapter {
       final data = jsonDecode(response.body);
       final stats = _extractUsage(data);
       if (stats != null) onUsage?.call(ApiUsage.fromStats(stats));
-      return data['choices'][0]['message']['content'] ?? '';
+      final message = data['choices'][0]['message'];
+      final content = message is Map ? '${message['content'] ?? ''}' : '';
+      final reasoning = message is Map
+          ? ProviderReasoning.fromMap(message)
+          : '';
+      if (thinkingEnabled && reasoning.isNotEmpty) {
+        return '<think>$reasoning</think>$content';
+      }
+      return content;
     } on SocketException catch (e) {
       throw Exception(_friendlyNetworkError(e));
     } on HttpException catch (e) {
@@ -251,6 +261,7 @@ class OpenAICompatibleService implements ApiAdapter {
       }
 
       Map<String, int>? requestStats;
+      var reasoningOpen = false;
       final diagnostics = SseStreamDiagnostics();
       await for (final data in SseStream.data(
         response.stream,
@@ -261,12 +272,28 @@ class OpenAICompatibleService implements ApiAdapter {
         try {
           final json = jsonDecode(data);
           if (json['usage'] != null) requestStats = _extractUsage(json);
-          final delta = json['choices']?[0]?['delta']?['content'];
+          final deltaMap = json['choices']?[0]?['delta'];
+          final reasoning = deltaMap is Map
+              ? ProviderReasoning.fromMap(deltaMap)
+              : '';
+          if (reasoning.isNotEmpty && thinkingEnabled) {
+            if (!reasoningOpen) {
+              reasoningOpen = true;
+              yield '<think>';
+            }
+            yield reasoning;
+          }
+          final delta = deltaMap is Map ? deltaMap['content'] : null;
           if (delta != null && delta.isNotEmpty) {
+            if (reasoningOpen) {
+              reasoningOpen = false;
+              yield '</think>';
+            }
             yield delta;
           }
         } catch (_) {}
       }
+      if (reasoningOpen) yield '</think>';
       final streamDiagnostics = <String, Object?>{
         'malformed_utf8_replacements': diagnostics.malformedUtf8Replacements,
       };

@@ -12,6 +12,7 @@ import 'system_context_debug.dart';
 /// 最小緩存長度 128 tokens，命中時費用降為 0.1 元/百萬 token
 class DeepSeekService implements ApiAdapter {
   final String apiKey;
+  final bool thinkingEnabled;
   http.Client? _activeClient;
   static const String _baseUrl = 'https://api.deepseek.com/chat/completions';
 
@@ -22,7 +23,7 @@ class DeepSeekService implements ApiAdapter {
     lastCacheStats = {};
   }
 
-  DeepSeekService({required this.apiKey});
+  DeepSeekService({required this.apiKey, this.thinkingEnabled = false});
 
   static Future<List<ModelInfo>> fetchModels(
     String apiKey, {
@@ -115,7 +116,15 @@ class DeepSeekService implements ApiAdapter {
       if (stats != null) {
         onUsage?.call(ApiUsage.fromStats(stats, cacheReadKey: 'cache_hit'));
       }
-      return data['choices']?[0]?['message']?['content'] ?? '';
+      final message = data['choices']?[0]?['message'];
+      final content = message is Map ? '${message['content'] ?? ''}' : '';
+      final reasoning = message is Map
+          ? ProviderReasoning.fromMap(message)
+          : '';
+      if (thinkingEnabled && reasoning.isNotEmpty) {
+        return '<think>$reasoning</think>$content';
+      }
+      return content;
     } finally {
       if (identical(_activeClient, client)) _activeClient = null;
       client.close();
@@ -161,6 +170,7 @@ class DeepSeekService implements ApiAdapter {
       }
 
       Map<String, int>? requestStats;
+      var reasoningOpen = false;
       final diagnostics = SseStreamDiagnostics();
       await for (final data in SseStream.data(
         response.stream,
@@ -171,10 +181,28 @@ class DeepSeekService implements ApiAdapter {
         try {
           final json = jsonDecode(data);
           if (json['usage'] != null) requestStats = _extractCacheStats(json);
-          final delta = json['choices']?[0]?['delta']?['content'];
-          if (delta != null && delta.isNotEmpty) yield delta;
+          final deltaMap = json['choices']?[0]?['delta'];
+          final reasoning = deltaMap is Map
+              ? ProviderReasoning.fromMap(deltaMap)
+              : '';
+          if (reasoning.isNotEmpty && thinkingEnabled) {
+            if (!reasoningOpen) {
+              reasoningOpen = true;
+              yield '<think>';
+            }
+            yield reasoning;
+          }
+          final delta = deltaMap is Map ? deltaMap['content'] : null;
+          if (delta is String && delta.isNotEmpty) {
+            if (reasoningOpen) {
+              reasoningOpen = false;
+              yield '</think>';
+            }
+            yield delta;
+          }
         } catch (_) {}
       }
+      if (reasoningOpen) yield '</think>';
       final streamDiagnostics = <String, Object?>{
         'malformed_utf8_replacements': diagnostics.malformedUtf8Replacements,
       };

@@ -388,6 +388,47 @@ abstract final class ThinkingModePolicy {
   }
 }
 
+/// Normalizes optional hidden-reasoning fields used by OpenAI-compatible
+/// providers. These fields are provider metadata, not user message content.
+abstract final class ProviderReasoning {
+  static String fromMap(Map<dynamic, dynamic> source) {
+    final direct =
+        _stringValue(source['reasoning_content']) ??
+        _stringValue(source['reasoning']);
+    if (direct != null && direct.trim().isNotEmpty) return direct;
+    return _collect(source['reasoning_details']);
+  }
+
+  static String _collect(dynamic raw) {
+    if (raw is String) return raw;
+    if (raw is List) {
+      return raw.map(_collect).where((value) => value.isNotEmpty).join();
+    }
+    if (raw is Map) {
+      for (final key in const <String>[
+        'text',
+        'content',
+        'reasoning_content',
+        'reasoning',
+        'summary',
+      ]) {
+        final value = _collect(raw[key]);
+        if (value.isNotEmpty) return value;
+      }
+    }
+    return '';
+  }
+
+  static String? _stringValue(dynamic value) {
+    if (value is String) return value;
+    if (value is List || value is Map) {
+      final collected = _collect(value);
+      return collected.isEmpty ? null : collected;
+    }
+    return null;
+  }
+}
+
 typedef ApiUsageCallback = void Function(ApiUsage usage);
 
 /// 單次 API 請求自己的用量與診斷。不得再由消費端讀 provider 的全域

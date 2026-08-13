@@ -681,6 +681,7 @@ class ApiSettings {
     String? overrideProvider,
   }) async {
     final provider = overrideProvider ?? await getApiProvider();
+    final thinkingEnabled = await getThinkingChain();
     // 如果指定了本地模型，直接返回 LocalModelService
     final modelId = overrideModel ?? await _modelForProvider(provider);
     if (LocalModelService.isLocalModelId(modelId)) {
@@ -719,6 +720,7 @@ class ApiSettings {
         apiKey: key,
         baseUrl: baseUrl,
         modelPrefixToStrip: localApiModelPrefix,
+        thinkingEnabled: thinkingEnabled,
       );
     }
 
@@ -739,6 +741,7 @@ class ApiSettings {
         apiKey: key,
         baseUrl: baseUrl,
         modelPrefixToStrip: localApiModelPrefix,
+        thinkingEnabled: thinkingEnabled,
       );
     }
 
@@ -775,11 +778,16 @@ class ApiSettings {
       if (_cachedGeminiKey == key &&
           _cachedGeminiModel == model &&
           cached != null) {
+        cached.thinkingEnabled = thinkingEnabled;
         return cached;
       }
       _cachedGeminiKey = key;
       _cachedGeminiModel = model;
-      _cachedGeminiService = GeminiService(apiKey: key, modelId: model);
+      _cachedGeminiService = GeminiService(
+        apiKey: key,
+        modelId: model,
+        thinkingEnabled: thinkingEnabled,
+      );
       return _cachedGeminiService!;
     }
 
@@ -793,7 +801,7 @@ class ApiSettings {
           ),
         );
       }
-      return DeepSeekService(apiKey: key);
+      return DeepSeekService(apiKey: key, thinkingEnabled: thinkingEnabled);
     }
 
     if (provider == 'qwen') {
@@ -806,7 +814,7 @@ class ApiSettings {
           ),
         );
       }
-      return QwenService(apiKey: key);
+      return QwenService(apiKey: key, thinkingEnabled: thinkingEnabled);
     }
 
     if (provider == 'thinking_machines') {
@@ -821,7 +829,7 @@ class ApiSettings {
       }
       return ThinkingMachinesService(
         apiKey: key,
-        thinkingEnabled: await getThinkingChain(),
+        thinkingEnabled: thinkingEnabled,
         thinkingEffort: await getThinkingMachinesEffort(),
       );
     }
@@ -842,7 +850,11 @@ class ApiSettings {
           L.pick(en: 'API Key is not configured', zhTW: 'API Key 未設定'),
         );
       }
-      return OpenAICompatibleService(apiKey: key, baseUrl: baseUrl);
+      return OpenAICompatibleService(
+        apiKey: key,
+        baseUrl: baseUrl,
+        thinkingEnabled: thinkingEnabled,
+      );
     }
 
     if (provider == 'openrouter') {
@@ -868,7 +880,7 @@ class ApiSettings {
           L.pick(en: 'xAI API Key is not configured', zhTW: 'xAI API Key 未設定'),
         );
       }
-      return XaiService(apiKey: apiKey);
+      return XaiService(apiKey: apiKey, thinkingEnabled: thinkingEnabled);
     }
 
     if (provider == 'local') {

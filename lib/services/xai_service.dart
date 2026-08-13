@@ -27,9 +27,10 @@ class XaiService implements ApiAdapter {
   static Map<String, Object?> lastDiagnostics = <String, Object?>{};
 
   final String apiKey;
+  final bool thinkingEnabled;
   http.Client? _activeClient;
 
-  XaiService({required this.apiKey});
+  XaiService({required this.apiKey, this.thinkingEnabled = false});
 
   static void resetDiagnostics() {
     lastCacheStats = <String, int>{};
@@ -132,7 +133,12 @@ class XaiService implements ApiAdapter {
       final message = data['choices']?[0]?['message'];
       if (message is Map) {
         await _rememberReasoning(plan, message);
-        return '${message['content'] ?? ''}';
+        final content = '${message['content'] ?? ''}';
+        final reasoning = ProviderReasoning.fromMap(message);
+        if (thinkingEnabled && reasoning.isNotEmpty) {
+          return '<think>$reasoning</think>$content';
+        }
+        return content;
       }
       return '';
     } finally {
@@ -177,6 +183,7 @@ class XaiService implements ApiAdapter {
 
       Map<String, dynamic>? usageData;
       final reasoning = StringBuffer();
+      var reasoningOpen = false;
       final diagnostics = SseStreamDiagnostics();
       await for (final raw in SseStream.data(
         response.stream,
@@ -188,15 +195,29 @@ class XaiService implements ApiAdapter {
           if (data['usage'] != null) usageData = data;
           final delta = data['choices']?[0]?['delta'];
           if (delta is Map) {
-            final hiddenReasoning = delta['reasoning_content'];
-            if (hiddenReasoning is String && hiddenReasoning.isNotEmpty) {
+            final hiddenReasoning = ProviderReasoning.fromMap(delta);
+            if (hiddenReasoning.isNotEmpty) {
               reasoning.write(hiddenReasoning);
+              if (thinkingEnabled) {
+                if (!reasoningOpen) {
+                  reasoningOpen = true;
+                  yield '<think>';
+                }
+                yield hiddenReasoning;
+              }
             }
             final content = delta['content'];
-            if (content is String && content.isNotEmpty) yield content;
+            if (content is String && content.isNotEmpty) {
+              if (reasoningOpen) {
+                reasoningOpen = false;
+                yield '</think>';
+              }
+              yield content;
+            }
           }
         } catch (_) {}
       }
+      if (reasoningOpen) yield '</think>';
 
       plan.diagnostics['malformed_utf8_replacements'] =
           diagnostics.malformedUtf8Replacements;

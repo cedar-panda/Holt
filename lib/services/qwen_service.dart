@@ -10,13 +10,14 @@ import 'system_context_debug.dart';
 /// endpoint: compatible-mode/v1
 class QwenService implements ApiAdapter {
   final String apiKey;
+  final bool thinkingEnabled;
   http.Client? _activeClient;
   static const String _baseUrl =
       'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions';
 
   static Map<String, int> lastCacheStats = {};
 
-  QwenService({required this.apiKey});
+  QwenService({required this.apiKey, this.thinkingEnabled = false});
 
   Map<String, dynamic> debugBuildBodyForTesting({
     required List<Map<String, String>> messages,
@@ -68,7 +69,15 @@ class QwenService implements ApiAdapter {
       final data = jsonDecode(response.body);
       final stats = _extractUsage(data);
       if (stats != null) onUsage?.call(ApiUsage.fromStats(stats));
-      return data['choices']?[0]?['message']?['content'] ?? '';
+      final message = data['choices']?[0]?['message'];
+      final content = message is Map ? '${message['content'] ?? ''}' : '';
+      final reasoning = message is Map
+          ? ProviderReasoning.fromMap(message)
+          : '';
+      if (thinkingEnabled && reasoning.isNotEmpty) {
+        return '<think>$reasoning</think>$content';
+      }
+      return content;
     } finally {
       if (identical(_activeClient, client)) _activeClient = null;
       client.close();
@@ -113,6 +122,7 @@ class QwenService implements ApiAdapter {
       }
 
       Map<String, int>? requestStats;
+      var reasoningOpen = false;
       final diagnostics = SseStreamDiagnostics();
       await for (final data in SseStream.data(
         response.stream,
@@ -123,10 +133,28 @@ class QwenService implements ApiAdapter {
         try {
           final json = jsonDecode(data);
           if (json['usage'] != null) requestStats = _extractUsage(json);
-          final delta = json['choices']?[0]?['delta']?['content'];
-          if (delta != null && delta.isNotEmpty) yield delta;
+          final deltaMap = json['choices']?[0]?['delta'];
+          final reasoning = deltaMap is Map
+              ? ProviderReasoning.fromMap(deltaMap)
+              : '';
+          if (reasoning.isNotEmpty && thinkingEnabled) {
+            if (!reasoningOpen) {
+              reasoningOpen = true;
+              yield '<think>';
+            }
+            yield reasoning;
+          }
+          final delta = deltaMap is Map ? deltaMap['content'] : null;
+          if (delta is String && delta.isNotEmpty) {
+            if (reasoningOpen) {
+              reasoningOpen = false;
+              yield '</think>';
+            }
+            yield delta;
+          }
         } catch (_) {}
       }
+      if (reasoningOpen) yield '</think>';
       final streamDiagnostics = <String, Object?>{
         'malformed_utf8_replacements': diagnostics.malformedUtf8Replacements,
       };
