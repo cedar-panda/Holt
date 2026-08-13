@@ -30,6 +30,10 @@ void main() {
         await WebSearchSettings.getDailyProviderLaunchCap(),
         WebSearchSettings.defaultDailyProviderLaunchCap,
       );
+      expect(
+        await WebSearchSettings.getMaxResults(),
+        WebSearchSettings.defaultMaxResults,
+      );
     },
   );
 
@@ -63,6 +67,17 @@ void main() {
     await WebSearchSettings.saveDailyProviderLaunchCap(101);
     expect(await WebSearchSettings.getDailyProviderLaunchCap(), 100);
   });
+
+  test(
+    'web page limit defaults to 2 and clamps writes to 1 through 20',
+    () async {
+      expect(await WebSearchSettings.getMaxResults(), 2);
+      await WebSearchSettings.saveMaxResults(0);
+      expect(await WebSearchSettings.getMaxResults(), 1);
+      await WebSearchSettings.saveMaxResults(21);
+      expect(await WebSearchSettings.getMaxResults(), 20);
+    },
+  );
 
   test('unknown persisted mode falls back to auto', () async {
     SharedPreferences.setMockInitialValues(<String, Object>{

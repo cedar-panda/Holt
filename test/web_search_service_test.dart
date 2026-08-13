@@ -47,10 +47,10 @@ void main() {
         final tool = tools.single as Map<String, dynamic>;
         expect(tool['type'], 'openrouter:web_search');
         final parameters = tool['parameters'] as Map<String, dynamic>;
-        expect(parameters['engine'], 'auto');
+        expect(parameters['engine'], 'exa');
         expect(parameters['max_uses'], 1);
-        expect(parameters['max_results'], 5);
-        expect(parameters['max_total_results'], 5);
+        expect(parameters['max_results'], 2);
+        expect(parameters['max_total_results'], 2);
         expect(parameters['max_characters'], 2000);
         return http.Response(
           jsonEncode(<String, dynamic>{

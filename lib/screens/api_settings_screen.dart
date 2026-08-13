@@ -132,6 +132,7 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
   WebSearchMode _webSearchMode = WebSearchMode.auto;
   int _webSearchDailyProviderLaunchCap =
       WebSearchSettings.defaultDailyProviderLaunchCap;
+  int _webSearchMaxResults = WebSearchSettings.defaultMaxResults;
   String _webSearchGeminiModel = '';
   String _webSearchXaiModel = '';
   String _wsSearchOrModelOverride = '';
@@ -182,6 +183,7 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
     final webSearchMode = await WebSearchSettings.getMode();
     final webSearchDailyProviderLaunchCap =
         await WebSearchSettings.getDailyProviderLaunchCap();
+    final webSearchMaxResults = await WebSearchSettings.getMaxResults();
     final webSearchGeminiModel = await ApiSettings.getModelForProvider(
       'gemini',
     );
@@ -250,6 +252,7 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
         _webSearchEnabled = webSearchEnabled;
         _webSearchMode = webSearchMode;
         _webSearchDailyProviderLaunchCap = webSearchDailyProviderLaunchCap;
+        _webSearchMaxResults = webSearchMaxResults;
         _webSearchGeminiModel = webSearchGeminiModel;
         _webSearchXaiModel = webSearchXaiModel;
         _wsSearchOrModelOverride = wsSearchOrOverride;
@@ -1275,6 +1278,67 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
                     Expanded(
                       child: Text(
                         L.pick(
+                          en: 'Web pages per search',
+                          zhTW: '每次搜尋網頁數',
+                          zhCN: '每次搜索网页数',
+                        ),
+                        style: YanciTheme.bodySmall.copyWith(
+                          color: YanciTheme.textPrimary,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ),
+                    Text(
+                      L.pick(
+                        en: '$_webSearchMaxResults pages',
+                        zhTW: '$_webSearchMaxResults 頁',
+                        zhCN: '$_webSearchMaxResults 页',
+                      ),
+                      style: YanciTheme.bodySmall.copyWith(
+                        color: YanciTheme.accent,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+                Semantics(
+                  label: L.pick(
+                    en: 'Web pages per search',
+                    zhTW: '每次搜尋網頁數',
+                    zhCN: '每次搜索网页数',
+                  ),
+                  value: '$_webSearchMaxResults',
+                  child: Slider.adaptive(
+                    value: _webSearchMaxResults.toDouble(),
+                    min: WebSearchSettings.minMaxResults.toDouble(),
+                    max: WebSearchSettings.maxMaxResults.toDouble(),
+                    divisions:
+                        WebSearchSettings.maxMaxResults -
+                        WebSearchSettings.minMaxResults,
+                    label: '$_webSearchMaxResults',
+                    activeColor: YanciTheme.accent,
+                    onChanged: (value) {
+                      setState(() => _webSearchMaxResults = value.round());
+                      _debouncedSave();
+                    },
+                    semanticFormatterCallback: (value) => L.pick(
+                      en: '${value.round()} web pages per search',
+                      zhTW: '每次搜尋 ${value.round()} 個網頁',
+                      zhCN: '每次搜索 ${value.round()} 个网页',
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Divider(
+                  color: YanciTheme.textSecondary.withValues(alpha: 0.12),
+                  height: 1,
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        L.pick(
                           en: 'Daily provider-launch cap',
                           zhTW: '每日供應商啟動上限',
                           zhCN: '每日供应商启动上限',
@@ -1431,6 +1495,7 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
     final webSearchEnabled = _webSearchEnabled;
     final webSearchMode = _webSearchMode;
     final webSearchDailyProviderLaunchCap = _webSearchDailyProviderLaunchCap;
+    final webSearchMaxResults = _webSearchMaxResults;
     final wsSearchOrOverride = _wsSearchOrModelOverride;
     final wsSearchGeminiOverride = _wsSearchGeminiModelOverride;
     final wsSearchXaiOverride = _wsSearchXaiModelOverride;
@@ -1459,6 +1524,7 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
     await WebSearchSettings.saveDailyProviderLaunchCap(
       webSearchDailyProviderLaunchCap,
     );
+    await WebSearchSettings.saveMaxResults(webSearchMaxResults);
     await WebSearchSettings.saveOpenRouterSearchModel(wsSearchOrOverride);
     await WebSearchSettings.saveGeminiSearchModel(wsSearchGeminiOverride);
     await WebSearchSettings.saveXaiSearchModel(wsSearchXaiOverride);

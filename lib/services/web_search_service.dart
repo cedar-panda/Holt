@@ -325,7 +325,7 @@ class WebSearchRequest {
   WebSearchRequest({
     required String query,
     String locale = 'zh-TW',
-    this.maxResults = 5,
+    this.maxResults = 2,
     this.sensitiveQueryConfirmed = false,
     this.allowCrossProviderFallback = false,
     Set<WebSearchProviderId> allowedProviders = const <WebSearchProviderId>{},
@@ -334,10 +334,10 @@ class WebSearchRequest {
        allowedProviders = Set<WebSearchProviderId>.unmodifiable(
          allowedProviders,
        ) {
-    if (maxResults < 1 || maxResults > 5) {
+    if (maxResults < 1 || maxResults > 20) {
       throw const WebSearchProviderException(
         code: WebSearchFailureCode.invalidQuery,
-        safeMessage: 'Web search result limit must be between 1 and 5.',
+        safeMessage: 'Web search result limit must be between 1 and 20.',
       );
     }
     if (!RegExp(
@@ -471,6 +471,7 @@ class OpenRouterWebSearchProvider implements WebSearchProvider {
     'openrouter.ai',
     '/api/v1/chat/completions',
   );
+  static const int _maxSearchContextCharacters = 4000;
 
   final String apiKey;
   final String model;
@@ -500,6 +501,8 @@ class OpenRouterWebSearchProvider implements WebSearchProvider {
         costCertainty: WebSearchCostCertainty.known,
       );
     }
+    final maxCharactersPerResult =
+        _maxSearchContextCharacters ~/ request.maxResults;
 
     final body = <String, Object?>{
       'model': selectedModel,
@@ -515,11 +518,13 @@ class OpenRouterWebSearchProvider implements WebSearchProvider {
         <String, Object?>{
           'type': 'openrouter:web_search',
           'parameters': <String, Object?>{
-            'engine': 'auto',
+            'engine': 'exa',
             'max_uses': 1,
             'max_results': request.maxResults,
             'max_total_results': request.maxResults,
-            'max_characters': 2000,
+            // Keep the whole search turn bounded even when a source page is
+            // enormous. More pages trade excerpt depth for breadth.
+            'max_characters': maxCharactersPerResult,
           },
         },
       ],

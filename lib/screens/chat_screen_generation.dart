@@ -1370,17 +1370,20 @@ extension _ChatGenerationMethods on _ChatScreenState {
 
     ResolvedWebSearchPlan resolvedPlan;
     int dailyProviderLaunchCap;
+    int maxResults;
     try {
       final settings = await Future.wait<Object>(<Future<Object>>[
         WebSearchSettings.getEnabled(),
         WebSearchSettings.getMode(),
         WebSearchSettings.getDailyProviderLaunchCap(),
+        WebSearchSettings.getMaxResults(),
       ]);
       if (settings[0] != true) return;
       resolvedPlan = await _webSearchService.resolvePlan(
         settings[1] as WebSearchMode,
       );
       dailyProviderLaunchCap = settings[2] as int;
+      maxResults = settings[3] as int;
     } on WebSearchProviderException catch (error) {
       _setWebSearchFailure(
         generationSerial: generationSerial,
@@ -1449,7 +1452,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
         generationSerial: generationSerial,
         query: query,
         locale: L.locale,
-        maxResults: 5,
+        maxResults: maxResults,
         plan: _webSearchTurnPlan(resolvedPlan),
       );
       grant = await _webSearchTurnCoordinator.issueGrant(

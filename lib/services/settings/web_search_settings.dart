@@ -47,6 +47,7 @@ class WebSearchSettings {
   static const String _keyMode = 'web_search_mode_v1';
   static const String _keyDailyProviderLaunchCap =
       'web_search_daily_provider_launch_cap_v1';
+  static const String _keyMaxResults = 'web_search_max_results_v1';
   static const String _keyOpenRouterSearchModel =
       'web_search_openrouter_model_v1';
   static const String _keyGeminiSearchModel = 'web_search_gemini_model_v1';
@@ -58,6 +59,9 @@ class WebSearchSettings {
   static const int minDailyProviderLaunchCap = 1;
   static const int maxDailyProviderLaunchCap = 100;
   static const int defaultDailyProviderLaunchCap = 20;
+  static const int minMaxResults = 1;
+  static const int maxMaxResults = 20;
+  static const int defaultMaxResults = 2;
 
   static Future<bool> getEnabled() async {
     if (!webSearchLiveDeveloperPreviewEnabled) return false;
@@ -101,6 +105,20 @@ class WebSearchSettings {
     await preferences.setInt(
       _keyDailyProviderLaunchCap,
       value.clamp(minDailyProviderLaunchCap, maxDailyProviderLaunchCap),
+    );
+  }
+
+  static Future<int> getMaxResults() async {
+    final preferences = await SharedPreferences.getInstance();
+    final value = preferences.getInt(_keyMaxResults) ?? defaultMaxResults;
+    return value.clamp(minMaxResults, maxMaxResults);
+  }
+
+  static Future<void> saveMaxResults(int value) async {
+    final preferences = await SharedPreferences.getInstance();
+    await preferences.setInt(
+      _keyMaxResults,
+      value.clamp(minMaxResults, maxMaxResults),
     );
   }
 

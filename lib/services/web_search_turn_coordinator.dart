@@ -156,11 +156,11 @@ class WebSearchTurnBinding {
         'Generation serial must not be negative.',
       );
     }
-    if (maxResults < 1 || maxResults > 5) {
+    if (maxResults < 1 || maxResults > 20) {
       throw ArgumentError.value(
         maxResults,
         'maxResults',
-        'Web search result limit must be between 1 and 5.',
+        'Web search result limit must be between 1 and 20.',
       );
     }
   }
