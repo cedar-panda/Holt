@@ -232,6 +232,9 @@ class _InputBarState extends State<InputBar> with TickerProviderStateMixin {
     if (text.isEmpty && !widget.hasPendingContent) return;
     _sendCtrl.forward(from: 0.0);
     widget.onSend(text);
+    if (widget.sendStyle == SendButtonStyle.leaf) {
+      _focusNode.unfocus();
+    }
   }
 
   @override
