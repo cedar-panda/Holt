@@ -990,7 +990,7 @@ class _ChatScreenState extends State<ChatScreen> {
   /// 不自動接受——觸發 AI 回覆，讓角色自己決定接受或退還。
   TransferData? _pendingUserTransfer;
 
-  void _scrollToBottom({bool force = false}) {
+  void _scrollToBottom({bool force = false, int settlePass = 0}) {
     // 流式輸出時用戶手動上滾了 → 不強制跟隨（除非 force）
     if (_userIsScrolling || (_userScrolledUp && !force)) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -999,7 +999,7 @@ class _ChatScreenState extends State<ChatScreen> {
       if (_scrollController.hasClients &&
           !_userIsScrolling &&
           (force || !_userScrolledUp)) {
-        if (_isGenerating) {
+        if (_isGenerating || force) {
           // 流式輸出中：直接跳轉，不做動畫（避免每個 token 都觸發 300ms 動畫卡頓）
           _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
         } else {
@@ -1008,6 +1008,15 @@ class _ChatScreenState extends State<ChatScreen> {
             duration: const Duration(milliseconds: 300),
             curve: Curves.easeOut,
           );
+        }
+        // 長窗口的文字換行與 lazy layout 可能在後續幀才增加高度。
+        // 初始化到底時短暫重試，直到 maxScrollExtent 穩定；用戶一旦上滑就停止。
+        if (force && settlePass < 8) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) {
+              _scrollToBottom(force: true, settlePass: settlePass + 1);
+            }
+          });
         }
       }
     });
