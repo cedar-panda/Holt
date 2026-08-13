@@ -2254,10 +2254,10 @@ extension _ChatGenerationMethods on _ChatScreenState {
       }
     }
 
-    // An autonomous search tag is only known after the first model pass. Hold
-    // that pass off-screen so its preface cannot appear before Search/Thinking.
-    final deferInitialStreamForSearchDecision =
-        webSearchEnabled && !preflightSearchExecuted;
+    // Keep the first pass visible. Search intent is parsed after the stream,
+    // while protocol tags are already hidden by the shared display sanitizer.
+    // Deferring this pass made every provider look like a static loader.
+    const deferInitialStreamForSearchDecision = false;
 
     if (mounted) {
       _refreshChatState(() {
