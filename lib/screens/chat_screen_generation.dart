@@ -45,6 +45,8 @@ extension _ChatGenerationMethods on _ChatScreenState {
 
   void _onStreamChunk(String chunk) {
     if (!mounted) return;
+    _streamChunkCount++;
+    if (_streamChunkCount >= 3) _streamTextUnlocked = true;
     for (int i = 0; i < chunk.length; i++) {
       _streamCharQueue.add(chunk[i]);
     }
@@ -52,7 +54,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
   }
 
   void _startStreamPopTimer() {
-    if (!_streamSurfaceVisible) return;
+    if (!_streamSurfaceVisible || !_streamTextUnlocked) return;
     if (_streamPopTimer?.isActive == true) return;
     _streamPopTimer = Timer.periodic(const Duration(milliseconds: 30), (timer) {
       if (!mounted || _streamCharQueue.isEmpty) {
@@ -85,6 +87,8 @@ extension _ChatGenerationMethods on _ChatScreenState {
     _streamCharQueue.clear();
     _streamPopTimer?.cancel();
     _streamingText = '';
+    _streamChunkCount = 0;
+    _streamTextUnlocked = false;
   }
 
   String _computeDisplayStreamingText() {

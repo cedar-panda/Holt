@@ -370,6 +370,8 @@ class _ChatScreenState extends State<ChatScreen> {
 
   // ═══ 流式絲滑打字機佇列 ═══
   final List<String> _streamCharQueue = [];
+  int _streamChunkCount = 0;
+  bool _streamTextUnlocked = false;
   Timer? _streamPopTimer;
   Timer? _streamSurfaceDelayTimer;
   final Random _streamSurfaceRandom = Random();
