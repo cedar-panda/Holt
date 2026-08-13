@@ -38,6 +38,7 @@ class _DatabaseSchema {
         image_path TEXT,
         split_mode INTEGER DEFAULT 0,
         memory_log TEXT DEFAULT '',
+        web_search_trace_json TEXT DEFAULT '',
         cache_hit INTEGER DEFAULT 0,
         status TEXT NOT NULL DEFAULT '',
         created_at TEXT NOT NULL,
@@ -72,6 +73,14 @@ class _DatabaseSchema {
   static Future<void> _ensureRuntimeSchema(Database db) async {
     await _createPendingMemoryActionsTable(db);
     await _createWebSearchUsageTable(db);
+    if (await _tableExists(db, 'messages')) {
+      await _safeAddColumn(
+        db,
+        'messages',
+        'web_search_trace_json',
+        "TEXT DEFAULT ''",
+      );
+    }
     await _ensureMemoryFts(db);
   }
 
@@ -112,7 +121,7 @@ class _DatabaseSchema {
         plan_strategy TEXT NOT NULL
           CHECK(plan_strategy IN ('single', 'dual')),
         provider TEXT NOT NULL
-          CHECK(provider IN ('openRouter', 'gemini')),
+          CHECK(provider IN ('openRouter', 'gemini', 'xai', 'relay')),
         provider_model TEXT NOT NULL,
         provider_route TEXT NOT NULL,
         call_id TEXT,
@@ -1017,10 +1026,20 @@ class _DatabaseSchema {
     if (oldVersion < 42) {
       await _createWebSearchUsageTable(db);
     }
+    if (oldVersion < 45 && await _tableExists(db, 'web_search_usage_logs')) {
+      await _migrateWebSearchUsageProviders(db);
+    }
     if (oldVersion < 43) {
       await rebuildMemoryFts(db);
     }
-
+    if (oldVersion < 44 && await _tableExists(db, 'messages')) {
+      await _safeAddColumn(
+        db,
+        'messages',
+        'web_search_trace_json',
+        "TEXT DEFAULT ''",
+      );
+    }
     // Rebuild shared indexes only after every versioned column migration has
     // completed. _migrateToV36 used to call this helper early; once v38 added
     // an index over source_message_id, a real v35 database tried to create the
@@ -1030,6 +1049,43 @@ class _DatabaseSchema {
     if (await _hasAllKnownIndexTables(db)) {
       await _createKnownIndexes(db);
     }
+  }
+
+  static Future<void> _migrateWebSearchUsageProviders(Database db) async {
+    // The v42 indexes belong to the table being replaced. Drop them first so
+    // SQLite does not preserve the index names on the temporary table after
+    // RENAME, which would make the fresh table silently miss its constraints.
+    for (final index in <String>[
+      'idx_web_search_turn_once',
+      'idx_web_search_call_once',
+      'idx_web_search_budget_status',
+      'idx_web_search_reservation',
+      'idx_web_search_char_time',
+    ]) {
+      await db.execute('DROP INDEX IF EXISTS $index');
+    }
+    await db.execute(
+      'ALTER TABLE web_search_usage_logs RENAME TO web_search_usage_logs_v45',
+    );
+    await _createWebSearchUsageTable(db);
+    await db.execute('''
+      INSERT INTO web_search_usage_logs (
+        id, reservation_id, logical_slot, conversation_id, character_id,
+        turn_id, generation_serial, budget_day, plan_strategy, provider,
+        provider_model, provider_route, call_id, status, reserved_at,
+        expires_at, claimed_at, launched_at, settled_at, search_requests,
+        prompt_tokens, completion_tokens, actual_cost_usd, cost_certainty
+      )
+      SELECT
+        id, reservation_id, logical_slot, conversation_id, character_id,
+        turn_id, generation_serial, budget_day, plan_strategy, provider,
+        provider_model, provider_route, call_id, status, reserved_at,
+        expires_at, claimed_at, launched_at, settled_at, search_requests,
+        prompt_tokens, completion_tokens, actual_cost_usd, cost_certainty
+      FROM web_search_usage_logs_v45
+      WHERE provider IN ('openRouter', 'gemini', 'xai', 'relay')
+    ''');
+    await db.execute('DROP TABLE web_search_usage_logs_v45');
   }
 
   static Future<void> _migrateToV38(Database db) async {

@@ -428,4 +428,6 @@ class _AttributionWidgetFactory extends WidgetFactory {
 String _providerLabel(WebSearchProviderId provider) => switch (provider) {
   WebSearchProviderId.openRouter => 'OpenRouter',
   WebSearchProviderId.gemini => 'Gemini',
+  WebSearchProviderId.xai => 'Grok / xAI',
+  WebSearchProviderId.relay => 'Search relay',
 };

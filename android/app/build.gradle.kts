@@ -112,6 +112,13 @@ android {
     }
 
     buildTypes {
+        debug {
+            signingConfig = if (releaseKeystoreReady) {
+                signingConfigs.getByName("release")
+            } else {
+                signingConfigs.getByName("debug")
+            }
+        }
         release {
             // .jks 就緒 → 正式簽名；否則退回 debug 簽名（僅供本機開發，
             // 給任何人安裝的包都必須用正式簽名打）

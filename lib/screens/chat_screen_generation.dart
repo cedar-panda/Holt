@@ -38,6 +38,12 @@ extension _ChatGenerationMethods on _ChatScreenState {
         buf.write(_streamCharQueue.removeAt(0));
       }
       _streamingText += buf.toString();
+      // Keep the same avatar + Thinking surface between search completion and
+      // the first streamed response. Remove it in the same frame that real
+      // response content appears, so the generic atom loader never flashes.
+      if (_webSearchActivity?.status == WebSearchActivityStatus.completed) {
+        _webSearchActivity = null;
+      }
       _refreshChatState(() {});
       _scrollToBottom();
     });
@@ -75,7 +81,10 @@ extension _ChatGenerationMethods on _ChatScreenState {
     if (partialTagMatch != null) {
       text = text.substring(0, partialTagMatch.start);
     }
-    return text.trim();
+    return ThinkingModePolicy.sanitizeVisibleReply(
+      text.trim(),
+      enabled: _generationThinkingEnabled,
+    );
   }
 
   int _beginGeneration() {
@@ -565,12 +574,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
     final charId = _activeCharacterId;
     final history = _messages
         .where((m) => m.text.trim().isNotEmpty)
-        .map(
-          (m) => <String, String>{
-            'role': m.isUser ? 'user' : 'assistant',
-            'content': m.text,
-          },
-        )
+        .map((m) => m.toPromptHistoryEntry())
         .toList();
 
     await KeepAliveService.instance.claimVisibleWindow(
@@ -666,6 +670,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
             cacheHit: m.cacheHit,
             status: m.status,
             memoryLog: m.memoryLog,
+            webSearchTrace: m.webSearchTrace,
             createdAt: m.createdAt,
           );
         }
@@ -708,6 +713,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
           cacheHit: m.cacheHit,
           status: m.status,
           memoryLog: newLog,
+          webSearchTrace: m.webSearchTrace,
           createdAt: m.createdAt,
         );
       }
@@ -1218,8 +1224,26 @@ extension _ChatGenerationMethods on _ChatScreenState {
 
   String _webSearchProviderLabel(ResolvedWebSearchProvider provider) {
     return switch (provider.id) {
-      WebSearchProviderId.gemini => 'Gemini · ${provider.model}',
-      WebSearchProviderId.openRouter => 'OpenRouter · ${provider.model} · Exa',
+      WebSearchProviderId.gemini => L.pick(
+        en: 'Gemini · ${provider.model}',
+        zhTW: 'Gemini · ${provider.model}',
+        zhCN: 'Gemini · ${provider.model}',
+      ),
+      WebSearchProviderId.openRouter => L.pick(
+        en: 'OpenRouter · ${provider.model} · Exa',
+        zhTW: 'OpenRouter · ${provider.model} · Exa',
+        zhCN: 'OpenRouter · ${provider.model} · Exa',
+      ),
+      WebSearchProviderId.xai => L.pick(
+        en: 'Grok · ${provider.model} · Web Search',
+        zhTW: 'Grok · ${provider.model} · 網路搜尋',
+        zhCN: 'Grok · ${provider.model} · 网络搜索',
+      ),
+      WebSearchProviderId.relay => L.pick(
+        en: 'Search relay · ${provider.model}',
+        zhTW: '搜尋中轉站 · ${provider.model}',
+        zhCN: '搜索中转站 · ${provider.model}',
+      ),
     };
   }
 
@@ -1229,34 +1253,6 @@ extension _ChatGenerationMethods on _ChatScreenState {
     if (dialogContext == null || !dialogContext.mounted) return;
     final navigator = Navigator.of(dialogContext);
     if (navigator.canPop()) navigator.pop(false);
-  }
-
-  Future<void> _showWebSearchPrivacyNote(BuildContext dialogContext) async {
-    final text = await rootBundle.loadString('PRIVACY.md');
-    if (!dialogContext.mounted) return;
-    await showDialog<void>(
-      context: dialogContext,
-      builder: (privacyContext) => AlertDialog(
-        backgroundColor: YanciTheme.surfacePanel,
-        title: Text(
-          L.pick(en: 'Web-search privacy', zhTW: '網路搜尋隱私說明', zhCN: '网络搜索隐私说明'),
-          style: YanciTheme.headingMedium,
-        ),
-        content: SizedBox(
-          width: double.maxFinite,
-          child: SingleChildScrollView(
-            child: SelectableText(text, style: YanciTheme.bodySmall),
-          ),
-        ),
-        actions: <Widget>[
-          TextButton(
-            style: TextButton.styleFrom(minimumSize: const Size(64, 48)),
-            onPressed: () => Navigator.of(privacyContext).pop(),
-            child: Text(L.pick(en: 'Close', zhTW: '關閉', zhCN: '关闭')),
-          ),
-        ],
-      ),
-    );
   }
 
   Future<bool> _confirmWebSearchPlan({
@@ -1280,6 +1276,12 @@ extension _ChatGenerationMethods on _ChatScreenState {
           provider.model,
         ),
         WebSearchProviderId.openRouter => WebSearchProviderRoute.openRouterExa(
+          provider.model,
+        ),
+        WebSearchProviderId.xai => WebSearchProviderRoute.xaiWebSearch(
+          provider.model,
+        ),
+        WebSearchProviderId.relay => WebSearchProviderRoute.relayOpenAiChat(
           provider.model,
         ),
       };
@@ -1481,6 +1483,14 @@ extension _ChatGenerationMethods on _ChatScreenState {
           data is WebSearchBatchResult) {
         _refreshChatState(() {
           _pendingWebSearchResult = data;
+          // Preserve one visual surface while the model starts composing from
+          // the search evidence. It hands off directly to the first streamed
+          // response instead of briefly falling back to the generic loader.
+          _webSearchActivity = _WebSearchActivityState(
+            status: WebSearchActivityStatus.completed,
+            query: binding.query,
+            providers: providerLabels,
+          );
         });
         return;
       }
@@ -1875,6 +1885,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
     final conciseOn = await conciseOnF;
     final freeformOn = await freeformOnF;
     final thinkingEnabled = await thinkingEnabledF;
+    _generationThinkingEnabled = thinkingEnabled;
     final webSearchEnabled = await webSearchEnabledF;
 
     final staticBundle = await _buildCommonStaticParts(
@@ -2067,18 +2078,11 @@ extension _ChatGenerationMethods on _ChatScreenState {
       ),
     );
 
-    // 思考鏈
-    if (thinkingEnabled && providerName != 'thinking_machines') {
-      controlParts.add(
-        SystemContextMarkdown.section(
-          enTitle: 'Thinking',
-          zhTWTitle: 'Thinking',
-          content: L.pick(
-            en: '【Thinking Mode】Before replying, show your inner thought process in <think>...</think> tags (first person). Use the same language as the normal reply for the thought process, then reply normally.',
-            zhTW:
-                '【思考模式】在回覆前，用 <think>...</think> 標籤展示你的內心思考過程（第一人稱），思考內容必須與正常回覆使用相同語言，思考完再正常回覆。',
-          ),
-        ),
+    // Thinking 是本輪展示策略，不得進入可快取 control prefix。Thinking
+    // Machines 使用原生 request 參數，其餘 provider 走 request-only sidecar。
+    if (providerName != 'thinking_machines') {
+      dynamicParts.add(
+        ThinkingModePolicy.runtimeInstruction(enabled: thinkingEnabled),
       );
     }
 
@@ -2134,19 +2138,24 @@ extension _ChatGenerationMethods on _ChatScreenState {
     );
 
     var preflightSearchExecuted = false;
-    String? preflightExplicitQuery = webSearchEnabled && userMsgWithId.id != null
+    String? preflightExplicitQuery =
+        webSearchEnabled && userMsgWithId.id != null
         ? WebSearchIntentParser.explicitUserQuery(userMsgWithId.text)
         : null;
 
     // 若當前訊息為短追問（如「有嗎有嗎」「查到了嗎」），從歷史對話向前尋找上一條明確的搜尋請求
-    if (webSearchEnabled && preflightExplicitQuery == null && userMsgWithId.id != null) {
+    if (webSearchEnabled &&
+        preflightExplicitQuery == null &&
+        userMsgWithId.id != null) {
       final isShortFollowUp = RegExp(
         r'^(?:有嗎|有吗|查到了嗎|查到了吗|結果呢|结果呢|怎麼樣了|怎么样了|找到了嗎|找到了吗|查出來了嗎|查出来了吗|有沒有|有没有|\?|？)+$',
       ).hasMatch(userMsgWithId.text.trim());
       if (isShortFollowUp) {
         for (final m in workingMessages.reversed.skip(1)) {
           if (m.isUser) {
-            preflightExplicitQuery = WebSearchIntentParser.explicitUserQuery(m.text);
+            preflightExplicitQuery = WebSearchIntentParser.explicitUserQuery(
+              m.text,
+            );
             if (preflightExplicitQuery != null) break;
           }
         }
@@ -2155,7 +2164,9 @@ extension _ChatGenerationMethods on _ChatScreenState {
 
     if (preflightExplicitQuery != null) {
       preflightSearchExecuted = true;
-      debugPrint('[WebSearch] Executing pre-flight search for: "$preflightExplicitQuery"');
+      debugPrint(
+        '[WebSearch] Executing pre-flight search for: "$preflightExplicitQuery"',
+      );
       await _runWebSearchIntent(
         query: preflightExplicitQuery,
         userMessageId: userMsgWithId.id!,
@@ -2186,11 +2197,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
       final enableVibration = await enableVibrationF;
 
       final nonEmpty = workingMessages.where((m) => m.text.isNotEmpty).toList();
-      var history = nonEmpty
-          .map(
-            (m) => {'role': m.isUser ? 'user' : 'assistant', 'content': m.text},
-          )
-          .toList();
+      var history = nonEmpty.map((m) => m.toPromptHistoryEntry()).toList();
 
       // ═══ B4 滯後截斷（保護前綴緩存）═══
       final keepFrom = await _hysteresisKeepFrom(
@@ -2230,7 +2237,10 @@ extension _ChatGenerationMethods on _ChatScreenState {
       }
       streamCompleted = true;
       await turnEffects.commit();
-      final replyText = rawReply.toString();
+      final replyText = ThinkingModePolicy.sanitizeVisibleReply(
+        rawReply.toString(),
+        enabled: thinkingEnabled,
+      );
       if (!_isCurrentGeneration(generationSerial)) return;
       final webSearchIntent = WebSearchIntentParser.parse(replyText);
       final replyTextWithoutWebSearch = webSearchIntent.visibleText;
@@ -2693,9 +2703,11 @@ extension _ChatGenerationMethods on _ChatScreenState {
 
       final webSearchQuery = !preflightSearchExecuted
           ? (webSearchIntent.query ??
-              (webSearchEnabled
-                  ? WebSearchIntentParser.explicitUserQuery(userMsgWithId.text)
-                  : null))
+                (webSearchEnabled
+                    ? WebSearchIntentParser.explicitUserQuery(
+                        userMsgWithId.text,
+                      )
+                    : null))
           : null;
       if (webSearchQuery != null && userMsgWithId.id != null) {
         if (mounted) {
@@ -2720,11 +2732,6 @@ extension _ChatGenerationMethods on _ChatScreenState {
             generationSerial: generationSerial,
           );
           if (followUp.isNotEmpty) processedText = followUp;
-          if (mounted) {
-            _refreshChatState(() => _webSearchActivity = null);
-          } else {
-            _webSearchActivity = null;
-          }
         }
       }
 
@@ -2743,6 +2750,9 @@ extension _ChatGenerationMethods on _ChatScreenState {
         _finishFailedGeneration();
         return;
       }
+      final completedWebSearchResult = _pendingWebSearchResult;
+      final completedWebSearchTrace = completedWebSearchResult
+          ?.toDisplayTrace();
       final aiMsg = Message(
         conversationId: conversationId,
         characterId: _activeCharacterId,
@@ -2751,6 +2761,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
         splitMode: _splitReply,
         cacheHit: cacheRead > 0,
         memoryLog: memLog,
+        webSearchTrace: completedWebSearchTrace,
       );
       final insertedId = await DatabaseHelper.insertMessage(aiMsg);
       await _bindMemoryProposalsToMessage(insertedId);
@@ -2773,8 +2784,8 @@ extension _ChatGenerationMethods on _ChatScreenState {
         createdAt: aiMsg.createdAt,
         imagePath: aiMsg.imagePath,
         memoryLog: aiMsg.memoryLog,
+        webSearchTrace: aiMsg.webSearchTrace,
       );
-      final completedWebSearchResult = _pendingWebSearchResult;
 
       // 記錄命中的 messageId
       if (cacheRead > 0 && mounted) {
@@ -2788,11 +2799,13 @@ extension _ChatGenerationMethods on _ChatScreenState {
             _webSearchResultsByMessageId[insertedId] = completedWebSearchResult;
           }
           _pendingWebSearchResult = null;
+          _webSearchActivity = null;
           _clearStreamQueue();
           _setGenerating(false);
         });
       } else {
         _pendingWebSearchResult = null;
+        _webSearchActivity = null;
         _clearStreamQueue();
         _setGenerating(false);
       }
@@ -3245,19 +3258,12 @@ extension _ChatGenerationMethods on _ChatScreenState {
       );
     }
 
-    // 思考鏈
+    // Thinking 是 request-only 動態策略，切換時不改可快取前綴。
     final thinkingOn = await ApiSettings.getThinkingChain();
-    if (thinkingOn && imgProviderName != 'thinking_machines') {
-      controlParts.add(
-        SystemContextMarkdown.section(
-          enTitle: 'Thinking',
-          zhTWTitle: 'Thinking',
-          content: L.pick(
-            en: '【Thinking Mode】Before replying, show your inner thought process in <think>...</think> tags (first person). Use the same language as the normal reply for the thought process, then reply normally.',
-            zhTW:
-                '【思考模式】在回覆前，用 <think>...</think> 標籤展示你的內心思考過程（第一人稱），思考內容必須與正常回覆使用相同語言，思考完再正常回覆。',
-          ),
-        ),
+    _generationThinkingEnabled = thinkingOn;
+    if (imgProviderName != 'thinking_machines') {
+      dynamicParts.add(
+        ThinkingModePolicy.runtimeInstruction(enabled: thinkingOn),
       );
     }
 
@@ -3388,7 +3394,10 @@ extension _ChatGenerationMethods on _ChatScreenState {
       }
       streamCompleted = true;
       await turnEffects.commit();
-      final replyText = rawReply.toString();
+      final replyText = ThinkingModePolicy.sanitizeVisibleReply(
+        rawReply.toString(),
+        enabled: thinkingOn,
+      );
       if (!_isCurrentGeneration(generationSerial) || _stopGenerationRequested) {
         _finishFailedGeneration();
         return;

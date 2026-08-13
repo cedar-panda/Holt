@@ -11,10 +11,21 @@ import 'package:project_yanci/services/settings/web_search_settings.dart';
 void main() {
   group('OpenRouter web search provider', () {
     test('developer preview uses an explicit non-native search model', () {
-      expect(openRouterWebSearchPreviewModel, 'google/gemini-2.0-flash-001');
+      expect(openRouterWebSearchPreviewModel, 'google/gemini-3.1-flash-lite');
       expect(
         isExplicitOpenRouterWebSearchModel(openRouterWebSearchPreviewModel),
         isTrue,
+      );
+    });
+
+    test('recognizes the retired built-in default for read-time migration', () {
+      expect(
+        retiredOpenRouterWebSearchDefaults,
+        contains('google/gemini-2.0-flash-001'),
+      );
+      expect(
+        retiredOpenRouterWebSearchDefaults,
+        isNot(contains(openRouterWebSearchPreviewModel)),
       );
     });
 
@@ -2176,6 +2187,100 @@ void main() {
         throwsA(isA<ToolCancelledException>()),
       );
       expect(pendingClient.closed, isTrue);
+    });
+
+    test(
+      'Grok uses the Responses web_search tool and normalizes citations',
+      () async {
+        final provider = XaiWebSearchProvider(
+          apiKey: 'xai-key',
+          model: 'grok-4.6',
+          clientFactory: () => MockClient((request) async {
+            expect(request.url, XaiWebSearchProvider.endpoint);
+            expect(request.headers['authorization'], 'Bearer xai-key');
+            final body = jsonDecode(request.body) as Map<String, dynamic>;
+            expect(body['model'], 'grok-4.6');
+            expect(body['tools'], <Map<String, String>>[
+              <String, String>{'type': 'web_search'},
+            ]);
+            expect((body['input'] as List).last['content'], 'latest xAI news');
+            return http.Response(
+              jsonEncode(<String, dynamic>{
+                'output': <Map<String, dynamic>>[
+                  <String, dynamic>{
+                    'type': 'message',
+                    'content': <Map<String, dynamic>>[
+                      <String, dynamic>{
+                        'type': 'output_text',
+                        'text': 'Grok grounded answer.',
+                        'annotations': <Map<String, dynamic>>[
+                          <String, dynamic>{
+                            'type': 'url_citation',
+                            'url': 'https://news.example/xai',
+                            'title': 'xAI news',
+                          },
+                        ],
+                      },
+                    ],
+                  },
+                ],
+              }),
+              200,
+            );
+          }),
+        );
+
+        final result = await provider.search(
+          WebSearchRequest(query: 'latest xAI news'),
+          ToolCancellationController().token,
+        );
+
+        expect(result.provider, WebSearchProviderId.xai);
+        expect(result.text, 'Grok grounded answer.');
+        expect(result.sources.single.url, 'https://news.example/xai');
+      },
+    );
+
+    test('HTTPS OpenAI-compatible relay requires url citations', () async {
+      final provider = RelayWebSearchProvider(
+        apiKey: 'relay-key',
+        model: 'search-model',
+        endpoint: 'https://relay.example/v1/chat/completions',
+        clientFactory: () => MockClient((request) async {
+          expect(request.url.host, 'relay.example');
+          final body = jsonDecode(request.body) as Map<String, dynamic>;
+          expect(body['model'], 'search-model');
+          expect((body['tools'] as List).single['type'], 'function');
+          return http.Response(
+            jsonEncode(<String, dynamic>{
+              'choices': <Map<String, dynamic>>[
+                <String, dynamic>{
+                  'message': <String, dynamic>{
+                    'content': 'Relay grounded answer.',
+                    'annotations': <Map<String, dynamic>>[
+                      <String, dynamic>{
+                        'url_citation': <String, String>{
+                          'url': 'https://relay.example/source',
+                          'title': 'Relay source',
+                        },
+                      },
+                    ],
+                  },
+                },
+              ],
+            }),
+            200,
+          );
+        }),
+      );
+
+      final result = await provider.search(
+        WebSearchRequest(query: 'relay search'),
+        ToolCancellationController().token,
+      );
+
+      expect(result.provider, WebSearchProviderId.relay);
+      expect(result.sources.single.url, 'https://relay.example/source');
     });
   });
 }

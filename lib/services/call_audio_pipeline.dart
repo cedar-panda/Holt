@@ -689,9 +689,7 @@ class CallContextLoader {
       );
       return tail
           .where((m) => m.text.trim().isNotEmpty)
-          .map(
-            (m) => {'role': m.isUser ? 'user' : 'assistant', 'content': m.text},
-          )
+          .map((m) => m.toPromptHistoryEntry())
           .toList();
     } catch (_) {
       return [];

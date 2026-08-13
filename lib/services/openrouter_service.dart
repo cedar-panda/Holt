@@ -20,6 +20,7 @@ class OpenRouterService implements ApiAdapter {
       kDebugMode || bool.fromEnvironment('CACHE_DEBUG_ECHO');
 
   final String apiKey;
+  final bool thinkingEnabled;
   http.Client? _activeClient;
   static const String _baseUrl =
       'https://openrouter.ai/api/v1/chat/completions';
@@ -49,7 +50,7 @@ class OpenRouterService implements ApiAdapter {
     return id.length <= 256 ? id : id.substring(0, 256);
   }
 
-  OpenRouterService({required this.apiKey});
+  OpenRouterService({required this.apiKey, this.thinkingEnabled = false});
 
   Future<Map<String, dynamic>> debugBuildBodyForTesting({
     required List<Map<String, String>> messages,
@@ -401,13 +402,18 @@ class OpenRouterService implements ApiAdapter {
     // Grok caching is implicit and has no Anthropic-style write surcharge or
     // cache_control switch. A structured chat always gets its own append-only
     // ledger and sticky route; Claude's explicit-cache path stays untouched.
-    final enableGrokCache = isGrok && structuredPrompt != null;
+    // Tool evidence is request-only. Do not put it in GrokContextLedger's
+    // append-only SharedPreferences history.
+    final enableGrokCache =
+        isGrok &&
+        structuredPrompt != null &&
+        structuredPrompt.ephemeralEvidencePart.isEmpty;
     final anyCacheEnabled = enableCache || enableGrokCache;
     final focusLatestUser =
         structuredPrompt != null &&
-        structuredPrompt.liveStatePart.isNotEmpty &&
+        structuredPrompt.requestOnlyPart.isNotEmpty &&
         _needsLatestUserFocus(model);
-    final runtimeDynamicPart = structuredPrompt?.liveStatePart ?? '';
+    final runtimeDynamicPart = structuredPrompt?.requestOnlyPart ?? '';
     final sentDynamicPart = structuredPrompt == null
         ? ''
         : (focusLatestUser
@@ -638,7 +644,7 @@ class OpenRouterService implements ApiAdapter {
       'dynamic_snapshot_active': false,
       'dynamic_live_hash': structuredPrompt == null
           ? ''
-          : _shortHash(structuredPrompt.liveStatePart),
+          : _shortHash(structuredPrompt.requestOnlyPart),
       'dynamic_sent_hash': sentDynamicPart.isEmpty
           ? ''
           : _shortHash(sentDynamicPart),
@@ -684,6 +690,13 @@ class OpenRouterService implements ApiAdapter {
       'messages': allMessages,
       'stream': stream,
       'max_tokens': 4096,
+      // Thinking is request policy, not prompt-cache content. Explicitly send
+      // both states so models whose OpenRouter default enables reasoning do
+      // not keep reasoning after the UI switch is turned off.
+      'reasoning': <String, dynamic>{
+        'enabled': thinkingEnabled,
+        if (!thinkingEnabled) 'exclude': true,
+      },
       // streaming 的 cache stats 需要 final usage chunk；沒有它會看起來
       // 像完全沒命中，實際只是客戶端沒有收到 usage。
       if (stream) 'stream_options': {'include_usage': true},
@@ -715,7 +728,7 @@ class OpenRouterService implements ApiAdapter {
         sourceMessages: messages,
         requestMessages: allMessages,
         stableContext: structuredPrompt.cacheableParts.join('\n\n'),
-        liveState: sentDynamicPart,
+        liveState: structuredPrompt.liveStatePart,
         cacheEnabled: anyCacheEnabled,
         cachePrefixPreserved: cachePrefixPreserved,
         fallbackReason: runtimeFallback,

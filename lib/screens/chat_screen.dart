@@ -29,6 +29,7 @@ import '../services/context_compressor.dart';
 import '../services/sticker_service.dart';
 import '../services/image_service.dart';
 import '../memory/database.dart';
+import '../models/web_search_trace.dart';
 import '../memory/retriever.dart';
 import '../services/bio_clock_service.dart';
 import '../services/shop_service.dart';
@@ -37,6 +38,7 @@ import '../services/marriage_service.dart';
 import '../services/tool_prompts.dart';
 import '../services/tool_runner.dart';
 import '../services/web_search_intent.dart';
+import '../services/web_search_follow_up.dart';
 import '../services/web_search_service.dart';
 import '../services/web_search_tool_bridge.dart';
 import '../services/web_search_turn_coordinator.dart';
@@ -62,6 +64,7 @@ import '../widgets/chat_model_picker.dart';
 import '../widgets/memory_review_tab.dart';
 import '../widgets/web_search_activity_card.dart';
 import '../widgets/web_search_result_card.dart';
+import '../widgets/web_search_thinking_node.dart';
 import 'call_screen.dart';
 import 'manual_summary_clean_screen.dart';
 import '../services/call_audio_pipeline.dart';
@@ -70,6 +73,7 @@ import '../services/dream_curation_service.dart';
 
 part 'chat_screen_generation.dart';
 part 'chat_screen_actions.dart';
+part 'chat_screen_web_search_follow_up.dart';
 
 const String _chatSearchToolName = 'chat.search';
 
@@ -269,6 +273,7 @@ class _ChatScreenState extends State<ChatScreen> {
   String _chatSearchQuery = '';
   List<Map<String, dynamic>> _chatSearchResults = [];
   int _generationSerial = 0;
+  bool _generationThinkingEnabled = false;
   ApiAdapter? _activeGenerationAdapter;
   final HybridWebSearchService _webSearchService =
       const HybridWebSearchService();
@@ -1487,7 +1492,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 const SizedBox(width: 5),
                 Expanded(
                   child: Text(
-                    '${L.pick(en: 'Searching', zhTW: '搜尋')}「$query」',
+                    '${L.pick(en: 'Searching', zhTW: '搜尋', zhCN: '搜索')}「$query」',
                     style: TextStyle(
                       fontSize: 11,
                       fontWeight: FontWeight.w500,
@@ -1508,8 +1513,8 @@ class _ChatScreenState extends State<ChatScreen> {
                 else
                   Text(
                     results.isEmpty
-                        ? (L.pick(en: 'No results', zhTW: '無結果'))
-                        : '${results.length} ${L.pick(en: 'found', zhTW: '條')}',
+                        ? (L.pick(en: 'No results', zhTW: '無結果', zhCN: '无结果'))
+                        : '${results.length} ${L.pick(en: 'found', zhTW: '條', zhCN: '条')}',
                     style: TextStyle(
                       fontSize: 10,
                       color: YanciTheme.accent.withValues(alpha: 0.6),
@@ -1556,7 +1561,12 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Widget _buildMessageList() {
     final hasStreamingBubble = _streamingText.isNotEmpty;
-    final showAtom = _isGenerating && _streamingText.isEmpty;
+    final hasWebSearchActivity = _webSearchActivity != null;
+    final pendingWebSearchTrace = _pendingWebSearchResult?.toDisplayTrace();
+    // Web search owns the active Thinking surface. Avoid rendering the generic
+    // atom above it, which otherwise looks like an empty assistant bubble.
+    final showAtom =
+        _isGenerating && _streamingText.isEmpty && !hasWebSearchActivity;
 
     // 構建顯示列表（拆分回覆時 AI 消息按段落拆開）
     // 渲染窗：只掛 _renderFrom 起的消息；i 保持全量索引（editMessage 等依賴）
@@ -1665,6 +1675,7 @@ class _ChatScreenState extends State<ChatScreen> {
               webSearchResult: isLast && msg.id != null
                   ? _webSearchResultsByMessageId[msg.id]
                   : null,
+              webSearchTrace: isLast ? msg.webSearchTrace : null,
               // 她遞的證書卡跟在拆分回覆的最後一段
               hasMarriageCert: isLast && splitHasCert,
               certFromChar: isLast && splitHasCert,
@@ -1696,6 +1707,7 @@ class _ChatScreenState extends State<ChatScreen> {
             webSearchResult: !msg.isUser && msg.id != null
                 ? _webSearchResultsByMessageId[msg.id]
                 : null,
+            webSearchTrace: msg.isUser ? null : msg.webSearchTrace,
             giftName: giftMatch?.group(1)?.trim(),
             giftAccepted: giftMatch != null && charReplyAfter[srcIdx],
             hasMarriageCert:
@@ -1729,7 +1741,6 @@ class _ChatScreenState extends State<ChatScreen> {
     }
 
     final hasSearchCard = _chatSearchQuery.isNotEmpty;
-    final hasWebSearchActivity = _webSearchActivity != null;
     final itemCount =
         (hasOlderButton ? 1 : 0) +
         displayItems.length +
@@ -1906,6 +1917,7 @@ class _ChatScreenState extends State<ChatScreen> {
                         item.dbMessageId != null
                     ? () => _openMemoryReview(item.dbMessageId!)
                     : null,
+                webSearchTrace: item.webSearchTrace,
                 // 窗內消息 → 原地編輯重發；
                 // 純顯示段（originalIndex -1）→ 編輯即開分支對話，原時間線不動
                 onEdit: item.isUser
@@ -1956,14 +1968,18 @@ class _ChatScreenState extends State<ChatScreen> {
                     ? null
                     : () => _toggleManualSummaryMessage(item.dbMessageId!),
               );
-              final webSearchResult = item.webSearchResult;
-              if (webSearchResult == null) return bubble;
+              final geminiDisplayResult = item.webSearchResult == null
+                  ? null
+                  : WebSearchFollowUp.geminiDisplayResultFor(
+                      item.webSearchResult!,
+                    );
+              if (geminiDisplayResult == null) return bubble;
               return Column(
-                key: ValueKey<String>('${item.messageId}_with_web_search'),
+                mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: <Widget>[
                   bubble,
-                  WebSearchResultCard(result: webSearchResult),
+                  WebSearchResultCard(result: geminiDisplayResult),
                 ],
               );
             } else if (showAtom && index == displayItems.length) {
@@ -1993,11 +2009,13 @@ class _ChatScreenState extends State<ChatScreen> {
               if (hasWebSearchActivity &&
                   webSearchActivity != null &&
                   index == webSearchActivityIdx) {
-                return WebSearchActivityCard(
+                return WebSearchThinkingActivity(
                   status: webSearchActivity.status,
                   query: webSearchActivity.query,
                   providers: webSearchActivity.providers,
                   safeMessage: webSearchActivity.safeMessage,
+                  showAvatar: _showChatAvatar,
+                  avatarPath: _charAvatarPath,
                 );
               }
               // ═══ 流式氣泡（拆分回覆時按段落拆）═══
@@ -2019,6 +2037,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   characterId: _activeCharacterId,
                   showAvatar: _showChatAvatar,
                   avatarPath: _charAvatarPath,
+                  webSearchTrace: isLast ? pendingWebSearchTrace : null,
                 );
               } else {
                 return ChatBubble(
@@ -2031,6 +2050,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   characterId: _activeCharacterId,
                   showAvatar: _showChatAvatar,
                   avatarPath: _charAvatarPath,
+                  webSearchTrace: pendingWebSearchTrace,
                 );
               }
             }
@@ -2501,6 +2521,9 @@ class _DisplayItem {
   /// 短生命週期的結構化網搜結果；只掛在本次 session 的最後一個角色氣泡。
   final WebSearchBatchResult? webSearchResult;
 
+  /// 可持久化的最小顯示紀錄；重新進入對話後仍能重建 Thinking。
+  final WebSearchDisplayTrace? webSearchTrace;
+
   /// 非空 → 這項渲染成居中分割線（通話已結束等），不渲染氣泡
   final String? callDivider;
 
@@ -2531,6 +2554,7 @@ class _DisplayItem {
     this.pendingMemoryActionCount = 0,
     this.hasUnreadMemoryActions = false,
     this.webSearchResult,
+    this.webSearchTrace,
     this.showToolbar = true,
     this.cacheHit = false,
     this.incomplete = false,

@@ -393,6 +393,50 @@ class MemorySettings {
     return p.getInt(_keyQuietEnd) ?? 7;
   }
 
+  // ═══ 做夢整理（對話累積後自動梳理記憶）═══
+  static const String _keyDreamCurationEnabled = 'dream_curation_enabled';
+  static const String _keyDreamCurationThreshold = 'dream_curation_threshold';
+  static const String _keyDreamCurationLastCount = 'dream_curation_last_count';
+
+  static const int defaultDreamThreshold = 20;
+  static const int minDreamThreshold = 5;
+  static const int maxDreamThreshold = 100;
+
+  static Future<void> saveDreamCurationEnabled(bool v) async {
+    final p = await SharedPreferences.getInstance();
+    await p.setBool(_keyDreamCurationEnabled, v);
+  }
+
+  static Future<bool> getDreamCurationEnabled() async {
+    final p = await SharedPreferences.getInstance();
+    return p.getBool(_keyDreamCurationEnabled) ?? false;
+  }
+
+  static Future<void> saveDreamCurationThreshold(int v) async {
+    final p = await SharedPreferences.getInstance();
+    await p.setInt(
+      _keyDreamCurationThreshold,
+      v.clamp(minDreamThreshold, maxDreamThreshold),
+    );
+  }
+
+  static Future<int> getDreamCurationThreshold() async {
+    final p = await SharedPreferences.getInstance();
+    final v = p.getInt(_keyDreamCurationThreshold) ?? defaultDreamThreshold;
+    return v.clamp(minDreamThreshold, maxDreamThreshold);
+  }
+
+  /// 上次做夢整理時的 active 記憶總數。用於判斷是否累積到門檻。
+  static Future<void> saveDreamCurationLastCount(int v) async {
+    final p = await SharedPreferences.getInstance();
+    await p.setInt(_keyDreamCurationLastCount, v);
+  }
+
+  static Future<int> getDreamCurationLastCount() async {
+    final p = await SharedPreferences.getInstance();
+    return p.getInt(_keyDreamCurationLastCount) ?? 0;
+  }
+
   /// 所有可切換的 ability 模組
   static const abilities = <String, String>{
     'emotion': '情緒座標',

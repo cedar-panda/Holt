@@ -892,6 +892,7 @@ extension _ChatActionMethods on _ChatScreenState {
                   cacheHit: msg.cacheHit,
                   status: msg.status,
                   memoryLog: msg.memoryLog,
+                  webSearchTrace: msg.webSearchTrace,
                   createdAt: msg.createdAt,
                 );
               });
@@ -1417,6 +1418,7 @@ extension _ChatActionMethods on _ChatScreenState {
       includeMemoryDetails: includeMemory,
       includeEmotionDetails: includeEmotion,
       memoryLog: includeMetadataLog ? message.memoryLog : '',
+      webSearchTrace: includeMetadataLog ? message.webSearchTrace : null,
       scratchData: includeCards ? _scratchDataMap[persistedMessageKey] : null,
       transferData: includeCards ? _transferDataMap[persistedMessageKey] : null,
       giftName: giftName,

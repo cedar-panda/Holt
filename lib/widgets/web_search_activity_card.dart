@@ -3,7 +3,12 @@ import 'package:flutter/material.dart';
 import '../services/locale_strings.dart';
 import '../theme/app_theme.dart';
 
-enum WebSearchActivityStatus { awaitingConfirmation, searching, failed }
+enum WebSearchActivityStatus {
+  awaitingConfirmation,
+  searching,
+  completed,
+  failed,
+}
 
 /// Short-lived status shown while a web-search ToolCall is being authorized or
 /// executed. Grounded results use [WebSearchResultCard] instead.
@@ -35,6 +40,11 @@ class WebSearchActivityCard extends StatelessWidget {
         en: 'Searching the public web',
         zhTW: '正在搜尋公開網路',
         zhCN: '正在搜索公开网络',
+      ),
+      WebSearchActivityStatus.completed => L.pick(
+        en: 'Search completed. Preparing reply',
+        zhTW: '搜尋完成，正在整理回覆',
+        zhCN: '搜索完成，正在整理回复',
       ),
       WebSearchActivityStatus.failed => L.pick(
         en: 'Web search was not completed',
@@ -81,8 +91,7 @@ class WebSearchActivityCard extends StatelessWidget {
               Padding(
                 padding: const EdgeInsets.only(top: 1),
                 child:
-                    status == WebSearchActivityStatus.searching &&
-                        !reduceMotion
+                    status == WebSearchActivityStatus.searching && !reduceMotion
                     ? SizedBox(
                         width: 15,
                         height: 15,
@@ -96,6 +105,8 @@ class WebSearchActivityCard extends StatelessWidget {
                             ? Icons.error_outline_rounded
                             : status == WebSearchActivityStatus.searching
                             ? Icons.travel_explore_rounded
+                            : status == WebSearchActivityStatus.completed
+                            ? Icons.check_circle_outline_rounded
                             : Icons.shield_outlined,
                         size: 16,
                         color: status == WebSearchActivityStatus.failed

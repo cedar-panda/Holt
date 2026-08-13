@@ -1,3 +1,5 @@
+import 'web_search_trace.dart';
+
 /// 訊息資料模型（帶角色綁定）
 class Message {
   final int? id;
@@ -15,8 +17,16 @@ class Message {
 
   bool get isIncomplete => status == statusIncomplete;
 
+  /// Provider-facing history is intentionally limited to role and visible
+  /// message text. UI metadata such as web-search traces never enters prompts.
+  Map<String, String> toPromptHistoryEntry() => <String, String>{
+    'role': isUser ? 'user' : 'assistant',
+    'content': text,
+  };
+
   /// 記憶過程日誌（本輪注入/寫入/刪除/合併的可視記錄）
   final String memoryLog;
+  final WebSearchDisplayTrace? webSearchTrace;
   final DateTime createdAt;
 
   Message({
@@ -30,6 +40,7 @@ class Message {
     this.cacheHit = false,
     this.status = statusComplete,
     this.memoryLog = '',
+    this.webSearchTrace,
     DateTime? createdAt,
   }) : createdAt = createdAt ?? DateTime.now();
 
@@ -45,6 +56,7 @@ class Message {
       'cache_hit': cacheHit ? 1 : 0,
       'status': status,
       'memory_log': memoryLog,
+      'web_search_trace_json': webSearchTrace?.encode() ?? '',
       'created_at': createdAt.toIso8601String(),
     };
   }
@@ -61,6 +73,9 @@ class Message {
       cacheHit: (map['cache_hit'] as int? ?? 0) == 1,
       status: map['status'] as String? ?? statusComplete,
       memoryLog: map['memory_log'] as String? ?? '',
+      webSearchTrace: WebSearchDisplayTrace.decode(
+        map['web_search_trace_json'] as String?,
+      ),
       createdAt: DateTime.parse(map['created_at'] as String),
     );
   }

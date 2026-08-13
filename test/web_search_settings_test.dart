@@ -6,6 +6,7 @@ import 'package:project_yanci/screens/api_settings_screen.dart';
 import 'package:project_yanci/services/locale_strings.dart';
 import 'package:project_yanci/services/settings/api_settings.dart';
 import 'package:project_yanci/services/settings/web_search_settings.dart';
+import 'package:project_yanci/services/web_search_service.dart';
 
 import 'helpers/secure_storage_test_mock.dart';
 
@@ -20,14 +21,17 @@ void main() {
 
   tearDown(() => secureStorage.uninstall());
 
-  test('web search defaults are enabled in developer preview and bounded', () async {
-    expect(await WebSearchSettings.getEnabled(), isTrue);
-    expect(await WebSearchSettings.getMode(), WebSearchMode.auto);
-    expect(
-      await WebSearchSettings.getDailyProviderLaunchCap(),
-      WebSearchSettings.defaultDailyProviderLaunchCap,
-    );
-  });
+  test(
+    'web search defaults are enabled in developer preview and bounded',
+    () async {
+      expect(await WebSearchSettings.getEnabled(), isTrue);
+      expect(await WebSearchSettings.getMode(), WebSearchMode.auto);
+      expect(
+        await WebSearchSettings.getDailyProviderLaunchCap(),
+        WebSearchSettings.defaultDailyProviderLaunchCap,
+      );
+    },
+  );
 
   test('compile-time developer-preview gate controls live state', () async {
     await WebSearchSettings.saveEnabled(true);
@@ -41,10 +45,15 @@ void main() {
     await WebSearchSettings.saveEnabled(true);
     expect(await WebSearchSettings.getEnabled(), isTrue);
 
-    for (final mode in WebSearchMode.values) {
+    for (final mode in WebSearchMode.values.where(
+      (mode) => mode != WebSearchMode.dual,
+    )) {
       await WebSearchSettings.saveMode(mode);
       expect(await WebSearchSettings.getMode(), mode);
     }
+
+    await WebSearchSettings.saveMode(WebSearchMode.dual);
+    expect(await WebSearchSettings.getMode(), WebSearchMode.auto);
   });
 
   test('daily provider-launch cap clamps writes to 1 through 100', () async {
@@ -63,35 +72,84 @@ void main() {
     expect(await WebSearchSettings.getMode(), WebSearchMode.auto);
   });
 
-  testWidgets(
-    'dual mode discloses separate providers, billing, and retention',
-    (tester) async {
-      await L.setLocale('zh_TW');
-      await WebSearchSettings.saveEnabled(true);
-      await WebSearchSettings.saveMode(WebSearchMode.dual);
+  test(
+    'retired OpenRouter default resolves in memory without rewriting it',
+    () async {
+      SharedPreferences.setMockInitialValues(<String, Object>{
+        'web_search_openrouter_model_v1': 'google/gemini-2.0-flash-001',
+      });
+      await ApiSettings.saveOpenRouterApiKey('openrouter-test-key');
 
-      await tester.pumpWidget(const MaterialApp(home: ApiSettingsScreen()));
-      for (var i = 0; i < 12; i++) {
-        await tester.pump(const Duration(milliseconds: 50));
-      }
-
-      final settingsList = find.byType(ListView).first;
-      for (var i = 0; i < 5; i++) {
-        await tester.drag(settingsList, const Offset(0, -420));
-        await tester.pump(const Duration(milliseconds: 50));
-      }
-
-      expect(find.text('雙供應商（分開顯示）'), findsWidgets);
-      expect(
-        find.textContaining('同一段經確認的請求會送往 Gemini 與 OpenRouter'),
-        findsOneWidget,
+      final configuration =
+          await const ApiSettingsWebSearchConfigurationSource().load();
+      final openRouter = configuration.providers.singleWhere(
+        (provider) => provider.id == WebSearchProviderId.openRouter,
       );
-      expect(find.textContaining('兩家結果使用獨立卡片顯示'), findsOneWidget);
-      expect(find.textContaining('費用與留存分別計算'), findsOneWidget);
-      expect(find.text('20 次／日'), findsOneWidget);
-      expect(tester.takeException(), isNull);
+
+      expect(openRouter.model, openRouterWebSearchPreviewModel);
+      expect(
+        await WebSearchSettings.getOpenRouterSearchModel(),
+        'google/gemini-2.0-flash-001',
+        reason: 'read-time migration must not mutate existing preferences',
+      );
     },
   );
+
+  test('legacy dual source migrates to auto', () async {
+    SharedPreferences.setMockInitialValues(<String, Object>{
+      'web_search_mode_v1': 'dual',
+    });
+
+    expect(await WebSearchSettings.getMode(), WebSearchMode.auto);
+  });
+
+  testWidgets('auto source lists every starred model for its resolved source', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1080, 2400);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await L.setLocale('zh_TW');
+    await WebSearchSettings.saveEnabled(true);
+    await WebSearchSettings.saveMode(WebSearchMode.auto);
+    await ApiSettings.saveGeminiApiKey('gemini-test-key');
+    await ApiSettings.saveProviderModelSelection('gemini', 'gemini-2.5-flash');
+    await ApiSettings.toggleStarModel('gemini-2.5-flash', provider: 'gemini');
+    await ApiSettings.toggleStarModel(
+      'gemini-3.1-flash-preview',
+      provider: 'gemini',
+    );
+
+    await tester.pumpWidget(const MaterialApp(home: ApiSettingsScreen()));
+    for (var i = 0; i < 12; i++) {
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+
+    final settingsList = find.byType(ListView).first;
+    for (var i = 0; i < 5; i++) {
+      await tester.drag(settingsList, const Offset(0, -420));
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+
+    expect(find.text('Gemini · 已就緒'), findsOneWidget);
+    final modelDropdowns = find.byWidgetPredicate(
+      (widget) => widget is DropdownButton<String>,
+    );
+    final searchDropdown = tester
+        .widgetList<DropdownButton<String>>(modelDropdowns)
+        .singleWhere(
+          (dropdown) => dropdown.items!.any(
+            (item) => item.value == 'gemini-3.1-flash-preview',
+          ),
+        );
+    final choices = searchDropdown.items!.map((item) => item.value);
+    expect(choices, contains('gemini-2.5-flash'));
+    expect(choices, contains('gemini-3.1-flash-preview'));
+    expect(find.textContaining('請先在上方替此來源的模型加上星標'), findsOneWidget);
+    expect(find.text('雙供應商（分開顯示）'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets('provider status rejects Gemini 2.0 and an OpenRouter alias', (
     tester,
@@ -102,6 +160,7 @@ void main() {
     addTearDown(tester.view.resetDevicePixelRatio);
     await L.setLocale('zh_TW');
     await WebSearchSettings.saveEnabled(true);
+    await WebSearchSettings.saveMode(WebSearchMode.openRouter);
     await ApiSettings.saveOpenRouterApiKey('openrouter-test-key');
     await ApiSettings.saveGeminiApiKey('gemini-test-key');
     await ApiSettings.saveModelForProvider('openrouter', 'openrouter/auto');
@@ -119,7 +178,7 @@ void main() {
     }
 
     expect(find.text('OpenRouter · 已就緒'), findsOneWidget);
-    expect(find.text('Gemini · 已就緒'), findsOneWidget);
+    expect(find.text('Gemini · 已就緒'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 

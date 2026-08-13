@@ -1,6 +1,8 @@
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../secure_store.dart';
+
 /// Live web search is a developer preview. Debug builds can exercise it, while
 /// release builds fail closed unless the distributor opts in explicitly with
 /// `--dart-define=HOLT_ENABLE_LIVE_WEB_SEARCH=true` after reviewing the current
@@ -11,13 +13,13 @@ const bool webSearchLiveDeveloperPreviewEnabled = bool.fromEnvironment(
 );
 
 /// 原生網路搜尋的供應商策略。
-///
-/// [dual] 代表同一段經使用者確認的請求會送往兩家供應商，結果分開顯示；
-/// 它不是單一供應商失敗後才啟動的 fallback。
 enum WebSearchMode {
   auto('auto'),
   gemini('gemini'),
   openRouter('openrouter'),
+  xai('xai'),
+  relay('relay'),
+  // 僅保留作舊資料兼容；讀取與保存時都會遷移為 auto，UI 不顯示。
   dual('dual');
 
   const WebSearchMode(this.storageValue);
@@ -27,7 +29,9 @@ enum WebSearchMode {
   static WebSearchMode fromStorage(String? value) => switch (value) {
     'gemini' => WebSearchMode.gemini,
     'openrouter' => WebSearchMode.openRouter,
-    'dual' => WebSearchMode.dual,
+    'xai' => WebSearchMode.xai,
+    'relay' => WebSearchMode.relay,
+    'dual' => WebSearchMode.auto,
     _ => WebSearchMode.auto,
   };
 }
@@ -46,6 +50,10 @@ class WebSearchSettings {
   static const String _keyOpenRouterSearchModel =
       'web_search_openrouter_model_v1';
   static const String _keyGeminiSearchModel = 'web_search_gemini_model_v1';
+  static const String _keyXaiSearchModel = 'web_search_xai_model_v1';
+  static const String _keyRelayEndpoint = 'web_search_relay_endpoint_v1';
+  static const String _keyRelayApiKey = 'web_search_relay_api_key_v1';
+  static const String _keyRelayModel = 'web_search_relay_model_v1';
 
   static const int minDailyProviderLaunchCap = 1;
   static const int maxDailyProviderLaunchCap = 100;
@@ -72,7 +80,12 @@ class WebSearchSettings {
 
   static Future<void> saveMode(WebSearchMode value) async {
     final preferences = await SharedPreferences.getInstance();
-    await preferences.setString(_keyMode, value.storageValue);
+    await preferences.setString(
+      _keyMode,
+      value == WebSearchMode.dual
+          ? WebSearchMode.auto.storageValue
+          : value.storageValue,
+    );
   }
 
   static Future<int> getDailyProviderLaunchCap() async {
@@ -113,5 +126,43 @@ class WebSearchSettings {
   static Future<void> saveGeminiSearchModel(String value) async {
     final preferences = await SharedPreferences.getInstance();
     await preferences.setString(_keyGeminiSearchModel, value.trim());
+  }
+
+  static Future<String> getXaiSearchModel() async {
+    final preferences = await SharedPreferences.getInstance();
+    return preferences.getString(_keyXaiSearchModel) ?? '';
+  }
+
+  static Future<void> saveXaiSearchModel(String value) async {
+    final preferences = await SharedPreferences.getInstance();
+    await preferences.setString(_keyXaiSearchModel, value.trim());
+  }
+
+  static Future<String> getRelayEndpoint() async {
+    final preferences = await SharedPreferences.getInstance();
+    return preferences.getString(_keyRelayEndpoint) ?? '';
+  }
+
+  static Future<void> saveRelayEndpoint(String value) async {
+    final preferences = await SharedPreferences.getInstance();
+    await preferences.setString(_keyRelayEndpoint, value.trim());
+  }
+
+  static Future<String> getRelayApiKey() async {
+    return SecureStore.read(_keyRelayApiKey);
+  }
+
+  static Future<void> saveRelayApiKey(String value) async {
+    await SecureStore.write(_keyRelayApiKey, value.trim());
+  }
+
+  static Future<String> getRelayModel() async {
+    final preferences = await SharedPreferences.getInstance();
+    return preferences.getString(_keyRelayModel) ?? '';
+  }
+
+  static Future<void> saveRelayModel(String value) async {
+    final preferences = await SharedPreferences.getInstance();
+    await preferences.setString(_keyRelayModel, value.trim());
   }
 }

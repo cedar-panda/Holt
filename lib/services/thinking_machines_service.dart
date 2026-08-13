@@ -382,7 +382,7 @@ class ThinkingMachinesService implements ApiAdapter {
       });
     }
 
-    final liveState = structuredPrompt?.liveStatePart ?? '';
+    final liveState = structuredPrompt?.requestOnlyPart ?? '';
     var runtimeTransport = '';
     var runtimeFallback = '';
     final attached =
@@ -422,12 +422,12 @@ class ThinkingMachinesService implements ApiAdapter {
         sourceMessages: messages,
         requestMessages: apiMessages,
         stableContext: structuredPrompt.cacheableParts.join('\n\n'),
-        liveState: liveState,
+        liveState: structuredPrompt.liveStatePart,
         fallbackReason: runtimeFallback,
         topLevelRoles: systemParts.isEmpty
             ? const <String>[]
             : const <String>['system'],
-        expectTime: liveState.trim().isNotEmpty,
+        expectTime: structuredPrompt.liveStatePart.trim().isNotEmpty,
       );
     }
     return body;

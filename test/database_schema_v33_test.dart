@@ -32,8 +32,12 @@ void main() {
     () async {
       await DatabaseHelper.createSchemaForTesting(db);
 
-      expect(DatabaseHelper.schemaVersionForTesting, 43);
+      expect(DatabaseHelper.schemaVersionForTesting, 45);
       expect(await _columnNames(db, 'messages'), contains('status'));
+      expect(
+        await _columnNames(db, 'messages'),
+        contains('web_search_trace_json'),
+      );
       expect(await _columnNames(db, 'characters'), contains('bio_clock'));
       expect(
         await _columnNames(db, 'characters'),
@@ -324,6 +328,29 @@ void main() {
       ]),
     );
   });
+
+  test(
+    'v44 adds message search traces without rewriting existing rows',
+    () async {
+      await db.execute('''
+      CREATE TABLE messages (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        text TEXT NOT NULL
+      )
+    ''');
+      await db.insert('messages', <String, Object?>{'text': 'legacy reply'});
+
+      await DatabaseHelper.upgradeSchemaForTesting(db, 43);
+
+      expect(
+        await _columnNames(db, 'messages'),
+        contains('web_search_trace_json'),
+      );
+      final row = (await db.query('messages')).single;
+      expect(row['text'], 'legacy reply');
+      expect(row['web_search_trace_json'], '');
+    },
+  );
 
   test('v38 backfills the automatic summary message cursor', () async {
     await DatabaseHelper.createSchemaForTesting(db);

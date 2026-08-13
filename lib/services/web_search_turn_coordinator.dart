@@ -8,7 +8,7 @@ enum WebSearchPlanStrategy { single, dual }
 
 enum WebSearchTurnRunMode { live, replay }
 
-enum WebSearchTurnProvider { openRouter, gemini }
+enum WebSearchTurnProvider { openRouter, gemini, xai, relay }
 
 enum WebSearchProviderLaunchOutcome { success, failure, cancelled, unknown }
 
@@ -50,6 +50,20 @@ class WebSearchProviderRoute {
         WebSearchTurnProvider.gemini,
         model,
         'gemini:google_search',
+      );
+
+  factory WebSearchProviderRoute.xaiWebSearch(String model) =>
+      WebSearchProviderRoute._(
+        WebSearchTurnProvider.xai,
+        model,
+        'xai:web_search',
+      );
+
+  factory WebSearchProviderRoute.relayOpenAiChat(String model) =>
+      WebSearchProviderRoute._(
+        WebSearchTurnProvider.relay,
+        model,
+        'relay:openai_chat_completions',
       );
 
   final WebSearchTurnProvider provider;

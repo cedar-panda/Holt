@@ -14,6 +14,17 @@ API 設定的遠端模型清單分派集中在
 DeepSeek 與 OpenAI-compatible 的 Key、端點及解析器隔離，避免切換供應商後
 沿用上一家的錯誤或憑證。
 
+網路搜尋的角色回覆與 UI 分拆如下，避免繼續擴張已超過 2500 行的聊天室主檔：
+
+```text
+lib/services/web_search_follow_up.dart          ← OpenRouter 搜尋證據封裝與純文字安全收尾
+lib/screens/chat_screen_web_search_follow_up.dart ← 搜尋後交給當前角色模型二次生成
+lib/widgets/web_search_thinking_node.dart        ← Thinking > Web Search 狀態與不可點擊來源列
+```
+
+搜尋證據只存在於單次 request，不加入 prompt cache、聊天歷史或本地資料庫；
+來源列只顯示標題與網域，不提供展開、預覽或開啟網站的操作。
+
 `database_memory_search.dart` 從超過 3000 行的 `database.dart` 拆出全文搜尋；
 支援 FTS5 的平台使用 SQLite 原生 BM25，Android 系統缺少 FTS5 時改用 FTS4
 統計計算 BM25，不需要更換主資料庫或複製業務 CRUD。

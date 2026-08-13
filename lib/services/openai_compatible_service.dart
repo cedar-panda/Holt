@@ -359,7 +359,7 @@ class OpenAICompatibleService implements ApiAdapter {
     // ═══ system 分層：只放可快取的穩定前綴 ═══
     final cacheableParts =
         structuredPrompt?.cacheableParts ?? <String>[systemPrompt ?? ''];
-    final liveState = structuredPrompt?.liveStatePart ?? '';
+    final liveState = structuredPrompt?.requestOnlyPart ?? '';
     for (var i = 0; i < cacheableParts.length; i++) {
       final part = cacheableParts[i];
       if (part.isEmpty) continue;
@@ -490,14 +490,14 @@ class OpenAICompatibleService implements ApiAdapter {
         sourceMessages: messages,
         requestMessages: allMessages,
         stableContext: cacheableParts.join('\n\n'),
-        liveState: liveState,
+        liveState: structuredPrompt.liveStatePart,
         cacheEnabled: shouldCache,
         cachePrefixPreserved: cachePrefixPreserved,
         fallbackReason: runtimeFallback,
         cacheBreakpointIndex: shouldCache && latestUserIndex > 0
             ? latestUserIndex - 1
             : -1,
-        expectTime: liveState.trim().isNotEmpty,
+        expectTime: structuredPrompt.liveStatePart.trim().isNotEmpty,
       );
     }
     return body;

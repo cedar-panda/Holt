@@ -855,7 +855,10 @@ class ApiSettings {
           ),
         );
       }
-      return OpenRouterService(apiKey: apiKey);
+      return OpenRouterService(
+        apiKey: apiKey,
+        thinkingEnabled: await getThinkingChain(),
+      );
     }
 
     if (provider == 'xai') {

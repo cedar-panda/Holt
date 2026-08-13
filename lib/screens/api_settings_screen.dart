@@ -119,6 +119,9 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
   final _thinkingMachinesKeyCtrl = TextEditingController();
   final _thinkingMachinesModelCtrl = TextEditingController();
   String _thinkingMachinesEffort = 'high';
+  final _webSearchRelayEndpointCtrl = TextEditingController();
+  final _webSearchRelayKeyCtrl = TextEditingController();
+  final _webSearchRelayModelCtrl = TextEditingController();
 
   String _selectedModel = '';
   String _summaryProvider = MemorySettings.defaultSummaryProvider;
@@ -130,8 +133,10 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
   int _webSearchDailyProviderLaunchCap =
       WebSearchSettings.defaultDailyProviderLaunchCap;
   String _webSearchGeminiModel = '';
+  String _webSearchXaiModel = '';
   String _wsSearchOrModelOverride = '';
   String _wsSearchGeminiModelOverride = '';
+  String _wsSearchXaiModelOverride = '';
   List<ModelInfo> _models = [];
   List<ModelInfo> _filteredModels = [];
   Set<String> _starredModels = {};
@@ -180,10 +185,15 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
     final webSearchGeminiModel = await ApiSettings.getModelForProvider(
       'gemini',
     );
+    final webSearchXaiModel = await ApiSettings.getModelForProvider('xai');
     final wsSearchOrOverride =
         await WebSearchSettings.getOpenRouterSearchModel();
     final wsSearchGeminiOverride =
         await WebSearchSettings.getGeminiSearchModel();
+    final wsSearchXaiOverride = await WebSearchSettings.getXaiSearchModel();
+    final webSearchRelayEndpoint = await WebSearchSettings.getRelayEndpoint();
+    final webSearchRelayKey = await WebSearchSettings.getRelayApiKey();
+    final webSearchRelayModel = await WebSearchSettings.getRelayModel();
 
     final starred = await ApiSettings.getStarredModels();
     var starredProviders = await ApiSettings.getStarredModelProviders();
@@ -218,6 +228,9 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
         _awsAccessKeyIdCtrl.text = awsId;
         _awsSecretAccessKeyCtrl.text = awsSec;
         _awsRegionCtrl.text = awsReg;
+        _webSearchRelayEndpointCtrl.text = webSearchRelayEndpoint;
+        _webSearchRelayKeyCtrl.text = webSearchRelayKey;
+        _webSearchRelayModelCtrl.text = webSearchRelayModel;
 
         _oaiCompatBaseUrlCtrl.text = oaiBase;
         _oaiCompatKeyCtrl.text = oaiKey;
@@ -238,8 +251,10 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
         _webSearchMode = webSearchMode;
         _webSearchDailyProviderLaunchCap = webSearchDailyProviderLaunchCap;
         _webSearchGeminiModel = webSearchGeminiModel;
+        _webSearchXaiModel = webSearchXaiModel;
         _wsSearchOrModelOverride = wsSearchOrOverride;
         _wsSearchGeminiModelOverride = wsSearchGeminiOverride;
+        _wsSearchXaiModelOverride = wsSearchXaiOverride;
         _lastPolicySelectionWasClaude = TokenEstimator.isClaudePromptCacheModel(
           provider: provider,
           model: savedModel,
@@ -762,38 +777,18 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
   }
 
   String _webSearchModeLabel(WebSearchMode mode) => switch (mode) {
-    WebSearchMode.auto => L.pick(en: 'Auto', zhTW: '自動選擇'),
+    WebSearchMode.auto => L.pick(en: 'Auto', zhTW: '自動選擇', zhCN: '自动选择'),
     WebSearchMode.gemini => 'Gemini',
     WebSearchMode.openRouter => 'OpenRouter',
-    WebSearchMode.dual => L.pick(
-      en: 'Two providers (shown separately)',
-      zhTW: '雙供應商（分開顯示）',
+    WebSearchMode.xai => 'Grok / xAI',
+    WebSearchMode.relay => L.pick(
+      en: 'Search relay',
+      zhTW: '搜尋中轉站',
+      zhCN: '搜索中转站',
     ),
+    // Retained only to migrate old stored values; it is no longer shown.
+    WebSearchMode.dual => L.pick(en: 'Auto', zhTW: '自動選擇', zhCN: '自动选择'),
   };
-
-  String _webSearchModeDescription(WebSearchMode mode) => switch (mode) {
-    WebSearchMode.auto => L.pick(
-      en: 'After confirmation, one provider is selected from the current chat source and the API keys saved on this device.',
-      zhTW: '確認後，會依目前聊天來源與此裝置已保存的 API 金鑰選擇一家供應商。',
-    ),
-    WebSearchMode.gemini => L.pick(
-      en: 'Developer preview for professional/business, 18+ use only. The confirmed request is sent only to Gemini; detected personal data is blocked. Gemini may rewrite it into multiple search queries, and its billing and retention terms apply.',
-      zhTW:
-          '開發者預覽：僅供專業／商業及 18 歲以上用途。經確認的請求只會送往 Gemini，偵測到個人資料時會攔截；Gemini 可能自行改寫成多個搜尋詞，費用與留存依其規則計算。',
-    ),
-    WebSearchMode.openRouter => L.pick(
-      en: 'Developer preview. Uses an explicit model and Exa. OpenRouter may select one ZDR endpoint; fallback is disabled. Router/search-native models are blocked. Verify the account has no enforced default web plugin, because an organization can prevent the App from disabling it.',
-      zhTW:
-          '開發者預覽。使用明確模型與 Exa；OpenRouter 可選一個 ZDR 端點，且已停用備援。Router／原生搜尋模型會被攔截。請先確認帳戶沒有強制預設 Web Plugin，因為組織可禁止 App 停用它。',
-    ),
-    WebSearchMode.dual => L.pick(
-      en: 'Developer preview; Gemini restrictions above apply. The same confirmed request is sent to Gemini and OpenRouter, and results are shown in separate provider cards. Each may rewrite it into multiple search queries; billing and retention are calculated separately.',
-      zhTW:
-          '開發者預覽，並適用上述 Gemini 限制。同一段經確認的請求會送往 Gemini 與 OpenRouter，兩家結果使用獨立卡片顯示；兩家都可能自行改寫成多個搜尋詞，費用與留存分別計算。',
-    ),
-  };
-
-
 
   /// 搜尋模型選擇器：從星標模型中過濾出符合供應商的模型，
   /// 加上一個「自動（使用預設）」選項。
@@ -804,6 +799,7 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
     required String fallbackModel,
     required bool hasApiKey,
     required ValueChanged<String> onChanged,
+    String? emptySelectionLabel,
   }) {
     // 過濾出當前 provider 的星標模型（排除不支援即時 API 的 :batch 模型）。
     final candidates = <String>[];
@@ -816,8 +812,9 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
     candidates.sort();
 
     // 有效模型 = override 如果非空，否則 fallback。
-    final effectiveModel =
-        currentOverride.isNotEmpty ? currentOverride : fallbackModel;
+    final effectiveModel = currentOverride.isNotEmpty
+        ? currentOverride
+        : fallbackModel;
 
     // 確保 currentOverride 在候選清單裡（即使已取消星標）。
     if (currentOverride.isNotEmpty && !candidates.contains(currentOverride)) {
@@ -826,10 +823,10 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
 
     final ready = hasApiKey && effectiveModel.isNotEmpty;
     final statusText = !hasApiKey
-        ? L.pick(en: 'No API key', zhTW: '尚未輸入 API 金鑰')
+        ? L.pick(en: 'No API key', zhTW: '尚未輸入 API 金鑰', zhCN: '尚未输入 API 密钥')
         : ready
         ? L.pick(en: 'Ready', zhTW: '已就緒', zhCN: '已就绪')
-        : L.pick(en: 'No model selected', zhTW: '尚未選擇模型');
+        : L.pick(en: 'No model selected', zhTW: '尚未選擇模型', zhCN: '尚未选择模型');
 
     return ConstrainedBox(
       constraints: const BoxConstraints(minHeight: 48),
@@ -841,9 +838,7 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
           Row(
             children: [
               Icon(
-                ready
-                    ? Icons.check_circle_outline_rounded
-                    : Icons.info_outline,
+                ready ? Icons.check_circle_outline_rounded : Icons.info_outline,
                 size: 18,
                 color: ready ? YanciTheme.accent : YanciTheme.textSecondary,
               ),
@@ -862,6 +857,7 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
             label: L.pick(
               en: '$providerLabel search model',
               zhTW: '$providerLabel 搜尋模型',
+              zhCN: '$providerLabel 搜索模型',
             ),
             value: effectiveModel,
             child: DropdownButton<String>(
@@ -881,9 +877,21 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
                   value: '',
                   child: Text(
                     L.pick(
-                      en: 'Auto · $fallbackModel',
-                      zhTW: '自動 · $fallbackModel',
-                      zhCN: '自动 · $fallbackModel',
+                      en:
+                          emptySelectionLabel ??
+                          (fallbackModel.isEmpty
+                              ? 'Choose a starred model'
+                              : 'Auto · $fallbackModel'),
+                      zhTW:
+                          emptySelectionLabel ??
+                          (fallbackModel.isEmpty
+                              ? '選擇已星標模型'
+                              : '自動 · $fallbackModel'),
+                      zhCN:
+                          emptySelectionLabel ??
+                          (fallbackModel.isEmpty
+                              ? '选择已星标模型'
+                              : '自动 · $fallbackModel'),
                     ),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
@@ -910,21 +918,240 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
               },
             ),
           ),
-          if (candidates.isEmpty)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 4),
-              child: Text(
-                L.pick(
-                  en: 'Star a $providerLabel model above to add it here.',
-                  zhTW: '在上方替 $providerLabel 模型加星即可加入選單。',
-                  zhCN: '在上方为 $providerLabel 模型加星即可加入选单。',
-                ),
-                style: YanciTheme.bodySmall.copyWith(
-                  fontSize: 10,
-                  color: YanciTheme.textSecondary.withValues(alpha: 0.65),
-                ),
+          Padding(
+            padding: const EdgeInsets.only(bottom: 4),
+            child: Text(
+              L.pick(
+                en: 'Star models for this source above, then choose one here.',
+                zhTW: '請先在上方替此來源的模型加上星標，再於此選擇。',
+                zhCN: '请先在上方为此来源的模型加上星标，再在此选择。',
+              ),
+              style: YanciTheme.bodySmall.copyWith(
+                fontSize: 10,
+                color: YanciTheme.textSecondary.withValues(alpha: 0.65),
               ),
             ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  WebSearchMode _resolvedAutomaticWebSearchMode() {
+    final openRouterModel = _wsSearchOrModelOverride.isNotEmpty
+        ? _wsSearchOrModelOverride
+        : openRouterWebSearchPreviewModel;
+    final geminiModel = _wsSearchGeminiModelOverride.isNotEmpty
+        ? _wsSearchGeminiModelOverride
+        : _webSearchGeminiModel;
+    final xaiModel = _wsSearchXaiModelOverride.isNotEmpty
+        ? _wsSearchXaiModelOverride
+        : _webSearchXaiModel;
+    final relayEndpoint = Uri.tryParse(_webSearchRelayEndpointCtrl.text.trim());
+
+    final ready = <WebSearchMode, bool>{
+      WebSearchMode.openRouter:
+          _apiKeyController.text.trim().isNotEmpty &&
+          isExplicitOpenRouterWebSearchModel(openRouterModel),
+      WebSearchMode.gemini:
+          _geminiKeyCtrl.text.trim().isNotEmpty &&
+          isSupportedGeminiWebSearchModel(geminiModel),
+      WebSearchMode.xai:
+          _xaiKeyCtrl.text.trim().isNotEmpty && xaiModel.trim().isNotEmpty,
+      WebSearchMode.relay:
+          _webSearchRelayKeyCtrl.text.trim().isNotEmpty &&
+          _webSearchRelayModelCtrl.text.trim().isNotEmpty &&
+          relayEndpoint != null &&
+          relayEndpoint.scheme == 'https' &&
+          relayEndpoint.host.isNotEmpty &&
+          relayEndpoint.userInfo.isEmpty &&
+          relayEndpoint.fragment.isEmpty,
+    };
+    final current = switch (_provider) {
+      'gemini' => WebSearchMode.gemini,
+      'openrouter' => WebSearchMode.openRouter,
+      'xai' => WebSearchMode.xai,
+      _ => null,
+    };
+    if (current != null && ready[current] == true) return current;
+    for (final mode in const <WebSearchMode>[
+      WebSearchMode.gemini,
+      WebSearchMode.openRouter,
+      WebSearchMode.xai,
+      WebSearchMode.relay,
+    ]) {
+      if (ready[mode] == true) return mode;
+    }
+
+    // Nothing is configured yet: expose the most relevant picker so setup can
+    // continue without silently changing the runtime auto-selection order.
+    return switch (_provider) {
+      'openrouter' => WebSearchMode.openRouter,
+      'xai' => WebSearchMode.xai,
+      'openai_compatible' => WebSearchMode.relay,
+      _ => WebSearchMode.gemini,
+    };
+  }
+
+  List<Widget> _buildSelectedWebSearchSourceOptions() {
+    final mode = _webSearchMode == WebSearchMode.auto
+        ? _resolvedAutomaticWebSearchMode()
+        : _webSearchMode;
+    final showOpenRouter = mode == WebSearchMode.openRouter;
+    final showGemini = mode == WebSearchMode.gemini;
+    final showXai = mode == WebSearchMode.xai;
+    final showRelay = mode == WebSearchMode.relay;
+    if (!showOpenRouter && !showGemini && !showXai && !showRelay) {
+      return <Widget>[];
+    }
+    final sections = <Widget>[];
+    void addSection(Widget child) {
+      if (sections.isNotEmpty) {
+        sections.add(
+          Divider(
+            color: YanciTheme.textSecondary.withValues(alpha: 0.12),
+            height: 1,
+          ),
+        );
+      }
+      sections.add(child);
+    }
+
+    if (showOpenRouter) {
+      addSection(
+        _buildWebSearchSearchModelPicker(
+          providerLabel: 'OpenRouter',
+          filterProvider: 'openrouter',
+          currentOverride: _wsSearchOrModelOverride,
+          fallbackModel: openRouterWebSearchPreviewModel,
+          hasApiKey: _apiKeyController.text.trim().isNotEmpty,
+          onChanged: (value) {
+            setState(() => _wsSearchOrModelOverride = value);
+            _debouncedSave();
+          },
+        ),
+      );
+    }
+    if (showGemini) {
+      addSection(
+        _buildWebSearchSearchModelPicker(
+          providerLabel: 'Gemini',
+          filterProvider: 'gemini',
+          currentOverride: _wsSearchGeminiModelOverride,
+          fallbackModel: _webSearchGeminiModel,
+          hasApiKey: _geminiKeyCtrl.text.trim().isNotEmpty,
+          onChanged: (value) {
+            setState(() => _wsSearchGeminiModelOverride = value);
+            _debouncedSave();
+          },
+        ),
+      );
+    }
+    if (showXai) {
+      addSection(
+        _buildWebSearchSearchModelPicker(
+          providerLabel: 'Grok / xAI',
+          filterProvider: 'xai',
+          currentOverride: _wsSearchXaiModelOverride,
+          fallbackModel: _webSearchXaiModel,
+          hasApiKey: _xaiKeyCtrl.text.trim().isNotEmpty,
+          onChanged: (value) {
+            setState(() => _wsSearchXaiModelOverride = value);
+            _debouncedSave();
+          },
+        ),
+      );
+    }
+    if (showRelay) addSection(_buildWebSearchRelayOptions());
+    return sections;
+  }
+
+  Widget _buildWebSearchRelayOptions() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Text(
+            L.pick(
+              en: 'Search relay (OpenAI-compatible)',
+              zhTW: '搜尋中轉站（OpenAI 相容）',
+              zhCN: '搜索中转站（OpenAI 兼容）',
+            ),
+            style: YanciTheme.bodySmall.copyWith(
+              color: YanciTheme.textSecondary,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+          const SizedBox(height: 6),
+          TextField(
+            controller: _webSearchRelayEndpointCtrl,
+            keyboardType: TextInputType.url,
+            onChanged: (_) => _debouncedSave(),
+            decoration: InputDecoration(
+              hintText: L.pick(
+                en: 'https://relay.example/v1/chat/completions',
+                zhTW: 'https://relay.example/v1/chat/completions',
+                zhCN: 'https://relay.example/v1/chat/completions',
+              ),
+              hintStyle: YanciTheme.bodySmall.copyWith(
+                color: YanciTheme.textSecondary.withValues(alpha: 0.4),
+              ),
+              border: const OutlineInputBorder(),
+              isDense: true,
+            ),
+          ),
+          const SizedBox(height: 6),
+          TextField(
+            controller: _webSearchRelayKeyCtrl,
+            obscureText: _obscureProviderKeys,
+            onChanged: (_) => _debouncedSave(),
+            decoration: InputDecoration(
+              hintText: L.pick(
+                en: 'Relay API Key',
+                zhTW: '中轉站 API 金鑰',
+                zhCN: '中转站 API 密钥',
+              ),
+              hintStyle: YanciTheme.bodySmall.copyWith(
+                color: YanciTheme.textSecondary.withValues(alpha: 0.4),
+              ),
+              border: const OutlineInputBorder(),
+              isDense: true,
+            ),
+          ),
+          const SizedBox(height: 6),
+          _buildWebSearchSearchModelPicker(
+            providerLabel: L.pick(
+              en: 'Search relay',
+              zhTW: '搜尋中轉站',
+              zhCN: '搜索中转站',
+            ),
+            filterProvider: 'openai_compatible',
+            currentOverride: _webSearchRelayModelCtrl.text.trim(),
+            fallbackModel: '',
+            hasApiKey:
+                _webSearchRelayEndpointCtrl.text.trim().isNotEmpty &&
+                _webSearchRelayKeyCtrl.text.trim().isNotEmpty,
+            onChanged: (value) {
+              setState(() => _webSearchRelayModelCtrl.text = value);
+              _debouncedSave();
+            },
+          ),
+          const SizedBox(height: 6),
+          Text(
+            L.pick(
+              en: 'Only HTTPS OpenAI Chat Completions relays are accepted; the relay must return url_citation annotations.',
+              zhTW:
+                  '只接受 HTTPS OpenAI Chat Completions 中轉站；中轉站必須回傳 url_citation 引用。',
+              zhCN:
+                  '只接受 HTTPS OpenAI Chat Completions 中转站；中转站必须返回 url_citation 引用。',
+            ),
+            style: YanciTheme.bodySmall.copyWith(
+              fontSize: 11,
+              height: 1.4,
+              color: YanciTheme.textSecondary,
+            ),
+          ),
         ],
       ),
     );
@@ -932,7 +1159,14 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
 
   Widget _buildWebSearchSettingsCard() {
     return AnimatedBuilder(
-      animation: Listenable.merge([_apiKeyController, _geminiKeyCtrl]),
+      animation: Listenable.merge([
+        _apiKeyController,
+        _geminiKeyCtrl,
+        _xaiKeyCtrl,
+        _webSearchRelayEndpointCtrl,
+        _webSearchRelayKeyCtrl,
+        _webSearchRelayModelCtrl,
+      ]),
       builder: (context, _) {
         final selectedModeLabel = _webSearchModeLabel(_webSearchMode);
         return _buildGlassCard(
@@ -944,29 +1178,15 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
                 child: SwitchListTile.adaptive(
                   contentPadding: EdgeInsets.zero,
                   title: Text(
-                    L.pick(en: 'Native web search', zhTW: '原生網路搜尋'),
+                    L.pick(
+                      en: 'Native web search',
+                      zhTW: '原生網路搜尋',
+                      zhCN: '原生网络搜索',
+                    ),
                     style: YanciTheme.bodyText.copyWith(
                       fontSize: 14,
                       fontWeight: FontWeight.w600,
                       color: YanciTheme.textPrimary,
-                    ),
-                  ),
-                  subtitle: Padding(
-                    padding: const EdgeInsets.only(top: 4),
-                    child: Text(
-                      L.pick(
-                        en: webSearchLiveDeveloperPreviewEnabled
-                            ? 'Developer preview. Lets chat request public-web searches. The exact query and recipients still require confirmation before any provider request is sent.'
-                            : 'Developer preview is not included in this build. Release distributors must opt in explicitly after reviewing provider terms and audience restrictions.',
-                        zhTW: webSearchLiveDeveloperPreviewEnabled
-                            ? '開發者預覽。允許聊天提出公開網頁搜尋；實際送往供應商前，仍需確認完整查詢內容與接收方。'
-                            : '此版本未包含開發者預覽。Release 發布者須先審核供應商條款與受眾限制，再於建置時明確啟用。',
-                      ),
-                      style: YanciTheme.bodySmall.copyWith(
-                        fontSize: 11,
-                        height: 1.45,
-                        color: YanciTheme.textSecondary,
-                      ),
                     ),
                   ),
                   value: _webSearchEnabled,
@@ -987,7 +1207,7 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
                 ),
                 const SizedBox(height: 12),
                 Text(
-                  L.pick(en: 'Provider mode', zhTW: '供應商模式'),
+                  L.pick(en: 'Source', zhTW: '來源', zhCN: '来源'),
                   style: YanciTheme.bodySmall.copyWith(
                     color: YanciTheme.textSecondary,
                     fontWeight: FontWeight.w500,
@@ -995,78 +1215,56 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
                 ),
                 Semantics(
                   label: L.pick(
-                    en: 'Web search provider mode',
-                    zhTW: '網路搜尋供應商模式',
+                    en: 'Search source',
+                    zhTW: '搜尋來源',
+                    zhCN: '搜索来源',
                   ),
                   value: selectedModeLabel,
-                  child: DropdownButton<WebSearchMode>(
-                    value: _webSearchMode,
-                    isExpanded: true,
-                    underline: const SizedBox(),
-                    dropdownColor: YanciTheme.isDark
-                        ? const Color(0xF0302830)
-                        : Colors.white,
-                    style: YanciTheme.bodyText.copyWith(
-                      fontSize: 13,
-                      color: YanciTheme.textPrimary,
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: Color.alphaBlend(
+                        (YanciTheme.isDark
+                                ? YanciTheme.accentLight
+                                : YanciTheme.accent)
+                            .withValues(alpha: YanciTheme.isDark ? 0.18 : 0.20),
+                        YanciTheme.glassInputBg,
+                      ),
+                      borderRadius: BorderRadius.circular(YanciTheme.radiusSm),
                     ),
-                    items: [
-                      for (final mode in WebSearchMode.values)
-                        DropdownMenuItem<WebSearchMode>(
-                          value: mode,
-                          child: Text(
-                            _webSearchModeLabel(mode),
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                    ],
-                    onChanged: (value) {
-                      if (value == null) return;
-                      setState(() => _webSearchMode = value);
-                      _debouncedSave();
-                    },
-                  ),
-                ),
-                Text(
-                  _webSearchModeDescription(_webSearchMode),
-                  style: YanciTheme.bodySmall.copyWith(
-                    fontSize: 11,
-                    height: 1.45,
-                    color: YanciTheme.textSecondary,
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    child: DropdownButton<WebSearchMode>(
+                      value: _webSearchMode,
+                      isExpanded: true,
+                      underline: const SizedBox(),
+                      dropdownColor: YanciTheme.isDark
+                          ? const Color(0xF0302830)
+                          : Colors.white,
+                      style: YanciTheme.bodyText.copyWith(
+                        fontSize: 13,
+                        color: YanciTheme.textPrimary,
+                      ),
+                      items: [
+                        for (final mode in WebSearchMode.values)
+                          if (mode != WebSearchMode.dual)
+                            DropdownMenuItem<WebSearchMode>(
+                              value: mode,
+                              child: Text(
+                                _webSearchModeLabel(mode),
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                      ],
+                      onChanged: (value) {
+                        if (value == null) return;
+                        setState(() => _webSearchMode = value);
+                        _debouncedSave();
+                      },
+                    ),
                   ),
                 ),
                 const SizedBox(height: 10),
-                Divider(
-                  color: YanciTheme.textSecondary.withValues(alpha: 0.12),
-                  height: 1,
-                ),
-                _buildWebSearchSearchModelPicker(
-                  providerLabel: 'OpenRouter',
-                  filterProvider: 'openrouter',
-                  currentOverride: _wsSearchOrModelOverride,
-                  fallbackModel: openRouterWebSearchPreviewModel,
-                  hasApiKey: _apiKeyController.text.trim().isNotEmpty,
-                  onChanged: (value) {
-                    setState(() => _wsSearchOrModelOverride = value);
-                    _debouncedSave();
-                  },
-                ),
-                Divider(
-                  color: YanciTheme.textSecondary.withValues(alpha: 0.12),
-                  height: 1,
-                ),
-                _buildWebSearchSearchModelPicker(
-                  providerLabel: 'Gemini',
-                  filterProvider: 'gemini',
-                  currentOverride: _wsSearchGeminiModelOverride,
-                  fallbackModel: _webSearchGeminiModel,
-                  hasApiKey: _geminiKeyCtrl.text.trim().isNotEmpty,
-                  onChanged: (value) {
-                    setState(() => _wsSearchGeminiModelOverride = value);
-                    _debouncedSave();
-                  },
-                ),
+                ..._buildSelectedWebSearchSourceOptions(),
                 Divider(
                   color: YanciTheme.textSecondary.withValues(alpha: 0.12),
                   height: 1,
@@ -1079,6 +1277,7 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
                         L.pick(
                           en: 'Daily provider-launch cap',
                           zhTW: '每日供應商啟動上限',
+                          zhCN: '每日供应商启动上限',
                         ),
                         style: YanciTheme.bodySmall.copyWith(
                           color: YanciTheme.textPrimary,
@@ -1090,6 +1289,7 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
                       L.pick(
                         en: '$_webSearchDailyProviderLaunchCap / day',
                         zhTW: '$_webSearchDailyProviderLaunchCap 次／日',
+                        zhCN: '$_webSearchDailyProviderLaunchCap 次／日',
                       ),
                       style: YanciTheme.bodySmall.copyWith(
                         color: YanciTheme.accent,
@@ -1102,6 +1302,7 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
                   label: L.pick(
                     en: 'Daily provider-launch cap',
                     zhTW: '每日供應商啟動上限',
+                    zhCN: '每日供应商启动上限',
                   ),
                   value: '$_webSearchDailyProviderLaunchCap',
                   child: Slider.adaptive(
@@ -1122,19 +1323,8 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
                     semanticFormatterCallback: (value) => L.pick(
                       en: '${value.round()} provider launches per day',
                       zhTW: '每日 ${value.round()} 次供應商啟動',
+                      zhCN: '每日 ${value.round()} 次供应商启动',
                     ),
-                  ),
-                ),
-                Text(
-                  L.pick(
-                    en: 'Each provider launch counts once. Dual mode uses two launches for one confirmed request. A provider may then rewrite it into multiple search queries; actual billing is separate from this cap.',
-                    zhTW:
-                        '每啟動一家供應商計 1 次；雙供應商模式下，同一段確認請求會使用 2 次啟動額度。供應商可能再改寫成多個搜尋詞，實際計費與此上限分開計算。',
-                  ),
-                  style: YanciTheme.bodySmall.copyWith(
-                    fontSize: 11,
-                    height: 1.45,
-                    color: YanciTheme.textSecondary,
                   ),
                 ),
                 const SizedBox(height: 8),
@@ -1243,6 +1433,10 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
     final webSearchDailyProviderLaunchCap = _webSearchDailyProviderLaunchCap;
     final wsSearchOrOverride = _wsSearchOrModelOverride;
     final wsSearchGeminiOverride = _wsSearchGeminiModelOverride;
+    final wsSearchXaiOverride = _wsSearchXaiModelOverride;
+    final webSearchRelayEndpoint = _webSearchRelayEndpointCtrl.text.trim();
+    final webSearchRelayKey = _webSearchRelayKeyCtrl.text.trim();
+    final webSearchRelayModel = _webSearchRelayModelCtrl.text.trim();
 
     await ApiSettings.saveOpenRouterApiKey(openRouterKey);
     await ApiSettings.saveXaiApiKey(xaiKey);
@@ -1267,6 +1461,10 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
     );
     await WebSearchSettings.saveOpenRouterSearchModel(wsSearchOrOverride);
     await WebSearchSettings.saveGeminiSearchModel(wsSearchGeminiOverride);
+    await WebSearchSettings.saveXaiSearchModel(wsSearchXaiOverride);
+    await WebSearchSettings.saveRelayEndpoint(webSearchRelayEndpoint);
+    await WebSearchSettings.saveRelayApiKey(webSearchRelayKey);
+    await WebSearchSettings.saveRelayModel(webSearchRelayModel);
     await MemorySettings.saveSummarySelection(
       provider: summaryProvider,
       model: summaryModel,
@@ -1311,6 +1509,9 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
     _oaiCompatModelCtrl.dispose();
     _thinkingMachinesKeyCtrl.dispose();
     _thinkingMachinesModelCtrl.dispose();
+    _webSearchRelayEndpointCtrl.dispose();
+    _webSearchRelayKeyCtrl.dispose();
+    _webSearchRelayModelCtrl.dispose();
     _modelSearchController.dispose();
     super.dispose();
   }
@@ -2486,7 +2687,11 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
                             ],
                             const SizedBox(height: YanciTheme.spacingLg),
                             _buildSectionTitle(
-                              L.pick(en: 'Web search', zhTW: '網路搜尋'),
+                              L.pick(
+                                en: 'Web search',
+                                zhTW: '網路搜尋',
+                                zhCN: '网络搜索',
+                              ),
                             ),
                             const SizedBox(height: YanciTheme.spacingSm),
                             _buildWebSearchSettingsCard(),

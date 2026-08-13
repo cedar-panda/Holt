@@ -455,14 +455,34 @@ class _HomeScreenState extends State<HomeScreen>
 
     _isStartingChat = true;
     try {
+      // 防禦：active ID 可能因競態殘留 'default'，校正為實際角色
+      var charId = _activeCharacterId;
+      if (!_characters.any((c) => c['id'] == charId)) {
+        charId = _characters.first['id'] as String;
+        _activeCharacterId = charId;
+        unawaited(UserSettings.saveActiveCharacterId(charId));
+      }
+
       final convId = const Uuid().v4();
-      final conv = Conversation(id: convId, characterId: _activeCharacterId);
+      final conv = Conversation(id: convId, characterId: charId);
       await DatabaseHelper.createConversation(conv);
 
       if (mounted) {
         await Navigator.of(context).pushNamed('/chat', arguments: convId);
         // 從聊天頁返回 → 刷新保活狀態 + 貝殼餘額
         await _refreshAfterChatReturn();
+      }
+    } catch (e) {
+      debugPrint('_startNewChat failed: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              L.pick(en: 'Could not open chat: $e', zhTW: '無法開啟對話：$e'),
+            ),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
       }
     } finally {
       _isStartingChat = false;

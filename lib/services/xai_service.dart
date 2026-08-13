@@ -243,7 +243,9 @@ class XaiService implements ApiAdapter {
         .join('\n\n');
     final cacheChannel = structuredPrompt?.cacheChannel ?? 'tool';
     const providerRoute = 'xai_native';
-    final liveState = structuredPrompt?.liveStatePart ?? '';
+    final liveState = structuredPrompt?.requestOnlyPart ?? '';
+    final hasEphemeralEvidence =
+        structuredPrompt?.ephemeralEvidencePart.isNotEmpty ?? false;
 
     final allMessages = <Map<String, dynamic>>[
       for (final part in stableParts.where((part) => part.trim().isNotEmpty))
@@ -251,7 +253,8 @@ class XaiService implements ApiAdapter {
     ];
 
     GrokPreparedHistory? prepared;
-    if (structuredPrompt != null) {
+    var runtimeTransport = '';
+    if (structuredPrompt != null && !hasEphemeralEvidence) {
       prepared = await GrokContextLedger.prepareHistory(
         sourceMessages: messages,
         providerRoute: providerRoute,
@@ -261,16 +264,24 @@ class XaiService implements ApiAdapter {
         liveState: liveState,
       );
       allMessages.addAll(prepared.messages);
+      runtimeTransport = 'grok_append_only_system_event';
     } else {
       allMessages.addAll(messages.map(_plainApiMessage));
+      if (structuredPrompt != null &&
+          RuntimeContextSidecar.insertSystemBeforeLatestUser(
+            allMessages,
+            liveState,
+          )) {
+        runtimeTransport = 'system_before_latest_user_no_ledger';
+      }
     }
 
     final affinity = prepared?.affinityId ?? '';
     final diagnostics = <String, Object?>{
       'provider': 'xai',
       'model': normalizedModel,
-      'cache_mode': 'xai_implicit_prefix',
-      'enable_cache': structuredPrompt != null,
+      'cache_mode': prepared == null ? 'none' : 'xai_implicit_prefix',
+      'enable_cache': prepared != null,
       'x_grok_conv_id': affinity.isEmpty ? null : affinity,
       'session_id': affinity.isEmpty ? null : affinity,
       'cache_channel': cacheChannel,
@@ -293,14 +304,14 @@ class XaiService implements ApiAdapter {
         model: normalizedModel,
         cacheChannel: cacheChannel,
         sessionId: affinity,
-        transport: 'grok_append_only_system_event',
+        transport: runtimeTransport,
         sourceMessages: messages,
         requestMessages: allMessages,
         stableContext: stableContext,
-        liveState: liveState,
-        cacheEnabled: true,
-        cachePrefixPreserved: true,
-        expectTime: liveState.trim().isNotEmpty,
+        liveState: structuredPrompt.liveStatePart,
+        cacheEnabled: prepared != null,
+        cachePrefixPreserved: prepared != null || liveState.trim().isEmpty,
+        expectTime: structuredPrompt.liveStatePart.trim().isNotEmpty,
       );
     }
 

@@ -11,6 +11,7 @@ import '../services/locale_strings.dart';
 import '../services/tts_service.dart';
 import '../services/settings_manager.dart';
 import '../memory/database.dart';
+import '../models/web_search_trace.dart';
 import '../services/scratch_service.dart';
 import '../services/transfer_service.dart';
 import '../services/marriage_service.dart';
@@ -21,6 +22,8 @@ import 'transfer_card.dart';
 import 'tts_play_button.dart';
 import 'sticker_preview_quality.dart';
 import 'bubble_action_glyph.dart';
+import 'chat_avatar.dart';
+import 'web_search_thinking_node.dart';
 
 /// 聊天氣泡 — 思考鏈 + markdown + 表情包圖片 + 長按菜單
 class ChatBubble extends StatefulWidget {
@@ -51,6 +54,7 @@ class ChatBubble extends StatefulWidget {
   final int pendingMemoryActionCount;
   final bool hasUnreadMemoryActions;
   final VoidCallback? onMemoryReviewTap;
+  final WebSearchDisplayTrace? webSearchTrace;
 
   /// 記憶過程日誌（注入/寫入/刪除/合併，Done 收尾），空則不顯示
   final String memoryLog;
@@ -103,6 +107,7 @@ class ChatBubble extends StatefulWidget {
     this.pendingMemoryActionCount = 0,
     this.hasUnreadMemoryActions = false,
     this.onMemoryReviewTap,
+    this.webSearchTrace,
     this.memoryLog = '',
     this.scratchData,
     this.transferData,
@@ -675,6 +680,7 @@ class _ChatBubbleState extends State<ChatBubble>
     final hasContextTree =
         !widget.isUser &&
         ((widget.includeThinkingDetails && thinking != null) ||
+            widget.webSearchTrace != null ||
             visibleMemoryLog.isNotEmpty ||
             visibleEmotionLog.isNotEmpty ||
             visibleEmotionCoordinate.isNotEmpty ||
@@ -1556,6 +1562,14 @@ class _ChatBubbleState extends State<ChatBubble>
     required String emotionLog,
     required String emotionCoordinate,
   }) {
+    if (thinking == null && widget.webSearchTrace != null) {
+      return _buildThinkingTree(
+        thinking: '',
+        memoryLog: memoryLog,
+        emotionLog: emotionLog,
+        emotionCoordinate: emotionCoordinate,
+      );
+    }
     if (thinking == null) {
       if (memoryLog.isNotEmpty || widget.pendingMemoryActionCount > 0) {
         return _buildStandaloneMemory(
@@ -1583,6 +1597,7 @@ class _ChatBubbleState extends State<ChatBubble>
   }) {
     final hasVisibleDetails =
         thinking.isNotEmpty ||
+        widget.webSearchTrace != null ||
         memoryLog.isNotEmpty ||
         emotionLog.isNotEmpty ||
         emotionCoordinate.isNotEmpty;
@@ -1657,6 +1672,13 @@ class _ChatBubbleState extends State<ChatBubble>
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  if (widget.webSearchTrace != null)
+                    Padding(
+                      padding: const EdgeInsets.only(left: 26, right: 8),
+                      child: WebSearchThinkingNode.completed(
+                        trace: widget.webSearchTrace!,
+                      ),
+                    ),
                   if (memoryLog.isNotEmpty ||
                       emotionLog.isNotEmpty ||
                       emotionCoordinate.isNotEmpty)
@@ -1677,18 +1699,19 @@ class _ChatBubbleState extends State<ChatBubble>
                         ],
                       ),
                     ),
-                  Padding(
-                    padding: const EdgeInsets.only(
-                      left: 10,
-                      top: 7,
-                      right: 8,
-                      bottom: 7,
+                  if (thinking.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(
+                        left: 10,
+                        top: 7,
+                        right: 8,
+                        bottom: 7,
+                      ),
+                      child: _buildThinkingMarkdown(
+                        thinking,
+                        key: const ValueKey('thinking-chain-content'),
+                      ),
                     ),
-                    child: _buildThinkingMarkdown(
-                      thinking,
-                      key: const ValueKey('thinking-chain-content'),
-                    ),
-                  ),
                 ],
               ),
             ),
@@ -1944,36 +1967,7 @@ class _ChatBubbleState extends State<ChatBubble>
   }
 
   Widget _buildAvatar() {
-    final hasAvatar =
-        widget.avatarPath != null &&
-        widget.avatarPath!.isNotEmpty &&
-        File(widget.avatarPath!).existsSync();
-    return Container(
-      width: 40,
-      height: 40,
-      margin: const EdgeInsets.only(top: 6),
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        color: YanciTheme.accent.withValues(alpha: 0.08),
-        border: Border.all(
-          color: YanciTheme.accent.withValues(alpha: 0.12),
-          width: 1,
-        ),
-        image: hasAvatar
-            ? DecorationImage(
-                image: FileImage(File(widget.avatarPath!)),
-                fit: BoxFit.cover,
-              )
-            : null,
-      ),
-      child: hasAvatar
-          ? null
-          : Icon(
-              widget.isUser ? Icons.person_rounded : Icons.smart_toy_outlined,
-              size: 20,
-              color: YanciTheme.accent.withValues(alpha: 0.3),
-            ),
-    );
+    return ChatAvatar(avatarPath: widget.avatarPath, isUser: widget.isUser);
   }
 }
 

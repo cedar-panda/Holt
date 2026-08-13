@@ -6,17 +6,26 @@ import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
+import '../models/web_search_trace.dart';
 import 'settings/api_settings.dart';
 import 'settings/web_search_settings.dart';
 import 'tool_runner.dart';
 
-enum WebSearchProviderId { openRouter, gemini }
+enum WebSearchProviderId { openRouter, gemini, xai, relay }
 
 /// Search-only model for the private OpenRouter/Exa developer preview.
 ///
 /// Keep search routing separate from the user's chat model;
 /// the resolved plan and confirmation dialog still disclose this exact model.
-const String openRouterWebSearchPreviewModel = 'google/gemini-2.0-flash-001';
+const String openRouterWebSearchPreviewModel = 'google/gemini-3.1-flash-lite';
+
+/// Models that used to be built-in search defaults but are no longer served.
+///
+/// Treating these exact legacy values as the current default is a read-time
+/// compatibility migration only. It does not rewrite the user's preferences.
+const Set<String> retiredOpenRouterWebSearchDefaults = <String>{
+  'google/gemini-2.0-flash-001',
+};
 
 enum WebSearchFailureCode {
   invalidQuery,
@@ -273,6 +282,43 @@ class WebSearchBatchResult {
 
   bool get isPartial => successes.isNotEmpty && failures.isNotEmpty;
   bool get allFailed => successes.isEmpty;
+}
+
+extension WebSearchBatchDisplayTrace on WebSearchBatchResult {
+  WebSearchDisplayTrace toDisplayTrace() {
+    final providers = <String>[
+      for (final outcome in outcomes) _providerLabel(outcome.provider),
+    ];
+    final seenHosts = <String>{};
+    final sources = <WebSearchTraceSource>[];
+    for (final success in successes) {
+      for (final source in success.sources) {
+        final uri = safeWebSearchSourceUri(source.url);
+        if (uri == null || !seenHosts.add(uri.host)) continue;
+        sources.add(
+          WebSearchTraceSource(
+            title: source.title.trim().isEmpty ? uri.host : source.title.trim(),
+            host: uri.host,
+          ),
+        );
+        if (sources.length == 5) break;
+      }
+      if (sources.length == 5) break;
+    }
+    final displayFailures = <WebSearchTraceFailure>[
+      for (final failure in failures)
+        WebSearchTraceFailure(
+          provider: _providerLabel(failure.provider),
+          safeMessage: failure.safeMessage,
+          statusCode: failure.statusCode,
+        ),
+    ];
+    return WebSearchDisplayTrace(
+      providers: providers,
+      sources: sources,
+      failures: displayFailures,
+    );
+  }
 }
 
 class WebSearchRequest {
@@ -585,18 +631,174 @@ class GeminiWebSearchProvider implements WebSearchProvider {
   }
 }
 
+/// Native xAI Responses API web search. This is deliberately separate from
+/// the chat adapter: its response is normalized into the same safe citation
+/// contract without entering the chat/cache history.
+class XaiWebSearchProvider implements WebSearchProvider {
+  XaiWebSearchProvider({
+    required this.apiKey,
+    required this.model,
+    WebSearchHttpClientFactory? clientFactory,
+  }) : _clientFactory = clientFactory ?? http.Client.new;
+
+  static final Uri endpoint = Uri.https('api.x.ai', '/v1/responses');
+
+  final String apiKey;
+  final String model;
+  final WebSearchHttpClientFactory _clientFactory;
+
+  @override
+  WebSearchProviderId get id => WebSearchProviderId.xai;
+
+  @override
+  Future<WebSearchResult> search(
+    WebSearchRequest request,
+    ToolCancellationToken cancellationToken,
+  ) async {
+    if (apiKey.trim().isEmpty) {
+      throw const WebSearchProviderException(
+        code: WebSearchFailureCode.notConfigured,
+        safeMessage: 'Grok web search is not configured.',
+        costCertainty: WebSearchCostCertainty.known,
+      );
+    }
+    final selectedModel = model.trim();
+    if (selectedModel.isEmpty || selectedModel.length > 128) {
+      throw const WebSearchProviderException(
+        code: WebSearchFailureCode.unsupportedModel,
+        safeMessage: 'Grok web search requires a valid model.',
+        costCertainty: WebSearchCostCertainty.known,
+      );
+    }
+    final data = await _postJson(
+      provider: id,
+      endpoint: endpoint,
+      headers: <String, String>{
+        'Authorization': 'Bearer ${apiKey.trim()}',
+        'Content-Type': 'application/json',
+      },
+      body: <String, Object?>{
+        'model': selectedModel,
+        'input': <Map<String, String>>[
+          <String, String>{
+            'role': 'system',
+            'content':
+                '$_searchSystemPrompt\nOutput language: ${request.locale}.',
+          },
+          <String, String>{'role': 'user', 'content': request.query},
+        ],
+        'tools': const <Map<String, String>>[
+          <String, String>{'type': 'web_search'},
+        ],
+        'max_output_tokens': 1200,
+      },
+      clientFactory: _clientFactory,
+      cancellationToken: cancellationToken,
+    );
+    return _parseXaiResponse(data, request: request, model: selectedModel);
+  }
+}
+
+/// Explicit OpenAI-compatible relay protocol. The endpoint is user supplied,
+/// but only HTTPS and this fixed chat-completions payload are accepted.
+class RelayWebSearchProvider implements WebSearchProvider {
+  RelayWebSearchProvider({
+    required this.apiKey,
+    required this.model,
+    required String endpoint,
+    WebSearchHttpClientFactory? clientFactory,
+  }) : endpoint = Uri.tryParse(endpoint.trim()),
+       _clientFactory = clientFactory ?? http.Client.new;
+
+  final String apiKey;
+  final String model;
+  final Uri? endpoint;
+  final WebSearchHttpClientFactory _clientFactory;
+
+  @override
+  WebSearchProviderId get id => WebSearchProviderId.relay;
+
+  @override
+  Future<WebSearchResult> search(
+    WebSearchRequest request,
+    ToolCancellationToken cancellationToken,
+  ) async {
+    final target = endpoint;
+    if (apiKey.trim().isEmpty ||
+        target == null ||
+        !_isValidRelayEndpoint(target.toString())) {
+      throw const WebSearchProviderException(
+        code: WebSearchFailureCode.notConfigured,
+        safeMessage:
+            'The web-search relay requires an HTTPS endpoint and API key.',
+        costCertainty: WebSearchCostCertainty.known,
+      );
+    }
+    final selectedModel = model.trim();
+    final data = await _postJson(
+      provider: id,
+      endpoint: target,
+      allowCustomHttpsEndpoint: true,
+      headers: <String, String>{
+        'Authorization': 'Bearer ${apiKey.trim()}',
+        'Content-Type': 'application/json',
+      },
+      body: <String, Object?>{
+        'model': selectedModel,
+        'messages': <Map<String, String>>[
+          <String, String>{
+            'role': 'system',
+            'content':
+                '$_searchSystemPrompt\nOutput language: ${request.locale}.',
+          },
+          <String, String>{'role': 'user', 'content': request.query},
+        ],
+        'tools': const <Map<String, Object?>>[
+          <String, Object?>{
+            'type': 'function',
+            'function': <String, Object?>{
+              'name': 'web_search',
+              'description': 'Search the public web for the supplied query.',
+              'parameters': <String, Object?>{
+                'type': 'object',
+                'properties': <String, Object?>{
+                  'query': <String, String>{'type': 'string'},
+                },
+                'required': <String>['query'],
+              },
+            },
+          },
+        ],
+        'max_tokens': 1200,
+      },
+      clientFactory: _clientFactory,
+      cancellationToken: cancellationToken,
+    );
+    return _parseOpenAiCompatibleResponse(
+      data,
+      request: request,
+      model: selectedModel,
+    );
+  }
+}
+
 class WebSearchProviderConfig {
   const WebSearchProviderConfig({
     required this.id,
     required this.apiKey,
     required this.model,
+    this.endpoint = '',
   });
 
   final WebSearchProviderId id;
   final String apiKey;
   final String model;
+  final String endpoint;
 
-  bool get isConfigured => apiKey.trim().isNotEmpty && model.trim().isNotEmpty;
+  bool get isConfigured =>
+      apiKey.trim().isNotEmpty &&
+      model.trim().isNotEmpty &&
+      (id != WebSearchProviderId.relay || endpoint.trim().isNotEmpty);
 
   @override
   String toString() =>
@@ -683,6 +885,17 @@ class ApiSettingsWebSearchConfigurationSource
             apiKey: '',
             model: '',
           ),
+          WebSearchProviderConfig(
+            id: WebSearchProviderId.xai,
+            apiKey: '',
+            model: '',
+          ),
+          WebSearchProviderConfig(
+            id: WebSearchProviderId.relay,
+            apiKey: '',
+            model: '',
+            endpoint: '',
+          ),
         ],
       );
     }
@@ -693,8 +906,20 @@ class ApiSettingsWebSearchConfigurationSource
       ApiSettings.getModelForProvider('gemini'),
       WebSearchSettings.getOpenRouterSearchModel(),
       WebSearchSettings.getGeminiSearchModel(),
+      ApiSettings.getXaiApiKey(),
+      WebSearchSettings.getXaiSearchModel(),
+      WebSearchSettings.getRelayEndpoint(),
+      WebSearchSettings.getRelayApiKey(),
+      WebSearchSettings.getRelayModel(),
     ]);
-    final orSearchModel = values[4].trim();
+    final xaiModelFallback = await ApiSettings.getXaiModel();
+    final savedOrSearchModel = values[4].trim();
+    final orSearchModel =
+        retiredOpenRouterWebSearchDefaults.contains(
+          savedOrSearchModel.toLowerCase(),
+        )
+        ? ''
+        : savedOrSearchModel;
     final geminiSearchModel = values[5].trim();
     return WebSearchConfiguration(
       currentChatProvider: values[0],
@@ -714,6 +939,19 @@ class ApiSettingsWebSearchConfigurationSource
           model: geminiSearchModel.isNotEmpty
               ? geminiSearchModel
               : values[3].trim(),
+        ),
+        WebSearchProviderConfig(
+          id: WebSearchProviderId.xai,
+          apiKey: values[6],
+          model: values[7].trim().isNotEmpty
+              ? values[7].trim()
+              : xaiModelFallback.trim(),
+        ),
+        WebSearchProviderConfig(
+          id: WebSearchProviderId.relay,
+          apiKey: values[9],
+          model: values[10].trim(),
+          endpoint: values[8].trim(),
         ),
       ],
     );
@@ -737,6 +975,15 @@ class DefaultWebSearchProviderFactory implements WebSearchProviderFactory {
       WebSearchProviderId.gemini => GeminiWebSearchProvider(
         apiKey: config.apiKey,
         model: config.model,
+      ),
+      WebSearchProviderId.xai => XaiWebSearchProvider(
+        apiKey: config.apiKey,
+        model: config.model,
+      ),
+      WebSearchProviderId.relay => RelayWebSearchProvider(
+        apiKey: config.apiKey,
+        model: config.model,
+        endpoint: config.endpoint,
       ),
     };
   }
@@ -778,6 +1025,12 @@ class HybridWebSearchService {
       WebSearchMode.openRouter => <WebSearchProviderConfig>[
         requireProvider(WebSearchProviderId.openRouter),
       ],
+      WebSearchMode.xai => <WebSearchProviderConfig>[
+        requireProvider(WebSearchProviderId.xai),
+      ],
+      WebSearchMode.relay => <WebSearchProviderConfig>[
+        requireProvider(WebSearchProviderId.relay),
+      ],
       WebSearchMode.dual => <WebSearchProviderConfig>[
         requireProvider(WebSearchProviderId.gemini),
         requireProvider(WebSearchProviderId.openRouter),
@@ -817,8 +1070,7 @@ class HybridWebSearchService {
     if (ordered.isEmpty) {
       throw const WebSearchProviderException(
         code: WebSearchFailureCode.notConfigured,
-        safeMessage:
-            'Web search needs a configured OpenRouter or Gemini API key.',
+        safeMessage: 'Web search needs a configured provider API key.',
         costCertainty: WebSearchCostCertainty.known,
       );
     }
@@ -1029,6 +1281,7 @@ class HybridWebSearchService {
     final current = switch (configuration.currentChatProvider.toLowerCase()) {
       'gemini' => WebSearchProviderId.gemini,
       'openrouter' => WebSearchProviderId.openRouter,
+      'xai' => WebSearchProviderId.xai,
       _ => null,
     };
     if (current != null && available[current] != null) {
@@ -1036,10 +1289,11 @@ class HybridWebSearchService {
     }
     return available[WebSearchProviderId.gemini] ??
         available[WebSearchProviderId.openRouter] ??
+        available[WebSearchProviderId.xai] ??
+        available[WebSearchProviderId.relay] ??
         (throw const WebSearchProviderException(
           code: WebSearchFailureCode.notConfigured,
-          safeMessage:
-              'Web search needs a configured OpenRouter or Gemini API key.',
+          safeMessage: 'Web search needs a configured provider API key.',
           costCertainty: WebSearchCostCertainty.known,
         ));
   }
@@ -1107,6 +1361,7 @@ class HybridWebSearchService {
     final current = switch (configuration.currentChatProvider.toLowerCase()) {
       'openrouter' => WebSearchProviderId.openRouter,
       'gemini' => WebSearchProviderId.gemini,
+      'xai' => WebSearchProviderId.xai,
       _ => null,
     };
     if (current != null &&
@@ -1117,6 +1372,8 @@ class HybridWebSearchService {
     const fallbackOrder = <WebSearchProviderId>[
       WebSearchProviderId.gemini,
       WebSearchProviderId.openRouter,
+      WebSearchProviderId.xai,
+      WebSearchProviderId.relay,
     ];
     available.sort((a, b) {
       if (a.id == current && b.id != current) return -1;
@@ -1134,6 +1391,8 @@ class HybridWebSearchService {
       WebSearchProviderId.gemini => isSupportedGeminiWebSearchModel(
         _normalizeGeminiModel(config.model),
       ),
+      WebSearchProviderId.xai => config.model.trim().isNotEmpty,
+      WebSearchProviderId.relay => _isValidRelayEndpoint(config.endpoint),
     };
   }
 }
@@ -1296,6 +1555,8 @@ WebSearchAuthorization? _webSearchAuthorization(Map<String, Object?> metadata) {
     final provider = switch (value) {
       'openRouter' => WebSearchProviderId.openRouter,
       'gemini' => WebSearchProviderId.gemini,
+      'xai' => WebSearchProviderId.xai,
+      'relay' => WebSearchProviderId.relay,
       _ => null,
     };
     if (provider == null) return null;
@@ -1322,6 +1583,8 @@ WebSearchAuthorization? _webSearchAuthorization(Map<String, Object?> metadata) {
 String _providerRoute(WebSearchProviderId provider) => switch (provider) {
   WebSearchProviderId.openRouter => 'openrouter:web_search:exa:zdr-no-fallback',
   WebSearchProviderId.gemini => 'gemini:google_search',
+  WebSearchProviderId.xai => 'xai:web_search',
+  WebSearchProviderId.relay => 'relay:openai_chat_completions',
 };
 
 String _webSearchDomainCode(WebSearchFailureCode code) => switch (code) {
@@ -1420,9 +1683,11 @@ Future<Map<String, dynamic>> _postJson({
   required Map<String, Object?> body,
   required WebSearchHttpClientFactory clientFactory,
   required ToolCancellationToken cancellationToken,
+  bool allowCustomHttpsEndpoint = false,
 }) async {
   if (endpoint.scheme != 'https' ||
-      !_isExpectedProviderHost(provider, endpoint)) {
+      (!allowCustomHttpsEndpoint &&
+          !_isExpectedProviderHost(provider, endpoint))) {
     throw const WebSearchProviderException(
       code: WebSearchFailureCode.invalidResponse,
       safeMessage: 'Web search provider endpoint is invalid.',
@@ -1450,7 +1715,9 @@ Future<Map<String, dynamic>> _postJson({
     final responseBody = await _readResponseBody(response.stream);
     cancellationToken.throwIfCancelled();
     debugPrint(
-      '[WebSearch] Provider: ${provider.name}, Status: ${response.statusCode}, Model: ${body['model']}, Response: $responseBody',
+      '[WebSearch] POST ${endpoint.host}${endpoint.path} '
+      'provider=${provider.name} status=${response.statusCode} '
+      'model=${body['model']}',
     );
     if (response.isRedirect ||
         (response.statusCode >= 300 && response.statusCode < 400)) {
@@ -1617,6 +1884,149 @@ String? _openRouterSafeErrorReason(String responseBody) {
   } on FormatException {
     return null;
   }
+}
+
+WebSearchResult _parseOpenAiCompatibleResponse(
+  Map<String, dynamic> data, {
+  required WebSearchRequest request,
+  required String model,
+}) {
+  final choices = data['choices'];
+  final firstChoice = choices is List && choices.isNotEmpty
+      ? choices.first
+      : null;
+  final message = firstChoice is Map ? firstChoice['message'] : null;
+  if (message is! Map) {
+    throw const WebSearchProviderException(
+      code: WebSearchFailureCode.invalidResponse,
+      safeMessage: 'The web-search relay returned an invalid response.',
+    );
+  }
+  final text = _sanitizeAnswer(
+    _extractContentText(message['content']),
+    _maxAnswerRunes,
+  );
+  final accumulator = _SourceAccumulator(maxSources: request.maxResults);
+  final annotations = message['annotations'];
+  if (annotations is List) {
+    for (final annotation in annotations) {
+      if (annotation is! Map) continue;
+      final citation = annotation['url_citation'];
+      if (citation is! Map) continue;
+      final url = citation['url'];
+      if (url is! String) continue;
+      accumulator.add(
+        url: url,
+        title: citation['title']?.toString() ?? '',
+        snippet: citation['content']?.toString() ?? '',
+      );
+    }
+  }
+  _requireGrounded(text, accumulator.sources, WebSearchProviderId.relay);
+  final usage = data['usage'];
+  return WebSearchResult(
+    provider: WebSearchProviderId.relay,
+    model: model,
+    requestedQuery: request.query,
+    text: text,
+    sources: accumulator.sources,
+    executedQueries: <String>[request.query],
+    usage: WebSearchUsage(
+      promptTokens: usage is Map ? _asInt(usage['prompt_tokens']) ?? 0 : 0,
+      completionTokens: usage is Map
+          ? _asInt(usage['completion_tokens']) ?? 0
+          : 0,
+      searchRequests: 1,
+    ),
+  );
+}
+
+WebSearchResult _parseXaiResponse(
+  Map<String, dynamic> data, {
+  required WebSearchRequest request,
+  required String model,
+}) {
+  final output = data['output'];
+  final textParts = <String>[];
+  final accumulator = _SourceAccumulator(maxSources: request.maxResults);
+  final topLevelText = data['output_text'];
+  if (topLevelText is String && topLevelText.trim().isNotEmpty) {
+    textParts.add(topLevelText);
+  }
+  if (output is List) {
+    for (final item in output) {
+      if (item is! Map) continue;
+      final content = item['content'];
+      if (content is String && content.trim().isNotEmpty) {
+        textParts.add(content);
+      }
+      if (content is List) {
+        for (final part in content) {
+          if (part is! Map) continue;
+          final partText = part['text'];
+          if (partText is String && partText.trim().isNotEmpty) {
+            textParts.add(partText);
+          }
+          final annotations = part['annotations'];
+          if (annotations is List) {
+            for (final annotation in annotations) {
+              if (annotation is! Map) continue;
+              final citation = annotation['url_citation'] ?? annotation;
+              if (citation is! Map || citation['url'] is! String) continue;
+              accumulator.add(
+                url: citation['url'] as String,
+                title: citation['title']?.toString() ?? '',
+                snippet: citation['content']?.toString() ?? '',
+              );
+            }
+          }
+        }
+      }
+      final annotations = item['annotations'];
+      if (annotations is List) {
+        for (final annotation in annotations) {
+          if (annotation is! Map) continue;
+          final citation = annotation['url_citation'] ?? annotation;
+          if (citation is! Map || citation['url'] is! String) continue;
+          accumulator.add(
+            url: citation['url'] as String,
+            title: citation['title']?.toString() ?? '',
+            snippet: citation['content']?.toString() ?? '',
+          );
+        }
+      }
+    }
+  }
+  final citations = data['citations'];
+  if (citations is List) {
+    for (final rawCitation in citations) {
+      if (rawCitation is String) {
+        accumulator.add(url: rawCitation, title: '', snippet: '');
+      } else if (rawCitation is Map && rawCitation['url'] is String) {
+        accumulator.add(
+          url: rawCitation['url'] as String,
+          title: rawCitation['title']?.toString() ?? '',
+          snippet: rawCitation['content']?.toString() ?? '',
+        );
+      }
+    }
+  }
+  final text = _sanitizeAnswer(textParts.join('\n'), _maxAnswerRunes);
+  _requireGrounded(text, accumulator.sources, WebSearchProviderId.xai);
+  final usage = data['usage'];
+  return WebSearchResult(
+    provider: WebSearchProviderId.xai,
+    model: model,
+    requestedQuery: request.query,
+    text: text,
+    sources: accumulator.sources,
+    executedQueries: <String>[request.query],
+    usage: WebSearchUsage(
+      promptTokens: usage is Map ? _asInt(usage['input_tokens']) ?? 0 : 0,
+      completionTokens: usage is Map ? _asInt(usage['output_tokens']) ?? 0 : 0,
+      searchRequests: 1,
+    ),
+  );
 }
 
 WebSearchResult _parseOpenRouterResponse(
@@ -2271,10 +2681,23 @@ bool _isExpectedProviderHost(WebSearchProviderId provider, Uri endpoint) {
     WebSearchProviderId.openRouter => endpoint.host == 'openrouter.ai',
     WebSearchProviderId.gemini =>
       endpoint.host == 'generativelanguage.googleapis.com',
+    WebSearchProviderId.xai => endpoint.host == 'api.x.ai',
+    WebSearchProviderId.relay => false,
   };
 }
 
 String _providerLabel(WebSearchProviderId provider) => switch (provider) {
   WebSearchProviderId.openRouter => 'OpenRouter',
   WebSearchProviderId.gemini => 'Gemini',
+  WebSearchProviderId.xai => 'Grok / xAI',
+  WebSearchProviderId.relay => 'Search relay',
 };
+
+bool _isValidRelayEndpoint(String value) {
+  final uri = Uri.tryParse(value.trim());
+  return uri != null &&
+      uri.scheme == 'https' &&
+      uri.host.isNotEmpty &&
+      uri.userInfo.isEmpty &&
+      uri.fragment.isEmpty;
+}

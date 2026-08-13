@@ -230,7 +230,7 @@ class DeepSeekService implements ApiAdapter {
       });
     }
 
-    final liveState = structuredPrompt?.liveStatePart ?? '';
+    final liveState = structuredPrompt?.requestOnlyPart ?? '';
     final attached = RuntimeContextSidecar.insertSystemBeforeLatestUser(
       allMessages,
       liveState,
@@ -251,9 +251,9 @@ class DeepSeekService implements ApiAdapter {
         sourceMessages: messages,
         requestMessages: allMessages,
         stableContext: systemParts.join('\n\n'),
-        liveState: liveState,
+        liveState: structuredPrompt.liveStatePart,
         cacheEnabled: true,
-        expectTime: liveState.trim().isNotEmpty,
+        expectTime: structuredPrompt.liveStatePart.trim().isNotEmpty,
       );
     }
     return body;

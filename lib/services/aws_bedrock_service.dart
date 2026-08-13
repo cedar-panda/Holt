@@ -235,14 +235,14 @@ class BedrockService implements ApiAdapter {
       if (RuntimeContextSidecar.supportsClaudeMidConversationSystem(modelId)) {
         final attached = RuntimeContextSidecar.appendSystemAfterLatestUser(
           allMessages,
-          structuredPrompt.liveStatePart,
+          structuredPrompt.requestOnlyPart,
         );
         if (attached) runtimeTransport = 'claude_mid_system';
       } else {
         final attached =
             RuntimeContextSidecar.appendToPreviousAssistantBeforeLatestUser(
               allMessages,
-              structuredPrompt.liveStatePart,
+              structuredPrompt.requestOnlyPart,
             );
         if (attached) {
           runtimeTransport = enableCache
@@ -250,7 +250,7 @@ class BedrockService implements ApiAdapter {
               : 'assistant_state';
         } else if (RuntimeContextSidecar.appendToSystemBlocks(
           cacheableBlocks,
-          structuredPrompt.liveStatePart,
+          structuredPrompt.requestOnlyPart,
         )) {
           runtimeTransport = 'top_level_system_fallback';
           runtimeFallback = 'No previous assistant turn was available.';

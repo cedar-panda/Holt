@@ -190,6 +190,8 @@ class WebSearchToolBridge {
           id: switch (route.provider) {
             WebSearchTurnProvider.openRouter => WebSearchProviderId.openRouter,
             WebSearchTurnProvider.gemini => WebSearchProviderId.gemini,
+            WebSearchTurnProvider.xai => WebSearchProviderId.xai,
+            WebSearchTurnProvider.relay => WebSearchProviderId.relay,
           },
           model: route.model,
           route: route.route,
@@ -200,6 +202,8 @@ class WebSearchToolBridge {
         : switch (providers.single.id) {
             WebSearchProviderId.openRouter => WebSearchMode.openRouter,
             WebSearchProviderId.gemini => WebSearchMode.gemini,
+            WebSearchProviderId.xai => WebSearchMode.xai,
+            WebSearchProviderId.relay => WebSearchMode.relay,
           };
     return ResolvedWebSearchPlan(mode: mode, providers: providers);
   }

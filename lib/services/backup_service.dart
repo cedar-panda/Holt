@@ -697,6 +697,8 @@ class BackupService {
       message['image_path'] = _sanitizeImportPath(message['image_path']);
       message['split_mode'] = _sqliteBool(message['split_mode']);
       message['memory_log'] = message['memory_log']?.toString() ?? '';
+      message['web_search_trace_json'] =
+          message['web_search_trace_json']?.toString() ?? '';
       message['cache_hit'] = _sqliteBool(message['cache_hit']);
       message['status'] = message['status'] == Message.statusIncomplete
           ? Message.statusIncomplete

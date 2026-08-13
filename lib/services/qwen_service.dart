@@ -178,7 +178,7 @@ class QwenService implements ApiAdapter {
       });
     }
 
-    final liveState = structuredPrompt?.liveStatePart ?? '';
+    final liveState = structuredPrompt?.requestOnlyPart ?? '';
     final attached = RuntimeContextSidecar.insertSystemBeforeLatestUser(
       allMessages,
       liveState,
@@ -202,8 +202,8 @@ class QwenService implements ApiAdapter {
         sourceMessages: messages,
         requestMessages: allMessages,
         stableContext: systemParts.join('\n\n'),
-        liveState: liveState,
-        expectTime: liveState.trim().isNotEmpty,
+        liveState: structuredPrompt.liveStatePart,
+        expectTime: structuredPrompt.liveStatePart.trim().isNotEmpty,
       );
     }
     return body;

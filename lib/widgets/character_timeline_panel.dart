@@ -439,6 +439,123 @@ class _CharacterTimelinePanelState extends State<CharacterTimelinePanel> {
   }
 
   // ═══════════════════════════════════
+  // 點擊節點展開完整內容
+  // ═══════════════════════════════════
+
+  void _showNodeDetail(_TimelineNode node) {
+    HapticFeedback.selectionClick();
+    final isState = node.type == _NodeType.state;
+    final dateStr =
+        '${node.date.year}.${node.date.month.toString().padLeft(2, '0')}.${node.date.day.toString().padLeft(2, '0')}  '
+        '${node.date.hour.toString().padLeft(2, '0')}:${node.date.minute.toString().padLeft(2, '0')}';
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (ctx) => Container(
+        constraints: BoxConstraints(
+          maxHeight: MediaQuery.of(ctx).size.height * 0.45,
+        ),
+        padding: const EdgeInsets.fromLTRB(24, 16, 24, 32),
+        decoration: BoxDecoration(
+          color: YanciTheme.isDark
+              ? const Color(0xFF1a1520).withValues(alpha: 0.98)
+              : Colors.white.withValues(alpha: 0.98),
+          borderRadius: const BorderRadius.vertical(
+            top: Radius.circular(YanciTheme.radiusLg),
+          ),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // 拉條
+            Center(
+              child: Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: YanciTheme.textSecondary.withValues(alpha: 0.3),
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            // 標籤 + 日期
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 3,
+                  ),
+                  decoration: BoxDecoration(
+                    color: isState
+                        ? YanciTheme.accent.withValues(alpha: 0.12)
+                        : YanciTheme.textSecondary.withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Text(
+                    isState
+                        ? L.pick(en: 'State', zhTW: '狀態')
+                        : L.pick(en: 'Event', zhTW: '事件'),
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontFamily: YanciTheme.fontFamily,
+                      fontWeight: FontWeight.w500,
+                      color: isState
+                          ? YanciTheme.accent
+                          : YanciTheme.textSecondary,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Text(
+                  dateStr,
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontFamily: YanciTheme.fontFamily,
+                    color: YanciTheme.textSecondary.withValues(alpha: 0.6),
+                  ),
+                ),
+              ],
+            ),
+            // 狀態 key
+            if (isState && node.key.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              Text(
+                node.key,
+                style: TextStyle(
+                  fontSize: 14,
+                  fontFamily: YanciTheme.fontFamily,
+                  fontWeight: FontWeight.w600,
+                  color: YanciTheme.accent.withValues(alpha: 0.9),
+                ),
+              ),
+            ],
+            const SizedBox(height: 12),
+            // 完整內容（可滾動）
+            Flexible(
+              child: SingleChildScrollView(
+                child: Text(
+                  node.value,
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontFamily: YanciTheme.fontFamily,
+                    height: 1.6,
+                    color: YanciTheme.textPrimary.withValues(alpha: 0.85),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ═══════════════════════════════════
   // 節點內容（上/下交錯）
   // ═══════════════════════════════════
 
@@ -456,47 +573,53 @@ class _CharacterTimelinePanelState extends State<CharacterTimelinePanel> {
     final bottomY =
         _contentHeight + _stalkHeight + _lineZoneHeight + _stalkHeight;
 
+    final displayText = isState && node.key.isNotEmpty
+        ? '${node.key}·${node.value}'
+        : node.value;
+
     return Positioned(
       left: left,
       top: isAbove ? topY : bottomY,
       width: _nodeWidth,
       height: _contentHeight,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        mainAxisAlignment: isAbove
-            ? MainAxisAlignment.end
-            : MainAxisAlignment.start,
-        children: [
-          // 日期
-          Text(
-            dateStr,
-            style: TextStyle(
-              fontSize: 9,
-              fontFamily: YanciTheme.fontFamily,
-              color: YanciTheme.textSecondary.withValues(alpha: 0.45),
-              height: 1.0,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () => _showNodeDetail(node),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          mainAxisAlignment: isAbove
+              ? MainAxisAlignment.end
+              : MainAxisAlignment.start,
+          children: [
+            // 日期
+            Text(
+              dateStr,
+              style: TextStyle(
+                fontSize: 9,
+                fontFamily: YanciTheme.fontFamily,
+                color: YanciTheme.textSecondary.withValues(alpha: 0.45),
+                height: 1.0,
+              ),
             ),
-          ),
-          const SizedBox(height: 2),
-          // 內容文字
-          Text(
-            isState && node.key.isNotEmpty
-                ? '${node.key}·${node.value}'
-                : node.value,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              fontSize: 10,
-              fontFamily: YanciTheme.fontFamily,
-              height: 1.3,
-              color: isState
-                  ? YanciTheme.accent.withValues(alpha: 0.85)
-                  : YanciTheme.textPrimary.withValues(alpha: 0.65),
-              fontWeight: isState ? FontWeight.w500 : FontWeight.w400,
+            const SizedBox(height: 2),
+            // 內容文字
+            Text(
+              displayText,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 10,
+                fontFamily: YanciTheme.fontFamily,
+                height: 1.3,
+                color: isState
+                    ? YanciTheme.accent.withValues(alpha: 0.85)
+                    : YanciTheme.textPrimary.withValues(alpha: 0.65),
+                fontWeight: isState ? FontWeight.w500 : FontWeight.w400,
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

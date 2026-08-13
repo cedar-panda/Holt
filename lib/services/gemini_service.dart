@@ -397,7 +397,7 @@ class GeminiService implements ApiAdapter {
 
     final body = <String, dynamic>{'contents': contents};
 
-    final liveState = structuredPrompt?.liveStatePart ?? '';
+    final liveState = structuredPrompt?.requestOnlyPart ?? '';
     final attachedToModel = RuntimeContextSidecar.appendToGeminiPreviousModel(
       contents,
       liveState,
@@ -446,7 +446,7 @@ class GeminiService implements ApiAdapter {
         sourceMessages: messages,
         requestMessages: contents,
         stableContext: structuredPrompt.cacheableParts.join('\n\n'),
-        liveState: liveState,
+        liveState: structuredPrompt.liveStatePart,
         cacheEnabled: useCachedContent,
         cachePrefixPreserved: useCachedContent || liveState.trim().isEmpty,
         fallbackReason: runtimeFallback,
@@ -457,7 +457,7 @@ class GeminiService implements ApiAdapter {
                   : const <String>[]),
         roleKey: 'role',
         contentKey: 'parts',
-        expectTime: liveState.trim().isNotEmpty,
+        expectTime: structuredPrompt.liveStatePart.trim().isNotEmpty,
       );
     }
 
