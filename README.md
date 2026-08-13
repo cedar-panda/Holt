@@ -10,7 +10,7 @@ models, with deep prompt-caching optimisation to keep long-conversation
 costs down. Build and signing instructions below; privacy details in
 [PRIVACY.md](PRIVACY.md).
 
-**[Download Holt v1.3.7 APK](https://github.com/cedar-panda/Holt/releases/tag/v1.3.7)**
+**[Download Holt v1.4.0 APK](https://github.com/cedar-panda/Holt/releases/tag/v1.4.0)**
 
 **If you have any questions or encounter any issues while using it, please feel free to contact me at wrenmyco@proton.me.**
 
