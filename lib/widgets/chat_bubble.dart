@@ -2006,9 +2006,15 @@ class _TypingIndicatorState extends State<_TypingIndicator>
 
   @override
   Widget build(BuildContext context) {
+    final textStyle = YanciTheme.bodyText;
+    final fontSize = textStyle.fontSize ?? 15;
+    final dotSize = (fontSize * 0.27).clamp(3.0, 6.0).toDouble();
+    final gap = (fontSize * 0.2).clamp(2.0, 4.0).toDouble();
+    final lineHeight = fontSize * (textStyle.height ?? 1.5);
     return SizedBox(
-      width: 24,
-      height: 18,
+      // The middle dot sits exactly at the center of the content width.
+      width: dotSize * 3 + gap * 2,
+      height: lineHeight,
       child: AnimatedBuilder(
         animation: _controller,
         builder: (_, _) => Row(
@@ -2021,12 +2027,12 @@ class _TypingIndicatorState extends State<_TypingIndicator>
             return Padding(
               padding: EdgeInsets.only(right: index == 2 ? 0 : 3),
               child: Transform.translate(
-                offset: Offset(0, -wave * 3.2),
+                offset: Offset(0, -wave * fontSize * 0.22),
                 child: Opacity(
                   opacity: (0.65 + wave * 0.25).clamp(0.35, 0.9),
                   child: Container(
-                    width: 4,
-                    height: 4,
+                    width: dotSize,
+                    height: dotSize,
                     decoration: BoxDecoration(
                       color: YanciTheme.accent,
                       shape: BoxShape.circle,
