@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
@@ -925,6 +926,9 @@ class _ChatBubbleState extends State<ChatBubble>
                                                     ),
                                                   ],
                                                 ),
+                                              if (displayText.isEmpty &&
+                                                  widget.isStreaming)
+                                                const _TypingIndicator(),
                                             ],
                                           ),
                                         ),
@@ -1969,6 +1973,72 @@ class _ChatBubbleState extends State<ChatBubble>
 
   Widget _buildAvatar() {
     return ChatAvatar(avatarPath: widget.avatarPath, isUser: widget.isUser);
+  }
+}
+
+/// Three-dot waiting state shown only before the first streamed character.
+/// The second dot is the geometric center of the bubble's content area.
+class _TypingIndicator extends StatefulWidget {
+  const _TypingIndicator();
+
+  @override
+  State<_TypingIndicator> createState() => _TypingIndicatorState();
+}
+
+class _TypingIndicatorState extends State<_TypingIndicator>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 900),
+    )..repeat();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 24,
+      height: 18,
+      child: AnimatedBuilder(
+        animation: _controller,
+        builder: (_, _) => Row(
+          mainAxisSize: MainAxisSize.max,
+          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: List<Widget>.generate(3, (index) {
+            final phase = (_controller.value + index * 0.18) % 1.0;
+            final wave = math.sin(phase * math.pi * 2);
+            return Padding(
+              padding: EdgeInsets.only(right: index == 2 ? 0 : 3),
+              child: Transform.translate(
+                offset: Offset(0, -wave * 3.2),
+                child: Opacity(
+                  opacity: (0.65 + wave * 0.25).clamp(0.35, 0.9),
+                  child: Container(
+                    width: 4,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: YanciTheme.accent,
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                ),
+              ),
+            );
+          }),
+        ),
+      ),
+    );
   }
 }
 
