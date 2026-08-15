@@ -67,6 +67,7 @@ summary：輸出「前情提要」與「本次摘要」兩部分。
 
 timeline：只從【新對話內容】提取屬於角色本人或雙方關係、對後續有持續回憶價值的候選。event 是已完成的角色事件或雙方共同事件；state 是目前仍持續的狀態，key 使用髮型、美甲、鬍子、住所、工作、寵物、健康、關係狀態、生理週期之一；狀態開始或結束本身使用 event。subject 使用 character；雙方共同事件或關係狀態使用 relationship。每項須能確定 YYYY-MM-DD，source_message_ids 全部來自新對話，evidence 是來源原文片段，value 保留其核心用詞。occurred_on 表示原文直接描述的事件或狀態日期；「第 N 天」照原文保留，由本地計算開始日。同一項合併，按 occurred_on 從早到晚排列。
 新對話明確說出角色「生理期第 N 天／開始／結束／今天仍在生理期」時必須輸出 character 候選：第 N 天或當下仍在生理期使用 state、key=生理週期；開始或結束使用 event；evidence 逐字取自來源消息。
+時間線相關內容有關角色健康（含生理期），可能持續 2 天以上的不適，不論男女角色皆輸出到時間線，請甄別清楚是否為角色內容。
 
 只輸出合法 JSON：{"summary":"文字","timeline":[{"type":"event","subject":"relationship","source_message_ids":[1],"occurred_on":"YYYY-MM-DD","date_basis":"message_time|relative|explicit","value":"第三人稱事件","evidence":"原文"},{"type":"state","subject":"character","source_message_ids":[2],"occurred_on":"YYYY-MM-DD","date_basis":"message_time|relative|explicit","key":"健康","value":"第三人稱狀態","evidence":"原文"}]}。無候選時 timeline 為空陣列。
 ''';
@@ -95,6 +96,7 @@ summary: Output two parts, Prior Context and This Update.
 
 timeline: Extract only lasting candidates belonging to the character or the shared relationship from 【New Conversation】. An event is a completed character event or shared event. A state is a condition that is still ongoing, whose key is hairstyle, nails, beard, residence, work, pet, health, relationship status, or menstrual cycle; use event for the start or end of a state itself. Use subject=character, or subject=relationship for shared events and relationship status. Every item must resolve to YYYY-MM-DD, cite only new source_message_ids, quote exact source text as evidence, and retain its core wording in value. occurred_on is the date directly described by the source; preserve "day N" wording so the app can derive its start date. Merge one item and order occurred_on oldest to newest.
 When new conversation explicitly states that the character's period is on day N, started, ended, or is still active today, a character candidate is required. Day N or an active current period uses type=state and key=menstrual cycle; start/end uses type=event; evidence is an exact source substring.
+For timeline content about the character's health (including menstruation), record discomfort that may last two or more days for characters of any gender, while carefully verifying that it belongs to the character.
 
 Output valid JSON only: {"summary":"text","timeline":[{"type":"event","subject":"relationship","source_message_ids":[1],"occurred_on":"YYYY-MM-DD","date_basis":"message_time|relative|explicit","value":"third-person event","evidence":"exact quote"},{"type":"state","subject":"character","source_message_ids":[2],"occurred_on":"YYYY-MM-DD","date_basis":"message_time|relative|explicit","key":"health","value":"third-person state","evidence":"exact quote"}]}. Use an empty timeline array when none qualify.
 ''';
@@ -105,6 +107,39 @@ Output valid JSON only: {"summary":"text","timeline":[{"type":"event","subject":
 
   static String get currentCompressionPrompt =>
       L.locale == 'en' ? _compressPromptEn : _zhPrompt(_compressPromptZh);
+
+  /// RP 方案只替換時間線欄位的抓取規則；摘要正文與 prompt cache 位置不變。
+  static Future<String> compressionPromptForCurrentMode() async {
+    final base = currentCompressionPrompt;
+    if (await MemorySettings.getTimelinePromptMode() != 'plot') return base;
+    final plotRule = L.pick(
+      en: 'RP timeline mode: treat the timeline as a fictional story chronology. Capture durable plot events, scene changes, character actions, relationship turns, promises, and unresolved threads that matter for continuing the role-play. Keep the existing date/source/evidence requirements. Do not replace the normal summary or invent events; only broaden the timeline candidates to narrative events.',
+      zhTW:
+          'RP 劇情時間線：將時間線視為虛構故事的編年記錄，抓取對後續 RP 有持續價值的劇情事件、場景變化、角色行動、關係轉折、承諾與未完線索。保留既有日期／來源／證據要求，不替換正常摘要，也不得捏造事件；只擴大時間線候選的敘事範圍。',
+      zhCN:
+          'RP 剧情时间线：将时间线视为虚构故事的编年记录，抓取对后续 RP 有持续价值的剧情事件、场景变化、角色行动、关系转折、承诺与未完线索。保留既有日期／来源／证据要求，不替换正常摘要，也不得捏造事件；只扩大时间线候选的叙事范围。',
+    );
+    return '$base\n\n$plotRule';
+  }
+
+  /// This rule scopes only the timeline field; the summary still covers both
+  /// speakers normally.
+  static String characterOnlyTimelineRule(
+    String characterName, {
+    DateTime? today,
+  }) {
+    final name = characterName.trim().isEmpty ? '角色本人' : characterName.trim();
+    final date = today ?? DateTime.now();
+    final todayText =
+        '${date.year.toString().padLeft(4, '0')}-'
+        '${date.month.toString().padLeft(2, '0')}-'
+        '${date.day.toString().padLeft(2, '0')}';
+    return L.pick(
+      en: 'MANDATORY timeline-only rule: Today is $todayText. For character health (including menstruation) or discomfort that may last two or more days, output timeline content only when it belongs to the character "$name". Never record the user\'s own health. If the subject cannot be confirmed as "$name", output no timeline item. Every candidate must include its own concrete occurred_on date (YYYY-MM-DD), resolved from source local_time and today\'s date. The summary field still covers both speakers normally.',
+      zhTW:
+          '強制要求（只約束時間線欄位）：今天日期是 $todayText。時間線相關內容涉及角色健康（含生理期）或可能持續 2 天以上的不適時，請輸出到時間線；時間線只記錄與「$name」本人有關的內容，不得記錄 user／使用者本人的健康內容。若無法確認是「$name」本人，請不要輸出時間線項目。每個候選都必須根據來源 local_time 與今天日期填寫各自具體的 occurred_on（YYYY-MM-DD）。summary 摘要正文仍正常記錄雙方內容。',
+    );
+  }
 
   /// Canonical storage contract shared by automatic summaries, manual
   /// summaries, full-block revisions, and keyword-source snapshots. Prompting
@@ -340,14 +375,14 @@ Rules:
     }
 
     // 組裝輸入
-    final isEn = L.locale == 'en';
     final identity = await _loadSummaryIdentity(characterId);
     final identityPrompt = identity.format(includePersona: false);
     final rawText = messages.map(_formatSourceMessage).join('\n\n');
-    final promptParts = <String>[
-      isEn ? _compressPromptEn : _zhPrompt(_compressPromptZh),
-    ];
+    final promptParts = <String>[await compressionPromptForCurrentMode()];
     if (identityPrompt.isNotEmpty) promptParts.add(identityPrompt);
+    promptParts.add(
+      characterOnlyTimelineRule(identity.characterName, today: DateTime.now()),
+    );
     final prompt = promptParts.join('\n\n');
     final userContent = StringBuffer();
     if (prevSummary != null && prevSummary.isNotEmpty) {

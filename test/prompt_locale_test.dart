@@ -62,6 +62,8 @@ void main() {
       userNickname: '昭昭',
       characterId: 'char',
       characterName: '晏辭',
+      emotionEnabled: true,
+      bioclockEnabled: true,
     );
 
     for (final prompt in [memoryPrompt, spiderPrompt]) {
@@ -69,6 +71,17 @@ void main() {
       expect(prompt, isNot(contains('長期情緒只記錄')));
     }
     expect(spiderPrompt, contains('情緒打點不是長期記憶'));
+
+    final quietSpiderPrompt = await SpiderWebService.abilityPrompt(
+      userNickname: '昭昭',
+      characterId: 'char',
+      characterName: '晏辭',
+      emotionEnabled: false,
+      bioclockEnabled: false,
+    );
+    expect(quietSpiderPrompt, contains('■ 蛛網記憶系統'));
+    expect(quietSpiderPrompt, isNot(contains('<emo>')));
+    expect(quietSpiderPrompt, isNot(contains('<clock>')));
 
     await L.setLocale('en');
     final englishPrompt = MemoryActions.abilityPrompt();

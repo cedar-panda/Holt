@@ -230,6 +230,7 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _sendSubmissionInProgress = false;
   bool _isLoading = true;
   bool _isChatReady = false;
+  bool _olderButtonReady = false;
   bool _initializationFailed = false;
   String _initializationError = '';
   String _streamingText = '';
@@ -443,6 +444,13 @@ class _ChatScreenState extends State<ChatScreen> {
         _isLoading = false;
         _initializationFailed = false;
       });
+      // Let the loading/list transition settle before exposing pagination.
+      // This prevents a recycled ListView child from flashing the old control.
+      Future.delayed(const Duration(milliseconds: 180), () {
+        if (mounted && _isChatReady) {
+          setState(() => _olderButtonReady = true);
+        }
+      });
       _scrollToBottom(force: true);
       Future.delayed(const Duration(milliseconds: 100), () {
         if (mounted) _scrollToBottom(force: true);
@@ -481,6 +489,7 @@ class _ChatScreenState extends State<ChatScreen> {
     setState(() {
       _isLoading = true;
       _isChatReady = false;
+      _olderButtonReady = false;
       _initializationFailed = false;
       _initializationError = '';
       _messages.clear();
@@ -829,6 +838,7 @@ class _ChatScreenState extends State<ChatScreen> {
   /// 本地時間線補掃游標：每個對話只查上次成功掃描後的新消息。
   /// 這是 SQLite/SharedPreferences 狀態，不是 prompt cache。
   Future<void> _scanExplicitMenstrualTimeline() async {
+    if (!await MemorySettings.getTimelineEnabled()) return;
     final prefs = await SharedPreferences.getInstance();
     final cursor = prefs.getInt(_timelineMenstrualScanCursorKey) ?? 0;
     final messages = await DatabaseHelper.getMessagesAfterId(
@@ -836,13 +846,22 @@ class _ChatScreenState extends State<ChatScreen> {
       cursor,
     );
     if (messages.isEmpty) return;
+    debugPrint(
+      '[TimelineDebug] chat rescan: char=$_activeCharacterId '
+      'cursor=$cursor messages=${messages.length}',
+    );
 
     final maxId = messages
         .map((message) => message.id ?? 0)
         .fold<int>(cursor, (max, id) => id > max ? id : max);
-    await CharacterTimelineService.storeExplicitMenstrualMessages(
-      characterId: _activeCharacterId,
-      messages: messages,
+    final changed =
+        await CharacterTimelineService.storeExplicitMenstrualMessages(
+          characterId: _activeCharacterId,
+          messages: messages,
+        );
+    debugPrint(
+      '[TimelineDebug] chat rescan stored=$changed char=$_activeCharacterId '
+      'nextCursor=$maxId',
     );
     await prefs.setInt(_timelineMenstrualScanCursorKey, maxId);
   }
@@ -1644,7 +1663,10 @@ class _ChatScreenState extends State<ChatScreen> {
     // 構建顯示列表（拆分回覆時 AI 消息按段落拆開）
     // 渲染窗：只掛 _renderFrom 起的消息；i 保持全量索引（editMessage 等依賴）
     final renderFrom = _renderFrom.clamp(0, _messages.length);
-    final hasOlderButton = renderFrom > 0 || _olderHasMore;
+    // Do not expose the pagination affordance while the window is still
+    // initializing; the first partial build can otherwise flash it briefly.
+    final hasOlderButton =
+        _isChatReady && _olderButtonReady && (renderFrom > 0 || _olderHasMore);
     // 渲染源 = 錨點前純顯示段（永不進上下文）+ 發送窗的渲染段。
     // 純顯示段 originalIndex 為 -1：編輯/重發等窗內索引操作不適用。
     final renderSource = <(Message, int)>[

@@ -253,6 +253,9 @@ class MemorySettings {
   static const String _keyContextWindowSummaryTrigger =
       'context_window_summary_trigger_tokens';
   static const String _keyMemoryWriteEnabled = 'memory_write_enabled';
+  static const String _keyTimelineEnabled = 'timeline_enabled';
+  static const String _keySelfNotesEnabled = 'self_notes_enabled';
+  static const String _keyTimelinePromptMode = 'timeline_prompt_mode';
 
   static Future<void> saveMemorySummarize(bool v) async {
     await saveWindowSummaryEnabled(v);
@@ -321,6 +324,46 @@ class MemorySettings {
   static Future<bool> getMemoryWriteEnabled() async {
     final p = await SharedPreferences.getInstance();
     return p.getBool(_keyMemoryWriteEnabled) ?? false;
+  }
+
+  /// 時間線只控制是否讀取、注入及寫入相關內容；不會改動任何 cache key 或位置。
+  static Future<void> saveTimelineEnabled(bool v) async {
+    final p = await SharedPreferences.getInstance();
+    await p.setBool(_keyTimelineEnabled, v);
+  }
+
+  static Future<bool> getTimelineEnabled() async {
+    final p = await SharedPreferences.getInstance();
+    return p.getBool(_keyTimelineEnabled) ?? true;
+  }
+
+  /// 「偷偷記住你」面板及其 prompt 注入開關，預設開啟。
+  static Future<void> saveSelfNotesEnabled(bool v) async {
+    final p = await SharedPreferences.getInstance();
+    if (v && p.getString(_keyTimelinePromptMode) == 'plot') return;
+    await p.setBool(_keySelfNotesEnabled, v);
+  }
+
+  static Future<bool> getSelfNotesEnabled() async {
+    final p = await SharedPreferences.getInstance();
+    final enabled = p.getBool(_keySelfNotesEnabled) ?? true;
+    // RP 劇情時間線會固定關閉「偷偷記住你」；切回其他方案時保留使用者
+    // 原本保存的值，不需要搬動或清除任何 cache。
+    final promptMode = p.getString(_keyTimelinePromptMode) ?? 'normal';
+    return enabled && promptMode != 'plot';
+  }
+
+  static Future<void> saveTimelinePromptMode(String mode) async {
+    final p = await SharedPreferences.getInstance();
+    await p.setString(
+      _keyTimelinePromptMode,
+      mode == 'plot' ? 'plot' : 'normal',
+    );
+  }
+
+  static Future<String> getTimelinePromptMode() async {
+    final p = await SharedPreferences.getInstance();
+    return p.getString(_keyTimelinePromptMode) ?? 'normal';
   }
 
   static Future<void> saveSplitReply(bool v) async {

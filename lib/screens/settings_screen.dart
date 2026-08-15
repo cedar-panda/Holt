@@ -316,6 +316,25 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         ],
                       ),
                     ),
+                    _buildSectionTitle(L.pick(en: 'Guidance', zhTW: '引導')),
+                    _buildGlassCard(
+                      child: _legalRow(
+                        icon: Icons.tune_rounded,
+                        label: L.pick(
+                          en: 'Choose your relationship mode again',
+                          zhTW: '再次選擇相處模式',
+                          zhCN: '再次选择相处模式',
+                        ),
+                        onTap: () async {
+                          final navigator = Navigator.of(context);
+                          await UserSettings.restartInitialSetup();
+                          if (!mounted) return;
+                          await navigator.pushReplacementNamed(
+                            '/initial_setup',
+                          );
+                        },
+                      ),
+                    ),
                     _buildSectionTitle(
                       L.pick(en: 'Legal & open source', zhTW: '法律與開源'),
                     ),

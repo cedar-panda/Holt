@@ -8,7 +8,9 @@ import '../services/settings_manager.dart';
 /// 開屏動畫
 /// 海獺落下 → Holt 逐字淡入 → 星光散開 → 推進主頁
 class SplashScreen extends StatefulWidget {
-  const SplashScreen({super.key});
+  const SplashScreen({super.key, this.showLanguagePicker = false});
+
+  final bool showLanguagePicker;
 
   @override
   State<SplashScreen> createState() => _SplashScreenState();
@@ -46,6 +48,8 @@ class _SplashScreenState extends State<SplashScreen>
   @override
   void initState() {
     super.initState();
+    _showLanguagePicker = widget.showLanguagePicker;
+    _selectedLocale = widget.showLanguagePicker ? L.locale : null;
     _initAnimations();
     _animationListenable = Listenable.merge([
       _logoCtrl,
@@ -126,6 +130,7 @@ class _SplashScreenState extends State<SplashScreen>
   Future<void> _startSequence() async {
     if (_navigationStarted) return;
     final shouldChooseLanguage =
+        widget.showLanguagePicker ||
         await UserSettings.shouldShowFirstLaunchLanguage();
     if (!mounted) return;
     _reduceMotion = MediaQuery.disableAnimationsOf(context);

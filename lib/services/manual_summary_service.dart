@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:http/http.dart' as http;
 
 import '../memory/database.dart';
@@ -165,6 +166,20 @@ class ManualSummaryService {
       throw ManualSummaryPolicyFailure(excerpt: fallbackExcerpt);
     }
 
+    // 手動摘要也要走本地明確生理期掃描；不能只依賴摘要模型輸出
+    // timeline，否則「昨天來的生理期」等可驗證句子可能被模型漏掉。
+    final explicitMenstrualChanges = sourceMessages.isEmpty
+        ? 0
+        : await CharacterTimelineService.storeExplicitMenstrualMessages(
+            characterId: characterId,
+            messages: sourceMessages,
+          );
+    debugPrint(
+      '[TimelineDebug] manual summary: char=$characterId '
+      'sourceMessages=${sourceMessages.length} modelTimeline=${decoded.timeline.length} '
+      'explicitChanges=$explicitMenstrualChanges',
+    );
+
     var timelineCandidates = decoded.timeline;
     if (sourceMessages.isNotEmpty) {
       timelineCandidates =
@@ -173,13 +188,18 @@ class ManualSummaryService {
             candidates: timelineCandidates,
           );
     }
-    final timelineChanges = sourceMessages.isEmpty
+    final modelTimelineChanges = sourceMessages.isEmpty
         ? 0
         : await CharacterTimelineService.storeSummaryCandidates(
             characterId: characterId,
             candidates: timelineCandidates,
             sourceMessages: sourceMessages,
           );
+    final timelineChanges = explicitMenstrualChanges + modelTimelineChanges;
+    debugPrint(
+      '[TimelineDebug] manual summary stored: char=$characterId '
+      'modelChanges=$modelTimelineChanges totalChanges=$timelineChanges',
+    );
 
     final savedContent = content;
     final windowId = await DatabaseHelper.ensureConversationWindowSummaryId(
@@ -226,7 +246,7 @@ class ManualSummaryService {
             },
           ],
           model: 'local',
-          systemPrompt: _systemPrompt,
+          systemPrompt: await _systemPromptForCharacter(charName),
         );
       }
 
@@ -261,7 +281,7 @@ class ManualSummaryService {
           },
         ],
         model: model,
-        systemPrompt: _systemPrompt,
+        systemPrompt: await _systemPromptForCharacter(charName),
       );
     } catch (e) {
       if (e is ManualSummaryPolicyFailure) rethrow;
@@ -285,10 +305,11 @@ class ManualSummaryService {
       throw Exception('OpenRouter API Key 未設定');
     }
 
+    final systemPrompt = await _systemPromptForCharacter(charName);
     final body = {
       'model': model,
       'messages': [
-        {'role': 'system', 'content': _systemPrompt},
+        {'role': 'system', 'content': systemPrompt},
         {
           'role': 'user',
           'content': _buildUserPrompt(
@@ -470,7 +491,7 @@ class ManualSummaryService {
     return buffer.toString();
   }
 
-  static String get _systemPrompt {
+  static Future<String> get _systemPrompt async {
     final sensitiveContentRule = L.pick(
       en: '''
 For explicit or sensitive source content, summarize its general meaning in abstract, neutral terms while preserving emotions, consent, boundaries, consequences, and relationship changes.
@@ -479,7 +500,10 @@ For explicit or sensitive source content, summarize its general meaning in abstr
 原文包含露骨或敏感內容時，以抽象、中性的方式概括大意，保留對後續有用的情緒、同意、界線、後果與關係變化。
 ''',
     );
-    return '${ContextCompressor.currentCompressionPrompt}\n\n'
+    return '${await ContextCompressor.compressionPromptForCurrentMode()}\n\n'
         '$sensitiveContentRule';
   }
+
+  static Future<String> _systemPromptForCharacter(String charName) async =>
+      '${await _systemPrompt}\n\n${ContextCompressor.characterOnlyTimelineRule(charName, today: DateTime.now())}';
 }

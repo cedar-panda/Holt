@@ -915,6 +915,9 @@ class _CallScreenState extends State<CallScreen>
 
       // 緩存提示（通話內 chip + 消息 ⚡）
       final cacheRead = CacheStatsHelper.readTokens(requestUsage);
+      if (cacheRead > 0) {
+        CacheSession.markCacheHit(widget.conversationId);
+      }
       final label = CacheStatsHelper.shortLabel(requestUsage);
       if (mounted && serial == _turnSerial) {
         setState(() {

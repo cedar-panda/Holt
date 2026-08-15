@@ -800,7 +800,9 @@ class _ThemeWorkshopScreenState extends State<ThemeWorkshopScreen> {
                                   behavior: HitTestBehavior.opaque,
                                   child: Padding(
                                     padding: const EdgeInsets.symmetric(
-                                        vertical: 4, horizontal: 8),
+                                      vertical: 4,
+                                      horizontal: 8,
+                                    ),
                                     child: Text(
                                       L.pick(en: 'Reset', zhTW: '恢復默認值'),
                                       style: YanciTheme.bodySmall.copyWith(
@@ -1063,7 +1065,7 @@ class _ThemeWorkshopScreenState extends State<ThemeWorkshopScreen> {
                 ),
                 const SizedBox(height: 2),
                 Text(
-                  preset.subtitle,
+                  L.get('theme_subtitle_${preset.id}'),
                   style: TextStyle(
                     fontSize: 12,
                     color: preset.textSecondary.withValues(alpha: 0.7),

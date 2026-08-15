@@ -11,7 +11,9 @@ extension _ChatGenerationMethods on _ChatScreenState {
       _streamSurfaceVisible = false;
       // Let the sent user bubble settle before revealing the assistant
       // avatar/bubble. The stream queue keeps incoming chunks meanwhile.
-      final delay = 180 + _streamSurfaceRandom.nextInt(220);
+      // Give the outgoing user bubble a little more breathing room before
+      // the character/avatar surface appears.
+      final delay = 360 + _streamSurfaceRandom.nextInt(260);
       _streamSurfaceDelayTimer = Timer(Duration(milliseconds: delay), () {
         if (!mounted || !_isGenerating) return;
         _streamSurfaceVisible = true;
@@ -460,7 +462,8 @@ extension _ChatGenerationMethods on _ChatScreenState {
     }
     final habitList = bioclockEnabled ? (_habitListSnapshot ?? '') : '';
 
-    if (_selfNotesSnapshot == null || _selfNotesSnapshotLines == null) {
+    if (selfNotes.isNotEmpty &&
+        (_selfNotesSnapshot == null || _selfNotesSnapshotLines == null)) {
       final convId = widget.conversationId;
       var pinned = await DatabaseHelper.getConversationPinnedSelfNotes(convId);
       pinned ??= await DatabaseHelper.setConversationPinnedSelfNotesIfAbsent(
@@ -497,7 +500,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
     } else if (normalizedSystemPrompt.isNotEmpty) {
       staticParts.add(normalizedSystemPrompt);
     }
-    if (_selfNotesSnapshot!.isNotEmpty) {
+    if (selfNotes.isNotEmpty && _selfNotesSnapshot?.isNotEmpty == true) {
       windowParts.add(
         '${L.pick(en: '【Self-notes (previously written by you)】', zhTW: '【自我註記（你過去為自己記下的）】')}\n$_selfNotesSnapshot',
       );
@@ -518,6 +521,8 @@ extension _ChatGenerationMethods on _ChatScreenState {
           userNickname: userNickname,
           characterId: characterId,
           characterName: characterName,
+          emotionEnabled: emotionEnabled,
+          bioclockEnabled: bioclockEnabled,
         ),
       );
     } else {
@@ -1889,11 +1894,16 @@ extension _ChatGenerationMethods on _ChatScreenState {
     final modelF = ApiSettings.getModel();
     final bucketF = _memoryBucket();
     final userProfileF = _buildUserProfilePrompt();
-    final selfNotesF = DatabaseHelper.getSelfNotes(charId);
+    final selfNotesEnabledF = MemorySettings.getSelfNotesEnabled();
+    final selfNotesF = selfNotesEnabledF.then<String>(
+      (enabled) async =>
+          enabled ? await DatabaseHelper.getSelfNotes(charId) : '',
+    );
     final userNicknameF = UserSettings.getUserName();
     final emotionEnabledF = MemorySettings.isAbilityEnabled('emotion');
     final imagegenEnabledF = MemorySettings.isAbilityEnabled('imagegen');
     final bioclockEnabledF = MemorySettings.isAbilityEnabled('bioclock');
+    final timelineEnabledF = MemorySettings.getTimelineEnabled();
     final memoryWriteEnabledF = MemorySettings.getMemoryWriteEnabled();
     final providerNameF = ApiSettings.getApiProviderName();
     final conciseOnF = ApiSettings.getConciseMode();
@@ -1913,11 +1923,14 @@ extension _ChatGenerationMethods on _ChatScreenState {
 
     // 記憶注入依賴 bucket，先 await bucket 再發射
     final bucket = await bucketF;
-    final memoryPromptF = Retriever.buildMemoryPrompt(
-      mode: bucket,
-      currentMessage: outboundText,
-      characterId: charId,
-      windowId: widget.conversationId,
+    final memoryPromptF = emotionEnabledF.then(
+      (emotionEnabled) => Retriever.buildMemoryPrompt(
+        mode: bucket,
+        currentMessage: outboundText,
+        characterId: charId,
+        windowId: widget.conversationId,
+        emotionEnabled: emotionEnabled,
+      ),
     );
 
     // 動態部分：也提前發射
@@ -1925,7 +1938,11 @@ extension _ChatGenerationMethods on _ChatScreenState {
       (enabled) async =>
           enabled ? await EmotionCoordinates.statePrompt(charId) : '',
     );
-    final recallPromptF = CharacterTimelineService.recallPrompt(charId, text);
+    final recallPromptF = timelineEnabledF.then<String>(
+      (enabled) async => enabled
+          ? await CharacterTimelineService.recallPrompt(charId, text)
+          : '',
+    );
     final fatiguePromptF = bioclockEnabledF.then(
       (enabled) async =>
           enabled ? await BioClockService.fatiguePrompt(charId) : '',
@@ -1946,6 +1963,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
     final emotionEnabled = await emotionEnabledF;
     final imagegenEnabled = await imagegenEnabledF;
     final bioclockEnabled = await bioclockEnabledF;
+    final timelineEnabled = await timelineEnabledF;
     final memoryWriteEnabled = await memoryWriteEnabledF;
     final providerName = await providerNameF;
     final conciseOn = await conciseOnF;
@@ -2109,10 +2127,12 @@ extension _ChatGenerationMethods on _ChatScreenState {
         final packPrompt = await ShopService.buildPackPrompt(charId);
         if (packPrompt.isNotEmpty) dynamicParts.add(packPrompt);
       }
-      final snapshot = await CharacterTimelineService.stateSnapshotPrompt(
-        charId,
-      );
-      if (snapshot.isNotEmpty) dynamicParts.add(snapshot);
+      if (timelineEnabled) {
+        final snapshot = await CharacterTimelineService.stateSnapshotPrompt(
+          charId,
+        );
+        if (snapshot.isNotEmpty) dynamicParts.add(snapshot);
+      }
     }
 
     // 回憶觸發（已提前發射）
@@ -2355,6 +2375,9 @@ extension _ChatGenerationMethods on _ChatScreenState {
 
       // 檢查本次是否命中緩存
       final cacheRead = requestUsage.cacheReadTokens;
+      if (cacheRead > 0) {
+        CacheSession.markCacheHit(widget.conversationId);
+      }
 
       // ═══ 模型自主記憶：開啟時才執行 <memo>/<persona_note> 落庫 ═══
       var processedText = (memoryWriteEnabled || isSpiderWebEnabled)
@@ -2363,6 +2386,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
               characterId: _activeCharacterId,
               mode: await _memoryBucket(),
               windowId: widget.conversationId,
+              emotionEnabled: emotionEnabled,
             )
           : MemoryActions.stripReply(
               replyTextWithoutWebSearch,
@@ -2389,23 +2413,33 @@ extension _ChatGenerationMethods on _ChatScreenState {
       // ═══ 情緒座標：<emo> 打點入庫並剝離 ═══
       // 同輪有 <memo> 時，點綁定那條記憶（同一輪 = 同一情緒時刻），
       // 翻舊帳由此能撈回「點 + 原記憶」
-      processedText = await EmotionCoordinates.processReply(
-        processedText,
-        characterId: _activeCharacterId,
-        memoryId: MemoryActions.lastInsertedMemoryIdFor(widget.conversationId),
-      );
+      processedText = emotionEnabled
+          ? await EmotionCoordinates.processReply(
+              processedText,
+              characterId: _activeCharacterId,
+              memoryId: MemoryActions.lastInsertedMemoryIdFor(
+                widget.conversationId,
+              ),
+            )
+          : EmotionCoordinates.stripReply(processedText);
       // ═══ 生物鐘：<clock> 標籤入庫並剝離 ═══
-      processedText = await BioClockService.processReply(
-        processedText,
-        characterId: _activeCharacterId,
-      );
+      if (await MemorySettings.isAbilityEnabled('bioclock')) {
+        processedText = await BioClockService.processReply(
+          processedText,
+          characterId: _activeCharacterId,
+        );
+      }
       // ═══ 角色生活化：只處理明確 <life_fix>；事件由摘要模型候選
       //     經本地驗證後寫入，不再掃回覆關鍵詞。═══
-      processedText = await CharacterTimelineService.processLifeFix(
-        _activeCharacterId,
-        processedText,
-      );
-      await BioClockService.recordLastChatTime(_activeCharacterId);
+      if (await MemorySettings.getTimelineEnabled()) {
+        processedText = await CharacterTimelineService.processLifeFix(
+          _activeCharacterId,
+          processedText,
+        );
+      }
+      if (await MemorySettings.isAbilityEnabled('bioclock')) {
+        await BioClockService.recordLastChatTime(_activeCharacterId);
+      }
       _isFirstRoundInWindow = false;
       // ═══ 便箋：<home> 標籤處理（存入 sticky_notes）═══
       final homeMatch = RegExp(
@@ -2674,12 +2708,16 @@ extension _ChatGenerationMethods on _ChatScreenState {
             usage: followUsage,
             characterId: _activeCharacterId,
           );
+          if (followUsage.cacheReadTokens > 0) {
+            CacheSession.markCacheHit(widget.conversationId);
+          }
           var followUp = memoryWriteEnabled
               ? await MemoryActions.processReply(
                   buf.toString(),
                   characterId: _activeCharacterId,
                   mode: await _memoryBucket(),
                   windowId: widget.conversationId,
+                  emotionEnabled: emotionEnabled,
                   resetState: false,
                 )
               : MemoryActions.stripReply(
@@ -2701,13 +2739,15 @@ extension _ChatGenerationMethods on _ChatScreenState {
             characterId: _activeCharacterId,
             conversationId: widget.conversationId,
           );
-          followUp = await EmotionCoordinates.processReply(
-            followUp,
-            characterId: _activeCharacterId,
-            memoryId: MemoryActions.lastInsertedMemoryIdFor(
-              widget.conversationId,
-            ),
-          );
+          followUp = emotionEnabled
+              ? await EmotionCoordinates.processReply(
+                  followUp,
+                  characterId: _activeCharacterId,
+                  memoryId: MemoryActions.lastInsertedMemoryIdFor(
+                    widget.conversationId,
+                  ),
+                )
+              : EmotionCoordinates.stripReply(followUp);
           followUp = followUp
               .replaceAll(RegExp(r'<home>[\s\S]*?</home>'), '')
               .replaceAll(RegExp(r'<draw>[\s\S]*?</draw>'), '')
@@ -2765,6 +2805,9 @@ extension _ChatGenerationMethods on _ChatScreenState {
             usage: followUsage,
             characterId: _activeCharacterId,
           );
+          if (followUsage.cacheReadTokens > 0) {
+            CacheSession.markCacheHit(widget.conversationId);
+          }
           var followUp = MemoryActions.stripReply(
             buf.toString(),
             windowId: widget.conversationId,
@@ -2776,11 +2819,13 @@ extension _ChatGenerationMethods on _ChatScreenState {
             characterId: _activeCharacterId,
             conversationId: widget.conversationId,
           );
-          followUp = await EmotionCoordinates.processReply(
-            followUp,
-            characterId: _activeCharacterId,
-            memoryId: null,
-          );
+          followUp = emotionEnabled
+              ? await EmotionCoordinates.processReply(
+                  followUp,
+                  characterId: _activeCharacterId,
+                  memoryId: null,
+                )
+              : EmotionCoordinates.stripReply(followUp);
           followUp = followUp
               .replaceAll(RegExp(r'<home>[\s\S]*?</home>'), '')
               .trim();
@@ -3170,6 +3215,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
     final model = await ApiSettings.getModel();
     _currentModel = model;
     final imgMemoryWriteEnabled = await MemorySettings.getMemoryWriteEnabled();
+    final emotionEnabled = await MemorySettings.isAbilityEnabled('emotion');
 
     final memoryPrompt = await Retriever.buildMemoryPrompt(
       mode: await _memoryBucket(),
@@ -3178,16 +3224,19 @@ extension _ChatGenerationMethods on _ChatScreenState {
           : '（用戶發送了一張圖片）',
       characterId: _activeCharacterId,
       windowId: widget.conversationId,
+      emotionEnabled: emotionEnabled,
     );
     final imgUserProfile = await _buildUserProfilePrompt();
-    final imgSelfNotes = await DatabaseHelper.getSelfNotes(_activeCharacterId);
+    final imgSelfNotesEnabled = await MemorySettings.getSelfNotesEnabled();
+    final imgSelfNotes = imgSelfNotesEnabled
+        ? await DatabaseHelper.getSelfNotes(_activeCharacterId)
+        : '';
     final userNickname = await UserSettings.getUserName();
     final charDataImg = await DatabaseHelper.getCharacter(_activeCharacterId);
     final imgCharDesc = charDataImg?['description'] as String? ?? '';
     final imgCharName = charDataImg?['name'] as String? ?? '';
     final isSpiderWebEnabledImg =
         (charDataImg?['is_spider_web_enabled'] as int? ?? 0) == 1;
-    final emotionEnabled = await MemorySettings.isAbilityEnabled('emotion');
     final imgBioclockEnabled = await MemorySettings.isAbilityEnabled(
       'bioclock',
     );
@@ -3522,14 +3571,18 @@ extension _ChatGenerationMethods on _ChatScreenState {
       );
 
       final imgCacheRead = requestUsage.cacheReadTokens;
+      if (imgCacheRead > 0) {
+        CacheSession.markCacheHit(widget.conversationId);
+      }
 
       // ═══ 模型自主記憶：開啟時才執行 <memo>/<persona_note> 落庫 ═══
-      var processedText = imgMemoryWriteEnabled
+      var processedText = (imgMemoryWriteEnabled || isSpiderWebEnabledImg)
           ? await MemoryActions.processReply(
               replyText,
               characterId: _activeCharacterId,
               mode: await _memoryBucket(),
               windowId: widget.conversationId,
+              emotionEnabled: emotionEnabled,
             )
           : MemoryActions.stripReply(
               replyText,
@@ -3552,22 +3605,32 @@ extension _ChatGenerationMethods on _ChatScreenState {
       // ═══ 情緒座標：<emo> 打點入庫並剝離 ═══
       // 同輪有 <memo> 時，點綁定那條記憶（同一輪 = 同一情緒時刻），
       // 翻舊帳由此能撈回「點 + 原記憶」
-      processedText = await EmotionCoordinates.processReply(
-        processedText,
-        characterId: _activeCharacterId,
-        memoryId: MemoryActions.lastInsertedMemoryIdFor(widget.conversationId),
-      );
+      processedText = emotionEnabled
+          ? await EmotionCoordinates.processReply(
+              processedText,
+              characterId: _activeCharacterId,
+              memoryId: MemoryActions.lastInsertedMemoryIdFor(
+                widget.conversationId,
+              ),
+            )
+          : EmotionCoordinates.stripReply(processedText);
       // ═══ 生物鐘：<clock> 標籤入庫並剝離 ═══
-      processedText = await BioClockService.processReply(
-        processedText,
-        characterId: _activeCharacterId,
-      );
+      if (await MemorySettings.isAbilityEnabled('bioclock')) {
+        processedText = await BioClockService.processReply(
+          processedText,
+          characterId: _activeCharacterId,
+        );
+      }
       // ═══ 角色生活化：只處理明確 <life_fix>；時間線事件不掃關鍵詞。═══
-      processedText = await CharacterTimelineService.processLifeFix(
-        _activeCharacterId,
-        processedText,
-      );
-      await BioClockService.recordLastChatTime(_activeCharacterId);
+      if (await MemorySettings.getTimelineEnabled()) {
+        processedText = await CharacterTimelineService.processLifeFix(
+          _activeCharacterId,
+          processedText,
+        );
+      }
+      if (await MemorySettings.isAbilityEnabled('bioclock')) {
+        await BioClockService.recordLastChatTime(_activeCharacterId);
+      }
       _isFirstRoundInWindow = false;
       // ═══ 便箋：<home> 標籤處理（存入 sticky_notes）═══
       final homeMatch = RegExp(

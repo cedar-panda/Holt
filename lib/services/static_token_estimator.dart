@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../memory/database.dart';
 import '../memory/emotion_coordinates.dart';
+import 'api_adapter.dart';
 import 'bio_clock_service.dart';
 import 'image_gen_service.dart';
 import 'locale_strings.dart';
@@ -37,7 +38,10 @@ class StaticTokenEstimator {
         '${L.pick(en: '【Character Profile】', zhTW: '【角色設定】')}\n$charDesc',
       );
     }
-    final selfNotes = await DatabaseHelper.getSelfNotes(charId);
+    final selfNotesEnabled = await MemorySettings.getSelfNotesEnabled();
+    final selfNotes = selfNotesEnabled
+        ? await DatabaseHelper.getSelfNotes(charId)
+        : '';
     if (selfNotes.isNotEmpty) {
       parts.add(
         '${L.pick(en: '【Self-notes (previously written by you)】', zhTW: '【自我註記（你過去為自己記下的）】')}\n$selfNotes',
@@ -60,6 +64,8 @@ class StaticTokenEstimator {
           userNickname: nickname,
           characterId: charId,
           characterName: charName,
+          emotionEnabled: await MemorySettings.isAbilityEnabled('emotion'),
+          bioclockEnabled: await MemorySettings.isAbilityEnabled('bioclock'),
         ),
       );
     } else {
@@ -103,9 +109,27 @@ class StaticTokenEstimator {
     return TokenEstimator.estimate(parts.join('\n\n'));
   }
 
-  /// 開關切換後調用：cache 開啟才彈「當前靜態緩存 token：約 N」。
+  /// 開關切換後調用：cache 開啟且目前已有命中時，先提示可能增加成本。
   static Future<void> showAfterToggle(BuildContext context) async {
     if (!await MemorySettings.getEnablePromptCaching()) return;
+    if (CacheSession.hasCacheHitForCurrentConversation) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            L.pick(
+              en: 'This will break the current cache hit and may incur extra cost.',
+              zhTW: '將會打斷現有緩存命中，可能造成額外消耗',
+              zhCN: '将会打断现有缓存命中，可能造成额外消耗',
+            ),
+          ),
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 3),
+        ),
+      );
+      return;
+    }
     final tokens = await estimate();
     if (!context.mounted) return;
     ScaffoldMessenger.of(context).hideCurrentSnackBar();

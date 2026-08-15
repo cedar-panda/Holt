@@ -964,7 +964,10 @@ extension _ChatActionMethods on _ChatScreenState {
       final charId = _activeCharacterId;
       final systemPrompt = await ApiSettings.getSystemPrompt();
       final userProfile = await _buildUserProfilePrompt();
-      final selfNotes = await DatabaseHelper.getSelfNotes(charId);
+      final selfNotesEnabled = await MemorySettings.getSelfNotesEnabled();
+      final selfNotes = selfNotesEnabled
+          ? await DatabaseHelper.getSelfNotes(charId)
+          : '';
       final userNickname = await UserSettings.getUserName();
       final emotionEnabled = await MemorySettings.isAbilityEnabled('emotion');
       final imagegenEnabled = await MemorySettings.isAbilityEnabled('imagegen');

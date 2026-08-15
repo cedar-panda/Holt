@@ -1191,6 +1191,16 @@ class EmotionCoordinates {
     return out.trim();
   }
 
+  /// 情緒模組關閉時，只移除模型可能輸出的協定標籤，不讀寫情緒資料。
+  static String stripReply(String text) {
+    var out = text.replaceAll(_emoRe, '').replaceAll(_resolveRe, '');
+    out = out.replaceAllMapped(
+      _toolCallsRe,
+      (m) => _stripEmotionToolCalls(m.group(0)!),
+    );
+    return out.trim();
+  }
+
   static _ParsedEmotionPoint? _parseEmoPayload(String raw) {
     final parts = raw.split('|');
     if (parts.length < 3) return null;

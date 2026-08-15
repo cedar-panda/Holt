@@ -605,4 +605,13 @@ class CacheBreakpoint {
 /// chat_screen 進入對話時設置。
 class CacheSession {
   static String conversationId = '';
+  static String _lastCacheHitConversationId = '';
+
+  static bool get hasCacheHitForCurrentConversation =>
+      conversationId.isNotEmpty &&
+      _lastCacheHitConversationId == conversationId;
+
+  static void markCacheHit(String id) {
+    if (id.isNotEmpty) _lastCacheHitConversationId = id;
+  }
 }

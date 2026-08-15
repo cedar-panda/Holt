@@ -15,6 +15,7 @@ class UserSettings {
       'first_launch_language_version';
   static const String _keyInitialSetupVersion = 'initial_setup_version';
   static const String _keyInitialSetupStep = 'initial_setup_step';
+  static const String _keyInitialSetupMode = 'initial_setup_mode';
   static const String _keyWeakGuidanceOptOut = 'weak_guidance_opt_out';
   static const String _keyLegacyOnboardingVersion = 'onboarding_version';
   static const String _keyAppLocale = 'app_locale';
@@ -153,14 +154,32 @@ class UserSettings {
     await p.remove(_keyInitialSetupStep);
   }
 
+  static Future<void> saveInitialSetupMode(String mode) async {
+    final p = await SharedPreferences.getInstance();
+    await p.setString(_keyInitialSetupMode, mode);
+  }
+
+  static Future<String> getInitialSetupMode() async {
+    final p = await SharedPreferences.getInstance();
+    return p.getString(_keyInitialSetupMode) ?? '';
+  }
+
+  /// 從「我的 → 設定」重新開啟一次方案引導；不清除既有角色或對話資料。
+  static Future<void> restartInitialSetup() async {
+    final p = await SharedPreferences.getInstance();
+    await p.setInt(_keyInitialSetupVersion, 0);
+    await p.setInt(_keyInitialSetupStep, 0);
+    await p.remove(_keyInitialSetupMode);
+  }
+
   static Future<void> saveInitialSetupStep(int step) async {
     final p = await SharedPreferences.getInstance();
-    await p.setInt(_keyInitialSetupStep, step.clamp(0, 2));
+    await p.setInt(_keyInitialSetupStep, step.clamp(0, 3));
   }
 
   static Future<int> getInitialSetupStep() async {
     final p = await SharedPreferences.getInstance();
-    return (p.getInt(_keyInitialSetupStep) ?? 0).clamp(0, 2);
+    return (p.getInt(_keyInitialSetupStep) ?? 0).clamp(0, 3);
   }
 
   static Future<int> getInitialSetupVersion() async {

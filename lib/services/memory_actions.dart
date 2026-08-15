@@ -172,6 +172,7 @@ class MemoryActions {
     required String characterId,
     required String mode,
     required String windowId,
+    bool emotionEnabled = true,
     bool resetState = true,
   }) async {
     final state = resetState
@@ -200,7 +201,9 @@ class MemoryActions {
         finalContent = '[$dateStr] $finalContent';
       }
 
-      final points = await EmotionCoordinates.activePoints(characterId);
+      final points = emotionEnabled
+          ? await EmotionCoordinates.activePoints(characterId)
+          : const <EmotionPoint>[];
       int? emoX, emoY, emoRes;
       if (points.isNotEmpty) {
         final latest = points.first;

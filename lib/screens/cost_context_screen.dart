@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
 import '../services/locale_strings.dart';
 import '../services/settings_manager.dart';
+import '../memory/database.dart';
+import 'ability_modules_screen.dart';
 import '../services/static_token_estimator.dart';
 import '../widgets/gradient_background.dart';
 import '../widgets/yanci_sprite_overlay.dart';
@@ -16,6 +18,74 @@ class CostContextScreen extends StatefulWidget {
 }
 
 class _CostContextScreenState extends State<CostContextScreen> {
+  Widget _buildNavigationTile({
+    required IconData icon,
+    required String title,
+    required String description,
+    required VoidCallback onTap,
+  }) {
+    return ListTile(
+      contentPadding: EdgeInsets.zero,
+      minTileHeight: 56,
+      leading: Icon(icon, color: YanciTheme.accent),
+      title: Text(title, style: YanciTheme.bodyText.copyWith(fontSize: 14)),
+      subtitle: Text(
+        description,
+        style: YanciTheme.bodySmall.copyWith(
+          color: YanciTheme.textSecondary.withValues(alpha: 0.72),
+        ),
+      ),
+      trailing: Icon(
+        Icons.chevron_right_rounded,
+        color: YanciTheme.textSecondary,
+      ),
+      onTap: onTap,
+    );
+  }
+
+  Future<void> _openMemoryMode() async {
+    final activeId = await UserSettings.getActiveCharacterId();
+    final characters = await DatabaseHelper.getCharacters();
+    Map<String, dynamic>? character;
+    for (final item in characters) {
+      if (item['id'] == activeId) {
+        character = item;
+        break;
+      }
+    }
+    character ??= characters.isEmpty ? null : characters.first;
+    if (!mounted) return;
+    if (character == null) {
+      await showDialog<void>(
+        context: context,
+        barrierDismissible: true,
+        builder: (dialogContext) => AlertDialog(
+          title: Text(L.pick(en: 'Memory mode', zhTW: '記憶模式', zhCN: '记忆模式')),
+          content: Text(
+            L.pick(
+              en: 'Create a character first to configure memory mode.',
+              zhTW: '請先建立角色，才能設定記憶模式。',
+              zhCN: '请先建立角色，才能设置记忆模式。',
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: Text(L.pick(en: 'OK', zhTW: '知道了', zhCN: '知道了')),
+            ),
+          ],
+        ),
+      );
+      return;
+    }
+    final selectedCharacter = character;
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => AbilityModulesScreen(character: selectedCharacter),
+      ),
+    );
+  }
+
   Widget _buildGlassCard({required Widget child}) {
     return ClipRRect(
       borderRadius: BorderRadius.circular(YanciTheme.radiusMd),
@@ -155,6 +225,100 @@ class _CostContextScreenState extends State<CostContextScreen> {
                               onChanged: (v) {
                                 MemorySettings.saveSplitReply(v);
                                 setState(() {});
+                                StaticTokenEstimator.showAfterToggle(context);
+                              },
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 28),
+                    _buildSectionTitle(
+                      L.pick(
+                        en: 'Memory & Role',
+                        zhTW: '記憶與角色功能',
+                        zhCN: '记忆与角色功能',
+                      ),
+                    ),
+                    _buildGlassCard(
+                      child: Column(
+                        children: [
+                          _buildNavigationTile(
+                            icon: Icons.hub_outlined,
+                            title: L.pick(
+                              en: 'Memory mode',
+                              zhTW: '記憶模式',
+                              zhCN: '记忆模式',
+                            ),
+                            description: L.pick(
+                              en: 'Choose classic memory or Spider Web memory.',
+                              zhTW: '選擇經典記憶或蛛網記憶。',
+                              zhCN: '选择经典记忆或蛛网记忆。',
+                            ),
+                            onTap: _openMemoryMode,
+                          ),
+                          _softDivider(),
+                          FutureBuilder<bool>(
+                            future: MemorySettings.isAbilityEnabled('bioclock'),
+                            builder: (ctx, snap) => HelpSwitchTile(
+                              title: L.pick(
+                                en: 'Bio Clock',
+                                zhTW: '生物鐘',
+                                zhCN: '生物钟',
+                              ),
+                              description: L.pick(
+                                en: 'Inject fatigue and daily-rhythm cues.',
+                                zhTW: '注入疲勞與日常作息提示。',
+                                zhCN: '注入疲劳与日常作息提示。',
+                              ),
+                              value: snap.data ?? true,
+                              onChanged: (v) {
+                                MemorySettings.setAbilityEnabled('bioclock', v);
+                                setState(() {});
+                                StaticTokenEstimator.showAfterToggle(context);
+                              },
+                            ),
+                          ),
+                          _softDivider(),
+                          FutureBuilder<bool>(
+                            future: MemorySettings.getTimelineEnabled(),
+                            builder: (ctx, snap) => HelpSwitchTile(
+                              title: L.pick(
+                                en: 'Timeline',
+                                zhTW: '時間線',
+                                zhCN: '时间线',
+                              ),
+                              description: L.pick(
+                                en: 'Show and inject character timeline context.',
+                                zhTW: '顯示並注入角色時間線內容。',
+                                zhCN: '显示并注入角色时间线内容。',
+                              ),
+                              value: snap.data ?? true,
+                              onChanged: (v) {
+                                MemorySettings.saveTimelineEnabled(v);
+                                setState(() {});
+                              },
+                            ),
+                          ),
+                          _softDivider(),
+                          FutureBuilder<bool>(
+                            future: MemorySettings.getSelfNotesEnabled(),
+                            builder: (ctx, snap) => HelpSwitchTile(
+                              title: L.pick(
+                                en: 'Secretly remembering you',
+                                zhTW: '偷偷記住你',
+                                zhCN: '偷偷记住你',
+                              ),
+                              description: L.pick(
+                                en: 'Keep the quiet self-notes panel and prompt.',
+                                zhTW: '保留安靜的自我註記面板與提示。',
+                                zhCN: '保留安静的自我注记面板与提示。',
+                              ),
+                              value: snap.data ?? true,
+                              onChanged: (v) {
+                                MemorySettings.saveSelfNotesEnabled(v);
+                                setState(() {});
+                                StaticTokenEstimator.showAfterToggle(context);
                               },
                             ),
                           ),

@@ -31,6 +31,8 @@ class _CharacterListScreenState extends State<CharacterListScreen> {
   late PageController _pageCtrl;
   int _currentPage = 0;
   bool _isImporting = false;
+  bool _timelineEnabled = true;
+  bool _selfNotesEnabled = true;
   final LatestRequestGate _loadGate = LatestRequestGate();
 
   @override
@@ -51,6 +53,8 @@ class _CharacterListScreenState extends State<CharacterListScreen> {
     final generation = _loadGate.begin();
     final chars = await DatabaseHelper.getCharacters();
     final activeId = await UserSettings.getActiveCharacterId();
+    final timelineEnabled = await MemorySettings.getTimelineEnabled();
+    final selfNotesEnabled = await MemorySettings.getSelfNotesEnabled();
     final activeIndex = chars.indexWhere((c) => c['id'] == activeId);
     if (!mounted || !_loadGate.isCurrent(generation)) return;
     setState(() {
@@ -58,6 +62,8 @@ class _CharacterListScreenState extends State<CharacterListScreen> {
       _activeId = activeId;
       _isLoading = false;
       _currentPage = activeIndex >= 0 ? activeIndex : 0;
+      _timelineEnabled = timelineEnabled;
+      _selfNotesEnabled = selfNotesEnabled;
     });
     // 等一幀再跳，確保 PageController 已掛載
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -209,14 +215,21 @@ class _CharacterListScreenState extends State<CharacterListScreen> {
 
               const SizedBox(height: 16),
 
-              // ═══ 時間線 ═══
-              if (_characters.isNotEmpty)
+              // ═══ 時間線／偷偷記住你 ═══
+              if (_characters.isNotEmpty && _timelineEnabled)
                 CharacterTimelinePanel(
                   key: ValueKey('timeline-$_currentCharId'),
                   characterId: _currentCharId,
+                )
+              else if (_characters.isNotEmpty && _selfNotesEnabled)
+                CharacterSelfNotesPanel(
+                  key: ValueKey('self-notes-fallback-$_currentCharId'),
+                  characterId: _currentCharId,
                 ),
 
-              if (_characters.isNotEmpty)
+              if (_characters.isNotEmpty &&
+                  _timelineEnabled &&
+                  _selfNotesEnabled)
                 CharacterSelfNotesPanel(
                   key: ValueKey('self-notes-$_currentCharId'),
                   characterId: _currentCharId,

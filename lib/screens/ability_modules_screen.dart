@@ -326,8 +326,8 @@ class _AbilityModulesScreenState extends State<AbilityModulesScreen> {
               Expanded(
                 child: Text(
                   L.pick(
-                    en: 'Spider Web mode is active. Advanced neural linking takes over standard capabilities.',
-                    zhTW: '已啟動神經網絡記憶。情緒與生物鐘模組已全面由蛛網接管。',
+                    en: 'Spider Web memory is active. Ancillary modules remain independently configurable.',
+                    zhTW: '已啟動蛛網記憶。情緒與生物鐘仍可在開關內獨立控制。',
                   ),
                   style: TextStyle(
                     color: YanciTheme.accent,
@@ -354,18 +354,13 @@ class _AbilityModulesScreenState extends State<AbilityModulesScreen> {
         _buildModuleTile(
           icon: Icons.scatter_plot_rounded,
           title: L.pick(en: 'Emotion', zhTW: '情緒座標'),
-          subtitle: L.pick(en: 'Managed by Spider Web', zhTW: '由蛛網神經網路強制接管'),
-          value: true,
-          onChanged: null,
-          locked: true,
-        ),
-        _buildModuleTile(
-          icon: Icons.access_time_rounded,
-          title: L.pick(en: 'Bio Clock', zhTW: '生物鐘'),
-          subtitle: L.pick(en: 'Managed by Spider Web', zhTW: '由蛛網神經網路強制接管'),
-          value: true,
-          onChanged: null,
-          locked: true,
+          subtitle: L.pick(
+            en: 'Inject emotion rules and current emotion state',
+            zhTW: '獨立控制情緒規則與當前情緒狀態注入',
+          ),
+          value: _abilityStates['emotion'] ?? true,
+          onChanged: (v) => _toggleAbility('emotion', v),
+          locked: false,
         ),
         _buildModuleTile(
           icon: Icons.brush_rounded,
@@ -499,14 +494,6 @@ class _AbilityModulesScreenState extends State<AbilityModulesScreen> {
           subtitle: L.pick(en: 'Track emotional state', zhTW: '追蹤雙方情緒變化'),
           value: _abilityStates['emotion'] ?? true,
           onChanged: (v) => _toggleAbility('emotion', v),
-          locked: false,
-        ),
-        _buildModuleTile(
-          icon: Icons.access_time_rounded,
-          title: L.pick(en: 'Bio Clock', zhTW: '生物鐘'),
-          subtitle: L.pick(en: 'Maintain daily routine', zhTW: '維護日常作息時間表'),
-          value: _abilityStates['bioclock'] ?? true,
-          onChanged: (v) => _toggleAbility('bioclock', v),
           locked: false,
         ),
         _buildModuleTile(

@@ -101,6 +101,19 @@ class CharacterTimelineService {
     required List<Message> sourceMessages,
   }) async {
     await _ensureTable();
+    debugPrint(
+      '[TimelineDebug] summary candidates: char=$characterId '
+      'candidates=${candidates.length} sourceMessages=${sourceMessages.length} '
+      'userMessages=${sourceMessages.where((message) => message.isUser).length}',
+    );
+    for (var i = 0; i < candidates.length; i++) {
+      final candidate = candidates[i];
+      debugPrint(
+        '[TimelineDebug] candidate[$i] type=${candidate.type} '
+        'subject=${candidate.subject} key=${candidate.key ?? ''} '
+        'value=${candidate.value} evidence=${candidate.evidence}',
+      );
+    }
     if (candidates.isEmpty || sourceMessages.isEmpty) return 0;
 
     final sourceById = <int, Message>{
@@ -117,6 +130,10 @@ class CharacterTimelineService {
       if (dateOrder != 0) return dateOrder;
       return a.sourceMessageIds.first.compareTo(b.sourceMessageIds.first);
     });
+    debugPrint(
+      '[TimelineDebug] validated=${validated.length} rejected='
+      '${candidates.length - validated.length} char=$characterId',
+    );
     if (validated.isEmpty) return 0;
 
     final db = await DatabaseHelper.database;
@@ -211,12 +228,20 @@ class CharacterTimelineService {
         ),
       );
     }
+    debugPrint(
+      '[TimelineDebug] explicit scan: char=$characterId messages=${messages.length} '
+      'candidates=${candidates.length}',
+    );
     if (candidates.isEmpty) return 0;
-    return storeSummaryCandidates(
+    final changed = await storeSummaryCandidates(
       characterId: characterId,
       candidates: candidates,
       sourceMessages: messages,
     );
+    debugPrint(
+      '[TimelineDebug] explicit scan stored=$changed char=$characterId',
+    );
+    return changed;
   }
 
   static String? _extractMenstrualEvidence(String text) {
@@ -253,10 +278,6 @@ class CharacterTimelineService {
     TimelineEventCandidate candidate,
     Map<int, Message> sourceById,
   ) {
-    if (!const {'event', 'state'}.contains(candidate.type) ||
-        !const {'character', 'relationship'}.contains(candidate.subject)) {
-      return null;
-    }
     final ids = candidate.sourceMessageIds.toSet().toList()..sort();
     if (ids.isEmpty || ids.any((id) => !sourceById.containsKey(id))) {
       return null;
@@ -267,27 +288,30 @@ class CharacterTimelineService {
     if (value.length < 2 || value.length > 120 || value.contains('\n')) {
       return null;
     }
-    if (evidence.length < 2 ||
-        evidence.length > 240 ||
-        value.contains('<') ||
-        value.contains('>')) {
+    if (value.contains('<') || value.contains('>')) {
       return null;
     }
 
-    final normalizedEvidence = _normalizeEvidence(evidence);
-    final evidenceMessages = ids
-        .map((id) => sourceById[id]!)
-        .where(
-          (message) =>
-              _normalizeEvidence(message.text).contains(normalizedEvidence),
-        )
-        .toList();
-    if (evidenceMessages.isEmpty) return null;
+    // Keep source-message provenance, but do not require the model's evidence
+    // to be one exact contiguous substring of the source bubble.
+    final evidenceMessages = ids.map((id) => sourceById[id]!).toList();
+    if (evidenceMessages.every(
+          (message) => _isMenstrualQuestion(message.text),
+        ) ||
+        _isMenstrualQuestion(evidence)) {
+      return null;
+    }
     final hasDeclarativeMenstrualEvidence = evidenceMessages.any(
       (message) => !_isMenstrualQuestion(message.text),
     );
+    final sourceCorpus = evidenceMessages
+        .map((message) => _normalizeEvidence(message.text))
+        .join();
+    final valueMenstrualDay = _menstrualDayFromText(value);
     final evidenceDay = hasDeclarativeMenstrualEvidence
-        ? _menstrualDayFromText(evidence)
+        ? (_menstrualDayFromText(evidence) ??
+              valueMenstrualDay ??
+              _menstrualDayFromText(sourceCorpus))
         : null;
     final menstrualDay =
         evidenceDay ??
@@ -295,58 +319,50 @@ class CharacterTimelineService {
             ? 1
             : null);
     final menstrualEnded =
-        hasDeclarativeMenstrualEvidence && _hasMenstrualEndCue(evidence);
+        hasDeclarativeMenstrualEvidence &&
+        (_hasMenstrualEndCue(evidence) || _hasMenstrualEndCue(value));
     final menstrualActive =
-        hasDeclarativeMenstrualEvidence && _hasCurrentMenstrualCue(evidence);
+        hasDeclarativeMenstrualEvidence &&
+        (_hasCurrentMenstrualCue(evidence) ||
+            _hasCurrentMenstrualCue(value) ||
+            _hasCurrentMenstrualCue(sourceCorpus));
+    // Keep menstrual semantics consistent: an explicit end candidate cannot
+    // be accepted when the source says the period has not ended.
+    if (_hasMenstrualTerm(value) &&
+        value.contains('結束') &&
+        !_hasMenstrualEndCue(evidence) &&
+        !_hasMenstrualEndCue(sourceCorpus)) {
+      return null;
+    }
     // 生理週期有明確、可驗證的角色主體；模型偶爾誤標 relationship 時，
     // 不應在證據驗證前把正確候選丟掉。
-    final normalizedSubject =
-        menstrualDay != null || menstrualEnded || menstrualActive
-        ? 'character'
-        : candidate.subject;
-    if (_isLowValueAddressAction(evidence) ||
-        (normalizedSubject == 'relationship' &&
-            !_hasRelationshipGrounding(evidence))) {
+    if (_isLowValueAddressAction(evidence)) {
       return null;
     }
 
-    final valueMenstrualDay = _menstrualDayFromText(value);
     if (valueMenstrualDay != null && valueMenstrualDay != menstrualDay) {
       return null;
     }
     final normalizedType = menstrualDay != null || menstrualActive
         ? 'state'
-        : candidate.type;
+        : (candidate.type == 'state' ? 'state' : 'event');
     var stateKey = normalizedType == 'state'
-        ? _canonicalStateKey(candidate.key ?? '')
+        ? (_canonicalStateKey(candidate.key ?? '') ??
+              (candidate.key?.trim().isNotEmpty == true
+                  ? candidate.key!.trim()
+                  : '健康'))
         : null;
     if (menstrualDay != null || menstrualActive) stateKey = '生理週期';
-    if (normalizedType == 'state' && stateKey == null) return null;
-    if (stateKey == '生理週期' &&
-        menstrualDay == null &&
-        !menstrualEnded &&
-        !menstrualActive) {
-      return null;
-    }
-    if (normalizedType == 'state') {
-      final relationshipState = stateKey == '關係狀態';
-      if (relationshipState != (normalizedSubject == 'relationship')) {
-        return null;
-      }
-    }
 
     var occurredDate = _parseStrictDate(candidate.occurredOn);
     if (occurredDate == null) return null;
     final modelBasis = candidate.dateBasis.trim();
-    if (!const {'message_time', 'relative', 'explicit'}.contains(modelBasis)) {
-      return null;
-    }
     final evidenceBasis = _dateBasisFromEvidence(evidence);
-    final basis = evidenceBasis ?? modelBasis;
-    if ((!menstrualEnded && _hasNonOccurrenceCue(evidence, basis)) ||
-        !_valueGroundedInEvidence(value, evidence)) {
-      return null;
-    }
+    final basis =
+        evidenceBasis ??
+        (const {'message_time', 'relative', 'explicit'}.contains(modelBasis)
+            ? modelBasis
+            : 'message_time');
 
     DateTime? anchor;
     DateTime? evidenceResolvedDate;
@@ -374,9 +390,8 @@ class CharacterTimelineService {
         break;
       }
     }
+    anchor ??= evidenceMessages.first.createdAt.toLocal();
     if (evidenceResolvedDate != null) occurredDate = evidenceResolvedDate;
-    if (anchor == null) return null;
-
     // The local bubble timestamp is the upper bound for a completed event.
     // This also catches a model turning an upcoming dated plan into history.
     final latestSourceDate = evidenceMessages
@@ -658,6 +673,7 @@ class CharacterTimelineService {
     return addressCues.any(normalized.contains);
   }
 
+  // ignore: unused_element
   static bool _hasRelationshipGrounding(String evidence) {
     final normalized = evidence.toLowerCase();
     const relationshipCues = [
@@ -693,6 +709,32 @@ class CharacterTimelineService {
       'made up',
     ];
     return relationshipCues.any(normalized.contains);
+  }
+
+  // ignore: unused_element
+  static bool _hasCharacterMenstrualCue(String evidence) {
+    final normalized = evidence.toLowerCase();
+    final characterCue = RegExp(
+      r'你|妳|您|your|her|她|角色',
+      caseSensitive: false,
+    ).hasMatch(normalized);
+    if (characterCue) return true;
+    final period = RegExp(
+      r'生理期|經期|经期|月經|月经|period|menstrual|menstruation',
+      caseSensitive: false,
+    ).firstMatch(normalized);
+    if (period == null) return true;
+    final beforePeriod = normalized.substring(0, period.start).trim();
+    if (RegExp(
+      r'(?:^|[，,。！？!?；;\s])(?:我|我的|自己)'
+      r'(?:今天|昨天|現在|目前|仍在|正在)?\s*$',
+    ).hasMatch(beforePeriod)) {
+      return false;
+    }
+    return !RegExp(
+      r'\b(?:i\s*am|i\x27m|my|me)\b',
+      caseSensitive: false,
+    ).hasMatch(beforePeriod);
   }
 
   static int? _menstrualDayFromText(String text) {
@@ -952,6 +994,7 @@ class CharacterTimelineService {
   static bool _sameDay(DateTime a, DateTime b) =>
       a.year == b.year && a.month == b.month && a.day == b.day;
 
+  // ignore: unused_element
   static bool _hasNonOccurrenceCue(String evidence, String basis) {
     final normalized = evidence.toLowerCase();
     const cues = [
@@ -1024,6 +1067,7 @@ class CharacterTimelineService {
   /// the concise value and its verbatim evidence. The prompt asks the model to
   /// retain the source event's core wording, making this a deterministic guard
   /// against mappings such as evidence="做愛" → value="吵架".
+  // ignore: unused_element
   static bool _valueGroundedInEvidence(String value, String evidence) {
     String compact(String input) => input.toLowerCase().replaceAll(
       RegExp(r'[\s，。！？、,.!?;；:：…「」『』（）()【】\[\]_\-—]'),
@@ -1208,6 +1252,20 @@ class CharacterTimelineService {
       whereArgs: [characterId],
       orderBy: 'updated_at DESC',
     );
+  }
+
+  static Future<bool> deleteEntry({
+    required String characterId,
+    required int id,
+  }) async {
+    await _ensureTable();
+    final db = await DatabaseHelper.database;
+    final deleted = await db.delete(
+      'character_timeline',
+      where: 'id = ? AND character_id = ?',
+      whereArgs: [id, characterId],
+    );
+    return deleted > 0;
   }
 
   /// 獲取一次性事件（按 week_group 分段）

@@ -19,6 +19,10 @@ class InitialCharacterDraft {
 
 /// 首次設定只負責建立完整角色系統能直接使用的最小資料列。
 class InitialSetupService {
+  static Future<bool> hasExistingCharacter() async {
+    return (await DatabaseHelper.getCharacters()).isNotEmpty;
+  }
+
   static Future<String> createCharacter(InitialCharacterDraft draft) async {
     final name = draft.name.trim();
     if (name.isEmpty) throw ArgumentError.value(draft.name, 'name');
@@ -31,6 +35,8 @@ class InitialSetupService {
       'gender': draft.gender.trim(),
       'relationship': draft.relationship.trim(),
       'description': draft.description.trim(),
+      // 新安裝預設啟用蛛網記憶；記憶本體沒有可關閉的 UI 開關。
+      'is_spider_web_enabled': 1,
       'created_at': now,
       'updated_at': now,
     });

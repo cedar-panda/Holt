@@ -10,6 +10,7 @@ import '../services/provider_model_catalog.dart';
 import '../services/thinking_machines_service.dart';
 import '../services/model_cost_policy.dart';
 import '../services/settings_manager.dart';
+import '../services/static_token_estimator.dart';
 import '../services/token_estimator.dart';
 import '../services/web_search_service.dart';
 import '../widgets/gradient_background.dart';
@@ -1199,6 +1200,7 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
                       ? (value) {
                           setState(() => _webSearchEnabled = value);
                           _debouncedSave();
+                          StaticTokenEstimator.showAfterToggle(context);
                         }
                       : null,
                 ),

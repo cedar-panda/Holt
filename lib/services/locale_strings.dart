@@ -90,6 +90,7 @@ class L {
   );
 
   static const Map<String, Map<String, String>> _strings = {
+    'nav_api': {'zh_TW': 'API', 'zh_CN': 'API', 'en': 'API'},
     'nav_usage': {'zh_TW': '用量', 'zh_CN': '用量', 'en': 'Usage'},
     'nav_memory': {'zh_TW': '記憶', 'zh_CN': '记忆', 'en': 'Memory'},
     'nav_chat': {'zh_TW': '首頁', 'zh_CN': '首页', 'en': 'Home'},
@@ -1159,6 +1160,76 @@ class L {
       'en': 'Sea Salt Soda',
     },
     'theme_preset_neon': {'zh_TW': '霓虹雨', 'zh_CN': '霓虹雨', 'en': 'Neon Rain'},
+    'theme_subtitle_dawn': {
+      'zh_TW': '清晨透進紗簾的光',
+      'zh_CN': '清晨透进纱帘的光',
+      'en': 'Morning light through the curtains',
+    },
+    'theme_subtitle_midnight': {
+      'zh_TW': '同一個房間入了夜',
+      'zh_CN': '同一个房间入了夜',
+      'en': 'The same room after nightfall',
+    },
+    'theme_subtitle_bamboo': {
+      'zh_TW': '竹林裡的書齋',
+      'zh_CN': '竹林里的书斋',
+      'en': 'A study in the bamboo grove',
+    },
+    'theme_subtitle_ivory': {
+      'zh_TW': '窗外透進來的一點天色',
+      'zh_CN': '窗外透进来的一点天色',
+      'en': 'A trace of sky through the window',
+    },
+    'theme_subtitle_mist': {
+      'zh_TW': '凌晨四點的霧',
+      'zh_CN': '凌晨四点的雾',
+      'en': 'Fog at four in the morning',
+    },
+    'theme_subtitle_bloom': {
+      'zh_TW': '淡紫裡的粉玫瑰',
+      'zh_CN': '淡紫里的粉玫瑰',
+      'en': 'Pink roses in soft violet',
+    },
+    'theme_subtitle_iced': {
+      'zh_TW': '清冷透亮的神經碎片',
+      'zh_CN': '清冷透亮的神经碎片',
+      'en': 'Cool, luminous neural fragments',
+    },
+    'theme_subtitle_nightlamp': {
+      'zh_TW': '小屋熄燈後剩的那一盞',
+      'zh_CN': '小屋熄灯后剩的那一盏',
+      'en': 'The one lamp left in the cottage',
+    },
+    'theme_subtitle_tipsy': {
+      'zh_TW': '一杯之後的體溫',
+      'zh_CN': '一杯之后的体温',
+      'en': 'Warmth after one drink',
+    },
+    'theme_subtitle_snow': {
+      'zh_TW': '世界安靜下來的那一刻',
+      'zh_CN': '世界安静下来的那一刻',
+      'en': 'The moment the world goes quiet',
+    },
+    'theme_subtitle_latte': {
+      'zh_TW': '奶泡上的一圈拉花',
+      'zh_CN': '奶泡上的一圈拉花',
+      'en': 'A swirl of latte art',
+    },
+    'theme_subtitle_blush': {
+      'zh_TW': '一滴暈開在指尖',
+      'zh_CN': '一滴晕开在指尖',
+      'en': 'A drop blooming on your fingertips',
+    },
+    'theme_subtitle_soda': {
+      'zh_TW': '氣泡正在往上竄',
+      'zh_CN': '气泡正在往上窜',
+      'en': 'Bubbles rushing upward',
+    },
+    'theme_subtitle_neon': {
+      'zh_TW': '雨夜霓虹落在傘面上',
+      'zh_CN': '雨夜霓虹落在伞面上',
+      'en': 'Neon rain on the umbrella',
+    },
 
     // ── home ──
     'note_hint': {

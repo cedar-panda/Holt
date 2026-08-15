@@ -26,8 +26,8 @@ import '../services/keep_alive_service.dart';
 import '../services/manual_summary_service.dart';
 import '../services/scratch_service.dart';
 import '../widgets/orbit_loading_indicator.dart';
+import '../widgets/yanci_bottom_nav_bar.dart';
 import '../utils/latest_request_gate.dart';
-import 'ability_modules_screen.dart';
 import 'manual_summary_clean_screen.dart';
 
 part 'home_screen_profile.dart';
@@ -545,7 +545,11 @@ class _HomeScreenState extends State<HomeScreen>
           ],
         ),
       ),
-      bottomNavigationBar: _buildNavBar(),
+      bottomNavigationBar: YanciBottomNavBar(
+        activeIndex: _currentTab,
+        reduceMotion: _reduceMotion,
+        onTap: _handleNavTap,
+      ),
     );
   }
 
@@ -654,34 +658,6 @@ class _HomeScreenState extends State<HomeScreen>
                     const SizedBox(width: 6),
                     CoinAmountText(_userCoins),
                   ],
-                ),
-              ),
-            ),
-            // ═══ 能力模組入口（右上角，歷史對話左邊）═══
-            Positioned(
-              top: 12,
-              right: 72,
-              child: Tooltip(
-                message: L.pick(en: 'Ability modules', zhTW: '能力模組'),
-                child: Semantics(
-                  button: true,
-                  label: L.pick(en: 'Ability modules', zhTW: '能力模組'),
-                  child: GestureDetector(
-                    behavior: HitTestBehavior.opaque,
-                    onTap: _showAbilityModulesScreen,
-                    child: SizedBox.square(
-                      dimension: 48,
-                      child: Center(
-                        child: Icon(
-                          Icons.extension_outlined,
-                          size: 22,
-                          color: YanciTheme.textSecondary.withValues(
-                            alpha: 0.6,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
                 ),
               ),
             ),
@@ -1620,26 +1596,6 @@ class _HomeScreenState extends State<HomeScreen>
 
   // ═══════════════════════════════════
   // 歷史對話
-  // ═══════════════════════════════════
-  // 能力模組與認知中樞
-  Future<void> _showAbilityModulesScreen() async {
-    final activeChar = _characters.firstWhere(
-      (c) => c['id'] == _activeCharacterId,
-      orElse: () => <String, dynamic>{},
-    );
-    if (activeChar.isEmpty) return;
-
-    final result = await Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (context) => AbilityModulesScreen(character: activeChar),
-      ),
-    );
-
-    if (result != null) {
-      if (mounted) _loadCharacters(selectId: _activeCharacterId);
-    }
-  }
-
   // 歷史對話
   Future<void> _showConversationList() async {
     final charId = _activeCharacterId;
@@ -2120,175 +2076,23 @@ class _HomeScreenState extends State<HomeScreen>
   // 底部導航
   // ═══════════════════════════════════
 
-  Widget _buildNavBar() {
-    final bottomPadding = MediaQuery.of(context).padding.bottom;
-    final shadowColor = YanciTheme.isDark
-        ? Colors.black.withValues(alpha: 0.38)
-        : Colors.black.withValues(alpha: 0.13);
-
-    return Padding(
-      padding: EdgeInsets.only(
-        left: 24,
-        right: 24,
-        bottom: bottomPadding > 0 ? bottomPadding : 16,
-      ),
-      child: Stack(
-        clipBehavior: Clip.none,
-        children: [
-          // 1. 僅保留外圍陰影，將中心挖空
-          Positioned.fill(
-            child: ClipPath(
-              clipper: _HoleClipper(borderRadius: 28),
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(28),
-                  boxShadow: [
-                    BoxShadow(
-                      color: shadowColor.withValues(
-                        alpha: YanciTheme.isDark ? 0.3 : 0.1,
-                      ),
-                      blurRadius: 20,
-                      spreadRadius: 0,
-                      offset: const Offset(0, 6),
-                    ),
-                    BoxShadow(
-                      color: shadowColor.withValues(
-                        alpha: YanciTheme.isDark ? 0.15 : 0.05,
-                      ),
-                      blurRadius: 8,
-                      spreadRadius: 0,
-                      offset: const Offset(0, 2),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-          // 2. 立體毛玻璃層
-          Positioned.fill(
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(28),
-              child: BackdropFilter(
-                filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    color: YanciTheme.isDark
-                        ? Colors.white.withValues(alpha: 0.04)
-                        : Colors.white.withValues(alpha: 0.35),
-                    borderRadius: BorderRadius.circular(28),
-                    border: Border.all(
-                      color: Colors.white.withValues(
-                        alpha: YanciTheme.isDark ? 0.08 : 0.5,
-                      ),
-                      width: 0.5,
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ),
-          // 3. 菜單欄內容本身無底色，懸浮在上方
-          SizedBox(
-            height: 66,
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-              children: [
-                _navItem(0, Icons.key_rounded, 'API'),
-                _navItem(1, Icons.bar_chart_rounded, L.get('nav_usage')),
-                _navItem(2, Icons.auto_awesome, L.get('nav_chat')),
-                _navItem(
-                  3,
-                  Icons.people_outline_rounded,
-                  L.get('nav_character'),
-                ),
-                _navItem(4, Icons.account_circle_outlined, L.get('nav_me')),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _navItem(int index, IconData icon, String label) {
-    final isActive = _currentTab == index;
-
-    return Semantics(
-      button: true,
-      selected: isActive,
-      label: label,
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: () async {
-          HapticFeedback.selectionClick();
-          if (index == 0) {
-            Navigator.of(context).pushNamed('/api_settings');
-            return;
-          }
-          if (index == 1) {
-            Navigator.of(context).pushNamed('/usage');
-            return;
-          }
-          if (index == 3) {
-            await Navigator.of(context).pushNamed('/character_list');
-            if (mounted) _loadCharacters(selectId: _activeCharacterId);
-            return;
-          }
-          setState(() => _currentTab = index);
-          _syncHomeAnimations();
-        },
-        child: TweenAnimationBuilder<double>(
-          tween: Tween<double>(end: isActive ? 1 : 0),
-          duration: _reduceMotion
-              ? Duration.zero
-              : const Duration(milliseconds: 180),
-          curve: Curves.easeOutCubic,
-          builder: (context, progress, child) {
-            final color = Color.lerp(
-              YanciTheme.navInactive,
-              YanciTheme.accent,
-              progress,
-            )!;
-            final padding = EdgeInsets.lerp(
-              const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-              const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
-              progress,
-            )!;
-
-            return Container(
-              constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
-              padding: padding,
-              decoration: BoxDecoration(
-                color: YanciTheme.accent.withValues(alpha: 0.12 * progress),
-                borderRadius: BorderRadius.circular(16 + 2 * progress),
-              ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(icon, size: 22 + progress, color: color),
-                  const SizedBox(height: 3),
-                  Text(
-                    label,
-                    style: TextStyle(
-                      fontSize: 10,
-                      fontWeight:
-                          FontWeight.lerp(
-                            FontWeight.w400,
-                            FontWeight.w600,
-                            progress,
-                          ) ??
-                          FontWeight.w400,
-                      color: color,
-                      fontFamily: YanciTheme.fontFamily,
-                    ),
-                  ),
-                ],
-              ),
-            );
-          },
-        ),
-      ),
-    );
+  Future<void> _handleNavTap(int index) async {
+    HapticFeedback.selectionClick();
+    if (index == 0) {
+      Navigator.of(context).pushNamed('/api_settings');
+      return;
+    }
+    if (index == 1) {
+      Navigator.of(context).pushNamed('/usage');
+      return;
+    }
+    if (index == 3) {
+      await Navigator.of(context).pushNamed('/character_list');
+      if (mounted) _loadCharacters(selectId: _activeCharacterId);
+      return;
+    }
+    setState(() => _currentTab = index);
+    _syncHomeAnimations();
   }
 }
 
@@ -2462,33 +2266,6 @@ class _MiniYanciPainter extends CustomPainter {
   bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
 */
-
-class _HoleClipper extends CustomClipper<Path> {
-  final double borderRadius;
-  _HoleClipper({required this.borderRadius});
-
-  @override
-  Path getClip(Size size) {
-    // 挖空中心，保留精確的邊界，避免產生內圈實體陰影
-    final innerRect = Rect.fromLTRB(0, 0, size.width, size.height);
-    final innerRRect = RRect.fromRectAndRadius(
-      innerRect,
-      Radius.circular(borderRadius),
-    );
-    final innerPath = Path()..addRRect(innerRRect);
-
-    // 外圍擴展 50 像素，足以容納陰影的 blurRadius 和 offset
-    final outerRect = Rect.fromLTRB(0, 0, size.width, size.height).inflate(50);
-    final outerPath = Path()..addRect(outerRect);
-
-    // difference: 從外圍大矩形中挖去內部的圓角矩形
-    return Path.combine(PathOperation.difference, outerPath, innerPath);
-  }
-
-  @override
-  bool shouldReclip(_HoleClipper oldClipper) =>
-      oldClipper.borderRadius != borderRadius;
-}
 
 class _SegmentedUsageIcon extends StatelessWidget {
   const _SegmentedUsageIcon({

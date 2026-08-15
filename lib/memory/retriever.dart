@@ -112,6 +112,7 @@ class Retriever {
     String? currentMessage,
     String characterId = 'default',
     required String windowId,
+    bool emotionEnabled = true,
   }) async {
     final scope = _scope(windowId);
     final injectionLog = <String>[];
@@ -344,7 +345,7 @@ class Retriever {
     }
 
     // ③ 其餘活躍記憶（已被 ①② 注入的跳過）
-    if (isSpiderWebEnabled) {
+    if (isSpiderWebEnabled && emotionEnabled) {
       final points = await EmotionCoordinates.activePoints(characterId);
       int? curX, curY;
       if (points.isNotEmpty) {

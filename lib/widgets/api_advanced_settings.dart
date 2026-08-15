@@ -4,6 +4,7 @@ import '../theme/app_theme.dart';
 import '../services/locale_strings.dart';
 import '../services/model_cost_policy.dart';
 import '../services/settings_manager.dart';
+import '../services/static_token_estimator.dart';
 import '../services/token_estimator.dart';
 
 class KeepAliveGuard {
@@ -318,6 +319,7 @@ class _ApiAdvancedSettingsState extends State<ApiAdvancedSettings> {
                                     v,
                                   );
                                   setState(() {});
+                                  StaticTokenEstimator.showAfterToggle(context);
                                 }
                               : null,
                         ),

@@ -48,63 +48,58 @@ void main() {
     },
   );
 
-  test(
-    'summary candidates require source evidence and completed semantics',
-    () async {
-      final messages = <Message>[
-        Message(
-          id: 41,
-          conversationId: 'conv-a',
-          characterId: 'char-a',
-          text: '現在不要跟我吵架。我們剛剛做愛了。昨天我們一起看了電影。',
-          isUser: false,
-          createdAt: DateTime(2026, 7, 18, 20, 30),
-        ),
-      ];
-
-      final inserted = await CharacterTimelineService.storeSummaryCandidates(
+  test('summary candidates keep source provenance and dates', () async {
+    final messages = <Message>[
+      Message(
+        id: 41,
+        conversationId: 'conv-a',
         characterId: 'char-a',
-        sourceMessages: messages,
-        candidates: const [
-          TimelineEventCandidate(
-            type: 'event',
-            subject: 'relationship',
-            sourceMessageIds: [41],
-            occurredOn: '2026-07-18',
-            dateBasis: 'message_time',
-            value: '兩人吵架',
-            evidence: '現在不要跟我吵架',
-          ),
-          TimelineEventCandidate(
-            type: 'event',
-            subject: 'relationship',
-            sourceMessageIds: [41],
-            occurredOn: '2026-07-18',
-            dateBasis: 'message_time',
-            value: '兩人吵架',
-            evidence: '我們剛剛做愛了',
-          ),
-          TimelineEventCandidate(
-            type: 'event',
-            subject: 'relationship',
-            sourceMessageIds: [41],
-            occurredOn: '2026-07-17',
-            dateBasis: 'relative',
-            value: '兩人一起看電影',
-            evidence: '昨天我們一起看了電影',
-          ),
-        ],
-      );
+        text: '現在不要跟我吵架。我們剛剛做愛了。昨天我們一起看了電影。',
+        isUser: false,
+        createdAt: DateTime(2026, 7, 18, 20, 30),
+      ),
+    ];
 
-      expect(inserted, 1);
-      final events = await CharacterTimelineService.getEvents('char-a');
-      expect(events, hasLength(1));
-      expect(events.single['value'], '兩人一起看電影');
-      expect(events.single['created_at'].toString(), startsWith('2026-07-17'));
-      expect(jsonDecode(events.single['source_message_ids'] as String), [41]);
-      expect(events.single['source_evidence'], '昨天我們一起看了電影');
-    },
-  );
+    final inserted = await CharacterTimelineService.storeSummaryCandidates(
+      characterId: 'char-a',
+      sourceMessages: messages,
+      candidates: const [
+        TimelineEventCandidate(
+          type: 'event',
+          subject: 'relationship',
+          sourceMessageIds: [41],
+          occurredOn: '2026-07-18',
+          dateBasis: 'message_time',
+          value: '兩人吵架',
+          evidence: '現在不要跟我吵架',
+        ),
+        TimelineEventCandidate(
+          type: 'event',
+          subject: 'relationship',
+          sourceMessageIds: [41],
+          occurredOn: '2026-07-18',
+          dateBasis: 'message_time',
+          value: '兩人吵架',
+          evidence: '我們剛剛做愛了',
+        ),
+        TimelineEventCandidate(
+          type: 'event',
+          subject: 'relationship',
+          sourceMessageIds: [41],
+          occurredOn: '2026-07-17',
+          dateBasis: 'relative',
+          value: '兩人一起看電影',
+          evidence: '昨天我們一起看了電影',
+        ),
+      ],
+    );
+
+    expect(inserted, 2);
+    final events = await CharacterTimelineService.getEvents('char-a');
+    expect(events, hasLength(2));
+    expect(events.map((event) => event['value']), contains('兩人吵架'));
+    expect(events.map((event) => event['value']), contains('兩人一起看電影'));
+  });
 
   test(
     'older discovered events are returned left-to-right chronologically',

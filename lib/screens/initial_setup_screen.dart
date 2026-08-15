@@ -2,13 +2,18 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../main.dart' show themeNotifier;
+import '../memory/database.dart';
 import '../services/initial_setup_service.dart';
 import '../services/locale_strings.dart';
 import '../services/settings/theme_settings.dart';
+import '../services/settings/memory_settings.dart';
 import '../services/settings/user_settings.dart';
+import '../services/static_token_estimator.dart';
+import 'splash_screen.dart';
 import '../theme/app_theme.dart';
 import '../theme/theme_presets.dart';
 import '../widgets/gradient_background.dart';
+import '../widgets/yanci_bottom_nav_bar.dart';
 
 final _lightThemePresets = presets
     .where((preset) => !preset.isDark)
@@ -17,7 +22,7 @@ final _darkThemePresets = presets
     .where((preset) => preset.isDark)
     .toList(growable: false);
 
-/// 首次語言選擇後的姓名、精簡 TA 人設與主題選擇。
+/// 首次語言選擇後的功能方案、姓名、精簡 TA 人設與主題選擇。
 ///
 /// 這不是功能導覽：完成後的 API、摘要模型與新視窗提示都由各自畫面內的
 /// 弱引導負責，並共同尊重 [UserSettings.isWeakGuidanceEnabled]。
@@ -49,6 +54,13 @@ class _InitialSetupScreenState extends State<InitialSetupScreen> {
   bool _lightThemeConfirmed = false;
   bool _darkThemeConfirmed = false;
   bool _themeSelectionTouched = false;
+  bool _hasExistingCharacter = false;
+  String _selectedMode = 'advanced';
+  bool _customEmotion = true;
+  bool _customBioclock = true;
+  bool _customTimeline = true;
+  bool _customAvatar = false;
+  bool _customSelfNotes = true;
 
   @override
   void initState() {
@@ -81,16 +93,48 @@ class _InitialSetupScreenState extends State<InitialSetupScreen> {
   Future<void> _restoreProgress() async {
     final name = await UserSettings.getUserName();
     final savedStep = await UserSettings.getInitialSetupStep();
+    var hasExistingCharacter = false;
+    try {
+      hasExistingCharacter = await InitialSetupService.hasExistingCharacter();
+    } catch (_) {
+      // The first frame must remain usable while the local database is still
+      // being initialized (and in widget tests without a sqflite factory).
+    }
+    final savedMode = await UserSettings.getInitialSetupMode();
+    final savedEmotion = await MemorySettings.isAbilityEnabled('emotion');
+    final savedBioclock = await MemorySettings.isAbilityEnabled('bioclock');
+    final savedTimeline = await MemorySettings.getTimelineEnabled();
+    final savedSelfNotes = await MemorySettings.getSelfNotesEnabled();
+    final savedAvatar = await UserSettings.getShowChatAvatar();
     final savedLightPreset = await ThemeSettings.getLastLightPreset();
     final savedDarkPreset = await ThemeSettings.getLastDarkPreset();
-    final activeCharacterId = savedStep >= 2
+    final activeCharacterId = savedStep >= 3
         ? await UserSettings.getActiveCharacterId()
         : 'default';
     if (!mounted) return;
     if (name.isNotEmpty) _userNameController.text = name;
     setState(() {
-      _step = savedStep >= 2 ? 2 : (savedStep >= 1 || name.isNotEmpty ? 1 : 0);
-      _characterCommitted = savedStep >= 2 && activeCharacterId != 'default';
+      _selectedMode = savedMode.isEmpty ? 'advanced' : savedMode;
+      _customEmotion = savedEmotion;
+      _customBioclock = savedBioclock;
+      _customTimeline = savedTimeline;
+      _customSelfNotes = savedSelfNotes;
+      _customAvatar = savedAvatar;
+      _hasExistingCharacter = hasExistingCharacter;
+      // 明確保存的第 1 頁優先於舊方案值；切回語言選擇再回來時，
+      // 必須從 1 → 2 → 3 → 4 重新順序進入。
+      _step = savedStep == 0
+          ? 0
+          : (savedMode.isEmpty
+                ? (savedStep >= 2 || name.isNotEmpty ? 2 : 1)
+                : (hasExistingCharacter
+                      ? 3
+                      : (savedStep >= 3
+                            ? 3
+                            : (savedStep >= 2 || name.isNotEmpty ? 2 : 1))));
+      _characterCommitted =
+          hasExistingCharacter ||
+          (savedStep >= 3 && activeCharacterId != 'default');
       if (!_themeSelectionTouched) {
         final activePreset = YanciTheme.preset;
         _lightPreviewIndex = _presetIndex(
@@ -134,19 +178,19 @@ class _InitialSetupScreenState extends State<InitialSetupScreen> {
     if (_busy) return;
     final name = _userNameController.text.trim();
     if (name.isNotEmpty) await UserSettings.saveUserName(name);
-    await UserSettings.saveInitialSetupStep(1);
+    await UserSettings.saveInitialSetupStep(2);
     if (!mounted) return;
     HapticFeedback.selectionClick();
-    setState(() => _step = 1);
+    setState(() => _step = 2);
   }
 
   Future<void> _skipName() async {
     if (_busy) return;
     FocusManager.instance.primaryFocus?.unfocus();
-    await UserSettings.saveInitialSetupStep(1);
+    await UserSettings.saveInitialSetupStep(2);
     if (!mounted) return;
     HapticFeedback.selectionClick();
-    setState(() => _step = 1);
+    setState(() => _step = 2);
   }
 
   Future<void> _saveCharacter() async {
@@ -169,12 +213,12 @@ class _InitialSetupScreenState extends State<InitialSetupScreen> {
           description: _descriptionController.text,
         ),
       );
-      await UserSettings.saveInitialSetupStep(2);
+      await UserSettings.saveInitialSetupStep(3);
       if (!mounted) return;
       HapticFeedback.selectionClick();
       setState(() {
         _busy = false;
-        _step = 2;
+        _step = 3;
         _characterCommitted = true;
       });
     } catch (_) {
@@ -197,12 +241,12 @@ class _InitialSetupScreenState extends State<InitialSetupScreen> {
   Future<void> _skipCharacter() async {
     if (_busy) return;
     setState(() => _busy = true);
-    await UserSettings.saveInitialSetupStep(2);
+    await UserSettings.saveInitialSetupStep(3);
     if (!mounted) return;
     HapticFeedback.selectionClick();
     setState(() {
       _busy = false;
-      _step = 2;
+      _step = 3;
       _characterCommitted = false;
     });
   }
@@ -333,7 +377,70 @@ class _InitialSetupScreenState extends State<InitialSetupScreen> {
 
   Future<void> _skipTheme() => _finish(skipAllGuidance: false);
 
+  Future<void> _continueFromMode(String mode) async {
+    if (_busy) return;
+    setState(() => _busy = true);
+    await UserSettings.saveInitialSetupMode(mode);
+    if (mode == 'basic') {
+      await MemorySettings.setAbilityEnabled('emotion', false);
+      await MemorySettings.setAbilityEnabled('bioclock', false);
+      await MemorySettings.saveTimelineEnabled(false);
+      await MemorySettings.saveSelfNotesEnabled(true);
+      await MemorySettings.saveTimelinePromptMode('normal');
+    } else if (mode == 'advanced') {
+      await MemorySettings.setAbilityEnabled('emotion', true);
+      await MemorySettings.setAbilityEnabled('bioclock', true);
+      await MemorySettings.saveTimelineEnabled(true);
+      await MemorySettings.saveSelfNotesEnabled(true);
+      await MemorySettings.saveTimelinePromptMode('normal');
+    } else if (mode == 'rp') {
+      await MemorySettings.setAbilityEnabled('emotion', true);
+      await MemorySettings.setAbilityEnabled('bioclock', true);
+      await MemorySettings.saveTimelineEnabled(true);
+      await MemorySettings.saveSelfNotesEnabled(false);
+      await MemorySettings.saveTimelinePromptMode('plot');
+    } else {
+      await MemorySettings.setAbilityEnabled('emotion', _customEmotion);
+      await MemorySettings.setAbilityEnabled('bioclock', _customBioclock);
+      await MemorySettings.saveTimelineEnabled(_customTimeline);
+      await MemorySettings.saveSelfNotesEnabled(_customSelfNotes);
+      await UserSettings.saveShowChatAvatar(_customAvatar);
+      await MemorySettings.saveTimelinePromptMode('normal');
+    }
+    // 方案只設定預設值；不鎖定策略。已有角色重新走引導時，先套用
+    // 「含記憶方案預設使用蛛網記憶」，之後仍可在能力模組切回經典記憶。
+    if (_hasExistingCharacter) {
+      final activeId = await UserSettings.getActiveCharacterId();
+      if (activeId != 'default') {
+        await DatabaseHelper.updateCharacter(activeId, {
+          'is_spider_web_enabled': 1,
+        });
+      }
+    }
+    if (mounted) StaticTokenEstimator.showAfterToggle(context);
+    final nextStep = _hasExistingCharacter ? 3 : 1;
+    await UserSettings.saveInitialSetupStep(nextStep);
+    if (!mounted) return;
+    HapticFeedback.selectionClick();
+    setState(() {
+      _busy = false;
+      _step = nextStep;
+    });
+  }
+
   Future<void> _skipAllGuidance() => _finish(skipAllGuidance: true);
+
+  Future<void> _returnToLanguageSelection() async {
+    if (_busy) return;
+    FocusManager.instance.primaryFocus?.unfocus();
+    await UserSettings.saveInitialSetupStep(0);
+    if (!mounted) return;
+    Navigator.of(context).pushReplacement(
+      MaterialPageRoute<void>(
+        builder: (_) => const SplashScreen(showLanguagePicker: true),
+      ),
+    );
+  }
 
   Future<void> _finish({required bool skipAllGuidance}) async {
     if (_busy) return;
@@ -350,9 +457,14 @@ class _InitialSetupScreenState extends State<InitialSetupScreen> {
   Future<void> _returnToPreviousStep() async {
     if (_busy || _step == 0) return;
     FocusManager.instance.primaryFocus?.unfocus();
-    if (_step == 2) {
+    if (_step == 3) {
       // 已建立正式角色後不回到建立表單，避免重複產生角色資料。
       if (_characterCommitted) return;
+      await UserSettings.saveInitialSetupStep(2);
+      if (mounted) setState(() => _step = 2);
+      return;
+    }
+    if (_step == 2) {
       await UserSettings.saveInitialSetupStep(1);
       if (mounted) setState(() => _step = 1);
       return;
@@ -382,16 +494,48 @@ class _InitialSetupScreenState extends State<InitialSetupScreen> {
               transitionBuilder: (child, animation) =>
                   FadeTransition(opacity: animation, child: child),
               child: switch (_step) {
-                0 => _NameStep(
+                0 => _ModeStep(
+                  key: const ValueKey('initial-mode-step'),
+                  selectedMode: _selectedMode,
+                  customEmotion: _customEmotion,
+                  customBioclock: _customBioclock,
+                  customTimeline: _customTimeline,
+                  customAvatar: _customAvatar,
+                  customSelfNotes: _customSelfNotes,
+                  busy: _busy,
+                  onBack: _returnToLanguageSelection,
+                  onModeChanged: (mode) => setState(() => _selectedMode = mode),
+                  onCustomChanged: (key, value) {
+                    setState(() {
+                      switch (key) {
+                        case 'emotion':
+                          _customEmotion = value;
+                        case 'bioclock':
+                          _customBioclock = value;
+                        case 'timeline':
+                          _customTimeline = value;
+                        case 'avatar':
+                          _customAvatar = value;
+                        case 'selfNotes':
+                          _customSelfNotes = value;
+                      }
+                    });
+                  },
+                  onContinue: () => _continueFromMode(_selectedMode),
+                  onSkip: () => _continueFromMode(_selectedMode),
+                  onSkipAll: _skipAllGuidance,
+                ),
+                1 => _NameStep(
                   key: const ValueKey('initial-name-step'),
                   controller: _userNameController,
                   focusNode: _userNameFocus,
                   busy: _busy,
+                  onBack: _returnToPreviousStep,
                   onContinue: _continueFromName,
                   onSkip: _skipName,
                   onSkipAll: _skipAllGuidance,
                 ),
-                1 => _CharacterStep(
+                2 => _CharacterStep(
                   key: const ValueKey('initial-character-step'),
                   nameController: _characterNameController,
                   genderController: _genderController,
@@ -399,6 +543,7 @@ class _InitialSetupScreenState extends State<InitialSetupScreen> {
                   descriptionController: _descriptionController,
                   nameFocusNode: _characterNameFocus,
                   busy: _busy,
+                  onBack: _returnToPreviousStep,
                   showNameError: _showCharacterNameError,
                   onNameChanged: (_) {
                     if (_showCharacterNameError) {
@@ -430,6 +575,7 @@ class _InitialSetupScreenState extends State<InitialSetupScreen> {
                   darkThemeConfirmed: _darkThemeConfirmed,
                   busy: _busy,
                   reduceMotion: reduceMotion,
+                  onBack: _returnToPreviousStep,
                   onSelectLight: () => _selectThemeMode(false),
                   onSelectDark: () => _selectThemeMode(true),
                   onPreviewChanged: _previewTheme,
@@ -446,12 +592,277 @@ class _InitialSetupScreenState extends State<InitialSetupScreen> {
   }
 }
 
+class _ModeStep extends StatelessWidget {
+  const _ModeStep({
+    super.key,
+    required this.selectedMode,
+    required this.customEmotion,
+    required this.customBioclock,
+    required this.customTimeline,
+    required this.customAvatar,
+    required this.customSelfNotes,
+    required this.busy,
+    required this.onBack,
+    required this.onModeChanged,
+    required this.onCustomChanged,
+    required this.onContinue,
+    required this.onSkip,
+    required this.onSkipAll,
+  });
+
+  final String selectedMode;
+  final bool customEmotion;
+  final bool customBioclock;
+  final bool customTimeline;
+  final bool customAvatar;
+  final bool customSelfNotes;
+  final bool busy;
+  final VoidCallback onBack;
+  final ValueChanged<String> onModeChanged;
+  final void Function(String key, bool value) onCustomChanged;
+  final VoidCallback onContinue;
+  final VoidCallback onSkip;
+  final VoidCallback onSkipAll;
+
+  String _label(String mode) => switch (mode) {
+    'basic' => L.pick(en: 'Basic', zhTW: '基礎', zhCN: '基础'),
+    'advanced' => L.pick(en: 'Advanced', zhTW: '進階', zhCN: '进阶'),
+    'rp' => 'RP',
+    _ => L.pick(en: 'Custom', zhTW: '自定義', zhCN: '自定义'),
+  };
+
+  String _description(String mode) => switch (mode) {
+    'basic' => L.pick(en: 'Memory stays on', zhTW: '記憶開啟', zhCN: '记忆开启'),
+    'advanced' => L.pick(
+      en: 'Basic / Emotion / Bio clock / Timeline',
+      zhTW: '基礎 / 情緒 / 生物鐘 / 時間線',
+      zhCN: '基础 / 情绪 / 生物钟 / 时间线',
+    ),
+    'rp' => L.pick(
+      en: 'Advanced options / Story timeline',
+      zhTW: '進階選項 / 劇情時間線',
+      zhCN: '进阶选项 / 剧情时间线',
+    ),
+    _ => L.pick(
+      en: 'Choose each switch yourself',
+      zhTW: '自行選擇各項開關',
+      zhCN: '自行选择各项开关',
+    ),
+  };
+
+  Widget _modeCard(BuildContext context, String mode) {
+    final selected = selectedMode == mode;
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 280),
+        child: Semantics(
+          button: true,
+          selected: selected,
+          label: _label(mode),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(18),
+            onTap: busy ? null : () => onModeChanged(mode),
+            child: Container(
+              width: double.infinity,
+              margin: const EdgeInsets.only(bottom: 10),
+              padding: const EdgeInsets.fromLTRB(24, 10, 24, 10),
+              decoration: BoxDecoration(
+                color: selected
+                    ? YanciTheme.accent.withValues(alpha: 0.12)
+                    : YanciTheme.glassInputBg,
+                borderRadius: BorderRadius.circular(18),
+                border: Border.all(
+                  color: selected
+                      ? YanciTheme.accent.withValues(alpha: 0.7)
+                      : YanciTheme.glassBorder,
+                ),
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    _label(mode),
+                    textAlign: TextAlign.center,
+                    style: YanciTheme.bodyText.copyWith(
+                      fontSize: (YanciTheme.bodyText.fontSize ?? 15) + 2,
+                      fontWeight: FontWeight.w800,
+                      color: YanciTheme.textPrimary,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    _description(mode),
+                    textAlign: TextAlign.center,
+                    style: YanciTheme.bodySmall.copyWith(
+                      color: YanciTheme.textSecondary.withValues(alpha: 0.72),
+                      height: 1.35,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _customSwitch(
+    String key,
+    String title,
+    String description,
+    bool value,
+  ) {
+    return SwitchListTile.adaptive(
+      contentPadding: EdgeInsets.zero,
+      title: Text(title, style: YanciTheme.bodyText.copyWith(fontSize: 14)),
+      subtitle: Text(
+        description,
+        style: YanciTheme.bodySmall.copyWith(
+          color: YanciTheme.textSecondary.withValues(alpha: 0.7),
+        ),
+      ),
+      value: value,
+      activeThumbColor: YanciTheme.accent,
+      onChanged: busy ? null : (next) => onCustomChanged(key, next),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return _SetupLayout(
+      topLeft: _BackButton(onPressed: busy ? null : onBack),
+      topRight: _SkipButton(onPressed: busy ? null : onSkip),
+      bottom: _SkipAllButton(onPressed: busy ? null : onSkipAll),
+      alignContentToTop: true,
+      centerAction: _PrimaryButton(
+        onPressed: busy ? null : onContinue,
+        label: L.pick(en: 'Continue', zhTW: '繼續', zhCN: '继续'),
+      ),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 520),
+        child: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                L.pick(
+                  en: 'Choose your memory setup',
+                  zhTW: '選擇你們的相處模式',
+                  zhCN: '选择你们的相处模式',
+                ),
+                style: YanciTheme.headingLarge.copyWith(
+                  color: YanciTheme.textPrimary,
+                  fontSize: 27,
+                  letterSpacing: 0.8,
+                ),
+              ),
+              const SizedBox(height: 10),
+              Text(
+                L.pick(
+                  en: 'You can change these switches later in Me → Switches.',
+                  zhTW: '之後可以在「我的 → 開關」裡修改。',
+                  zhCN: '之后可以在“我的 → 开关”里修改。',
+                ),
+                style: YanciTheme.bodySmall.copyWith(height: 1.5),
+              ),
+              const SizedBox(height: 22),
+              _modeCard(context, 'basic'),
+              _modeCard(context, 'advanced'),
+              _modeCard(context, 'rp'),
+              _modeCard(context, 'custom'),
+              if (selectedMode == 'custom')
+                Center(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 360),
+                    child: Container(
+                      margin: const EdgeInsets.only(top: 2, bottom: 18),
+                      padding: const EdgeInsets.fromLTRB(16, 8, 12, 8),
+                      decoration: BoxDecoration(
+                        color: YanciTheme.glassInputBg,
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(color: YanciTheme.glassBorder),
+                      ),
+                      child: Column(
+                        children: [
+                          _customSwitch(
+                            'emotion',
+                            L.pick(en: 'Emotion', zhTW: '情緒', zhCN: '情绪'),
+                            L.pick(
+                              en: 'Inject emotion coordinates into replies.',
+                              zhTW: '將情緒座標注入對話。',
+                              zhCN: '将情绪坐标注入对话。',
+                            ),
+                            customEmotion,
+                          ),
+                          _customSwitch(
+                            'bioclock',
+                            L.pick(en: 'Bio clock', zhTW: '生物鐘', zhCN: '生物钟'),
+                            L.pick(
+                              en: 'Use fatigue and sleep rhythm cues.',
+                              zhTW: '使用疲勞與作息提示。',
+                              zhCN: '使用疲劳与作息提示。',
+                            ),
+                            customBioclock,
+                          ),
+                          _customSwitch(
+                            'timeline',
+                            L.pick(en: 'Timeline', zhTW: '時間線', zhCN: '时间线'),
+                            L.pick(
+                              en: 'Show and inject character timeline context.',
+                              zhTW: '顯示並注入角色時間線內容。',
+                              zhCN: '显示并注入角色时间线内容。',
+                            ),
+                            customTimeline,
+                          ),
+                          _customSwitch(
+                            'avatar',
+                            L.pick(
+                              en: 'Chat avatars',
+                              zhTW: '對話框內頭像',
+                              zhCN: '对话框内头像',
+                            ),
+                            L.pick(
+                              en: 'Show avatars beside chat bubbles.',
+                              zhTW: '在對話氣泡旁顯示頭像。',
+                              zhCN: '在对话气泡旁显示头像。',
+                            ),
+                            customAvatar,
+                          ),
+                          _customSwitch(
+                            'selfNotes',
+                            L.pick(
+                              en: 'Secretly remembering you',
+                              zhTW: '偷偷記住你',
+                              zhCN: '偷偷记住你',
+                            ),
+                            L.pick(
+                              en: 'Keep the quiet self-notes panel and prompt.',
+                              zhTW: '保留安靜的自我註記面板與提示。',
+                              zhCN: '保留安静的自我注记面板与提示。',
+                            ),
+                            customSelfNotes,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _NameStep extends StatelessWidget {
   const _NameStep({
     super.key,
     required this.controller,
     required this.focusNode,
     required this.busy,
+    required this.onBack,
     required this.onContinue,
     required this.onSkip,
     required this.onSkipAll,
@@ -460,6 +871,7 @@ class _NameStep extends StatelessWidget {
   final TextEditingController controller;
   final FocusNode focusNode;
   final bool busy;
+  final VoidCallback onBack;
   final VoidCallback onContinue;
   final VoidCallback onSkip;
   final VoidCallback onSkipAll;
@@ -467,6 +879,7 @@ class _NameStep extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return _SetupLayout(
+      topLeft: _BackButton(onPressed: busy ? null : onBack),
       topRight: _SkipButton(onPressed: busy ? null : onSkip),
       bottom: _SkipAllButton(onPressed: busy ? null : onSkipAll),
       child: ConstrainedBox(
@@ -525,6 +938,7 @@ class _CharacterStep extends StatelessWidget {
     required this.descriptionController,
     required this.nameFocusNode,
     required this.busy,
+    required this.onBack,
     required this.showNameError,
     required this.onNameChanged,
     required this.onSave,
@@ -538,6 +952,7 @@ class _CharacterStep extends StatelessWidget {
   final TextEditingController descriptionController;
   final FocusNode nameFocusNode;
   final bool busy;
+  final VoidCallback onBack;
   final bool showNameError;
   final ValueChanged<String> onNameChanged;
   final VoidCallback onSave;
@@ -547,6 +962,7 @@ class _CharacterStep extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return _SetupLayout(
+      topLeft: _BackButton(onPressed: busy ? null : onBack),
       topRight: _SkipButton(onPressed: busy ? null : onSkip),
       bottom: _SkipAllButton(onPressed: busy ? null : onSkipAll),
       alignContentToTop: true,
@@ -668,6 +1084,7 @@ class _ThemeStep extends StatelessWidget {
     required this.darkThemeConfirmed,
     required this.busy,
     required this.reduceMotion,
+    required this.onBack,
     required this.onSelectLight,
     required this.onSelectDark,
     required this.onPreviewChanged,
@@ -687,6 +1104,7 @@ class _ThemeStep extends StatelessWidget {
   final bool darkThemeConfirmed;
   final bool busy;
   final bool reduceMotion;
+  final VoidCallback onBack;
   final VoidCallback onSelectLight;
   final VoidCallback onSelectDark;
   final ValueChanged<int> onPreviewChanged;
@@ -704,6 +1122,8 @@ class _ThemeStep extends StatelessWidget {
             constraints: const BoxConstraints(minHeight: 48),
             child: Row(
               children: [
+                _BackButton(onPressed: busy ? null : onBack),
+                const SizedBox(width: 8),
                 Expanded(
                   child: Text(
                     L.pick(en: 'Choose day and night', zhTW: '選擇日間與夜間主題'),
@@ -1071,9 +1491,7 @@ class _ThemePreviewScene extends StatelessWidget {
                       ),
                       const SizedBox(height: 2),
                       Text(
-                        L.locale == 'en'
-                            ? (preset.isDark ? 'Dark theme' : 'Light theme')
-                            : preset.subtitle,
+                        L.get('theme_subtitle_${preset.id}'),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
@@ -1083,36 +1501,10 @@ class _ThemePreviewScene extends StatelessWidget {
                         ),
                       ),
                       const SizedBox(height: 10),
-                      Container(
-                        height: 38,
-                        padding: const EdgeInsets.symmetric(horizontal: 24),
-                        decoration: BoxDecoration(
-                          color: preset.navBarBg,
-                          borderRadius: BorderRadius.circular(19),
-                          border: Border.all(
-                            color: preset.glassBorder.withValues(alpha: 0.7),
-                          ),
-                        ),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Icon(
-                              Icons.chat_bubble_rounded,
-                              size: 16,
-                              color: preset.accent,
-                            ),
-                            Icon(
-                              Icons.auto_stories_rounded,
-                              size: 16,
-                              color: preset.navInactive,
-                            ),
-                            Icon(
-                              Icons.person_rounded,
-                              size: 16,
-                              color: preset.navInactive,
-                            ),
-                          ],
-                        ),
+                      YanciBottomNavBar(
+                        activeIndex: 2,
+                        compact: true,
+                        themePreset: preset,
                       ),
                     ],
                   ),
@@ -1540,12 +1932,16 @@ class _SetupLayout extends StatelessWidget {
     required this.topRight,
     required this.bottom,
     this.alignContentToTop = false,
+    this.topLeft,
+    this.centerAction,
   });
 
   final Widget child;
   final Widget topRight;
   final Widget bottom;
   final bool alignContentToTop;
+  final Widget? topLeft;
+  final Widget? centerAction;
 
   @override
   Widget build(BuildContext context) {
@@ -1562,14 +1958,21 @@ class _SetupLayout extends StatelessWidget {
                   constraints: const BoxConstraints(minHeight: 48),
                   child: Row(
                     crossAxisAlignment: CrossAxisAlignment.center,
-                    children: [const Spacer(), topRight],
+                    children: [
+                      topLeft ?? const SizedBox(width: 48),
+                      const Spacer(),
+                      topRight,
+                    ],
                   ),
                 ),
                 if (!alignContentToTop) const Spacer(),
                 if (alignContentToTop)
                   SizedBox(height: MediaQuery.sizeOf(context).height * 0.072),
                 Align(alignment: Alignment.center, child: child),
-                const Spacer(),
+                if (centerAction != null)
+                  Expanded(child: Center(child: centerAction))
+                else
+                  const Spacer(),
                 const SizedBox(height: 24),
                 bottom,
               ],
@@ -1728,6 +2131,28 @@ class _SkipButton extends StatelessWidget {
         minimumSize: const Size(56, 48),
       ),
       child: Text(L.pick(en: 'Skip', zhTW: '跳過')),
+    );
+  }
+}
+
+class _BackButton extends StatelessWidget {
+  const _BackButton({required this.onPressed});
+
+  final VoidCallback? onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return IconButton(
+      key: const ValueKey('initial-back'),
+      onPressed: onPressed,
+      tooltip: L.pick(en: 'Back', zhTW: '返回', zhCN: '返回'),
+      padding: EdgeInsets.zero,
+      constraints: const BoxConstraints.tightFor(width: 48, height: 48),
+      icon: Icon(
+        Icons.arrow_back_rounded,
+        size: 22,
+        color: YanciTheme.textSecondary,
+      ),
     );
   }
 }

@@ -105,6 +105,7 @@ class _CharacterTimelinePanelState extends State<CharacterTimelinePanel> {
       final dt = parsed.isUtc ? parsed.toLocal() : parsed;
       nodes.add(
         _TimelineNode(
+          id: s['id'] as int,
           type: _NodeType.state,
           key: s['key'] as String? ?? '',
           value: s['value'] as String? ?? '',
@@ -119,6 +120,7 @@ class _CharacterTimelinePanelState extends State<CharacterTimelinePanel> {
       final dt = parsed.isUtc ? parsed.toLocal() : parsed;
       nodes.add(
         _TimelineNode(
+          id: e['id'] as int,
           type: _NodeType.event,
           key: '',
           value: e['value'] as String? ?? '',
@@ -482,7 +484,7 @@ class _CharacterTimelinePanelState extends State<CharacterTimelinePanel> {
               ),
             ),
             const SizedBox(height: 16),
-            // 標籤 + 日期
+            // 標籤 + 日期 + 刪除
             Row(
               children: [
                 Container(
@@ -518,6 +520,53 @@ class _CharacterTimelinePanelState extends State<CharacterTimelinePanel> {
                     fontFamily: YanciTheme.fontFamily,
                     color: YanciTheme.textSecondary.withValues(alpha: 0.6),
                   ),
+                ),
+                const Spacer(),
+                IconButton(
+                  tooltip: L.pick(en: 'Delete', zhTW: '刪除'),
+                  icon: Icon(
+                    Icons.delete_outline_rounded,
+                    size: 19,
+                    color: YanciTheme.textSecondary.withValues(alpha: 0.7),
+                  ),
+                  onPressed: () async {
+                    final confirmed = await showDialog<bool>(
+                      context: ctx,
+                      builder: (dialogContext) => AlertDialog(
+                        title: Text(
+                          L.pick(
+                            en: 'Delete timeline entry?',
+                            zhTW: '刪除此時間線項目？',
+                          ),
+                        ),
+                        content: Text(
+                          L.pick(
+                            en: 'This only deletes this timeline entry. Chat messages and summaries remain unchanged.',
+                            zhTW: '只會刪除這個時間線項目，不會刪除聊天消息或摘要。',
+                          ),
+                        ),
+                        actions: [
+                          TextButton(
+                            onPressed: () =>
+                                Navigator.pop(dialogContext, false),
+                            child: Text(L.pick(en: 'Cancel', zhTW: '取消')),
+                          ),
+                          TextButton(
+                            onPressed: () => Navigator.pop(dialogContext, true),
+                            child: Text(L.pick(en: 'Delete', zhTW: '刪除')),
+                          ),
+                        ],
+                      ),
+                    );
+                    if (confirmed != true || !mounted) return;
+                    await CharacterTimelineService.deleteEntry(
+                      characterId: widget.characterId,
+                      id: node.id,
+                    );
+                    if (!mounted) return;
+                    Navigator.of(context).pop();
+                    _load();
+                  },
                 ),
               ],
             ),
@@ -739,12 +788,14 @@ class _TimelineAxisPainter extends CustomPainter {
 enum _NodeType { state, event }
 
 class _TimelineNode {
+  final int id;
   final _NodeType type;
   final String key;
   final String value;
   final DateTime date;
 
   _TimelineNode({
+    required this.id,
     required this.type,
     required this.key,
     required this.value,
