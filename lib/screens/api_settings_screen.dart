@@ -14,6 +14,10 @@ import '../services/token_estimator.dart';
 import '../services/web_search_service.dart';
 import '../widgets/gradient_background.dart';
 import '../widgets/api_advanced_settings.dart';
+import '../widgets/api_key_field.dart';
+import '../widgets/api_model_picker.dart';
+import '../widgets/api_provider_picker.dart';
+import '../widgets/thinking_machines_settings_card.dart';
 
 class ApiSettingsScreen extends StatefulWidget {
   const ApiSettingsScreen({super.key});
@@ -485,35 +489,16 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
   ];
 
   Widget _buildProviderPicker() {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final columns = constraints.maxWidth >= 520 ? 3 : 2;
-        const gap = YanciTheme.spacingSm;
-        final cardWidth =
-            (constraints.maxWidth - (columns - 1) * gap) / columns;
-        const primaryIds = {'openrouter', 'openai_compatible'};
-        final options = _providerOptions();
-        final visibleOptions = _showOtherProviders
-            ? options
-            : options
-                  .where(
-                    (option) =>
-                        primaryIds.contains(option.id) ||
-                        option.id == _provider,
-                  )
-                  .toList();
-        return Wrap(
-          spacing: gap,
-          runSpacing: gap,
-          children: [
-            for (final option in visibleOptions)
-              SizedBox(
-                width: cardWidth,
-                child: _buildProviderOption(id: option.id, label: option.label),
-              ),
-          ],
-        );
-      },
+    return ApiProviderPicker(
+      options: [
+        for (final option in _providerOptions())
+          ApiProviderOption(id: option.id, label: option.label),
+      ],
+      selectedId: _provider,
+      showOtherProviders: _showOtherProviders,
+      primaryIds: const {'openrouter', 'openai_compatible'},
+      borderColor: _settingsBorderColor,
+      onChanged: _handleProviderChanged,
     );
   }
 
@@ -544,132 +529,20 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
     );
   }
 
-  Widget _buildProviderOption({required String id, required String label}) {
-    final selected = _provider == id;
-    final selectedColor = Color.lerp(
-      const Color(0xFF4CAF6A),
-      YanciTheme.accent,
-      0.28,
-    )!;
-    return Semantics(
-      key: ValueKey<String>('api_settings_provider_$id'),
-      button: true,
-      selected: selected,
-      label: label,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(YanciTheme.radiusMd),
-        onTap: selected ? null : () => _handleProviderChanged(id),
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 160),
-          curve: Curves.easeOut,
-          constraints: const BoxConstraints(minHeight: 54),
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-          decoration: BoxDecoration(
-            color: Colors.transparent,
-            borderRadius: BorderRadius.circular(YanciTheme.radiusMd),
-            border: Border.all(
-              color: selected ? selectedColor : _settingsBorderColor,
-              width: selected ? 1.5 : 1,
-            ),
-          ),
-          child: Row(
-            children: [
-              AnimatedContainer(
-                duration: const Duration(milliseconds: 160),
-                width: 18,
-                height: 18,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: selected ? selectedColor : Colors.transparent,
-                  border: Border.all(
-                    color: selected
-                        ? selectedColor
-                        : YanciTheme.textSecondary.withValues(alpha: 0.72),
-                    width: selected ? 1 : 1.5,
-                  ),
-                ),
-                child: selected
-                    ? Center(
-                        child: Container(
-                          width: 6,
-                          height: 6,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: Colors.white,
-                          ),
-                        ),
-                      )
-                    : null,
-              ),
-              const SizedBox(width: YanciTheme.spacingSm),
-              Expanded(
-                child: Text(
-                  label,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: YanciTheme.bodyText.copyWith(
-                    fontSize: 13.5,
-                    color: selected
-                        ? YanciTheme.textPrimary
-                        : YanciTheme.textSecondary,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  InputDecoration _buildApiKeyDecoration({
-    required String hintText,
-    List<Widget> trailingActions = const <Widget>[],
-  }) {
-    return InputDecoration(
-      hintText: hintText,
-      hintStyle: YanciTheme.bodySmall.copyWith(
-        color: YanciTheme.textSecondary.withValues(alpha: 0.48),
-      ),
-      border: InputBorder.none,
-      contentPadding: const EdgeInsets.symmetric(vertical: 10),
-      isDense: true,
-      suffixIcon: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          ...trailingActions,
-          IconButton(
-            icon: Icon(
-              _obscureProviderKeys
-                  ? Icons.visibility_outlined
-                  : Icons.visibility_off_outlined,
-              size: 21,
-            ),
-            color: YanciTheme.textSecondary,
-            tooltip: L.pick(en: 'Show API Key', zhTW: '顯示 API Key'),
-            onPressed: () =>
-                setState(() => _obscureProviderKeys = !_obscureProviderKeys),
-          ),
-        ],
-      ),
-    );
-  }
-
   Widget _buildApiKeyField({
     required TextEditingController controller,
     required String hintText,
     required ValueChanged<String> onChanged,
     List<Widget> trailingActions = const <Widget>[],
   }) {
-    return TextField(
+    return ApiKeyField(
       controller: controller,
+      hintText: hintText,
       obscureText: _obscureProviderKeys,
-      style: YanciTheme.bodyText.copyWith(fontSize: 14),
       onChanged: onChanged,
-      decoration: _buildApiKeyDecoration(
-        hintText: hintText,
-        trailingActions: trailingActions,
-      ),
+      onToggleObscure: () =>
+          setState(() => _obscureProviderKeys = !_obscureProviderKeys),
+      trailingActions: trailingActions,
     );
   }
 
@@ -1944,456 +1817,33 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
     );
   }
 
-  Widget _buildModelPicker(BuildContext context) {
-    final selectedModel = _modelValueForProvider();
-    final hasModels = _models.isNotEmpty;
-    final hasSearchResults = _filteredModels.isNotEmpty;
-    final query = _modelSearchController.text.trim();
-    final modelCountText = hasModels
-        ? L.pick(
-            en: '${_models.length} models available',
-            zhTW: '已載入 ${_models.length} 個模型',
-            zhCN: '已加载 ${_models.length} 个模型',
-          )
-        : L.pick(
-            en: 'Enter a model ID or fetch the list',
-            zhTW: '可直接填入模型 ID，或拉取列表',
-            zhCN: '可直接填入模型 ID，或拉取列表',
-          );
-
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: YanciTheme.spacingXs),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          if (selectedModel.isNotEmpty) ...[
-            Container(
-              padding: const EdgeInsets.symmetric(
-                horizontal: YanciTheme.spacingSm,
-                vertical: 9,
-              ),
-              decoration: BoxDecoration(
-                color: YanciTheme.accent.withValues(alpha: 0.12),
-                borderRadius: BorderRadius.circular(YanciTheme.radiusSm),
-                border: Border.all(
-                  color: _selectionSuccessColor.withValues(alpha: 0.72),
-                  width: 0.8,
-                ),
-              ),
-              child: Row(
-                children: [
-                  Icon(
-                    Icons.check_circle_rounded,
-                    size: 18,
-                    color: _selectionSuccessColor,
-                  ),
-                  const SizedBox(width: YanciTheme.spacingSm),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          L.pick(
-                            en: 'Current model',
-                            zhTW: '目前模型',
-                            zhCN: '当前模型',
-                          ),
-                          style: YanciTheme.bodySmall.copyWith(
-                            fontSize: 11,
-                            color: YanciTheme.textSecondary,
-                          ),
-                        ),
-                        const SizedBox(height: 2),
-                        ConstrainedBox(
-                          constraints: const BoxConstraints(maxHeight: 22),
-                          child: SingleChildScrollView(
-                            scrollDirection: Axis.horizontal,
-                            physics: const ClampingScrollPhysics(),
-                            child: Text(
-                              selectedModel,
-                              maxLines: 1,
-                              softWrap: false,
-                              style: YanciTheme.bodyText.copyWith(
-                                fontSize: 13,
-                                color: YanciTheme.textPrimary,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: YanciTheme.spacingSm),
-          ],
-          Semantics(
-            textField: true,
-            label: L.pick(en: 'Search models', zhTW: '搜尋模型', zhCN: '搜索模型'),
-            child: TextField(
-              key: const Key('api_settings_model_search_field'),
-              controller: _modelSearchController,
-              style: YanciTheme.bodyText.copyWith(fontSize: 14),
-              decoration: InputDecoration(
-                hintText: _models.isEmpty
-                    ? L.get('settings_model_hint_empty')
-                    : L.get('settings_model_hint_search'),
-                hintStyle: YanciTheme.bodySmall.copyWith(
-                  color: YanciTheme.textSecondary.withValues(alpha: 0.52),
-                ),
-                border: InputBorder.none,
-                enabledBorder: InputBorder.none,
-                focusedBorder: InputBorder.none,
-                contentPadding: const EdgeInsets.symmetric(vertical: 12),
-                prefixIcon: Icon(
-                  Icons.search_rounded,
-                  size: 20,
-                  color: YanciTheme.textSecondary,
-                ),
-                suffixIcon: query.isNotEmpty
-                    ? IconButton(
-                        icon: const Icon(Icons.clear_rounded, size: 18),
-                        tooltip: L.pick(en: 'Clear search', zhTW: '清除搜尋'),
-                        onPressed: () {
-                          _modelSearchController.clear();
-                          _filterModels('');
-                        },
-                      )
-                    : null,
-              ),
-              onChanged: _filterModels,
-              onSubmitted: (value) {
-                if (value.trim().isNotEmpty) {
-                  _selectModel(value.trim());
-                }
-              },
-            ),
-          ),
-          const SizedBox(height: YanciTheme.spacingXs),
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  modelCountText,
-                  style: YanciTheme.bodySmall.copyWith(
-                    fontSize: 11,
-                    color: YanciTheme.textSecondary.withValues(alpha: 0.72),
-                  ),
-                ),
-              ),
-              if (hasModels)
-                TextButton.icon(
-                  key: const Key('api_settings_model_list_toggle'),
-                  onPressed: () =>
-                      setState(() => _showModelList = !_showModelList),
-                  icon: Icon(
-                    _showModelList
-                        ? Icons.expand_less_rounded
-                        : Icons.expand_more_rounded,
-                    size: 17,
-                  ),
-                  label: Text(
-                    L.pick(
-                      en: _showModelList ? 'Collapse' : 'Show list',
-                      zhTW: _showModelList ? '收起' : '展開列表',
-                      zhCN: _showModelList ? '收起' : '展开列表',
-                    ),
-                  ),
-                  style: TextButton.styleFrom(
-                    minimumSize: const Size(0, 40),
-                    padding: const EdgeInsets.symmetric(horizontal: 6),
-                    foregroundColor: YanciTheme.textSecondary,
-                  ),
-                ),
-              Tooltip(
-                message: L.get('settings_model_refresh'),
-                child: TextButton.icon(
-                  key: const Key('api_settings_model_refresh_button'),
-                  onPressed: _isFetchingModels ? null : _fetchModels,
-                  icon: _isFetchingModels
-                      ? const SizedBox(
-                          width: 15,
-                          height: 15,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.download_rounded, size: 17),
-                  label: Text(
-                    L.pick(en: 'Fetch list', zhTW: '拉取列表', zhCN: '拉取列表'),
-                  ),
-                  style: TextButton.styleFrom(
-                    minimumSize: const Size(0, 40),
-                    padding: const EdgeInsets.symmetric(horizontal: 6),
-                    foregroundColor: YanciTheme.accent,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          if (hasModels && _showModelList) ...[
-            const SizedBox(height: YanciTheme.spacingXs),
-            ConstrainedBox(
-              constraints: BoxConstraints(
-                // Keep the first three results visible; the rest scrolls.
-                maxHeight: 172,
-              ),
-              child: hasSearchResults
-                  ? ListView.separated(
-                      shrinkWrap: true,
-                      itemCount: _filteredModels.length,
-                      separatorBuilder: (_, _) => Divider(
-                        height: 1,
-                        indent: YanciTheme.spacingSm,
-                        endIndent: YanciTheme.spacingSm,
-                        color: YanciTheme.textSecondary.withValues(alpha: 0.10),
-                      ),
-                      itemBuilder: (context, index) {
-                        final model = _filteredModels[index];
-                        final isSelected = model.id == _modelValueForProvider();
-                        return InkWell(
-                          onTap: () => _selectModel(model.id),
-                          child: Container(
-                            constraints: const BoxConstraints(minHeight: 52),
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: YanciTheme.spacingSm,
-                              vertical: 6,
-                            ),
-                            child: Row(
-                              children: [
-                                Expanded(
-                                  child: Text(
-                                    model.id,
-                                    maxLines: 2,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: YanciTheme.bodyText.copyWith(
-                                      fontSize: 13,
-                                      color: isSelected
-                                          ? YanciTheme.accent
-                                          : YanciTheme.textPrimary,
-                                    ),
-                                  ),
-                                ),
-                                if (isSelected)
-                                  Padding(
-                                    padding: const EdgeInsets.only(right: 4),
-                                    child: Icon(
-                                      Icons.check_rounded,
-                                      size: 18,
-                                      color: YanciTheme.accent,
-                                    ),
-                                  ),
-                                IconButton(
-                                  constraints: const BoxConstraints(
-                                    minWidth: 40,
-                                    minHeight: 40,
-                                  ),
-                                  padding: EdgeInsets.zero,
-                                  onPressed: () async {
-                                    await ApiSettings.toggleStarModel(
-                                      model.id,
-                                      provider: _provider,
-                                    );
-                                    final starred =
-                                        await ApiSettings.getStarredModels();
-                                    final providers =
-                                        await ApiSettings.getStarredModelProviders();
-                                    if (!mounted) return;
-                                    setState(() {
-                                      _starredModels = starred.toSet();
-                                      _starredModelProviders = providers;
-                                    });
-                                  },
-                                  icon: Icon(
-                                    _starredModels.contains(model.id)
-                                        ? Icons.star_rounded
-                                        : Icons.star_border_rounded,
-                                    size: 20,
-                                    color: _starredModels.contains(model.id)
-                                        ? YanciTheme.accent
-                                        : YanciTheme.textSecondary.withValues(
-                                            alpha: 0.42,
-                                          ),
-                                  ),
-                                  tooltip: _starredModels.contains(model.id)
-                                      ? L.pick(
-                                          en: 'Remove from favorites',
-                                          zhTW: '取消收藏',
-                                        )
-                                      : L.pick(
-                                          en: 'Add to favorites',
-                                          zhTW: '加入收藏',
-                                        ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        );
-                      },
-                    )
-                  : Padding(
-                      padding: const EdgeInsets.all(YanciTheme.spacingMd),
-                      child: Text(
-                        L.pick(
-                          en: 'No matching models',
-                          zhTW: '沒有符合的模型',
-                          zhCN: '没有符合的模型',
-                        ),
-                        style: YanciTheme.bodySmall,
-                      ),
-                    ),
-            ),
-          ],
-        ],
-      ),
+  Widget _buildModelPicker() {
+    return ApiModelPicker(
+      selectedModel: _modelValueForProvider(),
+      models: _models,
+      filteredModels: _filteredModels,
+      searchController: _modelSearchController,
+      isFetchingModels: _isFetchingModels,
+      showModelList: _showModelList,
+      starredModels: _starredModels,
+      selectionSuccessColor: _selectionSuccessColor,
+      onFilter: _filterModels,
+      onSelectModel: (modelId) => unawaited(_selectModel(modelId)),
+      onFetchModels: () => unawaited(_fetchModels()),
+      onToggleModelList: () => setState(() => _showModelList = !_showModelList),
+      onToggleStar: _toggleStarModel,
     );
   }
 
-  Widget _buildThinkingMachinesCard() {
-    final model = _thinkingMachinesModelCtrl.text.trim().isEmpty
-        ? ThinkingMachinesService.defaultModel
-        : _thinkingMachinesModelCtrl.text.trim();
-    final starred = _starredModels.contains(model);
-    return _buildGlassCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Padding(
-            padding: const EdgeInsets.only(top: 10, bottom: 4),
-            child: Text(
-              L.pick(
-                en: 'First-party Inkling API via Tinker (beta)',
-                zhTW: '透過 Tinker 使用第一方 Inkling API（beta）',
-              ),
-              style: YanciTheme.bodySmall.copyWith(
-                fontSize: 11,
-                color: YanciTheme.textSecondary.withValues(alpha: 0.65),
-              ),
-            ),
-          ),
-          _buildApiKeyField(
-            controller: _thinkingMachinesKeyCtrl,
-            hintText: 'Tinker API Key',
-            onChanged: (_) => _debouncedSave(),
-            trailingActions: [
-              _isTestingApi
-                  ? const Padding(
-                      padding: EdgeInsets.all(12),
-                      child: SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      ),
-                    )
-                  : IconButton(
-                      icon: const Icon(Icons.wifi_protected_setup, size: 18),
-                      tooltip: L.pick(
-                        en: 'Test Inkling connection',
-                        zhTW: '測試 Inkling 連線',
-                      ),
-                      onPressed: () => _testApiConnection(
-                        'thinking_machines',
-                        _thinkingMachinesKeyCtrl.text.trim(),
-                      ),
-                    ),
-            ],
-          ),
-          Divider(
-            color: YanciTheme.textSecondary.withValues(alpha: 0.1),
-            height: 1,
-          ),
-          TextField(
-            controller: _thinkingMachinesModelCtrl,
-            style: YanciTheme.bodyText.copyWith(fontSize: 13),
-            onChanged: (value) {
-              _selectedModel = value.trim().isEmpty
-                  ? ThinkingMachinesService.defaultModel
-                  : value.trim();
-              setState(() {});
-              _debouncedSave();
-            },
-            decoration: InputDecoration(
-              labelText: L.pick(en: 'Model', zhTW: '模型'),
-              hintText: ThinkingMachinesService.defaultModel,
-              labelStyle: YanciTheme.bodySmall.copyWith(
-                color: YanciTheme.textSecondary.withValues(alpha: 0.6),
-              ),
-              suffixIcon: IconButton(
-                icon: Icon(
-                  starred ? Icons.star_rounded : Icons.star_border_rounded,
-                  size: 20,
-                  color: starred
-                      ? Colors.amber
-                      : YanciTheme.textSecondary.withValues(alpha: 0.5),
-                ),
-                tooltip: L.pick(en: 'Star model', zhTW: '將模型加上星標'),
-                onPressed: () async {
-                  await ApiSettings.toggleStarModel(
-                    model,
-                    provider: 'thinking_machines',
-                  );
-                  final starredModels = await ApiSettings.getStarredModels();
-                  final providers =
-                      await ApiSettings.getStarredModelProviders();
-                  if (!mounted) return;
-                  setState(() {
-                    _starredModels = starredModels.toSet();
-                    _starredModelProviders = providers;
-                  });
-                },
-              ),
-              border: InputBorder.none,
-              contentPadding: const EdgeInsets.symmetric(vertical: 12),
-              isDense: true,
-            ),
-          ),
-          Divider(
-            color: YanciTheme.textSecondary.withValues(alpha: 0.1),
-            height: 1,
-          ),
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  L.pick(en: 'Thinking effort', zhTW: '思考強度'),
-                  style: YanciTheme.bodyText.copyWith(fontSize: 13),
-                ),
-              ),
-              DropdownButton<String>(
-                value: _thinkingMachinesEffort,
-                underline: const SizedBox(),
-                dropdownColor: YanciTheme.isDark
-                    ? const Color(0xF0302830)
-                    : Colors.white,
-                items: const [
-                  DropdownMenuItem(value: 'low', child: Text('Low')),
-                  DropdownMenuItem(value: 'medium', child: Text('Medium')),
-                  DropdownMenuItem(value: 'high', child: Text('High')),
-                  DropdownMenuItem(value: 'xhigh', child: Text('XHigh')),
-                ],
-                onChanged: (value) {
-                  if (value == null) return;
-                  setState(() => _thinkingMachinesEffort = value);
-                  _debouncedSave();
-                },
-              ),
-            ],
-          ),
-          Padding(
-            padding: const EdgeInsets.only(bottom: 10),
-            child: Text(
-              L.pick(
-                en: 'Uses Inkling native thinking blocks. Prompt caching and audio input are not supported by this compatible endpoint.',
-                zhTW: '使用 Inkling 原生思考區塊；此相容端點目前不支援提示詞快取與音訊輸入。',
-              ),
-              style: YanciTheme.bodySmall.copyWith(
-                fontSize: 10.5,
-                color: YanciTheme.textSecondary.withValues(alpha: 0.55),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
+  Future<void> _toggleStarModel(String modelId) async {
+    await ApiSettings.toggleStarModel(modelId, provider: _provider);
+    final starred = await ApiSettings.getStarredModels();
+    final providers = await ApiSettings.getStarredModelProviders();
+    if (!mounted) return;
+    setState(() {
+      _starredModels = starred.toSet();
+      _starredModelProviders = providers;
+    });
   }
 
   @override
@@ -2485,7 +1935,42 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
                             ),
                             const SizedBox(height: YanciTheme.spacingSm),
                             if (_provider == 'thinking_machines') ...[
-                              _buildThinkingMachinesCard(),
+                              ThinkingMachinesSettingsCard(
+                                keyController: _thinkingMachinesKeyCtrl,
+                                modelController: _thinkingMachinesModelCtrl,
+                                isTesting: _isTestingApi,
+                                obscureKey: _obscureProviderKeys,
+                                isStarred: _starredModels.contains(
+                                  _thinkingMachinesModelCtrl.text.trim().isEmpty
+                                      ? ThinkingMachinesService.defaultModel
+                                      : _thinkingMachinesModelCtrl.text.trim(),
+                                ),
+                                effort: _thinkingMachinesEffort,
+                                borderColor: _settingsBorderColor,
+                                onKeyChanged: (_) => _debouncedSave(),
+                                onModelChanged: (value) {
+                                  _selectedModel = value.trim().isEmpty
+                                      ? ThinkingMachinesService.defaultModel
+                                      : value.trim();
+                                  setState(() {});
+                                  _debouncedSave();
+                                },
+                                onEffortChanged: (value) {
+                                  setState(
+                                    () => _thinkingMachinesEffort = value,
+                                  );
+                                  _debouncedSave();
+                                },
+                                onTestConnection: (key) => _testApiConnection(
+                                  'thinking_machines',
+                                  key,
+                                ),
+                                onToggleObscure: () => setState(
+                                  () => _obscureProviderKeys =
+                                      !_obscureProviderKeys,
+                                ),
+                                onToggleStar: _toggleStarModel,
+                              ),
                             ],
                             if (_provider == 'openrouter') ...[
                               _buildGlassCard(
@@ -2905,7 +2390,7 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
                                     ),
                                   ),
                                 ),
-                              _buildModelPicker(context),
+                              _buildModelPicker(),
                             ],
                             const SizedBox(height: YanciTheme.spacingLg),
                             const ApiAdvancedSettings(cacheOnly: true),
