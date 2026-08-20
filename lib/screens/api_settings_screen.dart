@@ -11,12 +11,12 @@ import '../services/model_cost_policy.dart';
 import '../services/settings_manager.dart';
 import '../services/static_token_estimator.dart';
 import '../services/token_estimator.dart';
-import '../services/web_search_service.dart';
 import '../widgets/gradient_background.dart';
 import '../widgets/api_advanced_settings.dart';
 import '../widgets/api_key_field.dart';
 import '../widgets/api_model_picker.dart';
 import '../widgets/api_provider_picker.dart';
+import '../widgets/api_web_search_settings_card.dart';
 import '../widgets/thinking_machines_settings_card.dart';
 
 class ApiSettingsScreen extends StatefulWidget {
@@ -936,641 +936,6 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
     );
   }
 
-  String _webSearchModeLabel(WebSearchMode mode) => switch (mode) {
-    WebSearchMode.auto => L.pick(en: 'Auto', zhTW: '自動選擇', zhCN: '自动选择'),
-    WebSearchMode.gemini => 'Gemini',
-    WebSearchMode.openRouter => 'OpenRouter',
-    WebSearchMode.xai => 'Grok / xAI',
-    WebSearchMode.relay => L.pick(
-      en: 'Search relay',
-      zhTW: '搜尋中轉站',
-      zhCN: '搜索中转站',
-    ),
-    // Retained only to migrate old stored values; it is no longer shown.
-    WebSearchMode.dual => L.pick(en: 'Auto', zhTW: '自動選擇', zhCN: '自动选择'),
-  };
-
-  /// 搜尋模型選擇器：從星標模型中過濾出符合供應商的模型，
-  /// 加上一個「自動（使用預設）」選項。
-  Widget _buildWebSearchSearchModelPicker({
-    required String providerLabel,
-    required String filterProvider,
-    required String currentOverride,
-    required String fallbackModel,
-    required bool hasApiKey,
-    required ValueChanged<String> onChanged,
-    String? emptySelectionLabel,
-  }) {
-    // 過濾出當前 provider 的星標模型（排除不支援即時 API 的 :batch 模型）。
-    final candidates = <String>[];
-    for (final modelId in _starredModels) {
-      final p = _starredModelProviders[modelId] ?? '';
-      if (p == filterProvider && !modelId.toLowerCase().contains(':batch')) {
-        candidates.add(modelId);
-      }
-    }
-    candidates.sort();
-
-    // 有效模型 = override 如果非空，否則 fallback。
-    final effectiveModel = currentOverride.isNotEmpty
-        ? currentOverride
-        : fallbackModel;
-
-    // 確保 currentOverride 在候選清單裡（即使已取消星標）。
-    if (currentOverride.isNotEmpty && !candidates.contains(currentOverride)) {
-      candidates.insert(0, currentOverride);
-    }
-
-    final ready = hasApiKey && effectiveModel.isNotEmpty;
-    final statusText = !hasApiKey
-        ? L.pick(en: 'No API key', zhTW: '尚未輸入 API 金鑰', zhCN: '尚未输入 API 密钥')
-        : ready
-        ? L.pick(en: 'Ready', zhTW: '已就緒', zhCN: '已就绪')
-        : L.pick(en: 'No model selected', zhTW: '尚未選擇模型', zhCN: '尚未选择模型');
-
-    return ConstrainedBox(
-      constraints: const BoxConstraints(minHeight: 48),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              Icon(
-                ready ? Icons.check_circle_outline_rounded : Icons.info_outline,
-                size: 18,
-                color: ready ? YanciTheme.accent : YanciTheme.textSecondary,
-              ),
-              const SizedBox(width: 10),
-              Text(
-                '$providerLabel · $statusText',
-                style: YanciTheme.bodySmall.copyWith(
-                  color: YanciTheme.textPrimary,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 4),
-          Semantics(
-            label: L.pick(
-              en: '$providerLabel search model',
-              zhTW: '$providerLabel 搜尋模型',
-              zhCN: '$providerLabel 搜索模型',
-            ),
-            value: effectiveModel,
-            child: DropdownButton<String>(
-              value: currentOverride,
-              isExpanded: true,
-              underline: const SizedBox(),
-              dropdownColor: YanciTheme.isDark
-                  ? const Color(0xF0302830)
-                  : Colors.white,
-              style: YanciTheme.bodyText.copyWith(
-                fontSize: 12,
-                color: YanciTheme.textPrimary,
-              ),
-              items: [
-                // 「自動」選項 = 空字串 override
-                DropdownMenuItem<String>(
-                  value: '',
-                  child: Text(
-                    L.pick(
-                      en:
-                          emptySelectionLabel ??
-                          (fallbackModel.isEmpty
-                              ? 'Choose a starred model'
-                              : 'Auto · $fallbackModel'),
-                      zhTW:
-                          emptySelectionLabel ??
-                          (fallbackModel.isEmpty
-                              ? '選擇已星標模型'
-                              : '自動 · $fallbackModel'),
-                      zhCN:
-                          emptySelectionLabel ??
-                          (fallbackModel.isEmpty
-                              ? '选择已星标模型'
-                              : '自动 · $fallbackModel'),
-                    ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: YanciTheme.bodyText.copyWith(
-                      fontSize: 12,
-                      color: YanciTheme.textSecondary,
-                    ),
-                  ),
-                ),
-                for (final modelId in candidates)
-                  DropdownMenuItem<String>(
-                    value: modelId,
-                    child: Text(
-                      modelId,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: YanciTheme.bodyText.copyWith(fontSize: 12),
-                    ),
-                  ),
-              ],
-              onChanged: (value) {
-                if (value == null) return;
-                onChanged(value);
-              },
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.only(bottom: 4),
-            child: Text(
-              L.pick(
-                en: 'Star models for this source above, then choose one here.',
-                zhTW: '請先在上方替此來源的模型加上星標，再於此選擇。',
-                zhCN: '请先在上方为此来源的模型加上星标，再在此选择。',
-              ),
-              style: YanciTheme.bodySmall.copyWith(
-                fontSize: 10,
-                color: YanciTheme.textSecondary.withValues(alpha: 0.65),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  WebSearchMode _resolvedAutomaticWebSearchMode() {
-    final openRouterModel = _wsSearchOrModelOverride.isNotEmpty
-        ? _wsSearchOrModelOverride
-        : openRouterWebSearchPreviewModel;
-    final geminiModel = _wsSearchGeminiModelOverride.isNotEmpty
-        ? _wsSearchGeminiModelOverride
-        : _webSearchGeminiModel;
-    final xaiModel = _wsSearchXaiModelOverride.isNotEmpty
-        ? _wsSearchXaiModelOverride
-        : _webSearchXaiModel;
-    final relayEndpoint = Uri.tryParse(_webSearchRelayEndpointCtrl.text.trim());
-
-    final ready = <WebSearchMode, bool>{
-      WebSearchMode.openRouter:
-          _apiKeyController.text.trim().isNotEmpty &&
-          isExplicitOpenRouterWebSearchModel(openRouterModel),
-      WebSearchMode.gemini:
-          _geminiKeyCtrl.text.trim().isNotEmpty &&
-          isSupportedGeminiWebSearchModel(geminiModel),
-      WebSearchMode.xai:
-          _xaiKeyCtrl.text.trim().isNotEmpty && xaiModel.trim().isNotEmpty,
-      WebSearchMode.relay:
-          _webSearchRelayKeyCtrl.text.trim().isNotEmpty &&
-          _webSearchRelayModelCtrl.text.trim().isNotEmpty &&
-          relayEndpoint != null &&
-          relayEndpoint.scheme == 'https' &&
-          relayEndpoint.host.isNotEmpty &&
-          relayEndpoint.userInfo.isEmpty &&
-          relayEndpoint.fragment.isEmpty,
-    };
-    final current = switch (_provider) {
-      'gemini' => WebSearchMode.gemini,
-      'openrouter' => WebSearchMode.openRouter,
-      'xai' => WebSearchMode.xai,
-      _ => null,
-    };
-    if (current != null && ready[current] == true) return current;
-    for (final mode in const <WebSearchMode>[
-      WebSearchMode.gemini,
-      WebSearchMode.openRouter,
-      WebSearchMode.xai,
-      WebSearchMode.relay,
-    ]) {
-      if (ready[mode] == true) return mode;
-    }
-
-    // Nothing is configured yet: expose the most relevant picker so setup can
-    // continue without silently changing the runtime auto-selection order.
-    return switch (_provider) {
-      'openrouter' => WebSearchMode.openRouter,
-      'xai' => WebSearchMode.xai,
-      'openai_compatible' => WebSearchMode.relay,
-      _ => WebSearchMode.gemini,
-    };
-  }
-
-  List<Widget> _buildSelectedWebSearchSourceOptions() {
-    final mode = _webSearchMode == WebSearchMode.auto
-        ? _resolvedAutomaticWebSearchMode()
-        : _webSearchMode;
-    final showOpenRouter = mode == WebSearchMode.openRouter;
-    final showGemini = mode == WebSearchMode.gemini;
-    final showXai = mode == WebSearchMode.xai;
-    final showRelay = mode == WebSearchMode.relay;
-    if (!showOpenRouter && !showGemini && !showXai && !showRelay) {
-      return <Widget>[];
-    }
-    final sections = <Widget>[];
-    void addSection(Widget child) {
-      if (sections.isNotEmpty) {
-        sections.add(
-          Divider(
-            color: YanciTheme.textSecondary.withValues(alpha: 0.12),
-            height: 1,
-          ),
-        );
-      }
-      sections.add(child);
-    }
-
-    if (showOpenRouter) {
-      addSection(
-        _buildWebSearchSearchModelPicker(
-          providerLabel: 'OpenRouter',
-          filterProvider: 'openrouter',
-          currentOverride: _wsSearchOrModelOverride,
-          fallbackModel: openRouterWebSearchPreviewModel,
-          hasApiKey: _apiKeyController.text.trim().isNotEmpty,
-          onChanged: (value) {
-            setState(() => _wsSearchOrModelOverride = value);
-            _debouncedSave();
-          },
-        ),
-      );
-    }
-    if (showGemini) {
-      addSection(
-        _buildWebSearchSearchModelPicker(
-          providerLabel: 'Gemini',
-          filterProvider: 'gemini',
-          currentOverride: _wsSearchGeminiModelOverride,
-          fallbackModel: _webSearchGeminiModel,
-          hasApiKey: _geminiKeyCtrl.text.trim().isNotEmpty,
-          onChanged: (value) {
-            setState(() => _wsSearchGeminiModelOverride = value);
-            _debouncedSave();
-          },
-        ),
-      );
-    }
-    if (showXai) {
-      addSection(
-        _buildWebSearchSearchModelPicker(
-          providerLabel: 'Grok / xAI',
-          filterProvider: 'xai',
-          currentOverride: _wsSearchXaiModelOverride,
-          fallbackModel: _webSearchXaiModel,
-          hasApiKey: _xaiKeyCtrl.text.trim().isNotEmpty,
-          onChanged: (value) {
-            setState(() => _wsSearchXaiModelOverride = value);
-            _debouncedSave();
-          },
-        ),
-      );
-    }
-    if (showRelay) addSection(_buildWebSearchRelayOptions());
-    return sections;
-  }
-
-  Widget _buildWebSearchRelayOptions() {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          Text(
-            L.pick(
-              en: 'Search relay (OpenAI-compatible)',
-              zhTW: '搜尋中轉站（OpenAI 相容）',
-              zhCN: '搜索中转站（OpenAI 兼容）',
-            ),
-            style: YanciTheme.bodySmall.copyWith(
-              color: YanciTheme.textSecondary,
-              fontWeight: FontWeight.w500,
-            ),
-          ),
-          const SizedBox(height: 6),
-          TextField(
-            controller: _webSearchRelayEndpointCtrl,
-            keyboardType: TextInputType.url,
-            onChanged: (_) => _debouncedSave(),
-            decoration: InputDecoration(
-              hintText: L.pick(
-                en: 'https://relay.example/v1/chat/completions',
-                zhTW: 'https://relay.example/v1/chat/completions',
-                zhCN: 'https://relay.example/v1/chat/completions',
-              ),
-              hintStyle: YanciTheme.bodySmall.copyWith(
-                color: YanciTheme.textSecondary.withValues(alpha: 0.4),
-              ),
-              border: const OutlineInputBorder(),
-              isDense: true,
-            ),
-          ),
-          const SizedBox(height: 6),
-          TextField(
-            controller: _webSearchRelayKeyCtrl,
-            obscureText: _obscureProviderKeys,
-            onChanged: (_) => _debouncedSave(),
-            decoration: InputDecoration(
-              hintText: L.pick(
-                en: 'Relay API Key',
-                zhTW: '中轉站 API 金鑰',
-                zhCN: '中转站 API 密钥',
-              ),
-              hintStyle: YanciTheme.bodySmall.copyWith(
-                color: YanciTheme.textSecondary.withValues(alpha: 0.4),
-              ),
-              border: const OutlineInputBorder(),
-              isDense: true,
-              suffixIcon: IconButton(
-                icon: Icon(
-                  _obscureProviderKeys
-                      ? Icons.visibility_outlined
-                      : Icons.visibility_off_outlined,
-                  size: 20,
-                ),
-                tooltip: L.pick(
-                  en: _obscureProviderKeys ? 'Show API Key' : 'Hide API Key',
-                  zhTW: _obscureProviderKeys ? '顯示 API Key' : '隱藏 API Key',
-                ),
-                onPressed: () => setState(
-                  () => _obscureProviderKeys = !_obscureProviderKeys,
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(height: 6),
-          _buildWebSearchSearchModelPicker(
-            providerLabel: L.pick(
-              en: 'Search relay',
-              zhTW: '搜尋中轉站',
-              zhCN: '搜索中转站',
-            ),
-            filterProvider: 'openai_compatible',
-            currentOverride: _webSearchRelayModelCtrl.text.trim(),
-            fallbackModel: '',
-            hasApiKey:
-                _webSearchRelayEndpointCtrl.text.trim().isNotEmpty &&
-                _webSearchRelayKeyCtrl.text.trim().isNotEmpty,
-            onChanged: (value) {
-              setState(() => _webSearchRelayModelCtrl.text = value);
-              _debouncedSave();
-            },
-          ),
-          const SizedBox(height: 6),
-          Text(
-            L.pick(
-              en: 'Only HTTPS OpenAI Chat Completions relays are accepted; the relay must return url_citation annotations.',
-              zhTW:
-                  '只接受 HTTPS OpenAI Chat Completions 中轉站；中轉站必須回傳 url_citation 引用。',
-              zhCN:
-                  '只接受 HTTPS OpenAI Chat Completions 中转站；中转站必须返回 url_citation 引用。',
-            ),
-            style: YanciTheme.bodySmall.copyWith(
-              fontSize: 11,
-              height: 1.4,
-              color: YanciTheme.textSecondary,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildWebSearchSettingsCard() {
-    return AnimatedBuilder(
-      animation: Listenable.merge([
-        _apiKeyController,
-        _geminiKeyCtrl,
-        _xaiKeyCtrl,
-        _webSearchRelayEndpointCtrl,
-        _webSearchRelayKeyCtrl,
-        _webSearchRelayModelCtrl,
-      ]),
-      builder: (context, _) {
-        final selectedModeLabel = _webSearchModeLabel(_webSearchMode);
-        return _buildGlassCard(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Material(
-                color: Colors.transparent,
-                child: SwitchListTile.adaptive(
-                  contentPadding: EdgeInsets.zero,
-                  title: Text(
-                    L.pick(
-                      en: 'Native web search',
-                      zhTW: '原生網路搜尋',
-                      zhCN: '原生网络搜索',
-                    ),
-                    style: YanciTheme.bodyText.copyWith(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                      color: YanciTheme.textPrimary,
-                    ),
-                  ),
-                  value: _webSearchEnabled,
-                  activeThumbColor: YanciTheme.accent,
-                  activeTrackColor: YanciTheme.accent.withValues(alpha: 0.3),
-                  onChanged: webSearchLiveDeveloperPreviewEnabled
-                      ? (value) {
-                          setState(() => _webSearchEnabled = value);
-                          _debouncedSave();
-                          StaticTokenEstimator.showAfterToggle(context);
-                        }
-                      : null,
-                ),
-              ),
-              if (_webSearchEnabled) ...[
-                Divider(
-                  color: YanciTheme.textSecondary.withValues(alpha: 0.12),
-                  height: 1,
-                ),
-                const SizedBox(height: 12),
-                Text(
-                  L.pick(en: 'Source', zhTW: '來源', zhCN: '来源'),
-                  style: YanciTheme.bodySmall.copyWith(
-                    color: YanciTheme.textSecondary,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-                Semantics(
-                  label: L.pick(
-                    en: 'Search source',
-                    zhTW: '搜尋來源',
-                    zhCN: '搜索来源',
-                  ),
-                  value: selectedModeLabel,
-                  child: Container(
-                    decoration: BoxDecoration(
-                      color: Colors.transparent,
-                      borderRadius: BorderRadius.circular(YanciTheme.radiusSm),
-                      border: Border.all(
-                        color: _settingsBorderColor,
-                        width: 0.75,
-                      ),
-                    ),
-                    padding: const EdgeInsets.symmetric(horizontal: 12),
-                    child: DropdownButton<WebSearchMode>(
-                      value: _webSearchMode,
-                      isExpanded: true,
-                      underline: const SizedBox(),
-                      dropdownColor: YanciTheme.isDark
-                          ? const Color(0xF0302830)
-                          : Colors.white,
-                      style: YanciTheme.bodyText.copyWith(
-                        fontSize: 13,
-                        color: YanciTheme.textPrimary,
-                      ),
-                      items: [
-                        for (final mode in WebSearchMode.values)
-                          if (mode != WebSearchMode.dual)
-                            DropdownMenuItem<WebSearchMode>(
-                              value: mode,
-                              child: Text(
-                                _webSearchModeLabel(mode),
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ),
-                      ],
-                      onChanged: (value) {
-                        if (value == null) return;
-                        setState(() => _webSearchMode = value);
-                        _debouncedSave();
-                      },
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 10),
-                ..._buildSelectedWebSearchSourceOptions(),
-                Divider(
-                  color: YanciTheme.textSecondary.withValues(alpha: 0.12),
-                  height: 1,
-                ),
-                const SizedBox(height: 12),
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        L.pick(
-                          en: 'Web pages per search',
-                          zhTW: '每次搜尋網頁數',
-                          zhCN: '每次搜索网页数',
-                        ),
-                        style: YanciTheme.bodySmall.copyWith(
-                          color: YanciTheme.textPrimary,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                    ),
-                    Text(
-                      L.pick(
-                        en: '$_webSearchMaxResults pages',
-                        zhTW: '$_webSearchMaxResults 頁',
-                        zhCN: '$_webSearchMaxResults 页',
-                      ),
-                      style: YanciTheme.bodySmall.copyWith(
-                        color: YanciTheme.accent,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ],
-                ),
-                Semantics(
-                  label: L.pick(
-                    en: 'Web pages per search',
-                    zhTW: '每次搜尋網頁數',
-                    zhCN: '每次搜索网页数',
-                  ),
-                  value: '$_webSearchMaxResults',
-                  child: Slider.adaptive(
-                    value: _webSearchMaxResults.toDouble(),
-                    min: WebSearchSettings.minMaxResults.toDouble(),
-                    max: WebSearchSettings.maxMaxResults.toDouble(),
-                    divisions:
-                        WebSearchSettings.maxMaxResults -
-                        WebSearchSettings.minMaxResults,
-                    label: '$_webSearchMaxResults',
-                    activeColor: YanciTheme.accent,
-                    onChanged: (value) {
-                      setState(() => _webSearchMaxResults = value.round());
-                      _debouncedSave();
-                    },
-                    semanticFormatterCallback: (value) => L.pick(
-                      en: '${value.round()} web pages per search',
-                      zhTW: '每次搜尋 ${value.round()} 個網頁',
-                      zhCN: '每次搜索 ${value.round()} 个网页',
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Divider(
-                  color: YanciTheme.textSecondary.withValues(alpha: 0.12),
-                  height: 1,
-                ),
-                const SizedBox(height: 12),
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        L.pick(
-                          en: 'Daily provider-launch cap',
-                          zhTW: '每日供應商啟動上限',
-                          zhCN: '每日供应商启动上限',
-                        ),
-                        style: YanciTheme.bodySmall.copyWith(
-                          color: YanciTheme.textPrimary,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                    ),
-                    Text(
-                      L.pick(
-                        en: '$_webSearchDailyProviderLaunchCap / day',
-                        zhTW: '$_webSearchDailyProviderLaunchCap 次／日',
-                        zhCN: '$_webSearchDailyProviderLaunchCap 次／日',
-                      ),
-                      style: YanciTheme.bodySmall.copyWith(
-                        color: YanciTheme.accent,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ],
-                ),
-                Semantics(
-                  label: L.pick(
-                    en: 'Daily provider-launch cap',
-                    zhTW: '每日供應商啟動上限',
-                    zhCN: '每日供应商启动上限',
-                  ),
-                  value: '$_webSearchDailyProviderLaunchCap',
-                  child: Slider.adaptive(
-                    value: _webSearchDailyProviderLaunchCap.toDouble(),
-                    min: WebSearchSettings.minDailyProviderLaunchCap.toDouble(),
-                    max: WebSearchSettings.maxDailyProviderLaunchCap.toDouble(),
-                    divisions:
-                        WebSearchSettings.maxDailyProviderLaunchCap -
-                        WebSearchSettings.minDailyProviderLaunchCap,
-                    label: '$_webSearchDailyProviderLaunchCap',
-                    activeColor: YanciTheme.accent,
-                    onChanged: (value) {
-                      setState(
-                        () => _webSearchDailyProviderLaunchCap = value.round(),
-                      );
-                      _debouncedSave();
-                    },
-                    semanticFormatterCallback: (value) => L.pick(
-                      en: '${value.round()} provider launches per day',
-                      zhTW: '每日 ${value.round()} 次供應商啟動',
-                      zhCN: '每日 ${value.round()} 次供应商启动',
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 8),
-              ],
-            ],
-          ),
-        );
-      },
-    );
-  }
-
   void _showCostPolicyNotice(ModelCostPolicyNotice notice) {
     if (!mounted || notice == ModelCostPolicyNotice.none) return;
     final message = switch (notice) {
@@ -2465,7 +1830,84 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
                               ),
                               const SizedBox(height: YanciTheme.spacingLg),
                               const SizedBox(height: YanciTheme.spacingSm),
-                              _buildWebSearchSettingsCard(),
+                              ApiWebSearchSettingsCard(
+                                openRouterKeyController: _apiKeyController,
+                                geminiKeyController: _geminiKeyCtrl,
+                                xaiKeyController: _xaiKeyCtrl,
+                                relayEndpointController:
+                                    _webSearchRelayEndpointCtrl,
+                                relayKeyController: _webSearchRelayKeyCtrl,
+                                relayModelController: _webSearchRelayModelCtrl,
+                                enabled: _webSearchEnabled,
+                                mode: _webSearchMode,
+                                dailyProviderLaunchCap:
+                                    _webSearchDailyProviderLaunchCap,
+                                maxResults: _webSearchMaxResults,
+                                geminiModel: _webSearchGeminiModel,
+                                xaiModel: _webSearchXaiModel,
+                                openRouterModelOverride:
+                                    _wsSearchOrModelOverride,
+                                geminiModelOverride:
+                                    _wsSearchGeminiModelOverride,
+                                xaiModelOverride: _wsSearchXaiModelOverride,
+                                currentProvider: _provider,
+                                starredModels: _starredModels,
+                                starredModelProviders: _starredModelProviders,
+                                obscureProviderKeys: _obscureProviderKeys,
+                                enabledToggleActive:
+                                    webSearchLiveDeveloperPreviewEnabled,
+                                borderColor: _settingsBorderColor,
+                                onEnabledChanged: (value) {
+                                  setState(() => _webSearchEnabled = value);
+                                  _debouncedSave();
+                                  StaticTokenEstimator.showAfterToggle(context);
+                                },
+                                onModeChanged: (value) {
+                                  setState(() => _webSearchMode = value);
+                                  _debouncedSave();
+                                },
+                                onDailyProviderLaunchCapChanged: (value) {
+                                  setState(
+                                    () => _webSearchDailyProviderLaunchCap =
+                                        value,
+                                  );
+                                  _debouncedSave();
+                                },
+                                onMaxResultsChanged: (value) {
+                                  setState(() => _webSearchMaxResults = value);
+                                  _debouncedSave();
+                                },
+                                onOpenRouterModelChanged: (value) {
+                                  setState(
+                                    () => _wsSearchOrModelOverride = value,
+                                  );
+                                  _debouncedSave();
+                                },
+                                onGeminiModelChanged: (value) {
+                                  setState(
+                                    () => _wsSearchGeminiModelOverride = value,
+                                  );
+                                  _debouncedSave();
+                                },
+                                onXaiModelChanged: (value) {
+                                  setState(
+                                    () => _wsSearchXaiModelOverride = value,
+                                  );
+                                  _debouncedSave();
+                                },
+                                onRelayModelChanged: (value) {
+                                  setState(
+                                    () => _webSearchRelayModelCtrl.text = value,
+                                  );
+                                  _debouncedSave();
+                                },
+                                onToggleObscureProviderKeys: () => setState(
+                                  () => _obscureProviderKeys =
+                                      !_obscureProviderKeys,
+                                ),
+                                onRelayEndpointChanged: (_) => _debouncedSave(),
+                                onRelayKeyChanged: (_) => _debouncedSave(),
+                              ),
                               const SizedBox(height: YanciTheme.spacingLg),
                               _buildSectionTitle(
                                 L.get('settings_summary_model'),
