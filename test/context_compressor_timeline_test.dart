@@ -176,4 +176,35 @@ void main() {
       isFalse,
     );
   });
+
+  test('menstrual recovery only considers character-owned statements', () {
+    expect(
+      ContextCompressor.needsMenstrualRecoveryForTesting(
+        messages: [message(71, '我今天生理期第二天。')],
+        candidates: const [],
+      ),
+      isFalse,
+    );
+    expect(
+      ContextCompressor.needsMenstrualRecoveryForTesting(
+        messages: [message(73, '你記得嗎，我今天生理期第一天。')],
+        candidates: const [],
+      ),
+      isFalse,
+    );
+    expect(
+      ContextCompressor.needsMenstrualRecoveryForTesting(
+        messages: [message(72, '我今天生理期第二天。')],
+        candidates: const [],
+      ),
+      isTrue,
+    );
+    expect(
+      ContextCompressor.needsMenstrualRecoveryForTesting(
+        messages: [message(74, '你今天生理期第二天。')],
+        candidates: const [],
+      ),
+      isFalse,
+    );
+  });
 }

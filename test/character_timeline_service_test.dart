@@ -609,4 +609,132 @@ void main() {
     expect(isoWeekGroup(DateTime(2021, 1, 1)), '2020-W53');
     expect(isoWeekGroup(DateTime(2026, 7, 18)), '2026-W29');
   });
+
+  group('menstrual subject ownership', () {
+    Message source(String text, {required bool isUser, int id = 900}) {
+      return Message(
+        id: id,
+        conversationId: 'conv-a',
+        characterId: 'char-a',
+        text: text,
+        isUser: isUser,
+        createdAt: DateTime(2026, 7, 18, 20),
+      );
+    }
+
+    Future<int> scan(String text, {required bool isUser, int id = 900}) {
+      return CharacterTimelineService.storeExplicitMenstrualMessages(
+        characterId: 'char-a',
+        messages: [source(text, isUser: isUser, id: id)],
+      );
+    }
+
+    test('user talking about their own period is rejected', () async {
+      expect(await scan('我今天生理期第二天。', isUser: true), 0);
+    });
+
+    test('user talking about the character period is accepted', () async {
+      expect(await scan('你今天生理期第二天。', isUser: true), greaterThan(0));
+    });
+
+    test(
+      'a leading second person does not win over the local clause',
+      () async {
+        expect(await scan('你記得嗎，我今天生理期第一天。', isUser: true), 0);
+      },
+    );
+
+    test('character first person is accepted', () async {
+      expect(await scan('我今天生理期第二天。', isUser: false), greaterThan(0));
+    });
+
+    test('character second person is rejected', () async {
+      expect(await scan('你今天生理期第二天。', isUser: false), 0);
+    });
+
+    test('a subjectless statement follows its speaker', () async {
+      expect(await scan('今天生理期第二天。', isUser: false), greaterThan(0));
+      expect(await scan('今天生理期第二天。', isUser: true, id: 901), 0);
+    });
+
+    test('a pronoun after the menstrual term still determines ownership', () {
+      expect(
+        CharacterTimelineService.menstrualStatementBelongsToCharacter(
+          source('生理期第二天的是你。', isUser: true),
+        ),
+        isTrue,
+      );
+      expect(
+        CharacterTimelineService.menstrualStatementBelongsToCharacter(
+          source('生理期第二天的是你。', isUser: false),
+        ),
+        isFalse,
+      );
+      expect(
+        CharacterTimelineService.menstrualStatementBelongsToCharacter(
+          source('生理期第二天的是我。', isUser: false),
+        ),
+        isTrue,
+      );
+      expect(
+        CharacterTimelineService.menstrualStatementBelongsToCharacter(
+          source('生理期第二天的是她。', isUser: false),
+        ),
+        isFalse,
+      );
+    });
+
+    test('english pronouns follow the same rule', () async {
+      expect(await scan('my period day 2 today.', isUser: true), 0);
+      expect(
+        await scan('your period day 2 today.', isUser: true, id: 902),
+        greaterThan(0),
+      );
+    });
+
+    test('summary candidates cannot bypass the ownership check', () async {
+      final inserted = await CharacterTimelineService.storeSummaryCandidates(
+        characterId: 'char-a',
+        candidates: const [
+          TimelineEventCandidate(
+            type: 'state',
+            subject: 'character',
+            sourceMessageIds: [910],
+            occurredOn: '2026-07-18',
+            dateBasis: 'message_time',
+            key: '生理週期',
+            value: '生理期第2天',
+            evidence: '我今天生理期第二天',
+          ),
+        ],
+        sourceMessages: [source('我今天生理期第二天。', isUser: true, id: 910)],
+      );
+
+      expect(inserted, 0);
+    });
+
+    test(
+      'a menstrual value without menstrual source evidence is rejected',
+      () async {
+        final inserted = await CharacterTimelineService.storeSummaryCandidates(
+          characterId: 'char-a',
+          candidates: const [
+            TimelineEventCandidate(
+              type: 'state',
+              subject: 'character',
+              sourceMessageIds: [911],
+              occurredOn: '2026-07-18',
+              dateBasis: 'message_time',
+              key: '生理週期',
+              value: '生理期第2天',
+              evidence: '我今天有點累',
+            ),
+          ],
+          sourceMessages: [source('我今天有點累。', isUser: false, id: 911)],
+        );
+
+        expect(inserted, 0);
+      },
+    );
+  });
 }

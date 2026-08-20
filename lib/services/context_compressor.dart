@@ -1173,9 +1173,7 @@ Rules:
     required List<Message> messages,
     required List<TimelineEventCandidate> candidates,
   }) async {
-    final relevant = messages
-        .where((message) => _hasExplicitMenstrualCue(message.text))
-        .toList();
+    final relevant = messages.where(_isCharacterMenstrualSource).toList();
     if (relevant.isEmpty ||
         candidates.any(
           (candidate) =>
@@ -1189,11 +1187,11 @@ Rules:
       final response = await _callModel(
         systemPrompt: L.pick(
           en: '''
-Extract menstrual timeline candidates explicitly stated in the supplied messages. Day N or a period explicitly still active today is type=state, subject=character, key=menstrual cycle. A stated start or end is type=event, subject=character. Use the message's local date to resolve occurred_on and quote an exact source substring as evidence.
+Extract menstrual timeline candidates explicitly stated in the supplied messages. Every message is tagged speaker:user or speaker:char. In a speaker:user message "I/my/me" is the user and "you/your" is the character; in a speaker:char message it is the reverse. Only extract statements about the character; drop anything the user says about themselves. Day N or a period explicitly still active today is type=state, subject=character, key=menstrual cycle. A stated start or end is type=event, subject=character. Use the message's local date to resolve occurred_on and quote an exact source substring as evidence.
 Output valid JSON only: {"summary":"","timeline":[{"type":"state","subject":"character","source_message_ids":[1],"occurred_on":"YYYY-MM-DD","date_basis":"message_time|relative|explicit","key":"menstrual cycle","value":"period day N","evidence":"exact quote"}]}. Use an empty timeline array when there is no explicit candidate.
 ''',
           zhTW: '''
-從消息中提取明確說出的角色生理週期候選。生理期第 N 天或明確說今天仍在生理期，使用 type=state、subject=character、key=生理週期；明確開始或結束使用 type=event、subject=character。以消息本地日期換算 occurred_on，evidence 逐字引用來源片段。
+從消息中提取明確說出的角色生理週期候選。每條消息都帶 speaker:user 或 speaker:char 標記：speaker:user 的消息裡「我」是使用者、「你」是角色；speaker:char 的消息裡相反。只提取屬於角色的敘述，使用者講自己的一律不要提取。生理期第 N 天或明確說今天仍在生理期，使用 type=state、subject=character、key=生理週期；明確開始或結束使用 type=event、subject=character。以消息本地日期換算 occurred_on，evidence 逐字引用來源片段。
 只輸出合法 JSON：{"summary":"","timeline":[{"type":"state","subject":"character","source_message_ids":[1],"occurred_on":"YYYY-MM-DD","date_basis":"message_time|relative|explicit","key":"生理週期","value":"生理期第N天","evidence":"原文"}]}。沒有明確候選時 timeline 為空陣列。
 ''',
         ),
@@ -1221,13 +1219,19 @@ Output valid JSON only: {"summary":"","timeline":[{"type":"state","subject":"cha
     required List<Message> messages,
     required List<TimelineEventCandidate> candidates,
   }) {
-    return messages.any((message) => _hasExplicitMenstrualCue(message.text)) &&
+    return messages.any(_isCharacterMenstrualSource) &&
         !candidates.any(
           (candidate) =>
               _hasMenstrualTerm(candidate.key ?? '') ||
               _hasMenstrualTerm(candidate.evidence),
         );
   }
+
+  /// 補提取只看「屬於角色」的生理週期敘述。使用者說自己的不進候選——
+  /// 驗證器還會再擋一次，但不該先送去讓模型看。
+  static bool _isCharacterMenstrualSource(Message message) =>
+      _hasExplicitMenstrualCue(message.text) &&
+      CharacterTimelineService.menstrualStatementBelongsToCharacter(message);
 
   static String _timelineCandidateIdentity(TimelineEventCandidate candidate) =>
       '${candidate.type}|${candidate.subject}|${candidate.occurredOn}|'

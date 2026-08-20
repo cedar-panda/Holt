@@ -10,6 +10,13 @@ import 'locale_strings.dart';
 
 class TimelineEventCandidate {
   final String type;
+
+  /// 模型 JSON contract 裡的候選分類欄位。
+  ///
+  /// 注意：這**不是**經過驗證的歸屬，也不會被寫進 character_timeline
+  /// （表裡沒有 subject 欄位），驗證器不讀它。真正的主體判斷靠
+  /// [_menstrualBelongsToCharacter]，依據是來源訊息的 isUser 加上生理期
+  /// 分句的局部人稱。不要把這個欄位當成可信的 owner。
   final String subject;
   final List<int> sourceMessageIds;
   final String occurredOn;
@@ -29,6 +36,9 @@ class TimelineEventCandidate {
     required this.evidence,
   });
 }
+
+/// 生理週期所在小分句裡最靠近關鍵詞的人稱。
+enum _MenstrualPerson { none, first, second, third }
 
 /// ═══════════════════════════════════════════════
 /// 角色生活化 Timeline 服務
@@ -190,6 +200,14 @@ class CharacterTimelineService {
       if (message.id == null) continue;
       final evidence = _extractMenstrualEvidence(message.text);
       if (evidence == null) continue;
+      // 使用者說自己的生理期，不能記成角色的。驗證器還會再擋一次，
+      // 這裡提早退出只是不做白工，也讓 debug 計數反映實際收錄量。
+      if (!_menstrualBelongsToCharacter(
+        evidence: evidence,
+        speakerIsUser: message.isUser,
+      )) {
+        continue;
+      }
 
       final day = _menstrualDayFromText(evidence);
       final ended = _hasMenstrualEndCue(evidence);
@@ -274,6 +292,125 @@ class CharacterTimelineService {
         : evidence.substring(0, 240).trim();
   }
 
+  static final RegExp _menstrualTermPattern = RegExp(
+    r'生理期|生理週期|生理周期|經期|经期|月經|月经|'
+    r'\bperiod\b|\bmenstrual\b|\bmenstruation\b',
+    caseSensitive: false,
+  );
+
+  /// 比句號更細的斷點；用來切出緊鄰生理期關鍵詞的那一小段。
+  static final RegExp _menstrualClauseBreak = RegExp(r'[，,、。！？!?；;：:\n]');
+
+  // 撇號寫法（i'm、you're）不必單獨列：撇號是非單字字元，\bi\b 與
+  // \byou\b 已經會命中。
+  static final RegExp _menstrualFirstPerson = RegExp(
+    r'我|咱|俺|\bi\b|\bim\b|\bmy\b|\bme\b|\bmine\b',
+    caseSensitive: false,
+  );
+
+  static final RegExp _menstrualSecondPerson = RegExp(
+    r'你|妳|您|\byou\b|\byour\b|\byours\b',
+    caseSensitive: false,
+  );
+
+  static final RegExp _menstrualThirdPerson = RegExp(
+    r'她|他|牠|它|\bshe\b|\bher\b|\bhers\b|\bhe\b|\bhis\b',
+    caseSensitive: false,
+  );
+
+  /// 取生理期關鍵詞前後、同一小分句內最靠近它的人稱。
+  ///
+  /// 只看那一小段是刻意的：「你記得嗎，我今天生理期第一天」裡，前面的
+  /// 「你」不能覆蓋後面分句的「我」。
+  static _MenstrualPerson _menstrualSubjectPerson(String evidence) {
+    final term = _menstrualTermPattern.firstMatch(evidence);
+    if (term == null) return _MenstrualPerson.none;
+
+    final before = evidence.substring(0, term.start);
+    final priorBreaks = _menstrualClauseBreak.allMatches(before).toList();
+    final clauseStart = priorBreaks.isEmpty ? 0 : priorBreaks.last.end;
+    final after = evidence.substring(term.end);
+    final nextBreak = _menstrualClauseBreak.firstMatch(after);
+    final clauseEnd = nextBreak == null
+        ? evidence.length
+        : term.end + nextBreak.start;
+    final clause = evidence.substring(clauseStart, clauseEnd);
+    final termStart = term.start - clauseStart;
+    final termEnd = term.end - clauseStart;
+
+    var person = _MenstrualPerson.none;
+    var nearestDistance = 1 << 30;
+    void scan(RegExp pattern, _MenstrualPerson value) {
+      for (final match in pattern.allMatches(clause)) {
+        final distance = match.end <= termStart
+            ? termStart - match.end
+            : match.start >= termEnd
+            ? match.start - termEnd
+            : 0;
+        if (distance < nearestDistance) {
+          nearestDistance = distance;
+          person = value;
+        }
+      }
+    }
+
+    scan(_menstrualFirstPerson, _MenstrualPerson.first);
+    scan(_menstrualSecondPerson, _MenstrualPerson.second);
+    scan(_menstrualThirdPerson, _MenstrualPerson.third);
+    return person;
+  }
+
+  /// 這段生理週期敘述講的是不是角色自己。
+  ///
+  /// 同一句「我今天生理期第二天」，出現在誰的訊息裡決定了「我」是誰，
+  /// 純文字判不出來——必須帶上來源訊息的 isUser。
+  ///
+  /// 範圍限制：目前只認人稱代詞，不認角色名／使用者名。名字出現而沒有
+  /// 代詞時落在 none，視同說話者本人；這個限制可能造成名字句誤拒，角色
+  /// 消息以名字談別人時也可能誤收，後續若要支援名字須把雙方名稱帶進來。
+  static bool _menstrualBelongsToCharacter({
+    required String evidence,
+    required bool speakerIsUser,
+  }) {
+    return switch (_menstrualSubjectPerson(evidence)) {
+      // 第二人稱指向對話的另一方。
+      _MenstrualPerson.second => speakerIsUser,
+      // 第一人稱與無主詞都算說話者本人。
+      _MenstrualPerson.first || _MenstrualPerson.none => !speakerIsUser,
+      // 第三人稱既不是角色也不是使用者，寧可漏收。
+      _MenstrualPerson.third => false,
+    };
+  }
+
+  /// 摘要 recovery 路徑用：這條訊息裡的生理週期敘述是否屬於角色。
+  static bool menstrualStatementBelongsToCharacter(Message message) {
+    final evidence = _extractMenstrualEvidence(message.text);
+    if (evidence == null) return false;
+    return _menstrualBelongsToCharacter(
+      evidence: evidence,
+      speakerIsUser: message.isUser,
+    );
+  }
+
+  /// 決定這段 evidence 是誰說的。來源混合雙方且無法歸屬時回傳 null，
+  /// 由呼叫端當成「判不出來」處理。
+  static bool? _menstrualSpeakerIsUser(
+    String evidence,
+    List<Message> evidenceMessages,
+  ) {
+    if (evidenceMessages.isEmpty) return null;
+    final speakers = evidenceMessages.map((m) => m.isUser).toSet();
+    if (speakers.length == 1) return speakers.single;
+
+    final normalized = _normalizeEvidence(evidence);
+    if (normalized.isEmpty) return null;
+    final owners = evidenceMessages
+        .where((m) => _normalizeEvidence(m.text).contains(normalized))
+        .map((m) => m.isUser)
+        .toSet();
+    return owners.length == 1 ? owners.single : null;
+  }
+
   static _ValidatedTimelineEntry? _validateCandidate(
     TimelineEventCandidate candidate,
     Map<int, Message> sourceById,
@@ -300,6 +437,24 @@ class CharacterTimelineService {
         ) ||
         _isMenstrualQuestion(evidence)) {
       return null;
+    }
+    // 生理週期的主體無法只從文字判定。本地 explicit 掃描與摘要候選兩條
+    // 寫入路徑都會經過這裡，守門放在這個匯流點才不會有繞過的路。
+    final menstrualCandidate =
+        _hasMenstrualTerm(evidence) ||
+        _hasMenstrualTerm(value) ||
+        _hasMenstrualTerm(candidate.key ?? '');
+    if (menstrualCandidate) {
+      // value/key 不能替代來源證據；模型憑空填入生理週期時必須拒絕。
+      if (!_hasMenstrualTerm(evidence)) return null;
+      final speakerIsUser = _menstrualSpeakerIsUser(evidence, evidenceMessages);
+      if (speakerIsUser == null ||
+          !_menstrualBelongsToCharacter(
+            evidence: evidence,
+            speakerIsUser: speakerIsUser,
+          )) {
+        return null;
+      }
     }
     final hasDeclarativeMenstrualEvidence = evidenceMessages.any(
       (message) => !_isMenstrualQuestion(message.text),
