@@ -1,13 +1,14 @@
 import 'package:flutter/material.dart';
 
 import '../services/locale_strings.dart';
-import '../services/thinking_machines_service.dart';
 import '../theme/app_theme.dart';
 import 'api_key_field.dart';
 
 class ThinkingMachinesSettingsCard extends StatelessWidget {
   final TextEditingController keyController;
   final TextEditingController modelController;
+  final String modelValue;
+  final String defaultModel;
   final bool isTesting;
   final bool obscureKey;
   final bool isStarred;
@@ -24,6 +25,8 @@ class ThinkingMachinesSettingsCard extends StatelessWidget {
     super.key,
     required this.keyController,
     required this.modelController,
+    required this.modelValue,
+    required this.defaultModel,
     required this.isTesting,
     required this.obscureKey,
     required this.isStarred,
@@ -39,10 +42,6 @@ class ThinkingMachinesSettingsCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final model = modelController.text.trim().isEmpty
-        ? ThinkingMachinesService.defaultModel
-        : modelController.text.trim();
-
     return Container(
       padding: const EdgeInsets.symmetric(
         horizontal: YanciTheme.spacingMd,
@@ -106,7 +105,7 @@ class ThinkingMachinesSettingsCard extends StatelessWidget {
             onChanged: onModelChanged,
             decoration: InputDecoration(
               labelText: L.pick(en: 'Model', zhTW: '模型'),
-              hintText: ThinkingMachinesService.defaultModel,
+              hintText: defaultModel,
               labelStyle: YanciTheme.bodySmall.copyWith(
                 color: YanciTheme.textSecondary.withValues(alpha: 0.6),
               ),
@@ -119,7 +118,7 @@ class ThinkingMachinesSettingsCard extends StatelessWidget {
                       : YanciTheme.textSecondary.withValues(alpha: 0.5),
                 ),
                 tooltip: L.pick(en: 'Star model', zhTW: '將模型加上星標'),
-                onPressed: () => onToggleStar(model),
+                onPressed: () => onToggleStar(modelValue),
               ),
               border: InputBorder.none,
               contentPadding: const EdgeInsets.symmetric(vertical: 12),

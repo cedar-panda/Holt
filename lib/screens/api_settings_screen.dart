@@ -469,20 +469,26 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
     _debouncedSave();
   }
 
-  List<({String id, String label})> _providerOptions() => [
-    (id: 'openrouter', label: 'OpenRouter'),
-    (
+  List<ApiProviderOption> _providerOptions() => [
+    const ApiProviderOption(id: 'openrouter', label: 'OpenRouter'),
+    ApiProviderOption(
       id: 'openai_compatible',
       label: L.pick(en: 'Custom Relay', zhTW: '自訂中轉站', zhCN: '自定义中转站'),
     ),
-    (id: 'xai', label: 'xAI (Grok)'),
-    (id: 'gemini', label: 'Google Gemini'),
-    (id: 'deepseek', label: 'DeepSeek'),
-    (id: 'qwen', label: 'Qwen'),
-    (id: 'bedrock', label: 'AWS Bedrock'),
-    (id: 'thinking_machines', label: 'Thinking Machines'),
-    (id: 'local', label: L.pick(en: 'Local Model', zhTW: '本地模型', zhCN: '本地模型')),
-    (
+    const ApiProviderOption(id: 'xai', label: 'xAI (Grok)'),
+    const ApiProviderOption(id: 'gemini', label: 'Google Gemini'),
+    const ApiProviderOption(id: 'deepseek', label: 'DeepSeek'),
+    const ApiProviderOption(id: 'qwen', label: 'Qwen'),
+    const ApiProviderOption(id: 'bedrock', label: 'AWS Bedrock'),
+    const ApiProviderOption(
+      id: 'thinking_machines',
+      label: 'Thinking Machines',
+    ),
+    ApiProviderOption(
+      id: 'local',
+      label: L.pick(en: 'Local Model', zhTW: '本地模型', zhCN: '本地模型'),
+    ),
+    ApiProviderOption(
       id: 'local_api',
       label: L.pick(en: 'Local API', zhTW: '本地 API', zhCN: '本地 API'),
     ),
@@ -490,10 +496,7 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
 
   Widget _buildProviderPicker() {
     return ApiProviderPicker(
-      options: [
-        for (final option in _providerOptions())
-          ApiProviderOption(id: option.id, label: option.label),
-      ],
+      options: _providerOptions(),
       selectedId: _provider,
       showOtherProviders: _showOtherProviders,
       primaryIds: const {'openrouter', 'openai_compatible'},
@@ -684,10 +687,17 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
       return _oaiCompatModelCtrl.text.trim();
     }
     if (_provider == 'thinking_machines') {
-      final model = _thinkingMachinesModelCtrl.text.trim();
-      return model.isEmpty ? ThinkingMachinesService.defaultModel : model;
+      return _thinkingMachinesModelValue;
     }
     return _selectedModel;
+  }
+
+  String get _thinkingMachinesModelValue =>
+      _normalizeThinkingMachinesModel(_thinkingMachinesModelCtrl.text);
+
+  String _normalizeThinkingMachinesModel(String value) {
+    final model = value.trim();
+    return model.isEmpty ? ThinkingMachinesService.defaultModel : model;
   }
 
   static const String _summarySelectionSeparator = '\u0000';
@@ -1274,7 +1284,10 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
                       : Icons.visibility_off_outlined,
                   size: 20,
                 ),
-                tooltip: L.pick(en: 'Show API Key', zhTW: '顯示 API Key'),
+                tooltip: L.pick(
+                  en: _obscureProviderKeys ? 'Show API Key' : 'Hide API Key',
+                  zhTW: _obscureProviderKeys ? '顯示 API Key' : '隱藏 API Key',
+                ),
                 onPressed: () => setState(
                   () => _obscureProviderKeys = !_obscureProviderKeys,
                 ),
@@ -1938,20 +1951,20 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
                               ThinkingMachinesSettingsCard(
                                 keyController: _thinkingMachinesKeyCtrl,
                                 modelController: _thinkingMachinesModelCtrl,
+                                modelValue: _thinkingMachinesModelValue,
+                                defaultModel:
+                                    ThinkingMachinesService.defaultModel,
                                 isTesting: _isTestingApi,
                                 obscureKey: _obscureProviderKeys,
                                 isStarred: _starredModels.contains(
-                                  _thinkingMachinesModelCtrl.text.trim().isEmpty
-                                      ? ThinkingMachinesService.defaultModel
-                                      : _thinkingMachinesModelCtrl.text.trim(),
+                                  _thinkingMachinesModelValue,
                                 ),
                                 effort: _thinkingMachinesEffort,
                                 borderColor: _settingsBorderColor,
                                 onKeyChanged: (_) => _debouncedSave(),
                                 onModelChanged: (value) {
-                                  _selectedModel = value.trim().isEmpty
-                                      ? ThinkingMachinesService.defaultModel
-                                      : value.trim();
+                                  _selectedModel =
+                                      _normalizeThinkingMachinesModel(value);
                                   setState(() {});
                                   _debouncedSave();
                                 },

@@ -48,7 +48,10 @@ class ApiKeyField extends StatelessWidget {
                 size: 21,
               ),
               color: YanciTheme.textSecondary,
-              tooltip: L.pick(en: 'Show API Key', zhTW: '顯示 API Key'),
+              tooltip: L.pick(
+                en: obscureText ? 'Show API Key' : 'Hide API Key',
+                zhTW: obscureText ? '顯示 API Key' : '隱藏 API Key',
+              ),
               onPressed: onToggleObscure,
             ),
           ],

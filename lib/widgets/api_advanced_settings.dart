@@ -220,12 +220,22 @@ class _ApiAdvancedSettingsState extends State<ApiAdvancedSettings> {
     required bool value,
     required ValueChanged<bool?>? onChanged,
     double indent = 0,
+    String? leadingMarker,
   }) {
     return Padding(
       padding: EdgeInsets.only(left: indent),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          if (leadingMarker != null) ...[
+            ExcludeSemantics(
+              child: Text(
+                leadingMarker,
+                style: YanciTheme.bodyText.copyWith(fontSize: 13),
+              ),
+            ),
+            const SizedBox(width: 4),
+          ],
           _buildCheckBox(value: value, onChanged: onChanged),
           const SizedBox(width: 6),
           Expanded(
@@ -330,9 +340,10 @@ class _ApiAdvancedSettingsState extends State<ApiAdvancedSettings> {
                     final summaryEnabled = summarySnap.data ?? false;
                     return _buildCheckOption(
                       indent: 32,
+                      leadingMarker: '—',
                       title: L.pick(
-                        en: '— Dedicated window summary',
-                        zhTW: '— 專用窗口摘要',
+                        en: 'Dedicated window summary',
+                        zhTW: '專用窗口摘要',
                       ),
                       description: L.pick(
                         en: 'Pins a window summary into the cacheable prompt for new windows.',
