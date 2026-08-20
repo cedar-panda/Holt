@@ -13,8 +13,11 @@ import '../services/static_token_estimator.dart';
 import '../services/token_estimator.dart';
 import '../widgets/gradient_background.dart';
 import '../widgets/api_advanced_settings.dart';
-import '../widgets/api_key_field.dart';
+import '../widgets/api_aws_bedrock_settings_card.dart';
+import '../widgets/api_compatible_provider_settings_card.dart';
 import '../widgets/api_model_picker.dart';
+import '../widgets/api_memory_settings_card.dart';
+import '../widgets/api_provider_key_settings_card.dart';
 import '../widgets/api_provider_picker.dart';
 import '../widgets/api_web_search_settings_card.dart';
 import '../widgets/thinking_machines_settings_card.dart';
@@ -532,23 +535,6 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
     );
   }
 
-  Widget _buildApiKeyField({
-    required TextEditingController controller,
-    required String hintText,
-    required ValueChanged<String> onChanged,
-    List<Widget> trailingActions = const <Widget>[],
-  }) {
-    return ApiKeyField(
-      controller: controller,
-      hintText: hintText,
-      obscureText: _obscureProviderKeys,
-      onChanged: onChanged,
-      onToggleObscure: () =>
-          setState(() => _obscureProviderKeys = !_obscureProviderKeys),
-      trailingActions: trailingActions,
-    );
-  }
-
   Future<void> _testApiConnection(String provider, String keyStr) async {
     if (keyStr.isEmpty && provider != 'openai_compatible') {
       if (mounted) {
@@ -698,242 +684,6 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
   String _normalizeThinkingMachinesModel(String value) {
     final model = value.trim();
     return model.isEmpty ? ThinkingMachinesService.defaultModel : model;
-  }
-
-  static const String _summarySelectionSeparator = '\u0000';
-
-  String _summarySelectionValue(String provider, String model) {
-    if (model.isEmpty) return '';
-    return '$provider$_summarySelectionSeparator$model';
-  }
-
-  List<({String provider, String model})> _summaryModelOptions() {
-    final options = <({String provider, String model})>[];
-    final seen = <String>{};
-
-    void add(String provider, String model) {
-      final normalizedModel = model.trim();
-      final normalizedProvider = normalizedModel.isEmpty ? '' : provider.trim();
-      final value = _summarySelectionValue(normalizedProvider, normalizedModel);
-      if (seen.add(value)) {
-        options.add((provider: normalizedProvider, model: normalizedModel));
-      }
-    }
-
-    add('', '');
-    add(
-      MemorySettings.defaultSummaryProvider,
-      MemorySettings.defaultSummaryModel,
-    );
-    add(_summaryProvider, _summaryModel);
-
-    final starred = _starredModels.toList()..sort();
-    for (final model in starred) {
-      final provider = _starredModelProviders[model] ?? '';
-      if (provider.isNotEmpty) add(provider, model);
-    }
-    return options;
-  }
-
-  String _providerLabel(String provider) => switch (provider) {
-    'openrouter' => 'OpenRouter',
-    'xai' => 'xAI (Grok)',
-    'gemini' => 'Google Gemini',
-    'deepseek' => 'DeepSeek',
-    'qwen' => 'Qwen',
-    'bedrock' => 'AWS Bedrock',
-    'thinking_machines' => 'Thinking Machines',
-    'openai_compatible' => L.pick(
-      en: 'Custom Relay',
-      zhTW: '自訂中轉站',
-      zhCN: '自定义中转站',
-    ),
-    'local' => L.pick(en: 'Local Model', zhTW: '本地模型'),
-    'local_api' => 'Local API',
-    _ => provider,
-  };
-
-  Widget _buildSummaryModelCard() {
-    final options = _summaryModelOptions();
-    final selected = _summarySelectionValue(_summaryProvider, _summaryModel);
-    final selectedValue =
-        options.any(
-          (option) =>
-              _summarySelectionValue(option.provider, option.model) == selected,
-        )
-        ? selected
-        : '';
-
-    return _buildGlassCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Semantics(
-            label: L.get('settings_summary_model'),
-            child: DropdownButton<String>(
-              value: selectedValue,
-              isExpanded: true,
-              underline: const SizedBox(),
-              dropdownColor: YanciTheme.isDark
-                  ? const Color(0xF0302830)
-                  : Colors.white,
-              style: YanciTheme.bodyText.copyWith(fontSize: 12),
-              items: options.map((option) {
-                final value = _summarySelectionValue(
-                  option.provider,
-                  option.model,
-                );
-                final label = option.model.isEmpty
-                    ? L.pick(
-                        en: 'Follow chat model',
-                        zhTW: '跟隨聊天模型',
-                        zhCN: '跟随聊天模型',
-                      )
-                    : '${_providerLabel(option.provider)} · ${option.model}';
-                return DropdownMenuItem<String>(
-                  value: value,
-                  child: Text(
-                    label,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: YanciTheme.bodyText.copyWith(
-                      fontSize: 12,
-                      color: option.model.isEmpty
-                          ? YanciTheme.textSecondary
-                          : YanciTheme.textPrimary,
-                    ),
-                  ),
-                );
-              }).toList(),
-              onChanged: (value) {
-                if (value == null) return;
-                if (value.isEmpty) {
-                  setState(() {
-                    _summaryProvider = '';
-                    _summaryModel = '';
-                  });
-                } else {
-                  final separator = value.indexOf(_summarySelectionSeparator);
-                  if (separator < 1) return;
-                  setState(() {
-                    _summaryProvider = value.substring(0, separator);
-                    _summaryModel = value.substring(separator + 1);
-                  });
-                }
-                _debouncedSave();
-              },
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            L.pick(
-              en: 'Window summaries and automatic memory use this API pair. Star another model above to add it here.',
-              zhTW: '窗口摘要與自動記憶使用這組來源和模型；在上方替其他模型加星即可加入選單。',
-              zhCN: '窗口摘要与自动记忆使用这组来源和模型；在上方为其他模型加星即可加入选单。',
-            ),
-            style: YanciTheme.bodySmall.copyWith(
-              fontSize: 10,
-              color: YanciTheme.textSecondary.withValues(alpha: 0.65),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildDreamCurationCard() {
-    return _buildGlassCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  L.pick(en: 'Dream Curation', zhTW: '做夢整理', zhCN: '做梦整理'),
-                  style: YanciTheme.bodyText.copyWith(fontSize: 13),
-                ),
-              ),
-              SizedBox(
-                height: 24,
-                child: Switch.adaptive(
-                  value: _dreamCurationEnabled,
-                  activeThumbColor: YanciTheme.accent,
-                  activeTrackColor: YanciTheme.accent.withValues(alpha: 0.3),
-                  onChanged: (v) {
-                    setState(() => _dreamCurationEnabled = v);
-                    _debouncedSave();
-                  },
-                ),
-              ),
-            ],
-          ),
-          if (_dreamCurationEnabled) ...[
-            const SizedBox(height: 6),
-            Text(
-              L.pick(
-                en: 'Automatically organizes memories after conversations accumulate. Uses the summary model. Consumes a small amount of tokens.',
-                zhTW: '對話累積後自動梳理記憶，使用摘要模型，需消耗少量 tokens。',
-                zhCN: '对话累积后自动梳理记忆，使用摘要模型，需消耗少量 tokens。',
-              ),
-              style: YanciTheme.bodySmall.copyWith(
-                fontSize: 10,
-                color: YanciTheme.textSecondary.withValues(alpha: 0.65),
-              ),
-            ),
-            const SizedBox(height: 10),
-            Row(
-              children: [
-                Text(
-                  L.pick(en: 'Trigger after', zhTW: '累積', zhCN: '累积'),
-                  style: YanciTheme.bodySmall.copyWith(fontSize: 11),
-                ),
-                const SizedBox(width: 8),
-                SizedBox(
-                  width: 48,
-                  child: TextField(
-                    controller: TextEditingController(
-                      text: '$_dreamCurationThreshold',
-                    ),
-                    keyboardType: TextInputType.number,
-                    textAlign: TextAlign.center,
-                    style: YanciTheme.bodyText.copyWith(fontSize: 12),
-                    decoration: InputDecoration(
-                      isDense: true,
-                      contentPadding: EdgeInsets.symmetric(
-                        vertical: 4,
-                        horizontal: 4,
-                      ),
-                      border: _thinInputBorder(),
-                      enabledBorder: _thinInputBorder(),
-                      focusedBorder: _thinInputBorder(
-                        color: YanciTheme.accent.withValues(alpha: 0.85),
-                        width: 1,
-                      ),
-                    ),
-                    onChanged: (v) {
-                      final n = int.tryParse(v);
-                      if (n != null) {
-                        _dreamCurationThreshold = n.clamp(
-                          MemorySettings.minDreamThreshold,
-                          MemorySettings.maxDreamThreshold,
-                        );
-                        _debouncedSave();
-                      }
-                    },
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  L.pick(en: 'new memories', zhTW: '條新記憶後觸發', zhCN: '条新记忆后触发'),
-                  style: YanciTheme.bodySmall.copyWith(fontSize: 11),
-                ),
-              ],
-            ),
-          ],
-        ],
-      ),
-    );
   }
 
   void _showCostPolicyNotice(ModelCostPolicyNotice notice) {
@@ -1139,16 +889,6 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
   Color get _selectionSuccessColor =>
       Color.lerp(const Color(0xFF4CAF6A), YanciTheme.accent, 0.24)!;
 
-  OutlineInputBorder _thinInputBorder({Color? color, double width = 0.75}) {
-    return OutlineInputBorder(
-      borderRadius: BorderRadius.circular(YanciTheme.radiusSm),
-      borderSide: BorderSide(
-        color: color ?? _settingsBorderColor,
-        width: width,
-      ),
-    );
-  }
-
   Widget _buildSectionTitle(String title) {
     return Text(
       title,
@@ -1351,57 +1091,47 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
                               ),
                             ],
                             if (_provider == 'openrouter') ...[
-                              _buildGlassCard(
-                                child: _buildApiKeyField(
-                                  controller: _apiKeyController,
-                                  hintText: L.get('settings_api_key_hint'),
-                                  onChanged: (v) {
-                                    _scheduleProviderModelFetch(
-                                      'openrouter',
-                                      v,
-                                    );
-                                    _debouncedSave();
-                                  },
+                              ApiProviderKeySettingsCard(
+                                controller: _apiKeyController,
+                                hintText: L.get('settings_api_key_hint'),
+                                obscureText: _obscureProviderKeys,
+                                isTesting: _isTestingApi,
+                                borderColor: _settingsBorderColor,
+                                onChanged: (value) {
+                                  _scheduleProviderModelFetch(
+                                    'openrouter',
+                                    value,
+                                  );
+                                  _debouncedSave();
+                                },
+                                onToggleObscure: () => setState(
+                                  () => _obscureProviderKeys =
+                                      !_obscureProviderKeys,
                                 ),
                               ),
                             ],
                             if (_provider == 'xai') ...[
-                              _buildGlassCard(
-                                child: _buildApiKeyField(
-                                  controller: _xaiKeyCtrl,
-                                  hintText: 'xAI API Key',
-                                  onChanged: (value) {
-                                    _scheduleProviderModelFetch('xai', value);
-                                    _debouncedSave();
-                                  },
-                                  trailingActions: [
-                                    if (_isTestingApi)
-                                      const Padding(
-                                        padding: EdgeInsets.all(12),
-                                        child: SizedBox(
-                                          width: 16,
-                                          height: 16,
-                                          child: CircularProgressIndicator(
-                                            strokeWidth: 2,
-                                          ),
-                                        ),
-                                      )
-                                    else
-                                      IconButton(
-                                        icon: const Icon(
-                                          Icons.wifi_protected_setup,
-                                          size: 18,
-                                        ),
-                                        tooltip: L.pick(
-                                          en: 'Test xAI connection',
-                                          zhTW: '測試 xAI 連線',
-                                        ),
-                                        onPressed: () => _testApiConnection(
-                                          'xai',
-                                          _xaiKeyCtrl.text.trim(),
-                                        ),
-                                      ),
-                                  ],
+                              ApiProviderKeySettingsCard(
+                                controller: _xaiKeyCtrl,
+                                hintText: 'xAI API Key',
+                                obscureText: _obscureProviderKeys,
+                                isTesting: _isTestingApi,
+                                borderColor: _settingsBorderColor,
+                                onChanged: (value) {
+                                  _scheduleProviderModelFetch('xai', value);
+                                  _debouncedSave();
+                                },
+                                onToggleObscure: () => setState(
+                                  () => _obscureProviderKeys =
+                                      !_obscureProviderKeys,
+                                ),
+                                testTooltip: L.pick(
+                                  en: 'Test xAI connection',
+                                  zhTW: '測試 xAI 連線',
+                                ),
+                                onTestConnection: () => _testApiConnection(
+                                  'xai',
+                                  _xaiKeyCtrl.text.trim(),
                                 ),
                               ),
                               const SizedBox(height: YanciTheme.spacingXs),
@@ -1425,302 +1155,118 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
                               ),
                             ],
                             if (_provider == 'gemini') ...[
-                              _buildGlassCard(
-                                child: _buildApiKeyField(
-                                  controller: _geminiKeyCtrl,
-                                  hintText: 'Gemini API Key',
-                                  onChanged: (v) {
-                                    _scheduleProviderModelFetch('gemini', v);
-                                    _debouncedSave();
-                                  },
-                                  trailingActions: [
-                                    if (_isTestingApi)
-                                      const Padding(
-                                        padding: EdgeInsets.all(12),
-                                        child: SizedBox(
-                                          width: 16,
-                                          height: 16,
-                                          child: CircularProgressIndicator(
-                                            strokeWidth: 2,
-                                          ),
-                                        ),
-                                      )
-                                    else
-                                      IconButton(
-                                        icon: const Icon(
-                                          Icons.wifi_protected_setup,
-                                          size: 18,
-                                        ),
-                                        onPressed: () => _testApiConnection(
-                                          'gemini',
-                                          _geminiKeyCtrl.text,
-                                        ),
-                                      ),
-                                  ],
+                              ApiProviderKeySettingsCard(
+                                controller: _geminiKeyCtrl,
+                                hintText: 'Gemini API Key',
+                                obscureText: _obscureProviderKeys,
+                                isTesting: _isTestingApi,
+                                borderColor: _settingsBorderColor,
+                                onChanged: (value) {
+                                  _scheduleProviderModelFetch('gemini', value);
+                                  _debouncedSave();
+                                },
+                                onToggleObscure: () => setState(
+                                  () => _obscureProviderKeys =
+                                      !_obscureProviderKeys,
+                                ),
+                                onTestConnection: () => _testApiConnection(
+                                  'gemini',
+                                  _geminiKeyCtrl.text,
                                 ),
                               ),
                             ],
                             if (_provider == 'deepseek') ...[
-                              _buildGlassCard(
-                                child: _buildApiKeyField(
-                                  controller: _deepseekKeyCtrl,
-                                  hintText: 'DeepSeek API Key',
-                                  onChanged: (v) {
-                                    _scheduleProviderModelFetch('deepseek', v);
-                                    _debouncedSave();
-                                  },
-                                  trailingActions: [
-                                    if (_isTestingApi)
-                                      const Padding(
-                                        padding: EdgeInsets.all(12),
-                                        child: SizedBox(
-                                          width: 16,
-                                          height: 16,
-                                          child: CircularProgressIndicator(
-                                            strokeWidth: 2,
-                                          ),
-                                        ),
-                                      )
-                                    else
-                                      IconButton(
-                                        icon: const Icon(
-                                          Icons.wifi_protected_setup,
-                                          size: 18,
-                                        ),
-                                        onPressed: () => _testApiConnection(
-                                          'deepseek',
-                                          _deepseekKeyCtrl.text,
-                                        ),
-                                      ),
-                                  ],
+                              ApiProviderKeySettingsCard(
+                                controller: _deepseekKeyCtrl,
+                                hintText: 'DeepSeek API Key',
+                                obscureText: _obscureProviderKeys,
+                                isTesting: _isTestingApi,
+                                borderColor: _settingsBorderColor,
+                                onChanged: (value) {
+                                  _scheduleProviderModelFetch(
+                                    'deepseek',
+                                    value,
+                                  );
+                                  _debouncedSave();
+                                },
+                                onToggleObscure: () => setState(
+                                  () => _obscureProviderKeys =
+                                      !_obscureProviderKeys,
+                                ),
+                                onTestConnection: () => _testApiConnection(
+                                  'deepseek',
+                                  _deepseekKeyCtrl.text,
                                 ),
                               ),
                             ],
                             if (_provider == 'qwen') ...[
-                              _buildGlassCard(
-                                child: _buildApiKeyField(
-                                  controller: _qwenKeyCtrl,
-                                  hintText: 'Qwen API Key (DashScope)',
-                                  onChanged: (v) => _debouncedSave(),
-                                  trailingActions: [
-                                    if (_isTestingApi)
-                                      const Padding(
-                                        padding: EdgeInsets.all(12),
-                                        child: SizedBox(
-                                          width: 16,
-                                          height: 16,
-                                          child: CircularProgressIndicator(
-                                            strokeWidth: 2,
-                                          ),
-                                        ),
-                                      )
-                                    else
-                                      IconButton(
-                                        icon: const Icon(
-                                          Icons.wifi_protected_setup,
-                                          size: 18,
-                                        ),
-                                        onPressed: () => _testApiConnection(
-                                          'qwen',
-                                          _qwenKeyCtrl.text,
-                                        ),
-                                      ),
-                                  ],
+                              ApiProviderKeySettingsCard(
+                                controller: _qwenKeyCtrl,
+                                hintText: 'Qwen API Key (DashScope)',
+                                obscureText: _obscureProviderKeys,
+                                isTesting: _isTestingApi,
+                                borderColor: _settingsBorderColor,
+                                onChanged: (_) => _debouncedSave(),
+                                onToggleObscure: () => setState(
+                                  () => _obscureProviderKeys =
+                                      !_obscureProviderKeys,
+                                ),
+                                onTestConnection: () => _testApiConnection(
+                                  'qwen',
+                                  _qwenKeyCtrl.text,
                                 ),
                               ),
                             ],
                             if (_provider == 'bedrock') ...[
-                              _buildGlassCard(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    TextField(
-                                      controller: _awsAccessKeyIdCtrl,
-                                      style: YanciTheme.bodyText.copyWith(
-                                        fontSize: 13,
-                                      ),
-                                      onChanged: (v) => _debouncedSave(),
-                                      decoration: InputDecoration(
-                                        hintText: 'AWS Access Key ID',
-                                        hintStyle: YanciTheme.bodySmall
-                                            .copyWith(
-                                              color: YanciTheme.textSecondary
-                                                  .withValues(alpha: 0.4),
-                                            ),
-                                        border: InputBorder.none,
-                                        contentPadding:
-                                            const EdgeInsets.symmetric(
-                                              vertical: 12,
-                                            ),
-                                        isDense: true,
-                                      ),
-                                    ),
-                                    Divider(
-                                      color: YanciTheme.textSecondary
-                                          .withValues(alpha: 0.1),
-                                      height: 1,
-                                    ),
-                                    _buildApiKeyField(
-                                      controller: _awsSecretAccessKeyCtrl,
-                                      hintText: 'AWS Secret Access Key',
-                                      onChanged: (v) => _debouncedSave(),
-                                    ),
-                                    Divider(
-                                      color: YanciTheme.textSecondary
-                                          .withValues(alpha: 0.1),
-                                      height: 1,
-                                    ),
-                                    TextField(
-                                      controller: _awsRegionCtrl,
-                                      style: YanciTheme.bodyText.copyWith(
-                                        fontSize: 13,
-                                      ),
-                                      onChanged: (v) => _debouncedSave(),
-                                      decoration: InputDecoration(
-                                        hintText: 'Region (e.g. us-east-1)',
-                                        hintStyle: YanciTheme.bodySmall
-                                            .copyWith(
-                                              color: YanciTheme.textSecondary
-                                                  .withValues(alpha: 0.4),
-                                              fontSize: 11,
-                                            ),
-                                        border: InputBorder.none,
-                                        contentPadding:
-                                            const EdgeInsets.symmetric(
-                                              vertical: 12,
-                                            ),
-                                        isDense: true,
-                                      ),
-                                    ),
-                                  ],
+                              ApiAwsBedrockSettingsCard(
+                                accessKeyIdController: _awsAccessKeyIdCtrl,
+                                secretAccessKeyController:
+                                    _awsSecretAccessKeyCtrl,
+                                regionController: _awsRegionCtrl,
+                                obscureSecretAccessKey: _obscureProviderKeys,
+                                borderColor: _settingsBorderColor,
+                                onAccessKeyIdChanged: (_) => _debouncedSave(),
+                                onSecretAccessKeyChanged: (_) =>
+                                    _debouncedSave(),
+                                onRegionChanged: (_) => _debouncedSave(),
+                                onToggleObscureSecretAccessKey: () => setState(
+                                  () => _obscureProviderKeys =
+                                      !_obscureProviderKeys,
                                 ),
                               ),
                             ],
                             if (_provider == 'openai_compatible') ...[
-                              _buildGlassCard(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    TextField(
-                                      controller: _oaiCompatBaseUrlCtrl,
-                                      style: YanciTheme.bodyText.copyWith(
-                                        fontSize: 13,
-                                      ),
-                                      onChanged: (v) {
-                                        _scheduleCompatibleModelFetch(v);
-                                        _debouncedSave();
-                                      },
-                                      decoration: InputDecoration(
-                                        hintText:
-                                            'Base URL (e.g. https://api.example.com/v1)',
-                                        hintStyle: YanciTheme.bodySmall
-                                            .copyWith(
-                                              color: YanciTheme.textSecondary
-                                                  .withValues(alpha: 0.4),
-                                              fontSize: 11,
-                                            ),
-                                        border: InputBorder.none,
-                                        contentPadding:
-                                            const EdgeInsets.symmetric(
-                                              vertical: 12,
-                                            ),
-                                        isDense: true,
-                                      ),
-                                    ),
-                                    Divider(
-                                      color: YanciTheme.textSecondary
-                                          .withValues(alpha: 0.1),
-                                      height: 1,
-                                    ),
-                                    _buildApiKeyField(
-                                      controller: _oaiCompatKeyCtrl,
-                                      hintText: 'API Key',
-                                      onChanged: (v) {
-                                        _scheduleCompatibleModelFetch(
-                                          _oaiCompatBaseUrlCtrl.text,
-                                        );
-                                        _debouncedSave();
-                                      },
-                                      trailingActions: [
-                                        _isTestingApi
-                                            ? const Padding(
-                                                padding: EdgeInsets.all(12),
-                                                child: SizedBox(
-                                                  width: 16,
-                                                  height: 16,
-                                                  child:
-                                                      CircularProgressIndicator(
-                                                        strokeWidth: 2,
-                                                      ),
-                                                ),
-                                              )
-                                            : IconButton(
-                                                icon: const Icon(
-                                                  Icons.wifi_protected_setup,
-                                                  size: 18,
-                                                ),
-                                                onPressed: () =>
-                                                    _testApiConnection(
-                                                      'openai_compatible',
-                                                      _oaiCompatKeyCtrl.text,
-                                                    ),
-                                              ),
-                                      ],
-                                    ),
-                                    Divider(
-                                      color: YanciTheme.textSecondary
-                                          .withValues(alpha: 0.1),
-                                      height: 1,
-                                    ),
-                                    TextField(
-                                      controller: _oaiCompatModelCtrl,
-                                      style: YanciTheme.bodyText.copyWith(
-                                        fontSize: 13,
-                                      ),
-                                      onChanged: (v) {
-                                        _selectedModel = v.trim();
-                                        _debouncedSave();
-                                      },
-                                      decoration: InputDecoration(
-                                        hintText: 'Model name (e.g. gpt-4o)',
-                                        hintStyle: YanciTheme.bodySmall
-                                            .copyWith(
-                                              color: YanciTheme.textSecondary
-                                                  .withValues(alpha: 0.4),
-                                              fontSize: 11,
-                                            ),
-                                        suffixIcon: _isFetchingModels
-                                            ? const Padding(
-                                                padding: EdgeInsets.all(12),
-                                                child: SizedBox(
-                                                  width: 16,
-                                                  height: 16,
-                                                  child:
-                                                      CircularProgressIndicator(
-                                                        strokeWidth: 2,
-                                                      ),
-                                                ),
-                                              )
-                                            : IconButton(
-                                                icon: const Icon(
-                                                  Icons.refresh,
-                                                  size: 18,
-                                                ),
-                                                tooltip: L.get(
-                                                  'settings_model_refresh',
-                                                ),
-                                                onPressed: _fetchModels,
-                                              ),
-                                        border: InputBorder.none,
-                                        contentPadding:
-                                            const EdgeInsets.symmetric(
-                                              vertical: 12,
-                                            ),
-                                        isDense: true,
-                                      ),
-                                    ),
-                                  ],
+                              ApiCompatibleProviderSettingsCard(
+                                baseUrlController: _oaiCompatBaseUrlCtrl,
+                                apiKeyController: _oaiCompatKeyCtrl,
+                                modelController: _oaiCompatModelCtrl,
+                                obscureApiKey: _obscureProviderKeys,
+                                isTesting: _isTestingApi,
+                                isFetchingModels: _isFetchingModels,
+                                borderColor: _settingsBorderColor,
+                                onBaseUrlChanged: (value) {
+                                  _scheduleCompatibleModelFetch(value);
+                                  _debouncedSave();
+                                },
+                                onApiKeyChanged: (_) {
+                                  _scheduleCompatibleModelFetch(
+                                    _oaiCompatBaseUrlCtrl.text,
+                                  );
+                                  _debouncedSave();
+                                },
+                                onModelChanged: (value) {
+                                  _selectedModel = value.trim();
+                                  _debouncedSave();
+                                },
+                                onToggleObscureApiKey: () => setState(
+                                  () => _obscureProviderKeys =
+                                      !_obscureProviderKeys,
                                 ),
+                                onTestConnection: () => _testApiConnection(
+                                  'openai_compatible',
+                                  _oaiCompatKeyCtrl.text,
+                                ),
+                                onFetchModels: _fetchModels,
                               ),
                             ],
                             if (_provider == 'local_api' ||
@@ -1925,9 +1471,30 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
                                 L.get('settings_summary_model'),
                               ),
                               const SizedBox(height: YanciTheme.spacingSm),
-                              _buildSummaryModelCard(),
-                              const SizedBox(height: YanciTheme.spacingSm),
-                              _buildDreamCurationCard(),
+                              ApiMemorySettingsCard(
+                                summaryProvider: _summaryProvider,
+                                summaryModel: _summaryModel,
+                                starredModels: _starredModels,
+                                starredModelProviders: _starredModelProviders,
+                                dreamCurationEnabled: _dreamCurationEnabled,
+                                dreamCurationThreshold: _dreamCurationThreshold,
+                                borderColor: _settingsBorderColor,
+                                onSummarySelectionChanged: (provider, model) {
+                                  setState(() {
+                                    _summaryProvider = provider;
+                                    _summaryModel = model;
+                                  });
+                                  _debouncedSave();
+                                },
+                                onDreamCurationChanged: (value) {
+                                  setState(() => _dreamCurationEnabled = value);
+                                  _debouncedSave();
+                                },
+                                onDreamCurationThresholdChanged: (value) {
+                                  _dreamCurationThreshold = value;
+                                  _debouncedSave();
+                                },
+                              ),
                               const SizedBox(height: YanciTheme.spacingLg),
                               const ApiAdvancedSettings(
                                 showCacheSection: false,

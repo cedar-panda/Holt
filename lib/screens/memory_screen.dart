@@ -14,6 +14,11 @@ import '../services/memory_curation_service.dart';
 import '../services/existing_memory_scanner.dart';
 import '../widgets/spider_web_graph_view.dart';
 import '../widgets/memory_layer_rail.dart';
+import '../widgets/memory_capsule_tab_bar.dart';
+import '../widgets/memory_list_tile.dart';
+import '../widgets/memory_screen_header.dart';
+import '../widgets/memory_archive_fab.dart';
+import '../widgets/memory_search_field.dart';
 import '../widgets/memory_review_tab.dart';
 import '../widgets/memory_summary_tab.dart';
 import '../services/memory_guard_service.dart';
@@ -2002,232 +2007,38 @@ class _MemoryScreenState extends State<MemoryScreen>
             SafeArea(
               child: Column(
                 children: [
-                  // 頂部欄
-                  Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: YanciTheme.spacingSm,
-                      vertical: YanciTheme.spacingXs,
-                    ),
-                    child: SizedBox(
-                      height: 52,
-                      child: Row(
-                        children: [
-                          SizedBox(
-                            width: 40,
-                            child: Align(
-                              alignment: Alignment.centerLeft,
-                              child: IconButton(
-                                icon: Icon(
-                                  Icons.arrow_back_ios_rounded,
-                                  size: 20,
-                                  color: YanciTheme.textPrimary,
-                                ),
-                                padding: EdgeInsets.zero,
-                                constraints: const BoxConstraints(
-                                  minWidth: 44,
-                                  minHeight: 44,
-                                ),
-                                onPressed: () =>
-                                    Navigator.of(context).pop(_summaryModified),
-                              ),
+                  MemoryScreenHeader(
+                    isSpiderWebEnabled: _isSpiderWebEnabled,
+                    isGraphView: _isGraphView,
+                    memoryCount: _isSpiderWebEnabled
+                        ? _graphMemories.length
+                        : _memories.length,
+                    totalTokens: _totalTokens,
+                    activeLayerIndex: _activeLayerIndex,
+                    layerCount: _layers.length,
+                    memorySendLimit: _memorySendLimit,
+                    onBack: () => Navigator.of(context).pop(_summaryModified),
+                    onToggleGraph: () {
+                      setState(() {
+                        _isGraphView = !_isGraphView;
+                      });
+                    },
+                    onSendLimitPressed: _showSendLimitSettings,
+                    onBudgetPressed: _showBudgetSettings,
+                    onAddMemory: _showAddMemoryDialog,
+                    onManualAddBlocked: () {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(
+                            L.pick(
+                              en: 'Manual additions are disabled while Spider Web Memory is on. Let AI nodes expand it.',
+                              zhTW: '開啟蛛網記憶時禁止手動新增，請交由 AI 節點自行擴展',
                             ),
                           ),
-                          Expanded(
-                            child: Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  L.get('memory_title'),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: YanciTheme.headingMedium,
-                                ),
-                                Text(
-                                  '${_isSpiderWebEnabled ? _graphMemories.length : _memories.length} ${L.pick(en: 'memories', zhTW: '條', zhCN: '条')} · ≈${_totalTokens}t${_layers.isNotEmpty && _isGraphView ? ' · ${_activeLayerIndex + 1}/${_layers.length}' : ''}',
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: YanciTheme.bodySmall.copyWith(
-                                    fontSize: 10,
-                                    color: YanciTheme.textSecondary.withValues(
-                                      alpha: 0.5,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                          Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              if (_isSpiderWebEnabled)
-                                IconButton(
-                                  icon: Icon(
-                                    _isGraphView
-                                        ? Icons.list_rounded
-                                        : Icons.hub_rounded,
-                                    size: 18,
-                                    color: YanciTheme.accent,
-                                  ),
-                                  padding: EdgeInsets.zero,
-                                  constraints: const BoxConstraints(
-                                    minWidth: 44,
-                                    minHeight: 44,
-                                  ),
-                                  tooltip: _isGraphView
-                                      ? (L.pick(
-                                          en: 'List View',
-                                          zhTW: '切換條目記憶',
-                                        ))
-                                      : (L.pick(
-                                          en: 'Spider Web',
-                                          zhTW: '切換蛛網記憶',
-                                        )),
-                                  onPressed: () {
-                                    setState(() {
-                                      _isGraphView = !_isGraphView;
-                                    });
-                                  },
-                                ),
-                              IconButton(
-                                onPressed: _showSendLimitSettings,
-                                padding: EdgeInsets.zero,
-                                constraints: const BoxConstraints(
-                                  minWidth: 44,
-                                  minHeight: 44,
-                                ),
-                                tooltip: L.pick(
-                                  en: 'Chat memory send limit: $_memorySendLimit',
-                                  zhTW: '對話記憶發送限制：$_memorySendLimit 條',
-                                  zhCN: '对话记忆发送限制：$_memorySendLimit 条',
-                                ),
-                                icon: Stack(
-                                  clipBehavior: Clip.none,
-                                  children: [
-                                    Icon(
-                                      Icons.outbox_rounded,
-                                      size: 18,
-                                      color: YanciTheme.accent,
-                                    ),
-                                    Positioned(
-                                      right: -9,
-                                      top: -9,
-                                      child: Container(
-                                        constraints: const BoxConstraints(
-                                          minWidth: 18,
-                                        ),
-                                        height: 18,
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 3,
-                                        ),
-                                        alignment: Alignment.center,
-                                        decoration: BoxDecoration(
-                                          color: YanciTheme.accent,
-                                          borderRadius: BorderRadius.circular(
-                                            9,
-                                          ),
-                                        ),
-                                        child: Text(
-                                          '$_memorySendLimit',
-                                          style: const TextStyle(
-                                            color: Colors.white,
-                                            fontSize: 8,
-                                            fontWeight: FontWeight.w800,
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                              PopupMenuButton<String>(
-                                icon: Icon(
-                                  Icons.tune_rounded,
-                                  size: 18,
-                                  color: YanciTheme.accent,
-                                ),
-                                padding: EdgeInsets.zero,
-                                tooltip: L.pick(
-                                  en: 'Settings and add',
-                                  zhTW: '設定與新增',
-                                ),
-                                onSelected: (value) {
-                                  if (value == 'budget') {
-                                    _showBudgetSettings();
-                                  } else if (value == 'add') {
-                                    if (_isSpiderWebEnabled) {
-                                      ScaffoldMessenger.of(
-                                        context,
-                                      ).showSnackBar(
-                                        SnackBar(
-                                          content: Text(
-                                            L.pick(
-                                              en: 'Manual additions are disabled while Spider Web Memory is on. Let AI nodes expand it.',
-                                              zhTW:
-                                                  '開啟蛛網記憶時禁止手動新增，請交由 AI 節點自行擴展',
-                                            ),
-                                          ),
-                                          backgroundColor: Colors.red.shade400,
-                                        ),
-                                      );
-                                    } else {
-                                      _showAddMemoryDialog();
-                                    }
-                                  }
-                                },
-                                itemBuilder: (context) => [
-                                  PopupMenuItem(
-                                    value: 'budget',
-                                    child: Row(
-                                      children: [
-                                        Icon(
-                                          Icons.tune_rounded,
-                                          size: 18,
-                                          color: YanciTheme.textPrimary,
-                                        ),
-                                        const SizedBox(width: 8),
-                                        Text(
-                                          L.pick(
-                                            en: 'Memory injection budget',
-                                            zhTW: '記憶注入預算',
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                  PopupMenuItem(
-                                    value: 'add',
-                                    child: Row(
-                                      children: [
-                                        Icon(
-                                          Icons.add_circle_outline,
-                                          size: 18,
-                                          color: _isSpiderWebEnabled
-                                              ? YanciTheme.textSecondary
-                                              : YanciTheme.textPrimary,
-                                        ),
-                                        const SizedBox(width: 8),
-                                        Text(
-                                          L.pick(
-                                            en: 'Add memory',
-                                            zhTW: '新增記憶',
-                                          ),
-                                          style: TextStyle(
-                                            color: _isSpiderWebEnabled
-                                                ? YanciTheme.textSecondary
-                                                : YanciTheme.textPrimary,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
-                    ),
+                          backgroundColor: Colors.red.shade400,
+                        ),
+                      );
+                    },
                   ),
 
                   // 膠囊 TabBar
@@ -2236,7 +2047,12 @@ class _MemoryScreenState extends State<MemoryScreen>
                       horizontal: 16,
                       vertical: 4,
                     ),
-                    child: _buildCapsuleTabBar(),
+                    child: MemoryCapsuleTabBar(
+                      selectedIndex: _tabIndex,
+                      reviewTotal: _reviewTotal,
+                      reviewUnread: _reviewUnread,
+                      onTabSelected: _selectTab,
+                    ),
                   ),
 
                   if (_tabIndex == 0)
@@ -2274,91 +2090,11 @@ class _MemoryScreenState extends State<MemoryScreen>
               ),
             ),
 
-            // 積灰小盒子浮動按鈕
             if (_tabIndex == 0 && !_selectionMode)
-              Positioned(
-                right: 20,
-                bottom: 20 + MediaQuery.of(context).padding.bottom,
-                child: GestureDetector(
-                  onTap: () async {
-                    // Q 彈動效：縮 → 彈回
-                    _archiveAnimCtrl.forward(from: 0.0);
-                    await Future.delayed(const Duration(milliseconds: 150));
-                    _showArchive();
-                  },
-                  child: AnimatedBuilder(
-                    animation: _archiveAnimCtrl,
-                    builder: (ctx, child) {
-                      // 0→0.5: scale 1.0→0.85, 0.5→1.0: scale 0.85→1.05→1.0
-                      final t = _archiveAnimCtrl.value;
-                      double scale;
-                      if (t < 0.4) {
-                        scale = 1.0 - 0.15 * (t / 0.4);
-                      } else {
-                        final b = (t - 0.4) / 0.6;
-                        // overshoot then settle
-                        scale = 0.85 + 0.2 * Curves.elasticOut.transform(b);
-                      }
-                      return Transform.scale(
-                        scale: scale.clamp(0.8, 1.15),
-                        child: child,
-                      );
-                    },
-                    child: Container(
-                      width: 48,
-                      height: 48,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: Colors.transparent,
-                        border: Border.all(
-                          color: YanciTheme.textSecondary.withValues(
-                            alpha: 0.15,
-                          ),
-                          width: 1,
-                        ),
-                      ),
-                      child: Stack(
-                        alignment: Alignment.center,
-                        children: [
-                          Icon(
-                            Icons.inventory_2_outlined,
-                            size: 20,
-                            color: YanciTheme.textSecondary.withValues(
-                              alpha: 0.45,
-                            ),
-                          ),
-                          if (_archivedCount > 0)
-                            Positioned(
-                              top: 6,
-                              right: 6,
-                              child: Container(
-                                width: 14,
-                                height: 14,
-                                decoration: BoxDecoration(
-                                  shape: BoxShape.circle,
-                                  color: YanciTheme.accent.withValues(
-                                    alpha: 0.7,
-                                  ),
-                                ),
-                                child: Center(
-                                  child: Text(
-                                    _archivedCount > 99
-                                        ? '99'
-                                        : '$_archivedCount',
-                                    style: const TextStyle(
-                                      fontSize: 8,
-                                      color: Colors.white,
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
+              MemoryArchiveFab(
+                archivedCount: _archivedCount,
+                animationController: _archiveAnimCtrl,
+                onOpen: _showArchive,
               ),
           ],
         ),
@@ -2367,53 +2103,14 @@ class _MemoryScreenState extends State<MemoryScreen>
   }
 
   Widget _buildMemorySearch() {
-    return SizedBox(
-      height: 44,
-      child: TextField(
-        controller: _searchController,
-        onChanged: _onSearchChanged,
-        style: YanciTheme.bodyText.copyWith(fontSize: 13),
-        decoration: InputDecoration(
-          hintText: L.pick(
-            en: 'Search content, keyword or category',
-            zhTW: '搜尋內容、關鍵詞或類別',
-            zhCN: '搜索内容、关键词或类别',
-          ),
-          hintStyle: YanciTheme.bodySmall,
-          prefixIcon: _searching
-              ? const Padding(
-                  padding: EdgeInsets.all(13),
-                  child: SizedBox.square(
-                    dimension: 16,
-                    child: CircularProgressIndicator(strokeWidth: 1.5),
-                  ),
-                )
-              : const Icon(Icons.search_rounded, size: 20),
-          suffixIcon: _searchController.text.isEmpty
-              ? null
-              : IconButton(
-                  tooltip: L.pick(
-                    en: 'Clear search',
-                    zhTW: '清除搜尋',
-                    zhCN: '清除搜索',
-                  ),
-                  onPressed: () {
-                    _searchController.clear();
-                    _onSearchChanged('');
-                  },
-                  icon: const Icon(Icons.close_rounded, size: 18),
-                ),
-          filled: true,
-          fillColor: YanciTheme.isDark
-              ? Colors.white.withValues(alpha: 0.055)
-              : Colors.white.withValues(alpha: 0.55),
-          contentPadding: const EdgeInsets.symmetric(horizontal: 14),
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(14),
-            borderSide: BorderSide.none,
-          ),
-        ),
-      ),
+    return MemorySearchField(
+      controller: _searchController,
+      searching: _searching,
+      onChanged: _onSearchChanged,
+      onClear: () {
+        _searchController.clear();
+        _onSearchChanged('');
+      },
     );
   }
 
@@ -2461,10 +2158,22 @@ class _MemoryScreenState extends State<MemoryScreen>
     return ListView.builder(
       padding: const EdgeInsets.fromLTRB(16, 4, 16, 80),
       itemCount: memories.length,
-      itemBuilder: (context, index) => _memoryTile(
-        memories[index],
-        showDivider: index < memories.length - 1,
-      ),
+      itemBuilder: (context, index) {
+        final memory = memories[index];
+        final selected =
+            memory.id != null && _selectedMemoryIds.contains(memory.id);
+        return MemoryListTile(
+          key: ValueKey(memory.id),
+          memory: memory,
+          showDivider: index < memories.length - 1,
+          selected: selected,
+          selectionMode: _selectionMode,
+          onToggleSelection: () => _toggleMemorySelection(memory),
+          onDeletePressed: memory.id == null
+              ? null
+              : () => _deleteMemories({memory.id!}),
+        );
+      },
     );
   }
 
@@ -2790,399 +2499,7 @@ class _MemoryScreenState extends State<MemoryScreen>
   // 膠囊 TabBar
   // ═══════════════════════════════════
 
-  Widget _buildReviewCountBadge() {
-    final unread = _reviewUnread > 0;
-    final color = unread
-        ? const Color(0xFFD86B72)
-        : YanciTheme.textSecondary.withValues(alpha: 0.18);
-    final label = _reviewTotal > 9 ? '9+' : '$_reviewTotal';
-    return ExcludeSemantics(
-      child: SizedBox.square(
-        key: const ValueKey('memory-review-count-badge'),
-        dimension: 18,
-        child: DecoratedBox(
-          decoration: BoxDecoration(
-            color: color,
-            shape: BoxShape.circle,
-            boxShadow: [
-              BoxShadow(
-                color:
-                    (unread
-                            ? const Color(0xFFD86B72)
-                            : YanciTheme.textSecondary)
-                        .withValues(alpha: unread ? 0.2 : 0.08),
-                blurRadius: 2.4,
-                spreadRadius: 0.25,
-              ),
-            ],
-          ),
-          child: Center(
-            child: Text(
-              label,
-              style: TextStyle(
-                color: unread ? Colors.white : YanciTheme.textSecondary,
-                fontSize: label.length > 1 ? 8 : 9,
-                height: 1,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildCapsuleTabBar() {
-    final labels = [
-      L.pick(en: 'Memories', zhTW: '記憶'),
-      L.pick(en: 'Review', zhTW: '待確認'),
-      L.pick(en: 'Summary', zhTW: '摘要'),
-    ];
-    return Container(
-      height: 44,
-      decoration: BoxDecoration(
-        color: YanciTheme.isDark
-            ? Colors.white.withValues(alpha: 0.06)
-            : Colors.black.withValues(alpha: 0.04),
-        borderRadius: BorderRadius.circular(22),
-      ),
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final tabWidth = constraints.maxWidth / labels.length;
-          return Stack(
-            children: [
-              // Sliding capsule
-              AnimatedPositioned(
-                duration: const Duration(milliseconds: 200),
-                curve: Curves.easeOutCubic,
-                left: _tabIndex * tabWidth,
-                top: 3,
-                bottom: 3,
-                width: tabWidth,
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: YanciTheme.accent.withValues(alpha: 0.15),
-                    borderRadius: BorderRadius.circular(19),
-                    border: Border.all(
-                      color: YanciTheme.accent.withValues(alpha: 0.2),
-                      width: 0.5,
-                    ),
-                  ),
-                ),
-              ),
-              // Tab labels
-              Row(
-                children: List.generate(labels.length, (i) {
-                  final selected = _tabIndex == i;
-                  return Expanded(
-                    child: Semantics(
-                      button: true,
-                      selected: selected,
-                      label: i == 1 && _reviewTotal > 0
-                          ? '${labels[i]}, $_reviewTotal'
-                          : labels[i],
-                      child: GestureDetector(
-                        onTap: () => _selectTab(i),
-                        behavior: HitTestBehavior.opaque,
-                        child: Center(
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text(
-                                labels[i],
-                                style: TextStyle(
-                                  fontSize: 13,
-                                  fontWeight: selected
-                                      ? FontWeight.w600
-                                      : FontWeight.w400,
-                                  color: selected
-                                      ? YanciTheme.accent
-                                      : YanciTheme.textSecondary.withValues(
-                                          alpha: 0.58,
-                                        ),
-                                ),
-                              ),
-                              if (i == 1 && _reviewTotal > 0) ...[
-                                const SizedBox(width: 5),
-                                _buildReviewCountBadge(),
-                              ],
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                  );
-                }),
-              ),
-            ],
-          );
-        },
-      ),
-    );
-  }
-
   // ═══════════════════════════════════
   // 記憶卡片
   // ═══════════════════════════════════
-
-  Widget _memoryTile(Memory m, {required bool showDivider}) {
-    final selected = m.id != null && _selectedMemoryIds.contains(m.id);
-    return Column(
-      children: [
-        _SwipeDeleteReveal(
-          key: ValueKey(m.id),
-          enabled: !_selectionMode,
-          onDeletePressed: m.id == null ? null : () => _deleteMemories({m.id!}),
-          child: GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onLongPress: () => _toggleMemorySelection(m),
-            onTap: _selectionMode ? () => _toggleMemorySelection(m) : null,
-            child: Container(
-              padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(
-                color: selected
-                    ? YanciTheme.accent.withValues(alpha: 0.09)
-                    : Colors.transparent,
-                borderRadius: BorderRadius.circular(YanciTheme.radiusSm),
-                border: selected
-                    ? Border.all(
-                        color: YanciTheme.accent.withValues(alpha: 0.48),
-                        width: 0.9,
-                      )
-                    : null,
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 6,
-                          vertical: 2,
-                        ),
-                        decoration: BoxDecoration(
-                          color: YanciTheme.accent.withValues(alpha: 0.12),
-                          borderRadius: BorderRadius.circular(4),
-                        ),
-                        child: Text(
-                          m.category,
-                          style: TextStyle(
-                            fontSize: 10,
-                            color: YanciTheme.accent,
-                          ),
-                        ),
-                      ),
-                      if (m.isPermanent) ...[
-                        const SizedBox(width: 4),
-                        Icon(
-                          Icons.push_pin_rounded,
-                          size: 10,
-                          color: YanciTheme.accent.withValues(alpha: 0.4),
-                        ),
-                      ],
-                      const Spacer(),
-                      if (_selectionMode)
-                        Icon(
-                          selected
-                              ? Icons.check_circle_rounded
-                              : Icons.radio_button_unchecked_rounded,
-                          size: 20,
-                          color: selected
-                              ? YanciTheme.accent
-                              : YanciTheme.textSecondary,
-                        ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    m.content,
-                    style: YanciTheme.bodyText.copyWith(fontSize: 13),
-                  ),
-                  if (m.triggers.isNotEmpty) ...[
-                    const SizedBox(height: 6),
-                    Text(
-                      m.triggers
-                          .split(RegExp(r'[,，、]'))
-                          .map((t) => '#${t.trim()}')
-                          .join(' '),
-                      style: TextStyle(
-                        fontSize: 10,
-                        color: YanciTheme.textSecondary.withValues(alpha: 0.4),
-                      ),
-                    ),
-                  ],
-                ],
-              ),
-            ),
-          ),
-        ),
-        if (showDivider) const _MemoryFadeDivider(),
-      ],
-    );
-  }
-}
-
-class _MemoryFadeDivider extends StatelessWidget {
-  const _MemoryFadeDivider();
-
-  @override
-  Widget build(BuildContext context) {
-    final line = YanciTheme.textSecondary.withValues(alpha: 0.16);
-    return ExcludeSemantics(
-      child: SizedBox(
-        height: 10,
-        child: Center(
-          child: Container(
-            height: 0.7,
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                colors: [Colors.transparent, line, line, Colors.transparent],
-                stops: const [0, 0.46, 0.54, 1],
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// A non-destructive swipe affordance. The gesture only reveals an explicit
-/// button; it can never dismiss the row or mutate memory data by itself.
-class _SwipeDeleteReveal extends StatefulWidget {
-  final Widget child;
-  final bool enabled;
-  final Future<void> Function()? onDeletePressed;
-
-  const _SwipeDeleteReveal({
-    super.key,
-    required this.child,
-    required this.enabled,
-    required this.onDeletePressed,
-  });
-
-  @override
-  State<_SwipeDeleteReveal> createState() => _SwipeDeleteRevealState();
-}
-
-class _SwipeDeleteRevealState extends State<_SwipeDeleteReveal> {
-  static const double _actionWidth = 88;
-  double _offset = 0;
-  bool _dragging = false;
-
-  @override
-  void didUpdateWidget(_SwipeDeleteReveal oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (!widget.enabled && _offset != 0) _close();
-  }
-
-  void _close() {
-    if (!mounted) return;
-    setState(() {
-      _dragging = false;
-      _offset = 0;
-    });
-  }
-
-  void _onDragUpdate(DragUpdateDetails details) {
-    if (!widget.enabled) return;
-    setState(() {
-      _dragging = true;
-      _offset = (_offset + (details.primaryDelta ?? 0)).clamp(
-        -_actionWidth,
-        0.0,
-      );
-    });
-  }
-
-  void _onDragEnd(DragEndDetails details) {
-    if (!widget.enabled) return;
-    final velocity = details.primaryVelocity ?? 0;
-    final reveal = velocity < -240 || (velocity <= 240 && _offset < -36);
-    setState(() {
-      _dragging = false;
-      _offset = reveal ? -_actionWidth : 0;
-    });
-  }
-
-  Future<void> _delete() async {
-    _close();
-    await widget.onDeletePressed?.call();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final revealWidth = (-_offset).clamp(0.0, _actionWidth);
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(YanciTheme.radiusSm),
-      child: Stack(
-        children: [
-          // The memory card is intentionally translucent. Paint the
-          // destructive action only inside the portion actually revealed
-          // by the swipe, otherwise it bleeds through a closed row.
-          Positioned(
-            top: 0,
-            right: 0,
-            bottom: 0,
-            width: revealWidth,
-            child: ClipRect(
-              child: OverflowBox(
-                alignment: Alignment.centerRight,
-                minWidth: _actionWidth,
-                maxWidth: _actionWidth,
-                child: SizedBox(
-                  width: _actionWidth,
-                  child: Material(
-                    color: Colors.transparent,
-                    child: InkWell(
-                      onTap: widget.onDeletePressed == null ? null : _delete,
-                      child: Semantics(
-                        button: true,
-                        label: L.pick(
-                          en: 'Delete memory',
-                          zhTW: '刪除記憶',
-                          zhCN: '删除记忆',
-                        ),
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(
-                              Icons.delete_outline_rounded,
-                              color: Colors.red.shade400,
-                            ),
-                            const SizedBox(height: 3),
-                            Text(
-                              L.pick(en: 'Delete', zhTW: '刪除', zhCN: '删除'),
-                              style: TextStyle(
-                                fontSize: 11,
-                                color: Colors.red.shade400,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ),
-          GestureDetector(
-            behavior: HitTestBehavior.translucent,
-            onHorizontalDragUpdate: _onDragUpdate,
-            onHorizontalDragEnd: _onDragEnd,
-            child: AnimatedContainer(
-              duration: _dragging
-                  ? Duration.zero
-                  : const Duration(milliseconds: 180),
-              curve: Curves.easeOutCubic,
-              transform: Matrix4.translationValues(_offset, 0, 0),
-              child: widget.child,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
 }
