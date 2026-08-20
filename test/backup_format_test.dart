@@ -290,6 +290,12 @@ void main() {
     );
     expect(
       BackupService.isExportArtifactNameForTesting(
+        'holt_backup_2026-08-03T12-39-31.holt.backup',
+      ),
+      isTrue,
+    );
+    expect(
+      BackupService.isExportArtifactNameForTesting(
         'holt_export_2026-08-03T12-39-31.json',
       ),
       isTrue,

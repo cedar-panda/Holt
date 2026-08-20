@@ -28,7 +28,9 @@ class SecureStore {
     } catch (e) {
       // Keystore/Keychain 暫時性錯誤 ≠ 「沒設定過」。至少留下痕跡，
       // 否則「密鑰莫名消失」永遠查不到原因。
-      debugPrint('SecureStore.read($key) 失敗: $e');
+      if (kDebugMode) {
+        debugPrint('SecureStore.read 失敗（${e.runtimeType}）');
+      }
     }
     // 舊明文遷移
     final p = await SharedPreferences.getInstance();
@@ -38,7 +40,9 @@ class SecureStore {
         await _storage.write(key: key, value: legacy);
         await p.remove(key);
       } catch (e) {
-        debugPrint('SecureStore 遷移 $key 失敗（下次再試）: $e');
+        if (kDebugMode) {
+          debugPrint('SecureStore 遷移失敗（${e.runtimeType}，下次再試）');
+        }
       }
       return legacy;
     }
@@ -49,7 +53,9 @@ class SecureStore {
     try {
       await _storage.delete(key: key);
     } catch (e) {
-      debugPrint('SecureStore.delete($key) 失敗: $e');
+      if (kDebugMode) {
+        debugPrint('SecureStore.delete 失敗（${e.runtimeType}）');
+      }
     }
   }
 }

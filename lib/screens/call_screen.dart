@@ -9,6 +9,7 @@ import '../services/tts_service.dart';
 import '../services/api_adapter.dart';
 import '../services/token_tracker.dart';
 import '../services/call_audio_pipeline.dart';
+import '../services/local_asr_service.dart';
 import '../services/call_prompt_composer.dart';
 import '../services/deferred_prompt.dart';
 import '../services/bio_clock_service.dart';
@@ -84,6 +85,8 @@ class _CallScreenState extends State<CallScreen>
   String _micMode = 'hold'; // 'hold' | 'auto'
   bool _muted = false;
   bool _speechAvailable = false;
+  bool _localAsrAvailable = false;
+  StreamSubscription<String>? _localAsrSubscription;
   bool _popped = false;
   bool _endingForPoorSignal = false;
   String? _ttsConfigurationError;
@@ -114,6 +117,7 @@ class _CallScreenState extends State<CallScreen>
   bool _bootstrapReady = false;
   bool _bootstrapFailed = false;
   bool _sendingUserTurn = false;
+  String? _pendingUserText;
 
   // 來電
   final RingtonePlayer _ringtone = RingtonePlayer();
@@ -138,6 +142,13 @@ class _CallScreenState extends State<CallScreen>
 
   // 長按放開後 STT 回調失蹤的保底（Android 常只發 notListening 不發 done）
   Timer? _sttStopFallback;
+  // 按住模式的實際指針狀態。Android SpeechRecognizer 仍可能因停頓
+  // 結束一個 session；只要手指還按著，就自動接續而不提交。
+  bool _micPressed = false;
+  bool _captureFinalized = false;
+  String _heldTranscript = '';
+  String _activeTranscript = '';
+  Timer? _holdRestartTimer;
 
   @override
   void initState() {
@@ -230,6 +241,14 @@ class _CallScreenState extends State<CallScreen>
       return L.pick(en: 'Voice output is not configured', zhTW: '尚未設定語音輸出');
     }
     return _micMode == 'auto' ? L.get('call_auto_hint') : L.get('call_hold');
+  }
+
+  String get _recognizerLocale {
+    return switch (_sttLocale) {
+      'zh_TW' => 'cmn-Hant-TW',
+      'zh_CN' => 'cmn-Hans-CN',
+      _ => _sttLocale.replaceAll('_', '-'),
+    };
   }
 
   // ═══════════════ 來電與撥號 ═══════════════
@@ -340,17 +359,60 @@ class _CallScreenState extends State<CallScreen>
   // ═══════════════ STT ═══════════════
 
   Future<void> _initSpeech() async {
+    // Android 的 SpeechRecognizer 目前沒有中文離線包；通話優先使用
+    // App 內的 Sherpa-ONNX（中英流式模型）。模型只在第一次啟用時下載，
+    // 之後麥克風音訊不會送到系統辨識服務。
+    try {
+      if (!LocalAsrService.instance.isInitialized) {
+        if (mounted && !_popped) {
+          setState(
+            () => _statusText = L.pick(
+              en: 'Preparing local voice model…',
+              zhTW: '正在準備本機中文語音模型…',
+            ),
+          );
+        }
+        _localAsrAvailable = await LocalAsrService.instance.initialize(
+          onProgress: (percent) {
+            if (!mounted || _popped) return;
+            setState(
+              () => _statusText = L.pick(
+                en: 'Preparing local voice model $percent%…',
+                zhTW: '正在準備本機中文語音模型 $percent%…',
+              ),
+            );
+          },
+        );
+      } else {
+        _localAsrAvailable = true;
+      }
+    } catch (error) {
+      _localAsrAvailable = false;
+      debugPrint('Local ASR init failed: $error');
+    }
+
+    // 自動聆聽模式仍保留系統引擎；按住說話模式使用上面的本機引擎。
     try {
       _speechAvailable = await _speech.initialize(
         onError: (error) {
           debugPrint('STT 錯誤: ${error.errorMsg}');
           if (!mounted || _popped) return;
+          if (_micMode == 'hold' && _micPressed) {
+            _commitActiveTranscript();
+            setState(() => _statusText = L.get('call_listening'));
+            _scheduleHoldRestart();
+            return;
+          }
           if (_micState == _MicState.listening) {
-            setState(() {
-              _micState = _MicState.idle;
-              _statusText = L.get('call_stt_error');
-            });
-            _maybeRestartAutoListen();
+            if (_hasCapturedTranscript) {
+              _submitCapturedTranscript();
+            } else {
+              setState(() {
+                _micState = _MicState.idle;
+                _statusText = L.get('call_stt_error');
+              });
+              _maybeRestartAutoListen();
+            }
           }
         },
         onStatus: (status) {
@@ -364,10 +426,12 @@ class _CallScreenState extends State<CallScreen>
         },
       );
       if (!_speechAvailable && mounted) {
-        setState(() => _statusText = L.get('call_stt_unavailable'));
+        if (!_localAsrAvailable) {
+          setState(() => _statusText = L.get('call_stt_unavailable'));
+        }
       }
     } catch (_) {
-      if (mounted) {
+      if (mounted && !_localAsrAvailable) {
         setState(() => _statusText = L.get('call_stt_init_fail'));
       }
     }
@@ -417,25 +481,130 @@ class _CallScreenState extends State<CallScreen>
     return questionTail.contains(t[t.length - 1]) ? '$t？' : '$t。';
   }
 
+  bool get _hasCapturedTranscript =>
+      _heldTranscript.trim().isNotEmpty || _activeTranscript.trim().isNotEmpty;
+
+  String _joinTranscript(String left, String right) {
+    final a = left.trim();
+    final b = right.trim();
+    if (a.isEmpty) return b;
+    if (b.isEmpty) return a;
+    final needsSpace =
+        RegExp(r'[A-Za-z0-9]$').hasMatch(a) &&
+        RegExp(r'^[A-Za-z0-9]').hasMatch(b);
+    return needsSpace ? '$a $b' : '$a$b';
+  }
+
+  void _commitActiveTranscript() {
+    if (_activeTranscript.trim().isEmpty) return;
+    _heldTranscript = _joinTranscript(_heldTranscript, _activeTranscript);
+    _activeTranscript = '';
+    _currentTranscript = _heldTranscript;
+  }
+
+  void _clearCapturedTranscript() {
+    _heldTranscript = '';
+    _activeTranscript = '';
+    _currentTranscript = '';
+  }
+
+  void _submitCapturedTranscript() {
+    if (_captureFinalized) return;
+    final text = _finalizePunc(
+      _joinTranscript(_heldTranscript, _activeTranscript),
+    );
+    _clearCapturedTranscript();
+    if (text.isEmpty) return;
+    _captureFinalized = true;
+    setState(() {
+      _micState = _MicState.thinking;
+      _statusText = L.get('call_thinking');
+    });
+    _sendToAI(text);
+  }
+
+  void _scheduleHoldRestart() {
+    _holdRestartTimer?.cancel();
+    if (!mounted || _popped || !_micPressed || _micMode != 'hold') return;
+    _holdRestartTimer = Timer(const Duration(milliseconds: 120), () {
+      if (!mounted || _popped || !_micPressed || _micMode != 'hold') return;
+      if (_micState != _MicState.listening) return;
+      if (_speech.isListening) {
+        _scheduleHoldRestart();
+        return;
+      }
+      _listen(auto: false);
+    });
+  }
+
+  void _listenLocal() {
+    _localAsrSubscription?.cancel();
+    unawaited(_startLocalListen());
+  }
+
+  Future<void> _startLocalListen() async {
+    try {
+      final stream = await LocalAsrService.instance.startRecognition();
+      if (!mounted || _popped || !_micPressed) {
+        await LocalAsrService.instance.cancelRecognition();
+        return;
+      }
+      _localAsrSubscription = stream.listen(
+        (text) {
+          if (!mounted || _popped || _captureFinalized) return;
+          final display = _withPausePunc(text);
+          _activeTranscript = display;
+          setState(() {
+            _currentTranscript = _joinTranscript(_heldTranscript, display);
+          });
+        },
+        onError: (error) {
+          debugPrint('Local ASR error: $error');
+          if (!mounted || _popped || !_micPressed) return;
+          setState(() => _statusText = L.get('call_stt_error'));
+        },
+        onDone: () {
+          _localAsrSubscription = null;
+          _onSttDone();
+        },
+        cancelOnError: true,
+      );
+    } catch (error) {
+      debugPrint('Local ASR start failed: $error');
+      if (!mounted || _popped) return;
+      setState(() {
+        _micState = _MicState.idle;
+        _statusText = L.get('call_stt_error');
+      });
+    }
+  }
+
   void _listen({required bool auto}) {
     if (!mounted || _popped || !_bootstrapReady) return;
     _resetPunctuation();
+    if (_localAsrAvailable && _micMode == 'hold' && !auto) {
+      _listenLocal();
+      return;
+    }
     _speech.listen(
       onResult: (result) {
-        if (!mounted || _popped) return;
+        if (!mounted || _popped || _captureFinalized) return;
         final display = _withPausePunc(result.recognizedWords);
-        setState(() => _currentTranscript = display);
-        if (result.finalResult && _currentTranscript.trim().isNotEmpty) {
-          final text = _finalizePunc(_currentTranscript);
-          _currentTranscript = '';
-          _speech.stop();
-          // 同步進入 thinking：晚到的 done/notListening 回調看到的
-          // 不再是 listening，不會把狀態拉回 idle 重啟聆聽（重疊回合）
-          setState(() {
-            _micState = _MicState.thinking;
-            _statusText = L.get('call_thinking');
-          });
-          _sendToAI(text);
+        _activeTranscript = display;
+        setState(() {
+          _currentTranscript = _joinTranscript(_heldTranscript, display);
+        });
+        if (result.finalResult) {
+          if (_micMode == 'hold' && _micPressed) {
+            // Android 可能把停頓當成 final，但手指仍按著時只接續，
+            // 不把這一小段當成完整使用者回合送出。
+            _commitActiveTranscript();
+            _speech.stop();
+            _scheduleHoldRestart();
+          } else if (_hasCapturedTranscript) {
+            _speech.stop();
+            _submitCapturedTranscript();
+          }
         }
       },
       onSoundLevelChange: (db) {
@@ -443,10 +612,12 @@ class _CallScreenState extends State<CallScreen>
         // 錄音時保持平靜，char 開口才起伏。
       },
       listenOptions: stt.SpeechListenOptions(
-        localeId: _sttLocale,
+        localeId: _recognizerLocale,
         listenMode: stt.ListenMode.dictation,
-        listenFor: Duration(seconds: auto ? 120 : 60),
-        pauseFor: Duration(milliseconds: auto ? 2200 : 3000),
+        // 按住模式由鬆開事件控制；Android 仍可能因系統 endpoint
+        // 結束單次 session，_onSttDone 會在手指未鬆開時接續。
+        listenFor: auto ? const Duration(seconds: 120) : null,
+        pauseFor: auto ? const Duration(milliseconds: 2200) : null,
         partialResults: true,
         cancelOnError: true,
       ),
@@ -457,16 +628,13 @@ class _CallScreenState extends State<CallScreen>
     if (!mounted || _popped) return;
     _sttStopFallback?.cancel();
     _sttStopFallback = null;
-    if (_currentTranscript.trim().isNotEmpty) {
-      final text = _finalizePunc(_currentTranscript);
-      _currentTranscript = '';
-      // 同步進 thinking（同 onResult 的 finalResult 路徑）：
-      // 防第二個 status 回調把狀態拉回 idle 造成重疊聆聽
-      setState(() {
-        _micState = _MicState.thinking;
-        _statusText = L.get('call_thinking');
-      });
-      _sendToAI(text);
+    if (_micMode == 'hold' && _micPressed) {
+      _commitActiveTranscript();
+      _scheduleHoldRestart();
+      return;
+    }
+    if (_hasCapturedTranscript) {
+      _submitCapturedTranscript();
     } else if (_micState == _MicState.listening) {
       setState(() {
         _micState = _MicState.idle;
@@ -481,18 +649,30 @@ class _CallScreenState extends State<CallScreen>
   Future<void> _onMicDown() async {
     await _bootstrapFuture;
     if (!mounted || _popped || !_bootstrapReady) return;
-    if (!_speechAvailable || _micState == _MicState.thinking) return;
+    if ((!_speechAvailable && !_localAsrAvailable) ||
+        _micState == _MicState.thinking) {
+      return;
+    }
     if (_micState == _MicState.listening) return; // 重複按下
     if (_micState == _MicState.speaking) _interrupt();
+    _micPressed = false;
+    _holdRestartTimer?.cancel();
     _sttStopFallback?.cancel();
     // 上一段還沒完全停：先停乾淨再開，否則 listen() 會 error_busy
-    if (_speech.isListening) {
+    if (_speech.isListening || LocalAsrService.instance.isListening) {
       await _speech.stop();
+      if (LocalAsrService.instance.isListening) {
+        await LocalAsrService.instance.stopRecognition();
+      }
       await Future.delayed(const Duration(milliseconds: 60));
       if (!mounted || _micState == _MicState.thinking) return;
     }
+    _micPressed = true;
     setState(() {
       _micState = _MicState.listening;
+      _captureFinalized = false;
+      _heldTranscript = '';
+      _activeTranscript = '';
       _currentTranscript = '';
       _statusText = L.get('call_listening');
     });
@@ -500,8 +680,15 @@ class _CallScreenState extends State<CallScreen>
   }
 
   void _onMicUp() {
+    _micPressed = false;
+    _holdRestartTimer?.cancel();
     if (_micState != _MicState.listening) return;
-    _speech.stop(); // onStatus:'done'/'notListening' → _onSttDone
+    if (_localAsrAvailable && LocalAsrService.instance.isListening) {
+      // 本機 ASR 由放開手指明確結束；Stream 完成後進入同一個提交流程。
+      unawaited(LocalAsrService.instance.stopRecognition());
+    } else {
+      _speech.stop(); // onStatus:'done'/'notListening' → _onSttDone
+    }
     // 回調失蹤保底：1.5s 沒等到就強制收尾，按鍵不再卡死
     _sttStopFallback?.cancel();
     _sttStopFallback = Timer(const Duration(milliseconds: 1500), () {
@@ -619,7 +806,13 @@ class _CallScreenState extends State<CallScreen>
 
   Future<void> _sendToAI(String userText) async {
     final normalized = userText.trim();
-    if (normalized.isEmpty || _sendingUserTurn || _popped) return;
+    if (normalized.isEmpty || _popped) return;
+    if (_sendingUserTurn) {
+      // 按住模式鬆開時，上一輪可能還在取消/收尾；先排隊，
+      // 不再讓辨識成功的文字靜默消失。
+      _pendingUserText = normalized;
+      return;
+    }
     // 鎖必須在第一個 await 之前同步取得，否則兩個近乎同時的觸發源
     // （onResult finalResult 與 onStatus done）都能通過上面的檢查
     _sendingUserTurn = true;
@@ -646,6 +839,11 @@ class _CallScreenState extends State<CallScreen>
       await _generateTurn(userText: normalized);
     } finally {
       _sendingUserTurn = false;
+      final pending = _pendingUserText;
+      _pendingUserText = null;
+      if (pending != null && mounted && !_popped) {
+        unawaited(_sendToAI(pending));
+      }
     }
   }
 
@@ -1125,6 +1323,11 @@ class _CallScreenState extends State<CallScreen>
     final pipeline = _pipeline;
     _pipeline = null;
     if (pipeline != null) unawaited(pipeline.cancel());
+    _localAsrSubscription?.cancel();
+    _localAsrSubscription = null;
+    if (LocalAsrService.instance.isListening) {
+      unawaited(LocalAsrService.instance.cancelRecognition());
+    }
     _speech.stop();
     HapticFeedback.mediumImpact();
     setState(() {
@@ -1150,10 +1353,16 @@ class _CallScreenState extends State<CallScreen>
     _autoListenRestartTimer?.cancel();
     _poorSignalFinishTimer?.cancel();
     _sttStopFallback?.cancel();
+    _holdRestartTimer?.cancel();
     _durationTimer?.cancel();
     final pipeline = _pipeline;
     _pipeline = null;
     if (pipeline != null) unawaited(pipeline.cancel());
+    _localAsrSubscription?.cancel();
+    _localAsrSubscription = null;
+    if (LocalAsrService.instance.isListening) {
+      unawaited(LocalAsrService.instance.cancelRecognition());
+    }
     _speech.stop();
     _stopRinging();
     Navigator.pop(context, result);
@@ -1166,8 +1375,14 @@ class _CallScreenState extends State<CallScreen>
     _activeAdapter = null;
     adapter?.cancelActive();
     _sttStopFallback?.cancel();
+    _holdRestartTimer?.cancel();
     _autoListenRestartTimer?.cancel();
     _poorSignalFinishTimer?.cancel();
+    _localAsrSubscription?.cancel();
+    _localAsrSubscription = null;
+    if (LocalAsrService.instance.isListening) {
+      unawaited(LocalAsrService.instance.cancelRecognition());
+    }
     _speech.stop();
     _stopRinging();
     final pipeline = _pipeline;
@@ -1428,34 +1643,42 @@ class _CallScreenState extends State<CallScreen>
           ),
         ),
       ),
-      if (_logExpanded)
-        Container(
-          height: compact ? 76 : 132,
-          margin: const EdgeInsets.symmetric(horizontal: 20),
-          decoration: BoxDecoration(
-            color: YanciTheme.isDark
-                ? Colors.black.withValues(alpha: 0.14)
-                : Colors.white.withValues(alpha: 0.30),
-            borderRadius: BorderRadius.circular(16),
-          ),
-          child: _chatLog.isEmpty
-              ? Center(
-                  child: Text(
-                    L.get('call_log'),
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: YanciTheme.textSecondary.withValues(alpha: 0.45),
-                    ),
-                  ),
-                )
-              : ListView.builder(
-                  controller: _logScroll,
-                  padding: const EdgeInsets.all(12),
-                  itemCount: _chatLog.length,
-                  itemBuilder: (_, i) => _buildLogItem(_chatLog[i]),
-                ),
-        ),
+      if (_logExpanded) _buildSubtitleLog(compact: compact),
     ];
+  }
+
+  Widget _buildSubtitleLog({required bool compact}) {
+    // 保留約五行的閱讀空間；訊息變多時只在字幕區內滾動，避免把按鈕推出畫面。
+    final textScaler = MediaQuery.textScalerOf(context);
+    final lineHeight = textScaler.scale(13) * 1.5;
+    final minHeight = lineHeight * 5 + 24;
+    final preferredMaxHeight = compact ? 184.0 : 240.0;
+    final maxHeight = minHeight > preferredMaxHeight
+        ? minHeight
+        : preferredMaxHeight;
+
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 20),
+      child: ConstrainedBox(
+        constraints: BoxConstraints(minHeight: minHeight, maxHeight: maxHeight),
+        child: _chatLog.isEmpty
+            ? Center(
+                child: Text(
+                  L.get('call_log'),
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: YanciTheme.textSecondary.withValues(alpha: 0.45),
+                  ),
+                ),
+              )
+            : ListView.builder(
+                controller: _logScroll,
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                itemCount: _chatLog.length,
+                itemBuilder: (_, i) => _buildLogItem(_chatLog[i]),
+              ),
+      ),
+    );
   }
 
   // ── 來電按鈕列：拒接（紅）← → 接聽（綠，脈動）──

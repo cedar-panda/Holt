@@ -22,10 +22,17 @@ void main() {
     tester,
   ) async {
     await tester.pumpWidget(const MaterialApp(home: ApiSettingsScreen()));
-    for (var i = 0; i < 12; i++) {
+    for (var i = 0; i < 40; i++) {
       await tester.pump(const Duration(milliseconds: 50));
     }
     final settingsList = find.byType(ListView).first;
+    await tester.scrollUntilVisible(
+      find.byKey(const Key('api_settings_advanced_button')),
+      420,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.tap(find.byKey(const Key('api_settings_advanced_button')));
+    await tester.pump(const Duration(milliseconds: 50));
     for (var i = 0; i < 5; i++) {
       await tester.drag(settingsList, const Offset(0, -420));
       await tester.pump(const Duration(milliseconds: 50));

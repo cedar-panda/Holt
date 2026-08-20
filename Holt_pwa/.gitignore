@@ -1,0 +1,30 @@
+# Local OS/editor files
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Local development secrets and overrides
+.env
+.env.*
+!.env.example
+*.local
+
+# Dependencies and generated output
+node_modules/
+dist/
+build/
+coverage/
+.cache/
+.parcel-cache/
+.vite/
+
+# Local logs and temporary files
+*.log
+tmp/
+temp/
+
+# Exported user data: never commit backups to the app repository
+*.holt.backup
+*.holt.zip

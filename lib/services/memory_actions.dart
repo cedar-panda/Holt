@@ -78,6 +78,7 @@ class MemoryActions {
   static final _searchRe = RegExp(
     r'<search_chat>([\s\S]*?)</search_chat>',
     multiLine: true,
+    caseSensitive: false,
   );
   static final _toolCallsRe = RegExp(
     r'<tool_calls?>[\s\S]*?</tool_calls?>',
@@ -90,12 +91,15 @@ class MemoryActions {
     String text, {
     required String windowId,
     bool resetState = true,
+    bool captureSearchQuery = false,
   }) {
+    late final _MemoryActionState state;
     if (resetState) {
-      _resetState(windowId);
+      state = _resetState(windowId);
     } else {
-      _statesByWindow.putIfAbsent(windowId, _MemoryActionState.new);
+      state = _statesByWindow.putIfAbsent(windowId, _MemoryActionState.new);
     }
+    if (captureSearchQuery) _captureSearchQuery(text, state);
     return text
         .replaceAll(_memoRe, '')
         .replaceAll(_noteRe, '')
@@ -178,10 +182,11 @@ class MemoryActions {
     final state = resetState
         ? _resetState(windowId)
         : _statesByWindow.putIfAbsent(windowId, _MemoryActionState.new);
-    if (!text.contains('<memo') &&
-        !text.contains('<persona_note>') &&
-        !text.contains('<search_chat>') &&
-        !text.toLowerCase().contains('<tool_call')) {
+    final lowerText = text.toLowerCase();
+    if (!lowerText.contains('<memo') &&
+        !lowerText.contains('<persona_note>') &&
+        !lowerText.contains('<search_chat>') &&
+        !lowerText.contains('<tool_call')) {
       return text;
     }
     var out = text;
@@ -242,7 +247,9 @@ class MemoryActions {
           if (result.proposalId != null) {
             state.proposalIds.add(result.proposalId!);
           }
-          state.actionLog.add('◌ 疑似重複記憶已送往提案匣');
+          state.actionLog.add(
+            result.existingMemoryId == null ? '◌ 模型記憶待你確認' : '◌ 疑似重複記憶已送往提案匣',
+          );
           break;
       }
       memoCount++;
@@ -444,6 +451,27 @@ class MemoryActions {
     }
     if (content.isEmpty) return null;
     return [category, content, triggers];
+  }
+
+  static void _captureSearchQuery(String text, _MemoryActionState state) {
+    if (state.lastSearchQuery != null) return;
+
+    final tagMatch = _searchRe.firstMatch(text);
+    final tagQuery = tagMatch?.group(1)?.trim();
+    if (tagQuery != null && tagQuery.isNotEmpty) {
+      state.lastSearchQuery = tagQuery;
+      state.actionLog.add('🔍 搜尋「$tagQuery」');
+      return;
+    }
+
+    for (final match in _toolCallsRe.allMatches(text)) {
+      final query = _extractSearchQueryFromToolCall(match.group(0)!);
+      if (query != null && query.isNotEmpty) {
+        state.lastSearchQuery = query;
+        state.actionLog.add('🔍 搜尋「$query」');
+        return;
+      }
+    }
   }
 }
 

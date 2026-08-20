@@ -161,15 +161,22 @@ class _MemorySummaryTabState extends State<MemorySummaryTab>
     final id = summary['id'] as int;
     final newContent = ContextCompressor.normalizeSummaryFormat(_editCtrl.text);
     if (newContent.isEmpty) return;
+    // Let EditableText release its MediaQuery/Focus dependencies before the
+    // editing subtree is replaced by Markdown. Replacing it in the same frame
+    // as an active IME teardown can trip InheritedElement deactivation asserts
+    // on debug devices.
+    FocusManager.instance.primaryFocus?.unfocus();
     final newTokens = TokenEstimator.estimate(newContent);
     await DatabaseHelper.updateContextSummary(
       id: id,
       content: newContent,
       tokenCount: newTokens,
     );
+    await WidgetsBinding.instance.endOfFrame;
+    if (!mounted) return;
     _notifyModified();
     setState(() => _editingSummaryId = null);
-    _loadData();
+    await _loadData();
   }
 
   Future<void> _regenerate(Map<String, dynamic> summary) async {

@@ -137,11 +137,18 @@ void main() {
     );
 
     await tester.pumpWidget(const MaterialApp(home: ApiSettingsScreen()));
-    for (var i = 0; i < 12; i++) {
+    for (var i = 0; i < 40; i++) {
       await tester.pump(const Duration(milliseconds: 50));
     }
-
     final settingsList = find.byType(ListView).first;
+    await tester.scrollUntilVisible(
+      find.byKey(const Key('api_settings_advanced_button')),
+      420,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.tap(find.byKey(const Key('api_settings_advanced_button')));
+    await tester.pump();
+
     for (var i = 0; i < 5; i++) {
       await tester.drag(settingsList, const Offset(0, -420));
       await tester.pump(const Duration(milliseconds: 50));
@@ -182,11 +189,18 @@ void main() {
     await ApiSettings.saveProviderModelSelection('gemini', 'gemini-2.0-flash');
 
     await tester.pumpWidget(const MaterialApp(home: ApiSettingsScreen()));
-    for (var i = 0; i < 12; i++) {
+    for (var i = 0; i < 40; i++) {
       await tester.pump(const Duration(milliseconds: 50));
     }
-
     final settingsList = find.byType(ListView).first;
+    await tester.scrollUntilVisible(
+      find.byKey(const Key('api_settings_advanced_button')),
+      420,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.tap(find.byKey(const Key('api_settings_advanced_button')));
+    await tester.pump();
+
     for (var i = 0; i < 5; i++) {
       await tester.drag(settingsList, const Offset(0, -420));
       await tester.pump(const Duration(milliseconds: 50));
@@ -208,21 +222,17 @@ void main() {
     await ApiSettings.saveGeminiApiKey('gemini-test-key');
 
     await tester.pumpWidget(const MaterialApp(home: ApiSettingsScreen()));
-    for (var i = 0; i < 12; i++) {
+    for (var i = 0; i < 40; i++) {
       await tester.pump(const Duration(milliseconds: 50));
     }
 
-    await tester.tap(
-      find.byKey(const Key('api_settings_model_section_toggle')),
-    );
-    await tester.pump();
     await tester.tap(find.byTooltip(L.get('settings_model_refresh')).first);
     await tester.pump();
     expect(find.text('請先輸入 OpenRouter API Key'), findsOneWidget);
 
-    await tester.tap(find.byType(DropdownButton<String>).first);
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Google Gemini').last);
+    await tester.tap(find.byKey(const Key('api_settings_provider_toggle')));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('api_settings_provider_gemini')));
     await tester.pumpAndSettle();
 
     expect(find.text('請先輸入 OpenRouter API Key'), findsNothing);
@@ -231,9 +241,13 @@ void main() {
       String menuLabel,
       String expectedError,
     ) async {
-      await tester.tap(find.byType(DropdownButton<String>).first);
-      await tester.pumpAndSettle();
-      await tester.tap(find.text(menuLabel).last);
+      final providerId = switch (menuLabel) {
+        'xAI (Grok)' => 'xai',
+        'DeepSeek' => 'deepseek',
+        'OpenAI Compatible (Custom)' => 'openai_compatible',
+        _ => throw StateError('Unknown provider label: $menuLabel'),
+      };
+      await tester.tap(find.byKey(Key('api_settings_provider_$providerId')));
       await tester.pump();
       expect(find.text(expectedError), findsOneWidget);
       expect(find.text('請先輸入 OpenRouter API Key'), findsNothing);

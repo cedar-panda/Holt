@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import '../theme/app_theme.dart';
@@ -101,9 +100,25 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
     }
   }
 
+  Future<void> _saveNow() async {
+    if (!_settingsLoaded) return;
+    _settingsDirty = true;
+    try {
+      await _flushPendingSave();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(L.pick(en: 'Settings saved', zhTW: '設定已儲存')),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } catch (error) {
+      _reportSaveError(error);
+    }
+  }
+
   final _apiKeyController = TextEditingController();
   final _xaiKeyCtrl = TextEditingController();
-  final _systemPromptController = TextEditingController();
 
   final _geminiKeyCtrl = TextEditingController();
   final _deepseekKeyCtrl = TextEditingController();
@@ -149,7 +164,10 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
   bool _isTestingApi = false;
   String? _modelError;
   String? _modelErrorProvider;
-  bool _showModelSection = false;
+  bool _showModelSection = true;
+  bool _showModelList = true;
+  bool _showOtherProviders = false;
+  bool _showAdvancedSettings = false;
   bool _obscureProviderKeys = true;
 
   @override
@@ -161,7 +179,6 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
   Future<void> _loadSettings() async {
     final apiKey = await ApiSettings.getOpenRouterApiKey();
     final xaiKey = await ApiSettings.getXaiApiKey();
-    final systemPrompt = await ApiSettings.getSystemPrompt();
     final provider = await ApiSettings.getApiProvider();
 
     final gm = await ApiSettings.getGeminiApiKey();
@@ -221,7 +238,6 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
       setState(() {
         _apiKeyController.text = apiKey;
         _xaiKeyCtrl.text = xaiKey;
-        _systemPromptController.text = systemPrompt;
         _provider = provider;
 
         _geminiKeyCtrl.text = gm;
@@ -406,6 +422,254 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
     _modelFetchTimer = Timer(
       const Duration(milliseconds: 700),
       () => unawaited(_fetchModels()),
+    );
+  }
+
+  Future<void> _handleProviderChanged(String? value) async {
+    if (value == null) return;
+    _modelFetchTimer?.cancel();
+    _modelFetchGeneration++;
+    setState(() {
+      _provider = value;
+      _models = const <ModelInfo>[];
+      _filteredModels = const <ModelInfo>[];
+      _modelSearchController.clear();
+      _modelError = null;
+      _modelErrorProvider = null;
+      _isFetchingModels = false;
+    });
+    final savedModel = await ApiSettings.getModelForProvider(value);
+    if (!mounted) return;
+    setState(() {
+      _selectedModel = savedModel;
+      // 只更新顯示用主模型；搜尋模型由專屬選擇器獨立管理。
+      if (value == 'gemini') _webSearchGeminiModel = savedModel;
+    });
+    if (value == 'openrouter' ||
+        value == 'gemini' ||
+        value == 'deepseek' ||
+        value == 'xai' ||
+        value == 'openai_compatible') {
+      _fetchModels();
+    } else {
+      setState(() => _models = []);
+      _filteredModels = [];
+    }
+    await _applyCostPolicy(
+      provider: value,
+      model: savedModel,
+      apiKey: value == 'thinking_machines'
+          ? _thinkingMachinesKeyCtrl.text
+          : null,
+    );
+    _debouncedSave();
+  }
+
+  List<({String id, String label})> _providerOptions() => [
+    (id: 'openrouter', label: 'OpenRouter'),
+    (
+      id: 'openai_compatible',
+      label: L.pick(en: 'Custom Relay', zhTW: '自訂中轉站', zhCN: '自定义中转站'),
+    ),
+    (id: 'xai', label: 'xAI (Grok)'),
+    (id: 'gemini', label: 'Google Gemini'),
+    (id: 'deepseek', label: 'DeepSeek'),
+    (id: 'qwen', label: 'Qwen'),
+    (id: 'bedrock', label: 'AWS Bedrock'),
+    (id: 'thinking_machines', label: 'Thinking Machines'),
+    (id: 'local', label: L.pick(en: 'Local Model', zhTW: '本地模型', zhCN: '本地模型')),
+    (
+      id: 'local_api',
+      label: L.pick(en: 'Local API', zhTW: '本地 API', zhCN: '本地 API'),
+    ),
+  ];
+
+  Widget _buildProviderPicker() {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final columns = constraints.maxWidth >= 520 ? 3 : 2;
+        const gap = YanciTheme.spacingSm;
+        final cardWidth =
+            (constraints.maxWidth - (columns - 1) * gap) / columns;
+        const primaryIds = {'openrouter', 'openai_compatible'};
+        final options = _providerOptions();
+        final visibleOptions = _showOtherProviders
+            ? options
+            : options
+                  .where(
+                    (option) =>
+                        primaryIds.contains(option.id) ||
+                        option.id == _provider,
+                  )
+                  .toList();
+        return Wrap(
+          spacing: gap,
+          runSpacing: gap,
+          children: [
+            for (final option in visibleOptions)
+              SizedBox(
+                width: cardWidth,
+                child: _buildProviderOption(id: option.id, label: option.label),
+              ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildProviderSectionHeader() {
+    return Row(
+      children: [
+        Expanded(child: _buildSectionTitle(L.get('settings_api_source'))),
+        IconButton(
+          key: const Key('api_settings_provider_toggle'),
+          icon: Icon(
+            _showOtherProviders
+                ? Icons.expand_less_rounded
+                : Icons.expand_more_rounded,
+            size: 22,
+            color: YanciTheme.textSecondary,
+          ),
+          tooltip: L.pick(
+            en: _showOtherProviders
+                ? 'Hide other providers'
+                : 'Show other providers',
+            zhTW: _showOtherProviders ? '收起其他來源' : '展開其他來源',
+            zhCN: _showOtherProviders ? '收起其他来源' : '展开其他来源',
+          ),
+          onPressed: () =>
+              setState(() => _showOtherProviders = !_showOtherProviders),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildProviderOption({required String id, required String label}) {
+    final selected = _provider == id;
+    final selectedColor = Color.lerp(
+      const Color(0xFF4CAF6A),
+      YanciTheme.accent,
+      0.28,
+    )!;
+    return Semantics(
+      key: ValueKey<String>('api_settings_provider_$id'),
+      button: true,
+      selected: selected,
+      label: label,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(YanciTheme.radiusMd),
+        onTap: selected ? null : () => _handleProviderChanged(id),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 160),
+          curve: Curves.easeOut,
+          constraints: const BoxConstraints(minHeight: 54),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+          decoration: BoxDecoration(
+            color: Colors.transparent,
+            borderRadius: BorderRadius.circular(YanciTheme.radiusMd),
+            border: Border.all(
+              color: selected ? selectedColor : _settingsBorderColor,
+              width: selected ? 1.5 : 1,
+            ),
+          ),
+          child: Row(
+            children: [
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 160),
+                width: 18,
+                height: 18,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: selected ? selectedColor : Colors.transparent,
+                  border: Border.all(
+                    color: selected
+                        ? selectedColor
+                        : YanciTheme.textSecondary.withValues(alpha: 0.72),
+                    width: selected ? 1 : 1.5,
+                  ),
+                ),
+                child: selected
+                    ? Center(
+                        child: Container(
+                          width: 6,
+                          height: 6,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: Colors.white,
+                          ),
+                        ),
+                      )
+                    : null,
+              ),
+              const SizedBox(width: YanciTheme.spacingSm),
+              Expanded(
+                child: Text(
+                  label,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: YanciTheme.bodyText.copyWith(
+                    fontSize: 13.5,
+                    color: selected
+                        ? YanciTheme.textPrimary
+                        : YanciTheme.textSecondary,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  InputDecoration _buildApiKeyDecoration({
+    required String hintText,
+    List<Widget> trailingActions = const <Widget>[],
+  }) {
+    return InputDecoration(
+      hintText: hintText,
+      hintStyle: YanciTheme.bodySmall.copyWith(
+        color: YanciTheme.textSecondary.withValues(alpha: 0.48),
+      ),
+      border: InputBorder.none,
+      contentPadding: const EdgeInsets.symmetric(vertical: 10),
+      isDense: true,
+      suffixIcon: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          ...trailingActions,
+          IconButton(
+            icon: Icon(
+              _obscureProviderKeys
+                  ? Icons.visibility_outlined
+                  : Icons.visibility_off_outlined,
+              size: 21,
+            ),
+            color: YanciTheme.textSecondary,
+            tooltip: L.pick(en: 'Show API Key', zhTW: '顯示 API Key'),
+            onPressed: () =>
+                setState(() => _obscureProviderKeys = !_obscureProviderKeys),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildApiKeyField({
+    required TextEditingController controller,
+    required String hintText,
+    required ValueChanged<String> onChanged,
+    List<Widget> trailingActions = const <Widget>[],
+  }) {
+    return TextField(
+      controller: controller,
+      obscureText: _obscureProviderKeys,
+      style: YanciTheme.bodyText.copyWith(fontSize: 14),
+      onChanged: onChanged,
+      decoration: _buildApiKeyDecoration(
+        hintText: hintText,
+        trailingActions: trailingActions,
+      ),
     );
   }
 
@@ -596,7 +860,11 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
     'qwen' => 'Qwen',
     'bedrock' => 'AWS Bedrock',
     'thinking_machines' => 'Thinking Machines',
-    'openai_compatible' => 'OpenAI Compatible',
+    'openai_compatible' => L.pick(
+      en: 'Custom Relay',
+      zhTW: '自訂中轉站',
+      zhCN: '自定义中转站',
+    ),
     'local' => L.pick(en: 'Local Model', zhTW: '本地模型'),
     'local_api' => 'Local API',
     _ => provider,
@@ -747,13 +1015,18 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
                     keyboardType: TextInputType.number,
                     textAlign: TextAlign.center,
                     style: YanciTheme.bodyText.copyWith(fontSize: 12),
-                    decoration: const InputDecoration(
+                    decoration: InputDecoration(
                       isDense: true,
                       contentPadding: EdgeInsets.symmetric(
                         vertical: 4,
                         horizontal: 4,
                       ),
-                      border: UnderlineInputBorder(),
+                      border: _thinInputBorder(),
+                      enabledBorder: _thinInputBorder(),
+                      focusedBorder: _thinInputBorder(
+                        color: YanciTheme.accent.withValues(alpha: 0.85),
+                        width: 1,
+                      ),
                     ),
                     onChanged: (v) {
                       final n = int.tryParse(v);
@@ -1121,6 +1394,18 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
               ),
               border: const OutlineInputBorder(),
               isDense: true,
+              suffixIcon: IconButton(
+                icon: Icon(
+                  _obscureProviderKeys
+                      ? Icons.visibility_outlined
+                      : Icons.visibility_off_outlined,
+                  size: 20,
+                ),
+                tooltip: L.pick(en: 'Show API Key', zhTW: '顯示 API Key'),
+                onPressed: () => setState(
+                  () => _obscureProviderKeys = !_obscureProviderKeys,
+                ),
+              ),
             ),
           ),
           const SizedBox(height: 6),
@@ -1227,14 +1512,12 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
                   value: selectedModeLabel,
                   child: Container(
                     decoration: BoxDecoration(
-                      color: Color.alphaBlend(
-                        (YanciTheme.isDark
-                                ? YanciTheme.accentLight
-                                : YanciTheme.accent)
-                            .withValues(alpha: YanciTheme.isDark ? 0.18 : 0.20),
-                        YanciTheme.glassInputBg,
-                      ),
+                      color: Colors.transparent,
                       borderRadius: BorderRadius.circular(YanciTheme.radiusSm),
+                      border: Border.all(
+                        color: _settingsBorderColor,
+                        width: 0.75,
+                      ),
                     ),
                     padding: const EdgeInsets.symmetric(horizontal: 12),
                     child: DropdownButton<WebSearchMode>(
@@ -1475,7 +1758,6 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
     // 不會讓同一輪混入新舊欄位值。
     final openRouterKey = _apiKeyController.text.trim();
     final xaiKey = _xaiKeyCtrl.text.trim();
-    final systemPrompt = _systemPromptController.text.trim();
     final provider = _provider;
     final model = _modelValueForProvider();
     final geminiKey = _geminiKeyCtrl.text.trim();
@@ -1507,7 +1789,6 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
 
     await ApiSettings.saveOpenRouterApiKey(openRouterKey);
     await ApiSettings.saveXaiApiKey(xaiKey);
-    await ApiSettings.saveSystemPrompt(systemPrompt);
     await ApiSettings.saveProviderModelSelection(provider, model);
     await ApiSettings.saveGeminiApiKey(geminiKey);
     await ApiSettings.saveDeepseekApiKey(deepseekKey);
@@ -1565,7 +1846,6 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
     _modelFetchGeneration++;
     _apiKeyController.dispose();
     _xaiKeyCtrl.dispose();
-    _systemPromptController.dispose();
     _geminiKeyCtrl.dispose();
     _deepseekKeyCtrl.dispose();
     _qwenKeyCtrl.dispose();
@@ -1585,22 +1865,35 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
   }
 
   Widget _buildGlassCard({required Widget child}) {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(YanciTheme.radiusMd),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-        child: Container(
-          padding: const EdgeInsets.symmetric(
-            horizontal: YanciTheme.spacingMd,
-            vertical: YanciTheme.spacingXs,
-          ),
-          decoration: BoxDecoration(
-            color: YanciTheme.glassInputBg,
-            borderRadius: BorderRadius.circular(YanciTheme.radiusMd),
-            border: Border.all(color: YanciTheme.glassBorder, width: 0.5),
-          ),
-          child: child,
-        ),
+    return Container(
+      padding: const EdgeInsets.symmetric(
+        horizontal: YanciTheme.spacingMd,
+        vertical: YanciTheme.spacingXs,
+      ),
+      decoration: BoxDecoration(
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(YanciTheme.radiusMd),
+        border: Border.all(color: _settingsBorderColor, width: 0.75),
+      ),
+      child: child,
+    );
+  }
+
+  Color get _settingsBorderColor => Color.lerp(
+    YanciTheme.textSecondary,
+    YanciTheme.accent,
+    YanciTheme.isDark ? 0.38 : 0.28,
+  )!.withValues(alpha: 0.82);
+
+  Color get _selectionSuccessColor =>
+      Color.lerp(const Color(0xFF4CAF6A), YanciTheme.accent, 0.24)!;
+
+  OutlineInputBorder _thinInputBorder({Color? color, double width = 0.75}) {
+    return OutlineInputBorder(
+      borderRadius: BorderRadius.circular(YanciTheme.radiusSm),
+      borderSide: BorderSide(
+        color: color ?? _settingsBorderColor,
+        width: width,
       ),
     );
   }
@@ -1651,6 +1944,310 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
     );
   }
 
+  Widget _buildModelPicker(BuildContext context) {
+    final selectedModel = _modelValueForProvider();
+    final hasModels = _models.isNotEmpty;
+    final hasSearchResults = _filteredModels.isNotEmpty;
+    final query = _modelSearchController.text.trim();
+    final modelCountText = hasModels
+        ? L.pick(
+            en: '${_models.length} models available',
+            zhTW: '已載入 ${_models.length} 個模型',
+            zhCN: '已加载 ${_models.length} 个模型',
+          )
+        : L.pick(
+            en: 'Enter a model ID or fetch the list',
+            zhTW: '可直接填入模型 ID，或拉取列表',
+            zhCN: '可直接填入模型 ID，或拉取列表',
+          );
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: YanciTheme.spacingXs),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (selectedModel.isNotEmpty) ...[
+            Container(
+              padding: const EdgeInsets.symmetric(
+                horizontal: YanciTheme.spacingSm,
+                vertical: 9,
+              ),
+              decoration: BoxDecoration(
+                color: YanciTheme.accent.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(YanciTheme.radiusSm),
+                border: Border.all(
+                  color: _selectionSuccessColor.withValues(alpha: 0.72),
+                  width: 0.8,
+                ),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.check_circle_rounded,
+                    size: 18,
+                    color: _selectionSuccessColor,
+                  ),
+                  const SizedBox(width: YanciTheme.spacingSm),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          L.pick(
+                            en: 'Current model',
+                            zhTW: '目前模型',
+                            zhCN: '当前模型',
+                          ),
+                          style: YanciTheme.bodySmall.copyWith(
+                            fontSize: 11,
+                            color: YanciTheme.textSecondary,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        ConstrainedBox(
+                          constraints: const BoxConstraints(maxHeight: 22),
+                          child: SingleChildScrollView(
+                            scrollDirection: Axis.horizontal,
+                            physics: const ClampingScrollPhysics(),
+                            child: Text(
+                              selectedModel,
+                              maxLines: 1,
+                              softWrap: false,
+                              style: YanciTheme.bodyText.copyWith(
+                                fontSize: 13,
+                                color: YanciTheme.textPrimary,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: YanciTheme.spacingSm),
+          ],
+          Semantics(
+            textField: true,
+            label: L.pick(en: 'Search models', zhTW: '搜尋模型', zhCN: '搜索模型'),
+            child: TextField(
+              key: const Key('api_settings_model_search_field'),
+              controller: _modelSearchController,
+              style: YanciTheme.bodyText.copyWith(fontSize: 14),
+              decoration: InputDecoration(
+                hintText: _models.isEmpty
+                    ? L.get('settings_model_hint_empty')
+                    : L.get('settings_model_hint_search'),
+                hintStyle: YanciTheme.bodySmall.copyWith(
+                  color: YanciTheme.textSecondary.withValues(alpha: 0.52),
+                ),
+                border: InputBorder.none,
+                enabledBorder: InputBorder.none,
+                focusedBorder: InputBorder.none,
+                contentPadding: const EdgeInsets.symmetric(vertical: 12),
+                prefixIcon: Icon(
+                  Icons.search_rounded,
+                  size: 20,
+                  color: YanciTheme.textSecondary,
+                ),
+                suffixIcon: query.isNotEmpty
+                    ? IconButton(
+                        icon: const Icon(Icons.clear_rounded, size: 18),
+                        tooltip: L.pick(en: 'Clear search', zhTW: '清除搜尋'),
+                        onPressed: () {
+                          _modelSearchController.clear();
+                          _filterModels('');
+                        },
+                      )
+                    : null,
+              ),
+              onChanged: _filterModels,
+              onSubmitted: (value) {
+                if (value.trim().isNotEmpty) {
+                  _selectModel(value.trim());
+                }
+              },
+            ),
+          ),
+          const SizedBox(height: YanciTheme.spacingXs),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  modelCountText,
+                  style: YanciTheme.bodySmall.copyWith(
+                    fontSize: 11,
+                    color: YanciTheme.textSecondary.withValues(alpha: 0.72),
+                  ),
+                ),
+              ),
+              if (hasModels)
+                TextButton.icon(
+                  key: const Key('api_settings_model_list_toggle'),
+                  onPressed: () =>
+                      setState(() => _showModelList = !_showModelList),
+                  icon: Icon(
+                    _showModelList
+                        ? Icons.expand_less_rounded
+                        : Icons.expand_more_rounded,
+                    size: 17,
+                  ),
+                  label: Text(
+                    L.pick(
+                      en: _showModelList ? 'Collapse' : 'Show list',
+                      zhTW: _showModelList ? '收起' : '展開列表',
+                      zhCN: _showModelList ? '收起' : '展开列表',
+                    ),
+                  ),
+                  style: TextButton.styleFrom(
+                    minimumSize: const Size(0, 40),
+                    padding: const EdgeInsets.symmetric(horizontal: 6),
+                    foregroundColor: YanciTheme.textSecondary,
+                  ),
+                ),
+              Tooltip(
+                message: L.get('settings_model_refresh'),
+                child: TextButton.icon(
+                  key: const Key('api_settings_model_refresh_button'),
+                  onPressed: _isFetchingModels ? null : _fetchModels,
+                  icon: _isFetchingModels
+                      ? const SizedBox(
+                          width: 15,
+                          height: 15,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.download_rounded, size: 17),
+                  label: Text(
+                    L.pick(en: 'Fetch list', zhTW: '拉取列表', zhCN: '拉取列表'),
+                  ),
+                  style: TextButton.styleFrom(
+                    minimumSize: const Size(0, 40),
+                    padding: const EdgeInsets.symmetric(horizontal: 6),
+                    foregroundColor: YanciTheme.accent,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          if (hasModels && _showModelList) ...[
+            const SizedBox(height: YanciTheme.spacingXs),
+            ConstrainedBox(
+              constraints: BoxConstraints(
+                // Keep the first three results visible; the rest scrolls.
+                maxHeight: 172,
+              ),
+              child: hasSearchResults
+                  ? ListView.separated(
+                      shrinkWrap: true,
+                      itemCount: _filteredModels.length,
+                      separatorBuilder: (_, _) => Divider(
+                        height: 1,
+                        indent: YanciTheme.spacingSm,
+                        endIndent: YanciTheme.spacingSm,
+                        color: YanciTheme.textSecondary.withValues(alpha: 0.10),
+                      ),
+                      itemBuilder: (context, index) {
+                        final model = _filteredModels[index];
+                        final isSelected = model.id == _modelValueForProvider();
+                        return InkWell(
+                          onTap: () => _selectModel(model.id),
+                          child: Container(
+                            constraints: const BoxConstraints(minHeight: 52),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: YanciTheme.spacingSm,
+                              vertical: 6,
+                            ),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    model.id,
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: YanciTheme.bodyText.copyWith(
+                                      fontSize: 13,
+                                      color: isSelected
+                                          ? YanciTheme.accent
+                                          : YanciTheme.textPrimary,
+                                    ),
+                                  ),
+                                ),
+                                if (isSelected)
+                                  Padding(
+                                    padding: const EdgeInsets.only(right: 4),
+                                    child: Icon(
+                                      Icons.check_rounded,
+                                      size: 18,
+                                      color: YanciTheme.accent,
+                                    ),
+                                  ),
+                                IconButton(
+                                  constraints: const BoxConstraints(
+                                    minWidth: 40,
+                                    minHeight: 40,
+                                  ),
+                                  padding: EdgeInsets.zero,
+                                  onPressed: () async {
+                                    await ApiSettings.toggleStarModel(
+                                      model.id,
+                                      provider: _provider,
+                                    );
+                                    final starred =
+                                        await ApiSettings.getStarredModels();
+                                    final providers =
+                                        await ApiSettings.getStarredModelProviders();
+                                    if (!mounted) return;
+                                    setState(() {
+                                      _starredModels = starred.toSet();
+                                      _starredModelProviders = providers;
+                                    });
+                                  },
+                                  icon: Icon(
+                                    _starredModels.contains(model.id)
+                                        ? Icons.star_rounded
+                                        : Icons.star_border_rounded,
+                                    size: 20,
+                                    color: _starredModels.contains(model.id)
+                                        ? YanciTheme.accent
+                                        : YanciTheme.textSecondary.withValues(
+                                            alpha: 0.42,
+                                          ),
+                                  ),
+                                  tooltip: _starredModels.contains(model.id)
+                                      ? L.pick(
+                                          en: 'Remove from favorites',
+                                          zhTW: '取消收藏',
+                                        )
+                                      : L.pick(
+                                          en: 'Add to favorites',
+                                          zhTW: '加入收藏',
+                                        ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        );
+                      },
+                    )
+                  : Padding(
+                      padding: const EdgeInsets.all(YanciTheme.spacingMd),
+                      child: Text(
+                        L.pick(
+                          en: 'No matching models',
+                          zhTW: '沒有符合的模型',
+                          zhCN: '没有符合的模型',
+                        ),
+                        style: YanciTheme.bodySmall,
+                      ),
+                    ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
   Widget _buildThinkingMachinesCard() {
     final model = _thinkingMachinesModelCtrl.text.trim().isEmpty
         ? ThinkingMachinesService.defaultModel
@@ -1673,17 +2270,12 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
               ),
             ),
           ),
-          TextField(
+          _buildApiKeyField(
             controller: _thinkingMachinesKeyCtrl,
-            obscureText: _obscureProviderKeys,
-            style: YanciTheme.bodyText.copyWith(fontSize: 13),
+            hintText: 'Tinker API Key',
             onChanged: (_) => _debouncedSave(),
-            decoration: InputDecoration(
-              hintText: 'Tinker API Key',
-              hintStyle: YanciTheme.bodySmall.copyWith(
-                color: YanciTheme.textSecondary.withValues(alpha: 0.4),
-              ),
-              suffixIcon: _isTestingApi
+            trailingActions: [
+              _isTestingApi
                   ? const Padding(
                       padding: EdgeInsets.all(12),
                       child: SizedBox(
@@ -1703,10 +2295,7 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
                         _thinkingMachinesKeyCtrl.text.trim(),
                       ),
                     ),
-              border: InputBorder.none,
-              contentPadding: const EdgeInsets.symmetric(vertical: 12),
-              isDense: true,
-            ),
+            ],
           ),
           Divider(
             color: YanciTheme.textSecondary.withValues(alpha: 0.1),
@@ -1849,19 +2438,24 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
                         ),
                         Align(
                           alignment: Alignment.centerRight,
-                          child: IconButton(
-                            icon: Icon(
-                              _obscureProviderKeys
-                                  ? Icons.visibility_off_outlined
-                                  : Icons.visibility_outlined,
-                              size: 20,
-                              color: YanciTheme.textSecondary,
-                            ),
-                            onPressed: () => setState(
-                              () =>
-                                  _obscureProviderKeys = !_obscureProviderKeys,
-                            ),
-                            tooltip: L.pick(en: 'Show Keys', zhTW: '顯示金鑰'),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              IconButton(
+                                icon: const Icon(
+                                  Icons.phone_android_rounded,
+                                  size: 20,
+                                ),
+                                color: YanciTheme.textSecondary,
+                                onPressed: () => Navigator.of(
+                                  context,
+                                ).pushNamed('/local_models'),
+                                tooltip: L.pick(
+                                  en: 'Local Models',
+                                  zhTW: '本地模型',
+                                ),
+                              ),
+                            ],
                           ),
                         ),
                       ],
@@ -1871,250 +2465,80 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
                 Expanded(
                   child: _settingsLoaded
                       ? ListView(
-                          padding: const EdgeInsets.all(YanciTheme.spacingMd),
+                          padding: const EdgeInsets.fromLTRB(
+                            YanciTheme.spacingMd,
+                            YanciTheme.spacingXs,
+                            YanciTheme.spacingMd,
+                            YanciTheme.spacingMd,
+                          ),
                           children: [
-                            _buildSectionTitle(L.get('settings_api_source')),
+                            _buildProviderSectionHeader(),
                             const SizedBox(height: YanciTheme.spacingSm),
-                            _buildGlassCard(
-                              child: DropdownButton<String>(
-                                value: _provider,
-                                isExpanded: true,
-                                underline: const SizedBox(),
-                                style: YanciTheme.bodyText.copyWith(
-                                  fontSize: 13,
-                                ),
-                                dropdownColor: YanciTheme.isDark
-                                    ? const Color(0xF0302830)
-                                    : Colors.white,
-                                items: const [
-                                  DropdownMenuItem(
-                                    value: 'openrouter',
-                                    child: Text('OpenRouter'),
-                                  ),
-                                  DropdownMenuItem(
-                                    value: 'xai',
-                                    child: Text('xAI (Grok)'),
-                                  ),
-                                  DropdownMenuItem(
-                                    value: 'gemini',
-                                    child: Text('Google Gemini'),
-                                  ),
-                                  DropdownMenuItem(
-                                    value: 'deepseek',
-                                    child: Text('DeepSeek'),
-                                  ),
-                                  DropdownMenuItem(
-                                    value: 'qwen',
-                                    child: Text('Qwen (DashScope)'),
-                                  ),
-                                  DropdownMenuItem(
-                                    value: 'bedrock',
-                                    child: Text('AWS Bedrock'),
-                                  ),
-                                  DropdownMenuItem(
-                                    value: 'thinking_machines',
-                                    child: Text('Thinking Machines (Inkling)'),
-                                  ),
-                                  DropdownMenuItem(
-                                    value: 'openai_compatible',
-                                    child: Text('OpenAI Compatible (Custom)'),
-                                  ),
-                                  DropdownMenuItem(
-                                    value: 'local',
-                                    child: Text('Local Model (On-device)'),
-                                  ),
-                                  DropdownMenuItem(
-                                    value: 'local_api',
-                                    child: Text('Local API (Endpoint)'),
-                                  ),
-                                ],
-                                onChanged: (v) async {
-                                  if (v == null) return;
-                                  _modelFetchTimer?.cancel();
-                                  _modelFetchGeneration++;
-                                  setState(() {
-                                    _provider = v;
-                                    _models = const <ModelInfo>[];
-                                    _filteredModels = const <ModelInfo>[];
-                                    _modelSearchController.clear();
-                                    _modelError = null;
-                                    _modelErrorProvider = null;
-                                    _isFetchingModels = false;
-                                  });
-                                  final savedModel =
-                                      await ApiSettings.getModelForProvider(v);
-                                  if (!mounted) return;
-                                  setState(() {
-                                    _selectedModel = savedModel;
-                                    // 只更新顯示用主模型；搜尋模型由專屬選擇器獨立管理。
-                                    if (v == 'gemini') {
-                                      _webSearchGeminiModel = savedModel;
-                                    }
-                                  });
-                                  if (v == 'openrouter' ||
-                                      v == 'gemini' ||
-                                      v == 'deepseek' ||
-                                      v == 'xai' ||
-                                      v == 'openai_compatible') {
-                                    _fetchModels();
-                                  } else {
-                                    setState(() => _models = []);
-                                    _filteredModels = [];
-                                  }
-                                  await _applyCostPolicy(
-                                    provider: v,
-                                    model: savedModel,
-                                    apiKey: v == 'thinking_machines'
-                                        ? _thinkingMachinesKeyCtrl.text
-                                        : null,
-                                  );
-                                  _debouncedSave();
-                                },
+                            _buildProviderPicker(),
+                            const SizedBox(height: YanciTheme.spacingMd),
+                            _buildSectionTitle(
+                              L.pick(
+                                en: 'API Key',
+                                zhTW: 'API Key',
+                                zhCN: 'API Key',
                               ),
                             ),
-                            const SizedBox(height: YanciTheme.spacingMd),
+                            const SizedBox(height: YanciTheme.spacingSm),
                             if (_provider == 'thinking_machines') ...[
                               _buildThinkingMachinesCard(),
                             ],
                             if (_provider == 'openrouter') ...[
                               _buildGlassCard(
-                                child: Row(
-                                  children: [
-                                    Expanded(
-                                      child: TextField(
-                                        controller: _apiKeyController,
-                                        obscureText: _obscureProviderKeys,
-                                        style: YanciTheme.bodyText.copyWith(
-                                          fontSize: 13,
-                                        ),
-                                        decoration: InputDecoration(
-                                          hintText: L.get(
-                                            'settings_api_key_hint',
-                                          ),
-                                          hintStyle: YanciTheme.bodySmall
-                                              .copyWith(
-                                                color: YanciTheme.textSecondary
-                                                    .withValues(alpha: 0.4),
-                                              ),
-                                          border: InputBorder.none,
-                                          contentPadding:
-                                              const EdgeInsets.symmetric(
-                                                vertical: 12,
-                                              ),
-                                        ),
-                                        onChanged: (v) {
-                                          _scheduleProviderModelFetch(
-                                            'openrouter',
-                                            v,
-                                          );
-                                          _debouncedSave();
-                                        },
-                                      ),
-                                    ),
-                                    _isFetchingModels
-                                        ? const Padding(
-                                            padding: EdgeInsets.all(12),
-                                            child: SizedBox(
-                                              width: 16,
-                                              height: 16,
-                                              child: CircularProgressIndicator(
-                                                strokeWidth: 2,
-                                              ),
-                                            ),
-                                          )
-                                        : IconButton(
-                                            icon: const Icon(
-                                              Icons.refresh,
-                                              size: 20,
-                                            ),
-                                            onPressed: _fetchModels,
-                                            tooltip: L.get(
-                                              'settings_model_refresh',
-                                            ),
-                                          ),
-                                  ],
+                                child: _buildApiKeyField(
+                                  controller: _apiKeyController,
+                                  hintText: L.get('settings_api_key_hint'),
+                                  onChanged: (v) {
+                                    _scheduleProviderModelFetch(
+                                      'openrouter',
+                                      v,
+                                    );
+                                    _debouncedSave();
+                                  },
                                 ),
                               ),
                             ],
                             if (_provider == 'xai') ...[
                               _buildGlassCard(
-                                child: TextField(
+                                child: _buildApiKeyField(
                                   controller: _xaiKeyCtrl,
-                                  obscureText: _obscureProviderKeys,
-                                  style: YanciTheme.bodyText.copyWith(
-                                    fontSize: 13,
-                                  ),
+                                  hintText: 'xAI API Key',
                                   onChanged: (value) {
                                     _scheduleProviderModelFetch('xai', value);
                                     _debouncedSave();
                                   },
-                                  decoration: InputDecoration(
-                                    hintText: 'xAI API Key',
-                                    hintStyle: YanciTheme.bodySmall.copyWith(
-                                      color: YanciTheme.textSecondary
-                                          .withValues(alpha: 0.4),
-                                    ),
-                                    suffixIconConstraints: const BoxConstraints(
-                                      minWidth: 88,
-                                    ),
-                                    suffixIcon: Row(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        if (_isTestingApi)
-                                          const Padding(
-                                            padding: EdgeInsets.all(12),
-                                            child: SizedBox(
-                                              width: 16,
-                                              height: 16,
-                                              child: CircularProgressIndicator(
-                                                strokeWidth: 2,
-                                              ),
-                                            ),
-                                          )
-                                        else
-                                          IconButton(
-                                            icon: const Icon(
-                                              Icons.wifi_protected_setup,
-                                              size: 18,
-                                            ),
-                                            tooltip: L.pick(
-                                              en: 'Test xAI connection',
-                                              zhTW: '測試 xAI 連線',
-                                            ),
-                                            onPressed: () => _testApiConnection(
-                                              'xai',
-                                              _xaiKeyCtrl.text.trim(),
-                                            ),
+                                  trailingActions: [
+                                    if (_isTestingApi)
+                                      const Padding(
+                                        padding: EdgeInsets.all(12),
+                                        child: SizedBox(
+                                          width: 16,
+                                          height: 16,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2,
                                           ),
-                                        if (_isFetchingModels)
-                                          const Padding(
-                                            padding: EdgeInsets.all(12),
-                                            child: SizedBox(
-                                              width: 16,
-                                              height: 16,
-                                              child: CircularProgressIndicator(
-                                                strokeWidth: 2,
-                                              ),
-                                            ),
-                                          )
-                                        else
-                                          IconButton(
-                                            icon: const Icon(
-                                              Icons.refresh,
-                                              size: 18,
-                                            ),
-                                            tooltip: L.get(
-                                              'settings_model_refresh',
-                                            ),
-                                            onPressed: _fetchModels,
-                                          ),
-                                      ],
-                                    ),
-                                    border: InputBorder.none,
-                                    contentPadding: const EdgeInsets.symmetric(
-                                      vertical: 12,
-                                    ),
-                                  ),
+                                        ),
+                                      )
+                                    else
+                                      IconButton(
+                                        icon: const Icon(
+                                          Icons.wifi_protected_setup,
+                                          size: 18,
+                                        ),
+                                        tooltip: L.pick(
+                                          en: 'Test xAI connection',
+                                          zhTW: '測試 xAI 連線',
+                                        ),
+                                        onPressed: () => _testApiConnection(
+                                          'xai',
+                                          _xaiKeyCtrl.text.trim(),
+                                        ),
+                                      ),
+                                  ],
                                 ),
                               ),
                               const SizedBox(height: YanciTheme.spacingXs),
@@ -2139,201 +2563,106 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
                             ],
                             if (_provider == 'gemini') ...[
                               _buildGlassCard(
-                                child: TextField(
+                                child: _buildApiKeyField(
                                   controller: _geminiKeyCtrl,
-                                  obscureText: _obscureProviderKeys,
-                                  style: YanciTheme.bodyText.copyWith(
-                                    fontSize: 13,
-                                  ),
+                                  hintText: 'Gemini API Key',
                                   onChanged: (v) {
                                     _scheduleProviderModelFetch('gemini', v);
                                     _debouncedSave();
                                   },
-                                  decoration: InputDecoration(
-                                    hintText: 'Gemini API Key',
-                                    hintStyle: YanciTheme.bodySmall.copyWith(
-                                      color: YanciTheme.textSecondary
-                                          .withValues(alpha: 0.4),
-                                    ),
-                                    suffixIconConstraints: const BoxConstraints(
-                                      minWidth: 88,
-                                    ),
-                                    suffixIcon: Row(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        if (_isTestingApi)
-                                          const Padding(
-                                            padding: EdgeInsets.all(12),
-                                            child: SizedBox(
-                                              width: 16,
-                                              height: 16,
-                                              child: CircularProgressIndicator(
-                                                strokeWidth: 2,
-                                              ),
-                                            ),
-                                          )
-                                        else
-                                          IconButton(
-                                            icon: const Icon(
-                                              Icons.wifi_protected_setup,
-                                              size: 18,
-                                            ),
-                                            onPressed: () => _testApiConnection(
-                                              'gemini',
-                                              _geminiKeyCtrl.text,
-                                            ),
+                                  trailingActions: [
+                                    if (_isTestingApi)
+                                      const Padding(
+                                        padding: EdgeInsets.all(12),
+                                        child: SizedBox(
+                                          width: 16,
+                                          height: 16,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2,
                                           ),
-                                        if (_isFetchingModels)
-                                          const Padding(
-                                            padding: EdgeInsets.all(12),
-                                            child: SizedBox(
-                                              width: 16,
-                                              height: 16,
-                                              child: CircularProgressIndicator(
-                                                strokeWidth: 2,
-                                              ),
-                                            ),
-                                          )
-                                        else
-                                          IconButton(
-                                            icon: const Icon(
-                                              Icons.refresh,
-                                              size: 18,
-                                            ),
-                                            tooltip: L.get(
-                                              'settings_model_refresh',
-                                            ),
-                                            onPressed: _fetchModels,
-                                          ),
-                                      ],
-                                    ),
-                                    border: InputBorder.none,
-                                    contentPadding: const EdgeInsets.symmetric(
-                                      vertical: 12,
-                                    ),
-                                  ),
+                                        ),
+                                      )
+                                    else
+                                      IconButton(
+                                        icon: const Icon(
+                                          Icons.wifi_protected_setup,
+                                          size: 18,
+                                        ),
+                                        onPressed: () => _testApiConnection(
+                                          'gemini',
+                                          _geminiKeyCtrl.text,
+                                        ),
+                                      ),
+                                  ],
                                 ),
                               ),
                             ],
                             if (_provider == 'deepseek') ...[
                               _buildGlassCard(
-                                child: TextField(
+                                child: _buildApiKeyField(
                                   controller: _deepseekKeyCtrl,
-                                  obscureText: _obscureProviderKeys,
-                                  style: YanciTheme.bodyText.copyWith(
-                                    fontSize: 13,
-                                  ),
+                                  hintText: 'DeepSeek API Key',
                                   onChanged: (v) {
                                     _scheduleProviderModelFetch('deepseek', v);
                                     _debouncedSave();
                                   },
-                                  decoration: InputDecoration(
-                                    hintText: 'DeepSeek API Key',
-                                    hintStyle: YanciTheme.bodySmall.copyWith(
-                                      color: YanciTheme.textSecondary
-                                          .withValues(alpha: 0.4),
-                                    ),
-                                    suffixIconConstraints: const BoxConstraints(
-                                      minWidth: 88,
-                                    ),
-                                    suffixIcon: Row(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        if (_isTestingApi)
-                                          const Padding(
-                                            padding: EdgeInsets.all(12),
-                                            child: SizedBox(
-                                              width: 16,
-                                              height: 16,
-                                              child: CircularProgressIndicator(
-                                                strokeWidth: 2,
-                                              ),
-                                            ),
-                                          )
-                                        else
-                                          IconButton(
-                                            icon: const Icon(
-                                              Icons.wifi_protected_setup,
-                                              size: 18,
-                                            ),
-                                            onPressed: () => _testApiConnection(
-                                              'deepseek',
-                                              _deepseekKeyCtrl.text,
-                                            ),
+                                  trailingActions: [
+                                    if (_isTestingApi)
+                                      const Padding(
+                                        padding: EdgeInsets.all(12),
+                                        child: SizedBox(
+                                          width: 16,
+                                          height: 16,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2,
                                           ),
-                                        if (_isFetchingModels)
-                                          const Padding(
-                                            padding: EdgeInsets.all(12),
-                                            child: SizedBox(
-                                              width: 16,
-                                              height: 16,
-                                              child: CircularProgressIndicator(
-                                                strokeWidth: 2,
-                                              ),
-                                            ),
-                                          )
-                                        else
-                                          IconButton(
-                                            icon: const Icon(
-                                              Icons.refresh,
-                                              size: 18,
-                                            ),
-                                            tooltip: L.get(
-                                              'settings_model_refresh',
-                                            ),
-                                            onPressed: _fetchModels,
-                                          ),
-                                      ],
-                                    ),
-                                    border: InputBorder.none,
-                                    contentPadding: const EdgeInsets.symmetric(
-                                      vertical: 12,
-                                    ),
-                                  ),
+                                        ),
+                                      )
+                                    else
+                                      IconButton(
+                                        icon: const Icon(
+                                          Icons.wifi_protected_setup,
+                                          size: 18,
+                                        ),
+                                        onPressed: () => _testApiConnection(
+                                          'deepseek',
+                                          _deepseekKeyCtrl.text,
+                                        ),
+                                      ),
+                                  ],
                                 ),
                               ),
                             ],
                             if (_provider == 'qwen') ...[
                               _buildGlassCard(
-                                child: TextField(
+                                child: _buildApiKeyField(
                                   controller: _qwenKeyCtrl,
-                                  obscureText: _obscureProviderKeys,
-                                  style: YanciTheme.bodyText.copyWith(
-                                    fontSize: 13,
-                                  ),
+                                  hintText: 'Qwen API Key (DashScope)',
                                   onChanged: (v) => _debouncedSave(),
-                                  decoration: InputDecoration(
-                                    hintText: 'Qwen API Key (DashScope)',
-                                    hintStyle: YanciTheme.bodySmall.copyWith(
-                                      color: YanciTheme.textSecondary
-                                          .withValues(alpha: 0.4),
-                                    ),
-                                    suffixIcon: _isTestingApi
-                                        ? const Padding(
-                                            padding: EdgeInsets.all(12),
-                                            child: SizedBox(
-                                              width: 16,
-                                              height: 16,
-                                              child: CircularProgressIndicator(
-                                                strokeWidth: 2,
-                                              ),
-                                            ),
-                                          )
-                                        : IconButton(
-                                            icon: const Icon(
-                                              Icons.wifi_protected_setup,
-                                              size: 18,
-                                            ),
-                                            onPressed: () => _testApiConnection(
-                                              'qwen',
-                                              _qwenKeyCtrl.text,
-                                            ),
+                                  trailingActions: [
+                                    if (_isTestingApi)
+                                      const Padding(
+                                        padding: EdgeInsets.all(12),
+                                        child: SizedBox(
+                                          width: 16,
+                                          height: 16,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2,
                                           ),
-                                    border: InputBorder.none,
-                                    contentPadding: const EdgeInsets.symmetric(
-                                      vertical: 12,
-                                    ),
-                                  ),
+                                        ),
+                                      )
+                                    else
+                                      IconButton(
+                                        icon: const Icon(
+                                          Icons.wifi_protected_setup,
+                                          size: 18,
+                                        ),
+                                        onPressed: () => _testApiConnection(
+                                          'qwen',
+                                          _qwenKeyCtrl.text,
+                                        ),
+                                      ),
+                                  ],
                                 ),
                               ),
                             ],
@@ -2368,27 +2697,10 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
                                           .withValues(alpha: 0.1),
                                       height: 1,
                                     ),
-                                    TextField(
+                                    _buildApiKeyField(
                                       controller: _awsSecretAccessKeyCtrl,
-                                      obscureText: _obscureProviderKeys,
-                                      style: YanciTheme.bodyText.copyWith(
-                                        fontSize: 13,
-                                      ),
+                                      hintText: 'AWS Secret Access Key',
                                       onChanged: (v) => _debouncedSave(),
-                                      decoration: InputDecoration(
-                                        hintText: 'AWS Secret Access Key',
-                                        hintStyle: YanciTheme.bodySmall
-                                            .copyWith(
-                                              color: YanciTheme.textSecondary
-                                                  .withValues(alpha: 0.4),
-                                            ),
-                                        border: InputBorder.none,
-                                        contentPadding:
-                                            const EdgeInsets.symmetric(
-                                              vertical: 12,
-                                            ),
-                                        isDense: true,
-                                      ),
                                     ),
                                     Divider(
                                       color: YanciTheme.textSecondary
@@ -2457,26 +2769,17 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
                                           .withValues(alpha: 0.1),
                                       height: 1,
                                     ),
-                                    TextField(
+                                    _buildApiKeyField(
                                       controller: _oaiCompatKeyCtrl,
-                                      obscureText: _obscureProviderKeys,
-                                      style: YanciTheme.bodyText.copyWith(
-                                        fontSize: 13,
-                                      ),
+                                      hintText: 'API Key',
                                       onChanged: (v) {
                                         _scheduleCompatibleModelFetch(
                                           _oaiCompatBaseUrlCtrl.text,
                                         );
                                         _debouncedSave();
                                       },
-                                      decoration: InputDecoration(
-                                        hintText: 'API Key',
-                                        hintStyle: YanciTheme.bodySmall
-                                            .copyWith(
-                                              color: YanciTheme.textSecondary
-                                                  .withValues(alpha: 0.4),
-                                            ),
-                                        suffixIcon: _isTestingApi
+                                      trailingActions: [
+                                        _isTestingApi
                                             ? const Padding(
                                                 padding: EdgeInsets.all(12),
                                                 child: SizedBox(
@@ -2499,13 +2802,7 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
                                                       _oaiCompatKeyCtrl.text,
                                                     ),
                                               ),
-                                        border: InputBorder.none,
-                                        contentPadding:
-                                            const EdgeInsets.symmetric(
-                                              vertical: 12,
-                                            ),
-                                        isDense: true,
-                                      ),
+                                      ],
                                     ),
                                     Divider(
                                       color: YanciTheme.textSecondary
@@ -2586,7 +2883,7 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
 
                             const SizedBox(height: YanciTheme.spacingMd),
                             _buildCollapsibleTitle(
-                              '${L.get('settings_model_label')}${_modelValueForProvider().isNotEmpty ? "：${_modelValueForProvider()}" : ""}',
+                              L.get('settings_model_label'),
                               _showModelSection,
                               () => setState(
                                 () => _showModelSection = !_showModelSection,
@@ -2608,202 +2905,82 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
                                     ),
                                   ),
                                 ),
-                              _buildGlassCard(
-                                child: TextField(
-                                  controller: _modelSearchController,
-                                  style: YanciTheme.bodyText.copyWith(
-                                    fontSize: 13,
-                                  ),
-                                  decoration: InputDecoration(
-                                    hintText: _models.isEmpty
-                                        ? L.get('settings_model_hint_empty')
-                                        : L.get('settings_model_hint_search'),
-                                    hintStyle: YanciTheme.bodySmall.copyWith(
-                                      color: YanciTheme.textSecondary
-                                          .withValues(alpha: 0.4),
-                                    ),
-                                    border: InputBorder.none,
-                                    contentPadding: const EdgeInsets.symmetric(
-                                      vertical: 12,
-                                    ),
-                                    prefixIcon: Icon(
-                                      Icons.search,
-                                      size: 18,
-                                      color: YanciTheme.textSecondary,
-                                    ),
-                                  ),
-                                  onChanged: _filterModels,
-                                  onSubmitted: (v) {
-                                    if (v.trim().isNotEmpty) {
-                                      _selectModel(v.trim());
-                                    }
-                                  },
-                                ),
-                              ),
-                              if (_filteredModels.isNotEmpty)
-                                Container(
-                                  constraints: BoxConstraints(
-                                    maxHeight:
-                                        MediaQuery.of(context).size.height *
-                                        0.35,
-                                  ),
-                                  margin: const EdgeInsets.only(
-                                    top: YanciTheme.spacingXs,
-                                  ),
-                                  child: ClipRRect(
-                                    borderRadius: BorderRadius.circular(
-                                      YanciTheme.radiusMd,
-                                    ),
-                                    child: Container(
-                                      decoration: BoxDecoration(
-                                        color: YanciTheme.surfacePanel,
-                                        borderRadius: BorderRadius.circular(
-                                          YanciTheme.radiusMd,
-                                        ),
-                                      ),
-                                      child: ListView.builder(
-                                        shrinkWrap: true,
-                                        itemCount: _filteredModels.length,
-                                        itemBuilder: (context, index) {
-                                          final model = _filteredModels[index];
-                                          final isSelected =
-                                              model.id ==
-                                              _modelValueForProvider();
-                                          return InkWell(
-                                            onTap: () => _selectModel(model.id),
-                                            child: Container(
-                                              padding:
-                                                  const EdgeInsets.symmetric(
-                                                    horizontal:
-                                                        YanciTheme.spacingMd,
-                                                    vertical: 10,
-                                                  ),
-                                              color: isSelected
-                                                  ? YanciTheme.accent
-                                                        .withValues(alpha: 0.1)
-                                                  : null,
-                                              child: Row(
-                                                children: [
-                                                  Expanded(
-                                                    child: Text(
-                                                      model.id,
-                                                      style: YanciTheme.bodyText
-                                                          .copyWith(
-                                                            fontSize: 12,
-                                                            color: isSelected
-                                                                ? YanciTheme
-                                                                      .accent
-                                                                : YanciTheme
-                                                                      .textPrimary,
-                                                          ),
-                                                    ),
-                                                  ),
-                                                  GestureDetector(
-                                                    onTap: () async {
-                                                      await ApiSettings.toggleStarModel(
-                                                        model.id,
-                                                        provider: _provider,
-                                                      );
-                                                      final starred =
-                                                          await ApiSettings.getStarredModels();
-                                                      final providers =
-                                                          await ApiSettings.getStarredModelProviders();
-                                                      if (!mounted) return;
-                                                      setState(() {
-                                                        _starredModels = starred
-                                                            .toSet();
-                                                        _starredModelProviders =
-                                                            providers;
-                                                      });
-                                                    },
-                                                    child: Padding(
-                                                      padding:
-                                                          const EdgeInsets.only(
-                                                            left: 8,
-                                                          ),
-                                                      child: Icon(
-                                                        _starredModels.contains(
-                                                              model.id,
-                                                            )
-                                                            ? Icons.star_rounded
-                                                            : Icons
-                                                                  .star_border_rounded,
-                                                        size: 18,
-                                                        color:
-                                                            _starredModels
-                                                                .contains(
-                                                                  model.id,
-                                                                )
-                                                            ? YanciTheme.accent
-                                                            : YanciTheme
-                                                                  .textSecondary
-                                                                  .withValues(
-                                                                    alpha: 0.3,
-                                                                  ),
-                                                      ),
-                                                    ),
-                                                  ),
-                                                ],
-                                              ),
-                                            ),
-                                          );
-                                        },
-                                      ),
-                                    ),
-                                  ),
-                                ),
+                              _buildModelPicker(context),
                             ],
                             const SizedBox(height: YanciTheme.spacingLg),
-                            _buildSectionTitle(
-                              L.pick(
-                                en: 'Web search',
-                                zhTW: '網路搜尋',
-                                zhCN: '网络搜索',
-                              ),
-                            ),
-                            const SizedBox(height: YanciTheme.spacingSm),
-                            _buildWebSearchSettingsCard(),
+                            const ApiAdvancedSettings(cacheOnly: true),
                             const SizedBox(height: YanciTheme.spacingLg),
-                            _buildSectionTitle(L.get('settings_summary_model')),
-                            const SizedBox(height: YanciTheme.spacingSm),
-                            _buildSummaryModelCard(),
-                            const SizedBox(height: YanciTheme.spacingSm),
-                            _buildDreamCurationCard(),
-                            const SizedBox(height: YanciTheme.spacingLg),
-                            const ApiAdvancedSettings(),
-                            const SizedBox(height: YanciTheme.spacingLg),
-                            _buildSectionTitle(
-                              L.pick(
-                                en: 'Profile (global settings)',
-                                zhTW: 'Profile（全域設定）',
-                              ),
-                            ),
-                            const SizedBox(height: YanciTheme.spacingSm),
-                            _buildGlassCard(
-                              child: TextField(
-                                controller: _systemPromptController,
-                                maxLines: null,
-                                style: YanciTheme.bodyText.copyWith(
-                                  fontSize: 13,
-                                ),
-                                onChanged: (v) => _debouncedSave(),
-                                decoration: InputDecoration(
-                                  hintText: L.pick(
-                                    en: 'Enter global settings…\n(Changing this invalidates the current static cache)',
-                                    zhTW: '輸入全域設定…\n（改動會打斷目前的靜態緩存狀態）',
-                                  ),
-                                  hintStyle: YanciTheme.bodySmall.copyWith(
-                                    color: YanciTheme.textSecondary.withValues(
-                                      alpha: 0.4,
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: FilledButton.icon(
+                                    key: const Key('api_settings_save_button'),
+                                    onPressed: _saveNow,
+                                    icon: const Icon(
+                                      Icons.save_outlined,
+                                      size: 17,
+                                    ),
+                                    label: Text(
+                                      L.pick(
+                                        en: 'Save settings',
+                                        zhTW: '儲存設定',
+                                        zhCN: '保存设置',
+                                      ),
                                     ),
                                   ),
-                                  border: InputBorder.none,
-                                  contentPadding: const EdgeInsets.symmetric(
-                                    vertical: 12,
+                                ),
+                                const SizedBox(width: YanciTheme.spacingSm),
+                                Expanded(
+                                  child: OutlinedButton.icon(
+                                    key: const Key(
+                                      'api_settings_advanced_button',
+                                    ),
+                                    onPressed: () => setState(
+                                      () => _showAdvancedSettings =
+                                          !_showAdvancedSettings,
+                                    ),
+                                    icon: Icon(
+                                      _showAdvancedSettings
+                                          ? Icons.expand_less_rounded
+                                          : Icons.tune_rounded,
+                                      size: 17,
+                                    ),
+                                    label: Text(
+                                      L.pick(
+                                        en: 'Advanced',
+                                        zhTW: '高級設定',
+                                        zhCN: '高级设置',
+                                      ),
+                                    ),
                                   ),
                                 ),
-                              ),
+                              ],
                             ),
+                            if (_showAdvancedSettings) ...[
+                              const SizedBox(height: YanciTheme.spacingSm),
+                              _buildSectionTitle(
+                                L.pick(
+                                  en: 'Advanced settings',
+                                  zhTW: '高級設定',
+                                  zhCN: '高级设置',
+                                ),
+                              ),
+                              const SizedBox(height: YanciTheme.spacingLg),
+                              const SizedBox(height: YanciTheme.spacingSm),
+                              _buildWebSearchSettingsCard(),
+                              const SizedBox(height: YanciTheme.spacingLg),
+                              _buildSectionTitle(
+                                L.get('settings_summary_model'),
+                              ),
+                              const SizedBox(height: YanciTheme.spacingSm),
+                              _buildSummaryModelCard(),
+                              const SizedBox(height: YanciTheme.spacingSm),
+                              _buildDreamCurationCard(),
+                              const SizedBox(height: YanciTheme.spacingLg),
+                              const ApiAdvancedSettings(
+                                showCacheSection: false,
+                              ),
+                            ],
                           ],
                         )
                       : const Center(child: CircularProgressIndicator()),

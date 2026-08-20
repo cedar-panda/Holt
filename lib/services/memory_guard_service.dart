@@ -54,6 +54,9 @@ class MemoryGuardService {
     r'\[\s*(?:(?:\d{2,4})[./-])?\d{1,2}[./-]\d{1,2}\s*\]',
   );
 
+  static bool _requiresManualConfirmation(String source) =>
+      source == 'model' || source == 'summary';
+
   /// The single write gate for every newly extracted or manually entered
   /// memory. Detection, proposal creation and direct insertion share one
   /// SQLite transaction, so concurrent writers cannot both pass the same
@@ -75,7 +78,8 @@ class MemoryGuardService {
       final assessment = MemoryDuplicateDetector.assess(candidate, existing);
       final best = assessment.best;
 
-      if (assessment.disposition == MemoryDuplicateDisposition.newMemory) {
+      if (assessment.disposition == MemoryDuplicateDisposition.newMemory &&
+          !_requiresManualConfirmation(source)) {
         final id = await txn.insert('memories', candidate.toMap());
         return GuardedMemoryWriteResult(
           disposition: GuardedMemoryWriteDisposition.inserted,
@@ -91,7 +95,24 @@ class MemoryGuardService {
         );
       }
 
-      if (best?.memory.id == null) {
+      final bestMatch = best;
+      if (bestMatch == null || bestMatch.memory.id == null) {
+        if (_requiresManualConfirmation(source)) {
+          final proposalId = await _createCandidateProposal(
+            txn,
+            candidate: candidate,
+            best: null,
+            relatedMatches: const [],
+            source: source,
+            sourceConversationId: sourceConversationId,
+          );
+          return GuardedMemoryWriteResult(
+            disposition: proposalId == null
+                ? GuardedMemoryWriteDisposition.skippedDuplicate
+                : GuardedMemoryWriteDisposition.proposalCreated,
+            proposalId: proposalId,
+          );
+        }
         final id = await txn.insert('memories', candidate.toMap());
         return GuardedMemoryWriteResult(
           disposition: GuardedMemoryWriteDisposition.inserted,
@@ -102,7 +123,7 @@ class MemoryGuardService {
       final proposalId = await _createCandidateProposal(
         txn,
         candidate: candidate,
-        best: best!,
+        best: bestMatch,
         relatedMatches: assessment.matches.take(3).toList(growable: false),
         source: source,
         sourceConversationId: sourceConversationId,
@@ -111,9 +132,9 @@ class MemoryGuardService {
         disposition: proposalId == null
             ? GuardedMemoryWriteDisposition.skippedDuplicate
             : GuardedMemoryWriteDisposition.proposalCreated,
-        existingMemoryId: best.memory.id,
+        existingMemoryId: bestMatch.memory.id,
         proposalId: proposalId,
-        duplicateScore: best.score,
+        duplicateScore: bestMatch.score,
       );
     });
   }
@@ -121,22 +142,25 @@ class MemoryGuardService {
   static Future<String?> _createCandidateProposal(
     DatabaseExecutor db, {
     required Memory candidate,
-    required MemoryDuplicateMatch best,
+    required MemoryDuplicateMatch? best,
     required List<MemoryDuplicateMatch> relatedMatches,
     required String source,
     required String? sourceConversationId,
   }) async {
-    final target = best.memory;
-    final targetId = target.id!;
-    final targetSnapshot = _memorySnapshot(target);
+    final target = best?.memory;
+    final targetId = target?.id;
+    final targetSnapshot = target == null ? null : _memorySnapshot(target);
     final baseVersions = <String, Object?>{
-      '$targetId': <String, Object?>{
-        'updated_at': target.updatedAt.toIso8601String(),
-        'status': target.status,
-      },
+      if (target != null && targetId != null)
+        '$targetId': <String, Object?>{
+          'updated_at': target.updatedAt.toIso8601String(),
+          'status': target.status,
+        },
     };
     final candidatePayload = _candidatePayload(candidate);
-    final mergePreview = _defaultMergePreview(target, candidate);
+    final mergePreview = target == null
+        ? const <String, Object?>{}
+        : _defaultMergePreview(target, candidate);
     final fingerprint = sha256
         .convert(
           utf8.encode(
@@ -144,7 +168,9 @@ class MemoryGuardService {
               'character_id': candidate.characterId,
               'action': MemoryActionProposal.actionCreate,
               'target_id': targetId,
-              'target_version': baseVersions['$targetId'],
+              'target_version': targetId == null
+                  ? null
+                  : baseVersions['$targetId'],
               'candidate': <String, Object?>{
                 'mode': candidate.mode,
                 'category': candidate.category.trim().toLowerCase(),
@@ -169,13 +195,17 @@ class MemoryGuardService {
         'source': source,
         'source_conversation_id': sourceConversationId,
         'source_message_id': null,
-        'target_ids_json': jsonEncode(<int>[targetId]),
+        'target_ids_json': jsonEncode(
+          targetId == null ? const <int>[] : <int>[targetId],
+        ),
         'payload_json': jsonEncode(<String, Object?>{
-          'targets': <Map<String, Object?>>[targetSnapshot],
+          'targets': targetSnapshot == null
+              ? const <Map<String, Object?>>[]
+              : <Map<String, Object?>>[targetSnapshot],
           'candidate': candidatePayload,
           'result': mergePreview,
-          'duplicate_score': best.score,
-          'reasons': best.reasons,
+          'duplicate_score': best?.score ?? 0,
+          'reasons': best?.reasons ?? const <String>[],
           'similar_matches': [
             for (final match in relatedMatches)
               <String, Object?>{
@@ -838,6 +868,34 @@ class MemoryGuardService {
     };
   }
 
+  static Future<Map<int, List<MemoryActionProposal>>>
+  pendingProposalsByMessage({
+    required String characterId,
+    required String conversationId,
+  }) async {
+    final db = await DatabaseHelper.database;
+    final statuses = _reviewStatuses.toList(growable: false);
+    final placeholders = List.filled(statuses.length, '?').join(',');
+    final rows = await db.rawQuery(
+      'SELECT * FROM pending_memory_actions '
+      'WHERE character_id = ? AND source_conversation_id = ? '
+      'AND source_message_id IS NOT NULL AND status IN ($placeholders) '
+      'ORDER BY created_at ASC',
+      [characterId, conversationId, ...statuses],
+    );
+    final grouped = <int, List<MemoryActionProposal>>{};
+    for (final raw in rows) {
+      final messageId = raw['source_message_id'] is int
+          ? raw['source_message_id'] as int
+          : int.tryParse(raw['source_message_id']?.toString() ?? '');
+      if (messageId == null) continue;
+      grouped
+          .putIfAbsent(messageId, () => <MemoryActionProposal>[])
+          .add(MemoryActionProposal.fromMap(raw));
+    }
+    return grouped;
+  }
+
   static Future<void> markSeen(
     String characterId, {
     int? sourceMessageId,
@@ -1092,9 +1150,12 @@ class MemoryGuardService {
             proposal.targetIds.length,
             '?',
           ).join(',');
+          final excludedTargets = proposal.targetIds.isEmpty
+              ? ''
+              : ' AND id NOT IN ($placeholders)';
           final otherRows = await txn.rawQuery(
             'SELECT * FROM memories WHERE character_id = ? AND mode = ? '
-            'AND status = ? AND id NOT IN ($placeholders)',
+            'AND status = ?$excludedTargets',
             [characterId, newMemory.mode, 'active', ...proposal.targetIds],
           );
           final freshAssessment = MemoryDuplicateDetector.assess(

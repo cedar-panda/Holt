@@ -4,6 +4,7 @@ import 'package:project_yanci/memory/database.dart';
 import 'package:project_yanci/screens/initial_setup_screen.dart';
 import 'package:project_yanci/services/initial_setup_service.dart';
 import 'package:project_yanci/services/locale_strings.dart';
+import 'package:project_yanci/services/settings/memory_settings.dart';
 import 'package:project_yanci/services/settings/theme_settings.dart';
 import 'package:project_yanci/services/settings/user_settings.dart';
 import 'package:project_yanci/theme/app_theme.dart';
@@ -77,6 +78,7 @@ void main() {
     tester,
   ) async {
     await _pumpSetup(tester);
+    await _continueFromModeStep(tester);
 
     expect(find.text('怎麼稱呼你～'), findsOneWidget);
     expect(find.text('無需引導 自我探索'), findsOneWidget);
@@ -128,6 +130,7 @@ void main() {
     'top skip advances one step while bottom action opts out of all hints',
     (tester) async {
       await _pumpSetup(tester);
+      await _continueFromModeStep(tester);
 
       await tester.tap(find.byKey(const ValueKey('initial-skip-step')));
       await tester.pump();
@@ -151,6 +154,25 @@ void main() {
       expect(await UserSettings.isWeakGuidanceEnabled(), isFalse);
     },
   );
+
+  testWidgets('RP preset disables emotion and bio clock', (tester) async {
+    await _pumpSetup(tester);
+
+    expect(find.text('記憶 / 劇情時間線'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+
+    await tester.tap(find.text('RP'));
+    await tester.pump();
+    await tester.tap(find.text('繼續'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(await MemorySettings.isAbilityEnabled('emotion'), isFalse);
+    expect(await MemorySettings.isAbilityEnabled('bioclock'), isFalse);
+    expect(await MemorySettings.getTimelineEnabled(), isTrue);
+    expect(await MemorySettings.getTimelinePromptMode(), 'plot');
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets(
     'theme setup saves day and night slots only after the final choice',
@@ -260,10 +282,18 @@ Future<void> _startAtThemeStep() async {
     'app_locale': 'zh_TW',
     'first_launch_language_version':
         UserSettings.currentFirstLaunchLanguageVersion,
-    'initial_setup_step': 2,
+    'initial_setup_step': 3,
+    'initial_setup_mode': 'advanced',
   });
   await L.load();
   YanciTheme.setPreset('ivory');
+}
+
+Future<void> _continueFromModeStep(WidgetTester tester) async {
+  expect(find.byKey(const ValueKey('initial-mode-step')), findsOneWidget);
+  await tester.tap(find.text('繼續'));
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 300));
 }
 
 Future<void> _pumpSetup(WidgetTester tester) async {

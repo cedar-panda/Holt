@@ -19,6 +19,9 @@ class SpiderWebCore {
   /// 恩典期上限天數
   static const int _graceCapDays = 90;
 
+  /// 長時間沒有新聊天時，暫停孤島記憶的本地衰退。
+  static const Duration _idleDecayPauseAfter = Duration(days: 3);
+
   /// 計算當前記憶的衰減後清晰度 (Ebbinghaus Forgetting Curve)
   /// clarity = 1.0 * (0.5) ^ (days / half_life)
   /// 自我揭露類別使用 90 天半衰期，其他用 7 天
@@ -103,6 +106,14 @@ class SpiderWebCore {
   /// 恩典期 = f(mention_count)，被激活越多次的記憶恩典期越長
   /// 自我揭露類別永遠豁免封存
   static Future<int> runArchiveEngine({String characterId = 'default'}) async {
+    // 沒有聊天不代表記憶正在被遺忘：連續靜止滿三天後先停住衰退，
+    // 等下一次本地聊天活動重新建立時間錨點後再恢復計算。
+    final lastChatAt = await DatabaseHelper.getLastMessageTime(characterId);
+    if (lastChatAt == null ||
+        DateTime.now().difference(lastChatAt) >= _idleDecayPauseAfter) {
+      return 0;
+    }
+
     final db = await DatabaseHelper.database;
 
     // 找出所有孤立且活躍的非永久記憶（排除自我揭露）。

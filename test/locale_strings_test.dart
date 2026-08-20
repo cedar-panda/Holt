@@ -31,6 +31,15 @@ void main() {
     expect(L.pick(en: 'Done', zhTW: '完成', zhCN: '搞定'), '搞定');
   });
 
+  test('character edit title is the short Edit label in all locales', () async {
+    await L.setLocale('en');
+    expect(L.get('char_edit_title'), 'Edit');
+    await L.setLocale('zh_TW');
+    expect(L.get('char_edit_title'), '編輯');
+    await L.setLocale('zh_CN');
+    expect(L.get('char_edit_title'), '编辑');
+  });
+
   testWidgets('language selection refreshes settings immediately', (
     tester,
   ) async {

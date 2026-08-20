@@ -14,12 +14,24 @@ if (keystorePropertiesFile.exists()) {
     keystoreProperties.load(FileInputStream(keystorePropertiesFile))
 }
 
-// key.properties 填了、而且 .jks 文件真的存在，才啟用正式簽名；
-// 否則靜默退回 debug 簽名，開發流程永遠不會被擋住。
+// key.properties 填了、而且 .jks 文件真的存在，才啟用正式簽名。
 val releaseKeystoreReady =
     keystorePropertiesFile.exists() &&
         (keystoreProperties["storeFile"] as String?)
             ?.let { file(it).exists() } == true
+
+// Debug 開發不受影響；但任何 release APK/AAB 任務都必須有正式簽名，
+// 避免開源貢獻者或 CI 誤把 debug-key release 當成可分發成品。
+gradle.taskGraph.whenReady {
+    val releaseArtifactRequested = allTasks.any { task ->
+        Regex("^(assemble|bundle|package).*Release$").matches(task.name)
+    }
+    if (releaseArtifactRequested && !releaseKeystoreReady) {
+        throw GradleException(
+            "Release signing is not configured. Add android/key.properties and a valid release keystore."
+        )
+    }
+}
 
 // Optional side-by-side validation package. Normal debug/release builds keep
 // com.yanci.holt; CI or a local safety check may pass Gradle properties such as
@@ -120,13 +132,8 @@ android {
             }
         }
         release {
-            // .jks 就緒 → 正式簽名；否則退回 debug 簽名（僅供本機開發，
-            // 給任何人安裝的包都必須用正式簽名打）
-            signingConfig = if (releaseKeystoreReady) {
-                signingConfigs.getByName("release")
-            } else {
-                println("⚠️ 正式簽名未就緒（key.properties 或 .jks 缺失），release 使用 debug 簽名（不可分發）")
-                signingConfigs.getByName("debug")
+            if (releaseKeystoreReady) {
+                signingConfig = signingConfigs.getByName("release")
             }
             isMinifyEnabled = true
             isShrinkResources = true

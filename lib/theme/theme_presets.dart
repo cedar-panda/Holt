@@ -32,8 +32,12 @@ class ThemePreset {
   // 氣泡漸變（可選，設了就用漸變代替純色）
   final Color? aiBubbleTop;
 
-  // 背景粒子效果：null=神經網路碎片（默認）, 'stars'=星光
+  // 背景粒子效果：null=神經網路碎片（默認）, 'stars'=星光, 'rain'=雨絲, 'firefly'=螢火蟲, 'leaf'=落葉, 'snow'=飄雪
   final String? bgEffect;
+
+  // 可縮放氣泡框 PNG（疊在純色氣泡外層，null=不使用）
+  final String? bubbleAiAsset;
+  final String? bubbleUserAsset;
 
   const ThemePreset({
     required this.id,
@@ -63,6 +67,8 @@ class ThemePreset {
     required this.starGlow,
     this.aiBubbleTop,
     this.bgEffect,
+    this.bubbleAiAsset,
+    this.bubbleUserAsset,
   });
 
   List<Color> get gradient => [bg1, bg2, bg3, bg4];
@@ -81,6 +87,8 @@ const presets = <ThemePreset>[
   bloomPreset,
   pinkPreset,
   sodaPreset,
+  // ── 特色組（季節×動物）──
+  swallowPreset,
   // ── 暗色組 ──
   midnightPreset,
   nightlampPreset,
@@ -98,10 +106,10 @@ const dawnPreset = ThemePreset(
   name: '晨光',
   subtitle: '清晨透進紗簾的光',
   isDark: false,
-  bg1: Color(0xFFF2DDD0),  // 地平線的暖桃光
-  bg2: Color(0xFFECD4DC),  // 天際的玫瑰粉
-  bg3: Color(0xFFE0D4E4),  // 中層淡藤紫
-  bg4: Color(0xFFD8DCE8),  // 高空的淺長春花藍
+  bg1: Color(0xFFF2DDD0), // 地平線的暖桃光
+  bg2: Color(0xFFECD4DC), // 天際的玫瑰粉
+  bg3: Color(0xFFE0D4E4), // 中層淡藤紫
+  bg4: Color(0xFFD8DCE8), // 高空的淺長春花藍
   aiBubble: Color(0xFFFAF6F3),
   userBubble: Color(0xFFEFE4EC),
   aiBubbleBorder: Color(0x28A090B0),
@@ -109,8 +117,8 @@ const dawnPreset = ThemePreset(
   textPrimary: Color(0xFF484050),
   textSecondary: Color(0xFF787080),
   textOnBubble: Color(0xFF464050),
-  accent: Color(0xFF9680B4),      // 藤花紫 — 清透明亮
-  accentLight: Color(0xFFBCA8D0),  // 淡藤光
+  accent: Color(0xFF9680B4), // 藤花紫 — 清透明亮
+  accentLight: Color(0xFFBCA8D0), // 淡藤光
   accentGlow: Color(0x28B098C0),
   glassWhite: Color(0x80FFFFFF),
   glassBorder: Color(0x40FFFFFF),
@@ -376,10 +384,10 @@ const snowPreset = ThemePreset(
   name: '初雪',
   subtitle: '世界安靜下來的那一刻',
   isDark: false,
-  bg1: Color(0xFFEAE6EA),  // 雪面微光
-  bg2: Color(0xFFE4E0E6),  // 霜灰
-  bg3: Color(0xFFDEDCE4),  // 雪影
-  bg4: Color(0xFFEEEAEE),  // 新雪
+  bg1: Color(0xFFEAE6EA), // 雪面微光
+  bg2: Color(0xFFE4E0E6), // 霜灰
+  bg3: Color(0xFFDEDCE4), // 雪影
+  bg4: Color(0xFFEEEAEE), // 新雪
   aiBubble: Color(0xFFF6F4F6),
   userBubble: Color(0xFFE6E2EC),
   aiBubbleBorder: Color(0x20687080),
@@ -387,7 +395,7 @@ const snowPreset = ThemePreset(
   textPrimary: Color(0xFF3C3E44),
   textSecondary: Color(0xFF6C6E76),
   textOnBubble: Color(0xFF3E4046),
-  accent: Color(0xFF6878A0),      // 冬霧藍 — 柔和的灰藍
+  accent: Color(0xFF6878A0), // 冬霧藍 — 柔和的灰藍
   accentLight: Color(0xFF8898B8),
   accentGlow: Color(0x247888A8),
   glassWhite: Color(0x88FFFFFF),
@@ -406,19 +414,19 @@ const lattePreset = ThemePreset(
   name: '卡布奇諾',
   subtitle: '奶泡上的一圈拉花',
   isDark: false,
-  bg1: Color(0xFFF2EAE0),  // 杯心奶泡
-  bg2: Color(0xFFE0D2C4),  // 拉花交界
-  bg3: Color(0xFFD4C4B4),  // 咖啡旋渦
-  bg4: Color(0xFFEDE2D8),  // 杯緣奶沫
-  aiBubble: Color(0xFFFAF6F0),     // 鮮奶泡白
-  userBubble: Color(0xFFEDE0D2),   // 焦糖奶霜
-  aiBubbleBorder: Color(0x08886050),   // 近乎無邊框
+  bg1: Color(0xFFF2EAE0), // 杯心奶泡
+  bg2: Color(0xFFE0D2C4), // 拉花交界
+  bg3: Color(0xFFD4C4B4), // 咖啡旋渦
+  bg4: Color(0xFFEDE2D8), // 杯緣奶沫
+  aiBubble: Color(0xFFFAF6F0), // 鮮奶泡白
+  userBubble: Color(0xFFEDE0D2), // 焦糖奶霜
+  aiBubbleBorder: Color(0x08886050), // 近乎無邊框
   userBubbleBorder: Color(0x08907060), // 近乎無邊框
   textPrimary: Color(0xFF4A4240),
   textSecondary: Color(0xFF7A706A),
   textOnBubble: Color(0xFF484040),
-  accent: Color(0xFF8C6E5E),      // 冷調濃縮咖啡
-  accentLight: Color(0xFFB09080),  // 烘焙淡棕
+  accent: Color(0xFF8C6E5E), // 冷調濃縮咖啡
+  accentLight: Color(0xFFB09080), // 烘焙淡棕
   accentGlow: Color(0x20A08070),
   glassWhite: Color(0x78FFFFFF),
   glassBorder: Color(0x38FFFFFF),
@@ -436,10 +444,10 @@ const pinkPreset = ThemePreset(
   name: '玫瑰露',
   subtitle: '一滴暈開在指尖',
   isDark: false,
-  bg1: Color(0xFFFAE8EC),  // 極淡玫瑰奶
-  bg2: Color(0xFFF5E2E8),  // 霧粉
-  bg3: Color(0xFFF0DDE4),  // 柔腮
-  bg4: Color(0xFFFCF2F4),  // 近乎純白的粉
+  bg1: Color(0xFFFAE8EC), // 極淡玫瑰奶
+  bg2: Color(0xFFF5E2E8), // 霧粉
+  bg3: Color(0xFFF0DDE4), // 柔腮
+  bg4: Color(0xFFFCF2F4), // 近乎純白的粉
   aiBubble: Color(0xFFFDF8F8),
   userBubble: Color(0xFFF8ECF0),
   aiBubbleBorder: Color(0x20C88898),
@@ -447,8 +455,8 @@ const pinkPreset = ThemePreset(
   textPrimary: Color(0xFF504048),
   textSecondary: Color(0xFF887078),
   textOnBubble: Color(0xFF4C3840),
-  accent: Color(0xFFC07888),      // 清透玫瑰
-  accentLight: Color(0xFFE0A8B8),  // 花瓣粉
+  accent: Color(0xFFC07888), // 清透玫瑰
+  accentLight: Color(0xFFE0A8B8), // 花瓣粉
   accentGlow: Color(0x25D898A8),
   glassWhite: Color(0x85FFFFFF),
   glassBorder: Color(0x45FFFFFF),
@@ -466,10 +474,10 @@ const sodaPreset = ThemePreset(
   name: '薄荷氣泡',
   subtitle: '氣泡正在往上竄',
   isDark: false,
-  bg1: Color(0xFFD4ECE8),  // 冰塊表面
-  bg2: Color(0xFFC8E4E2),  // 薄荷冰沙
-  bg3: Color(0xFFBEDEDD),  // 蘇打水深處
-  bg4: Color(0xFFDAF0EC),  // 杯口霧氣
+  bg1: Color(0xFFD4ECE8), // 冰塊表面
+  bg2: Color(0xFFC8E4E2), // 薄荷冰沙
+  bg3: Color(0xFFBEDEDD), // 蘇打水深處
+  bg4: Color(0xFFDAF0EC), // 杯口霧氣
   aiBubble: Color(0xFFF8FCFB),
   userBubble: Color(0xFFDCF0EA),
   aiBubbleBorder: Color(0x20388880),
@@ -477,8 +485,8 @@ const sodaPreset = ThemePreset(
   textPrimary: Color(0xFF344240),
   textSecondary: Color(0xFF607470),
   textOnBubble: Color(0xFF364442),
-  accent: Color(0xFF388880),      // 氣泡水的透明青
-  accentLight: Color(0xFF5AAAA0),  // 薄荷亮光
+  accent: Color(0xFF388880), // 氣泡水的透明青
+  accentLight: Color(0xFF5AAAA0), // 薄荷亮光
   accentGlow: Color(0x2448A098),
   glassWhite: Color(0x85FFFFFF),
   glassBorder: Color(0x45FFFFFF),
@@ -517,4 +525,37 @@ const neonPreset = ThemePreset(
   navInactive: Color(0xFF6A6390),
   starColor: Color(0x6600E5D4),
   starGlow: Color(0x1CFF3E8E),
+);
+
+// ─── 春·燕（季節×動物特色主題）───
+// 雨後青瓦的色調，燕子歸巢的春天
+const swallowPreset = ThemePreset(
+  id: 'swallow',
+  name: '春·燕',
+  subtitle: '燕子歸來的雨後',
+  isDark: false,
+  bg1: Color(0xFFE4DDD6), // 青瓦暖灰
+  bg2: Color(0xFFDDD8D4), // 泥牆灰米
+  bg3: Color(0xFFD6D4D8), // 雨後霧藍灰
+  bg4: Color(0xFFE0DDD8), // 屋簷下的柔光
+  aiBubble: Color(0xFFF6F4F2), // 羽白
+  userBubble: Color(0xFFE8E0D6), // 巢泥暖棕
+  aiBubbleBorder: Color(0x18506878),
+  userBubbleBorder: Color(0x18786050),
+  textPrimary: Color(0xFF3A3836),
+  textSecondary: Color(0xFF6A6460),
+  textOnBubble: Color(0xFF3C3A38),
+  accent: Color(0xFF8B5E4B), // 銹紅——燕子腹羽
+  accentLight: Color(0xFFB08470),
+  accentGlow: Color(0x20906858),
+  glassWhite: Color(0x80FFFFFF),
+  glassBorder: Color(0x40FFFFFF),
+  glassInputBg: Color(0xB5FFFFFF),
+  navBarBg: Color(0xE8F0EDEA),
+  navInactive: Color(0xFF8A8480),
+  starColor: Color(0x66D8D0C8),
+  starGlow: Color(0x1CD0C8C0),
+  bgEffect: 'rain',
+  bubbleAiAsset: 'assets/bubbles/swallow/ai.png',
+  bubbleUserAsset: 'assets/bubbles/swallow/user.png',
 );

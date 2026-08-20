@@ -204,6 +204,7 @@ class _DatabaseSchema {
         avatar_path TEXT,
         tts_voice_id TEXT DEFAULT '',
         self_notes TEXT DEFAULT '',
+        signature TEXT DEFAULT '',
         draw_anchor_user TEXT DEFAULT '',
         draw_anchor_char TEXT DEFAULT '',
         draw_style TEXT DEFAULT '',
@@ -1054,6 +1055,9 @@ class _DatabaseSchema {
         'email_draft_json',
         "TEXT DEFAULT ''",
       );
+    }
+    if (oldVersion < 47 && await _tableExists(db, 'characters')) {
+      await _safeAddColumn(db, 'characters', 'signature', "TEXT DEFAULT ''");
     }
     // Rebuild shared indexes only after every versioned column migration has
     // completed. _migrateToV36 used to call this helper early; once v38 added

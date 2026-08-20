@@ -16,6 +16,7 @@ import '../main.dart' show themeNotifier;
 import '../widgets/coin_amount_text.dart';
 import '../widgets/gradient_background.dart';
 import '../widgets/starfield_painter.dart';
+import '../widgets/rain_painter.dart';
 import '../widgets/neural_field.dart';
 import '../memory/database.dart';
 import '../models/message.dart';
@@ -24,15 +25,19 @@ import '../services/backup_service.dart';
 import '../services/device_file_saver.dart';
 import '../services/keep_alive_service.dart';
 import '../services/manual_summary_service.dart';
+import '../services/character_signature_service.dart';
 import '../services/scratch_service.dart';
 import '../widgets/orbit_loading_indicator.dart';
 import '../widgets/yanci_bottom_nav_bar.dart';
+import '../widgets/character_signature_panel.dart';
 import '../utils/latest_request_gate.dart';
 import 'manual_summary_clean_screen.dart';
 
 part 'home_screen_profile.dart';
 
 enum _BackupExportMode { save, share }
+
+enum _BackupSheetAction { save, share, import, cleanup }
 
 /// 主頁 — 角色輪盤 + 水晶球 + 底部導航
 class HomeScreen extends StatefulWidget {
@@ -54,6 +59,8 @@ class _HomeScreenState extends State<HomeScreen>
   // 角色輪盤
   PageController? _carouselController;
   int _currentCarouselPage = 0;
+  Timer? _onlineDwellTimer;
+  bool _onlineDwellReady = false;
 
   // 心電圖動畫
   late AnimationController _ecgController;
@@ -211,6 +218,7 @@ class _HomeScreenState extends State<HomeScreen>
     _autoBackupTimer?.cancel();
     _heartbeatSub?.cancel();
     _userCoinsSub?.cancel();
+    _onlineDwellTimer?.cancel();
     _carouselController?.dispose();
     _ecgController.dispose();
     super.dispose();
@@ -306,6 +314,18 @@ class _HomeScreenState extends State<HomeScreen>
   Future<void> _refreshAfterChatReturn() async {
     await _loadKeepAliveInfo(characterId: _activeCharacterId);
     await _loadUserCoins();
+    await CharacterSignatureService.waitForPending(_activeCharacterId);
+    final refreshed = await DatabaseHelper.getCharacter(_activeCharacterId);
+    if (!mounted || refreshed == null) return;
+    final index = _characters.indexWhere(
+      (character) => character['id'] == _activeCharacterId,
+    );
+    if (index < 0) return;
+    setState(() {
+      final next = List<Map<String, dynamic>>.from(_characters);
+      next[index] = refreshed;
+      _characters = next;
+    });
   }
 
   String _userName = '';
@@ -348,7 +368,7 @@ class _HomeScreenState extends State<HomeScreen>
     if (!mounted || !_charactersGate.isCurrent(generation)) return;
     _carouselController?.dispose();
     _carouselController = PageController(
-      viewportFraction: 0.28,
+      viewportFraction: 0.72,
       initialPage: activeIndex,
     );
     _currentCarouselPage = activeIndex;
@@ -357,6 +377,7 @@ class _HomeScreenState extends State<HomeScreen>
       _characters = chars;
       _activeCharacterId = activeId;
     });
+    _beginOnlineDwell(activeId);
     unawaited(_loadKeepAliveInfo(characterId: activeId));
 
     // TODO: 每日自動發放貝殼 — 遊戲上線後刪除
@@ -398,6 +419,7 @@ class _HomeScreenState extends State<HomeScreen>
     if (mounted) {
       setState(() {
         _activeCharacterId = id;
+        _onlineDwellReady = false;
         _latestNote = null;
         _randomNotes = const [];
         _heartbeat = null;
@@ -405,6 +427,7 @@ class _HomeScreenState extends State<HomeScreen>
         _keepAliveConvTitle = null;
       });
     }
+    _beginOnlineDwell(id);
     _noteGate.invalidate();
     _keepAliveGate.invalidate();
 
@@ -442,6 +465,16 @@ class _HomeScreenState extends State<HomeScreen>
         curve: Curves.easeOut,
       );
     }
+  }
+
+  void _beginOnlineDwell(String characterId) {
+    _onlineDwellTimer?.cancel();
+    if (!mounted) return;
+    setState(() => _onlineDwellReady = false);
+    _onlineDwellTimer = Timer(const Duration(seconds: 1), () {
+      if (!mounted || _activeCharacterId != characterId) return;
+      setState(() => _onlineDwellReady = true);
+    });
   }
 
   Future<void> _startNewChat() async {
@@ -534,9 +567,11 @@ class _HomeScreenState extends State<HomeScreen>
                 child: Offstage(
                   offstage: !YanciTheme.starEnabled || _currentTab == 4,
                   child: RepaintBoundary(
-                    child: YanciTheme.bgEffect == 'stars'
-                        ? const StarfieldWidget(starCount: 18)
-                        : const NeuralFieldWidget(nodeCount: 18),
+                    child: switch (YanciTheme.bgEffect) {
+                      'stars' => const StarfieldWidget(starCount: 18),
+                      'rain' => const RainWidget(dropCount: 30),
+                      _ => const NeuralFieldWidget(nodeCount: 18),
+                    },
                   ),
                 ),
               ),
@@ -573,7 +608,9 @@ class _HomeScreenState extends State<HomeScreen>
         const navBarH = 66.0;
         final visibleH = h - navBarH;
         // 畫面均分三塊，輪盤中心落在上 1/3 線
-        const carouselH = 56.0;
+        // 輪盤內容含卡片下方的在線提示；與輪盤 widget 的 120 高度一致，
+        // 避免提示文字在 Positioned 內被擠出底部。
+        const carouselH = 120.0;
         final carouselCenterY = visibleH / 3;
         final carouselTop = max(0.0, carouselCenterY - carouselH / 2);
         // 問候語在頂部（≈50 給貝殼/歷史行）與輪盤之間的正中心
@@ -773,13 +810,13 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   // ═══════════════════════════════════
-  // 角色輪盤（撥動切換 + 居中放大 + 兩側漸小漸淡）
+  // 角色輪盤（卡片式撥動切換 + 居中放大 + 兩側漸小漸淡）
   // ═══════════════════════════════════
 
   Widget _buildCharacterCarousel() {
     if (_characters.isEmpty || _carouselController == null) {
       return SizedBox(
-        height: 56,
+        height: 120,
         child: Center(
           child: GestureDetector(
             onTap: () async {
@@ -811,20 +848,35 @@ class _HomeScreenState extends State<HomeScreen>
       );
     }
 
+    final carouselWidth = min(MediaQuery.sizeOf(context).width - 28, 380.0);
+    final canGoPrevious = _currentCarouselPage > 0;
+    final canGoNext = _currentCarouselPage < _characters.length - 1;
+
+    void moveCarouselTo(int index) {
+      final controller = _carouselController;
+      if (controller == null || !controller.hasClients) return;
+      controller.animateToPage(
+        index,
+        duration: const Duration(milliseconds: 320),
+        curve: Curves.easeOutCubic,
+      );
+    }
+
     return SizedBox(
-      height: 56,
+      height: 120,
       child: Stack(
         children: [
-          // 輪盤固定寬度居中（width 控制寬窄）
           Center(
             child: SizedBox(
-              width: 260,
+              width: carouselWidth,
               child: PageView.builder(
                 controller: _carouselController!,
                 itemCount: _characters.length,
                 onPageChanged: (index) {
                   _currentCarouselPage = index;
-                  _selectCharacter(_characters[index]['id'] as String);
+                  final id = _characters[index]['id'] as String;
+                  _beginOnlineDwell(id);
+                  unawaited(_selectCharacter(id));
                 },
                 itemBuilder: (context, index) {
                   return AnimatedBuilder(
@@ -840,50 +892,215 @@ class _HomeScreenState extends State<HomeScreen>
                       }
 
                       final diff = (page - index).abs();
-                      final scale = (1.0 - diff * 0.22).clamp(0.68, 1.0);
-                      final opacity = (1.0 - diff * 0.45).clamp(0.15, 1.0);
+                      final scale = (1.0 - diff * 0.12).clamp(0.84, 1.0);
                       final isCenter = diff < 0.5;
+                      // 靜止時只保留選中的角色可見；拖動開始後再讓鄰近卡片
+                      // 依位移漸入，保留原本的輪盤滑動回饋與觸控範圍。
+                      final distanceFromRest =
+                          (page - _currentCarouselPage.toDouble()).abs();
+                      final revealDuringSwipe = (distanceFromRest / 0.25).clamp(
+                        0.0,
+                        1.0,
+                      );
+                      final opacity = isCenter
+                          ? 1.0
+                          : (1.0 - diff * 0.38).clamp(0.0, 1.0) *
+                                revealDuringSwipe;
+                      final character = _characters[index];
+                      final id = character['id'] as String;
+                      final name = character['name'] as String? ?? '？';
+                      final avatarPath =
+                          character['avatar_path'] as String? ?? '';
+                      final hasAvatar =
+                          avatarPath.isNotEmpty &&
+                          File(avatarPath).existsSync();
+                      final isOnline =
+                          isCenter &&
+                          id == _activeCharacterId &&
+                          _onlineDwellReady;
 
                       return Center(
-                        child: Transform.scale(
-                          scale: scale,
-                          child: Opacity(
-                            opacity: opacity,
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 12,
-                                vertical: 8,
-                              ),
-                              decoration: BoxDecoration(
-                                color: isCenter
-                                    ? YanciTheme.accent.withValues(alpha: 0.18)
-                                    : Colors.transparent,
-                                borderRadius: BorderRadius.circular(16),
-                                border: isCenter
-                                    ? Border.all(
-                                        color: YanciTheme.accent.withValues(
-                                          alpha: 0.45,
+                        child: Semantics(
+                          button: true,
+                          selected: isCenter,
+                          label: isOnline
+                              ? '$name，${L.pick(en: 'Online', zhTW: '對方已上線', zhCN: '对方已上线')}'
+                              : name,
+                          child: GestureDetector(
+                            behavior: HitTestBehavior.opaque,
+                            onTap: () => _selectCharacter(id),
+                            child: Transform.scale(
+                              scale: scale,
+                              child: Opacity(
+                                opacity: opacity,
+                                child: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Container(
+                                      height: 92,
+                                      padding: const EdgeInsets.fromLTRB(
+                                        10,
+                                        9,
+                                        10,
+                                        8,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: Colors.transparent,
+                                        borderRadius: BorderRadius.circular(18),
+                                        border: Border.all(
+                                          color: YanciTheme.accent.withValues(
+                                            alpha: isCenter
+                                                ? (YanciTheme.isDark
+                                                      ? 0.20
+                                                      : 0.16)
+                                                : 0.10,
+                                          ),
+                                          width: 0.6,
                                         ),
-                                        width: 1.2,
-                                      )
-                                    : null,
-                              ),
-                              child: Text(
-                                _characters[index]['name'] as String? ?? '？',
-                                style: TextStyle(
-                                  fontSize: isCenter ? 15 : 13,
-                                  fontWeight: isCenter
-                                      ? FontWeight.w600
-                                      : FontWeight.w400,
-                                  color: isCenter
-                                      ? YanciTheme.accent
-                                      : YanciTheme.textPrimary.withValues(
-                                          alpha: 0.6,
+                                      ),
+                                      child: Row(
+                                        children: [
+                                          Container(
+                                            width: 50,
+                                            height: 50,
+                                            decoration: BoxDecoration(
+                                              shape: BoxShape.circle,
+                                              color: YanciTheme.accent
+                                                  .withValues(
+                                                    alpha: isCenter
+                                                        ? 0.14
+                                                        : 0.08,
+                                                  ),
+                                              border: Border.all(
+                                                color: isCenter
+                                                    ? YanciTheme.accent
+                                                          .withValues(
+                                                            alpha: 0.3,
+                                                          )
+                                                    : YanciTheme.textSecondary
+                                                          .withValues(
+                                                            alpha: 0.12,
+                                                          ),
+                                              ),
+                                              image: hasAvatar
+                                                  ? DecorationImage(
+                                                      image: FileImage(
+                                                        File(avatarPath),
+                                                      ),
+                                                      fit: BoxFit.cover,
+                                                    )
+                                                  : null,
+                                            ),
+                                            child: hasAvatar
+                                                ? null
+                                                : Icon(
+                                                    Icons.person_rounded,
+                                                    size: 27,
+                                                    color: YanciTheme.accent
+                                                        .withValues(alpha: 0.5),
+                                                  ),
+                                          ),
+                                          const SizedBox(width: 10),
+                                          Expanded(
+                                            child: Column(
+                                              mainAxisAlignment:
+                                                  MainAxisAlignment.center,
+                                              crossAxisAlignment:
+                                                  CrossAxisAlignment.start,
+                                              children: [
+                                                Row(
+                                                  mainAxisSize:
+                                                      MainAxisSize.min,
+                                                  children: [
+                                                    Flexible(
+                                                      child: Text(
+                                                        name,
+                                                        maxLines: 1,
+                                                        overflow: TextOverflow
+                                                            .ellipsis,
+                                                        style: TextStyle(
+                                                          fontSize: isCenter
+                                                              ? 16
+                                                              : 14,
+                                                          fontWeight:
+                                                              FontWeight.w400,
+                                                          color: isCenter
+                                                              ? YanciTheme
+                                                                    .accent
+                                                              : YanciTheme
+                                                                    .textPrimary
+                                                                    .withValues(
+                                                                      alpha:
+                                                                          0.64,
+                                                                    ),
+                                                          fontFamily: YanciTheme
+                                                              .fontFamily,
+                                                        ),
+                                                      ),
+                                                    ),
+                                                    if (isOnline) ...[
+                                                      const SizedBox(width: 6),
+                                                      Container(
+                                                        width: 7,
+                                                        height: 7,
+                                                        decoration:
+                                                            const BoxDecoration(
+                                                              color: Color(
+                                                                0xFF65C98A,
+                                                              ),
+                                                              shape: BoxShape
+                                                                  .circle,
+                                                              boxShadow: [
+                                                                BoxShadow(
+                                                                  color: Color(
+                                                                    0x5965C98A,
+                                                                  ),
+                                                                  blurRadius: 5,
+                                                                ),
+                                                              ],
+                                                            ),
+                                                      ),
+                                                    ],
+                                                  ],
+                                                ),
+                                                const SizedBox(height: 4),
+                                                Padding(
+                                                  padding:
+                                                      const EdgeInsets.only(
+                                                        top: 4,
+                                                      ),
+                                                  child: CharacterSignaturePanel(
+                                                    compact: true,
+                                                    signature:
+                                                        character['signature']
+                                                            as String?,
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                    if (isOnline)
+                                      Padding(
+                                        padding: const EdgeInsets.only(top: 2),
+                                        child: Text(
+                                          L.pick(
+                                            en: 'Online',
+                                            zhTW: '對方已上線',
+                                            zhCN: '对方已上线',
+                                          ),
+                                          style: TextStyle(
+                                            fontSize: 9,
+                                            height: 1.0,
+                                            color: const Color(0xFF65C98A),
+                                            fontFamily: YanciTheme.fontFamily,
+                                          ),
                                         ),
-                                  fontFamily: YanciTheme.fontFamily,
+                                      ),
+                                  ],
                                 ),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
                               ),
                             ),
                           ),
@@ -895,42 +1112,54 @@ class _HomeScreenState extends State<HomeScreen>
               ),
             ),
           ),
-          // ✦ 新增角色（垂直對齊右上角歷史按鈕中心）
-          Positioned(
-            right: 30,
-            top: 0,
-            bottom: 0,
-            child: Center(
-              child: Tooltip(
-                message: L.pick(en: 'Add character', zhTW: '新增角色'),
-                child: Semantics(
-                  button: true,
-                  label: L.pick(en: 'Add character', zhTW: '新增角色'),
-                  child: GestureDetector(
-                    behavior: HitTestBehavior.opaque,
-                    onTap: () async {
-                      final newId = await Navigator.of(
-                        context,
-                      ).pushNamed('/character');
-                      if (newId != null && mounted) {
-                        await _loadCharacters(selectId: newId as String);
-                      }
-                    },
-                    child: SizedBox.square(
-                      dimension: 48,
-                      child: Center(
-                        child: Icon(
-                          Icons.auto_awesome,
-                          size: 22,
-                          color: YanciTheme.accent.withValues(alpha: 0.45),
-                        ),
-                      ),
-                    ),
+          if (canGoPrevious)
+            Positioned(
+              left: 0,
+              top: 0,
+              bottom: 0,
+              child: IconButton(
+                onPressed: () => moveCarouselTo(_currentCarouselPage - 1),
+                tooltip: L.pick(
+                  en: 'Previous character',
+                  zhTW: '上一個角色',
+                  zhCN: '上一个角色',
+                ),
+                padding: EdgeInsets.zero,
+                iconSize: 15,
+                style: IconButton.styleFrom(
+                  minimumSize: const Size(44, 44),
+                  tapTargetSize: MaterialTapTargetSize.padded,
+                  foregroundColor: YanciTheme.textSecondary.withValues(
+                    alpha: YanciTheme.isDark ? 0.19 : 0.15,
                   ),
                 ),
+                icon: const Icon(Icons.arrow_back_ios_new_rounded),
               ),
             ),
-          ),
+          if (canGoNext)
+            Positioned(
+              right: 0,
+              top: 0,
+              bottom: 0,
+              child: IconButton(
+                onPressed: () => moveCarouselTo(_currentCarouselPage + 1),
+                tooltip: L.pick(
+                  en: 'Next character',
+                  zhTW: '下一個角色',
+                  zhCN: '下一个角色',
+                ),
+                padding: EdgeInsets.zero,
+                iconSize: 15,
+                style: IconButton.styleFrom(
+                  minimumSize: const Size(44, 44),
+                  tapTargetSize: MaterialTapTargetSize.padded,
+                  foregroundColor: YanciTheme.textSecondary.withValues(
+                    alpha: YanciTheme.isDark ? 0.19 : 0.15,
+                  ),
+                ),
+                icon: const Icon(Icons.arrow_forward_ios_rounded),
+              ),
+            ),
         ],
       ),
     );

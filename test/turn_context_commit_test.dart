@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:project_yanci/memory/database.dart';
 import 'package:project_yanci/memory/retriever.dart';
 import 'package:project_yanci/models/memory.dart';
+import 'package:project_yanci/models/message.dart';
 import 'package:project_yanci/services/bio_clock_service.dart';
 import 'package:project_yanci/services/locale_strings.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -237,6 +238,30 @@ void main() {
     final notes = await DatabaseHelper.getSelfNotes('char-a');
     expect(notes.split('\n'), hasLength(2));
   });
+
+  test(
+    'deleting a self note leaves the conversation static snapshot intact',
+    () async {
+      await DatabaseHelper.appendSelfNote('char-a', '昭昭喜歡下雨天');
+      await DatabaseHelper.appendSelfNote('char-a', '昭昭嘴硬時其實想被抱住');
+      await DatabaseHelper.createConversation(
+        Conversation(id: 'conv-a', characterId: 'char-a'),
+      );
+      await db.update(
+        'conversations',
+        {'pinned_static_self_notes': '· 昭昭喜歡下雨天\n· 昭昭嘴硬時其實想被抱住'},
+        where: 'id = ?',
+        whereArgs: ['conv-a'],
+      );
+
+      expect(await DatabaseHelper.deleteSelfNote('char-a', '昭昭喜歡下雨天'), isTrue);
+      expect(await DatabaseHelper.getSelfNotes('char-a'), '· 昭昭嘴硬時其實想被抱住');
+      expect(
+        await DatabaseHelper.getConversationPinnedSelfNotes('conv-a'),
+        '· 昭昭喜歡下雨天\n· 昭昭嘴硬時其實想被抱住',
+      );
+    },
+  );
 
   test(
     'reading self notes cleans existing duplicates but keeps conflicts',

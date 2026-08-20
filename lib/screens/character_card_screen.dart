@@ -18,7 +18,6 @@ import '../services/token_estimator.dart';
 import '../services/sticker_service.dart';
 import '../services/spider_web_state_service.dart';
 import '../services/whisper_service.dart';
-import '../widgets/emotion_panel.dart';
 import '../utils/latest_request_gate.dart';
 
 /// 人設卡 — 創建/編輯（存 DB，無行數限制）
@@ -102,12 +101,8 @@ class _CharacterCardScreenState extends State<CharacterCardScreen> {
       _loadedWhisperState = CharacterWhisperState.fromCharacter(char);
       _whisperController.text = _loadedWhisperState!.displayText;
       _whisperModelOverride = _loadedWhisperState!.modelOverrideEnabled;
-      _showExtras =
-          _raceController.text.isNotEmpty ||
-          _skillController.text.isNotEmpty ||
-          _ageController.text.isNotEmpty ||
-          _heightController.text.isNotEmpty ||
-          _ttsVoiceId.isNotEmpty;
+      // 已保存的更多屬性仍完整載入，但編輯頁初始保持收合。
+      _showExtras = false;
     }
     setState(() => _isLoading = false);
   }
@@ -339,38 +334,14 @@ class _CharacterCardScreenState extends State<CharacterCardScreen> {
                                                   File(
                                                     _avatarPath!,
                                                   ).existsSync()
-                                              ? ShaderMask(
-                                                  shaderCallback: (rect) =>
-                                                      RadialGradient(
-                                                        center:
-                                                            Alignment.center,
-                                                        radius: 0.85,
-                                                        colors: [
-                                                          Colors.white,
-                                                          Colors.white,
-                                                          Colors.white
-                                                              .withValues(
-                                                                alpha: 0.0,
-                                                              ),
-                                                        ],
-                                                        stops: const [
-                                                          0.0,
-                                                          0.6,
-                                                          1.0,
-                                                        ],
-                                                      ).createShader(rect),
-                                                  blendMode: BlendMode.dstIn,
-                                                  child: ClipRRect(
-                                                    borderRadius:
-                                                        BorderRadius.circular(
-                                                          16,
-                                                        ),
-                                                    child: Image.file(
-                                                      File(_avatarPath!),
-                                                      fit: BoxFit.cover,
-                                                      width: 130,
-                                                      height: 195,
-                                                    ),
+                                              ? ClipRRect(
+                                                  borderRadius:
+                                                      BorderRadius.circular(16),
+                                                  child: Image.file(
+                                                    File(_avatarPath!),
+                                                    fit: BoxFit.cover,
+                                                    width: 130,
+                                                    height: 195,
                                                   ),
                                                 )
                                               : Container(
@@ -427,7 +398,7 @@ class _CharacterCardScreenState extends State<CharacterCardScreen> {
                                     ),
                                     const SizedBox(width: 12),
 
-                                    // ── 右側：姓名 / 性別 / 關係（透明氣泡框）──
+                                    // ── 右側：姓名 / 性別 / 關係 ──
                                     Expanded(
                                       child: Padding(
                                         padding: const EdgeInsets.only(top: 24),
@@ -435,20 +406,6 @@ class _CharacterCardScreenState extends State<CharacterCardScreen> {
                                           padding: const EdgeInsets.symmetric(
                                             horizontal: 16,
                                             vertical: 20,
-                                          ),
-                                          decoration: BoxDecoration(
-                                            color: Colors.white.withValues(
-                                              alpha: 0.06,
-                                            ),
-                                            borderRadius: BorderRadius.circular(
-                                              16,
-                                            ),
-                                            border: Border.all(
-                                              color: Colors.white.withValues(
-                                                alpha: 0.1,
-                                              ),
-                                              width: 0.5,
-                                            ),
                                           ),
                                           child: Column(
                                             mainAxisAlignment:
@@ -488,32 +445,45 @@ class _CharacterCardScreenState extends State<CharacterCardScreen> {
                             // ═══ 角色設定（透明氣泡圓角框）═══
                             Stack(
                               children: [
-                                Container(
-                                  decoration: BoxDecoration(
-                                    color: Colors.white.withValues(alpha: 0.06),
-                                    borderRadius: BorderRadius.circular(16),
-                                    border: Border.all(
-                                      color: Colors.white.withValues(
-                                        alpha: 0.1,
-                                      ),
-                                      width: 0.5,
-                                    ),
+                                ConstrainedBox(
+                                  constraints: const BoxConstraints(
+                                    maxHeight: 260,
                                   ),
-                                  child: TextField(
-                                    controller: _descController,
-                                    maxLines: null,
-                                    minLines: 6,
-                                    style: YanciTheme.bodyText.copyWith(
-                                      fontSize: 13,
-                                    ),
-                                    decoration: InputDecoration(
-                                      hintText: L.get('char_desc_hint'),
-                                      hintStyle: YanciTheme.bodySmall.copyWith(
-                                        color: YanciTheme.textSecondary
-                                            .withValues(alpha: 0.3),
+                                  child: Container(
+                                    decoration: BoxDecoration(
+                                      color: Colors.white.withValues(
+                                        alpha: 0.06,
                                       ),
-                                      border: InputBorder.none,
-                                      contentPadding: const EdgeInsets.all(14),
+                                      borderRadius: BorderRadius.circular(16),
+                                      border: Border.all(
+                                        color: Colors.white.withValues(
+                                          alpha: 0.1,
+                                        ),
+                                        width: 0.5,
+                                      ),
+                                    ),
+                                    child: TextField(
+                                      key: const ValueKey(
+                                        'character-description-collapsed',
+                                      ),
+                                      controller: _descController,
+                                      maxLines: null,
+                                      minLines: 6,
+                                      style: YanciTheme.bodyText.copyWith(
+                                        fontSize: 13,
+                                      ),
+                                      decoration: InputDecoration(
+                                        hintText: L.get('char_desc_hint'),
+                                        hintStyle: YanciTheme.bodySmall
+                                            .copyWith(
+                                              color: YanciTheme.textSecondary
+                                                  .withValues(alpha: 0.3),
+                                            ),
+                                        border: InputBorder.none,
+                                        contentPadding: const EdgeInsets.all(
+                                          14,
+                                        ),
+                                      ),
                                     ),
                                   ),
                                 ),
@@ -543,17 +513,6 @@ class _CharacterCardScreenState extends State<CharacterCardScreen> {
                               ],
                             ),
                             const SizedBox(height: YanciTheme.spacingMd),
-
-                            // ═══ 情緒座標測試面板（kVisible 控制顯隱）═══
-                            if (EmotionPanel.kVisible) ...[
-                              EmotionPanel(
-                                key: ValueKey(
-                                  'emotion-${widget.characterId ?? 'default'}',
-                                ),
-                                characterId: widget.characterId ?? 'default',
-                              ),
-                              const SizedBox(height: YanciTheme.spacingMd),
-                            ],
 
                             // 擴展欄位
                             GestureDetector(
@@ -608,12 +567,12 @@ class _CharacterCardScreenState extends State<CharacterCardScreen> {
                             ],
                             const SizedBox(height: YanciTheme.spacingMd),
 
-                            // ═══ 相處細節：輸入框悄悄話 ═══
-                            _buildWhisperSection(),
+                            // ═══ 畫畫設定：次要入口，錨點在底部面板編輯 ═══
+                            _buildDrawAnchorEntry(),
                             const SizedBox(height: YanciTheme.spacingMd),
 
-                            // ═══ 畫畫角色錨點 ═══
-                            _buildDrawAnchorSection(),
+                            // ═══ 相處細節：輸入框悄悄話 ═══
+                            _buildWhisperSection(),
 
                             const SizedBox(height: YanciTheme.spacingXl),
 
@@ -885,70 +844,209 @@ class _CharacterCardScreenState extends State<CharacterCardScreen> {
     }
   }
 
-  /// 畫畫角色錨點區塊
-  Widget _buildDrawAnchorSection() {
-    final hasContent =
-        _drawAnchorUserCtrl.text.isNotEmpty ||
-        _drawAnchorCharCtrl.text.isNotEmpty;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        GestureDetector(
-          onTap: () => setState(() {}), // 始終展開，點擊無效
-          child: Row(
-            children: [
-              Icon(
-                Icons.brush_outlined,
-                size: 14,
-                color: YanciTheme.accent.withValues(alpha: 0.6),
-              ),
-              const SizedBox(width: 6),
-              Text(
-                L.pick(en: 'Draw Anchors', zhTW: '畫畫錨點'),
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w500,
-                  color: YanciTheme.textSecondary,
-                  fontFamily: YanciTheme.fontFamily,
+  int get _configuredDrawAnchorCount => [
+    _drawAnchorUserCtrl,
+    _drawAnchorCharCtrl,
+    _drawStyleCtrl,
+  ].where((controller) => controller.text.trim().isNotEmpty).length;
+
+  String get _drawAnchorStatus {
+    final count = _configuredDrawAnchorCount;
+    if (count == 0) {
+      return L.pick(en: 'Not set', zhTW: '未設定', zhCN: '未设置');
+    }
+    return L.pick(en: '$count set', zhTW: '已設定 $count 項', zhCN: '已设置 $count 项');
+  }
+
+  /// 畫畫角色錨點的輕量入口；三個欄位在底部面板內編輯。
+  Widget _buildDrawAnchorEntry() {
+    final title = L.pick(en: 'Drawing settings', zhTW: '畫畫設定', zhCN: '画画设置');
+    final status = _drawAnchorStatus;
+    return Semantics(
+      button: true,
+      label: title,
+      value: status,
+      child: InkWell(
+        key: const ValueKey('draw-anchor-entry'),
+        onTap: _showDrawAnchorEditor,
+        borderRadius: BorderRadius.circular(12),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minHeight: 48),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 8),
+            child: Row(
+              children: [
+                Icon(
+                  Icons.brush_outlined,
+                  size: 18,
+                  color: YanciTheme.accent.withValues(alpha: 0.72),
                 ),
-              ),
-              if (!hasContent) ...[
-                const SizedBox(width: 6),
-                Text(
-                  L.pick(en: '(auto-inject when drawing)', zhTW: '（畫圖時自動注入）'),
-                  style: TextStyle(
-                    fontSize: 11,
-                    color: YanciTheme.textSecondary.withValues(alpha: 0.4),
-                    fontFamily: YanciTheme.fontFamily,
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    title,
+                    style: YanciTheme.bodySmall.copyWith(
+                      fontSize: 13,
+                      color: YanciTheme.textSecondary,
+                    ),
                   ),
                 ),
+                Text(
+                  status,
+                  key: const ValueKey('draw-anchor-status'),
+                  style: YanciTheme.bodySmall.copyWith(
+                    fontSize: 11,
+                    color: YanciTheme.textSecondary.withValues(alpha: 0.55),
+                  ),
+                ),
+                const SizedBox(width: 4),
+                Icon(
+                  Icons.chevron_right_rounded,
+                  size: 18,
+                  color: YanciTheme.textSecondary.withValues(alpha: 0.4),
+                ),
               ],
-            ],
+            ),
           ),
         ),
-        const SizedBox(height: 8),
-        // User 外觀
-        _buildAnchorField(
-          label: L.pick(en: 'User appearance', zhTW: '使用者外觀'),
-          controller: _drawAnchorUserCtrl,
-          hint: 'e.g. short black hair, Asian male, 165cm, casual outfit',
-        ),
-        const SizedBox(height: 8),
-        // Char 外觀
-        _buildAnchorField(
-          label: L.pick(en: 'Character appearance', zhTW: '角色外觀'),
-          controller: _drawAnchorCharCtrl,
-          hint: 'e.g. tall woman, dark hair bun, white hoodie, 172cm',
-        ),
-        const SizedBox(height: 8),
-        // 畫風
-        _buildAnchorField(
-          label: L.pick(en: 'Art style', zhTW: '畫風'),
-          controller: _drawStyleCtrl,
-          hint: 'e.g. soft anime, watercolor, studio ghibli style',
-        ),
-      ],
+      ),
     );
+  }
+
+  Future<void> _showDrawAnchorEditor() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) {
+        final media = MediaQuery.of(sheetContext);
+        return AnimatedPadding(
+          duration: const Duration(milliseconds: 180),
+          curve: Curves.easeOut,
+          padding: EdgeInsets.only(bottom: media.viewInsets.bottom),
+          child: Container(
+            constraints: BoxConstraints(maxHeight: media.size.height * 0.82),
+            decoration: BoxDecoration(
+              color: YanciTheme.isDark
+                  ? const Color(0xF0252228)
+                  : Colors.white.withValues(alpha: 0.98),
+              borderRadius: const BorderRadius.vertical(
+                top: Radius.circular(YanciTheme.radiusLg),
+              ),
+            ),
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(18, 12, 18, 20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Center(
+                    child: Container(
+                      width: 40,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: YanciTheme.textSecondary.withValues(alpha: 0.3),
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      Icon(
+                        Icons.brush_outlined,
+                        size: 19,
+                        color: YanciTheme.accent.withValues(alpha: 0.75),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          L.pick(
+                            en: 'Drawing settings',
+                            zhTW: '畫畫設定',
+                            zhCN: '画画设置',
+                          ),
+                          style: YanciTheme.headingMedium,
+                        ),
+                      ),
+                      IconButton(
+                        tooltip: L.pick(en: 'Close', zhTW: '關閉', zhCN: '关闭'),
+                        onPressed: () => Navigator.pop(sheetContext),
+                        icon: Icon(
+                          Icons.close_rounded,
+                          color: YanciTheme.textSecondary,
+                        ),
+                      ),
+                    ],
+                  ),
+                  Text(
+                    L.pick(
+                      en: 'Automatically included only when drawing.',
+                      zhTW: '只在畫圖時自動注入，不影響普通對話。',
+                      zhCN: '只在画图时自动注入，不影响普通对话。',
+                    ),
+                    style: YanciTheme.bodySmall.copyWith(
+                      fontSize: 11,
+                      color: YanciTheme.textSecondary.withValues(alpha: 0.58),
+                    ),
+                  ),
+                  const SizedBox(height: 18),
+                  _buildAnchorField(
+                    label: L.pick(
+                      en: 'User appearance',
+                      zhTW: '使用者外觀',
+                      zhCN: '使用者外观',
+                    ),
+                    controller: _drawAnchorUserCtrl,
+                    hint:
+                        'e.g. short black hair, Asian male, 165cm, casual outfit',
+                  ),
+                  const SizedBox(height: 12),
+                  _buildAnchorField(
+                    label: L.pick(
+                      en: 'Character appearance',
+                      zhTW: '角色外觀',
+                      zhCN: '角色外观',
+                    ),
+                    controller: _drawAnchorCharCtrl,
+                    hint: 'e.g. tall woman, dark hair bun, white hoodie, 172cm',
+                  ),
+                  const SizedBox(height: 12),
+                  _buildAnchorField(
+                    label: L.pick(en: 'Art style', zhTW: '畫風', zhCN: '画风'),
+                    controller: _drawStyleCtrl,
+                    hint: 'e.g. soft anime, watercolor, studio ghibli style',
+                  ),
+                  const SizedBox(height: 18),
+                  SizedBox(
+                    width: double.infinity,
+                    child: TextButton(
+                      onPressed: () => Navigator.pop(sheetContext),
+                      style: TextButton.styleFrom(
+                        minimumSize: const Size.fromHeight(48),
+                        backgroundColor: YanciTheme.accent.withValues(
+                          alpha: 0.13,
+                        ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                      child: Text(
+                        L.pick(en: 'Done', zhTW: '完成', zhCN: '完成'),
+                        style: YanciTheme.bodyText.copyWith(
+                          color: YanciTheme.accent,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+    if (mounted) setState(() {});
   }
 
   Widget _buildAnchorField({
@@ -1323,6 +1421,7 @@ class _CharacterCardScreenState extends State<CharacterCardScreen> {
       'skill': c['skill'],
       'age': c['age'],
       'height': c['height'],
+      'signature': c['signature'],
     };
     export.removeWhere((k, v) => v == null || v == '');
     final code = base64Encode(utf8.encode(jsonEncode(export)));

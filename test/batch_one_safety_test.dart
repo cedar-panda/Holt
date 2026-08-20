@@ -75,6 +75,20 @@ void main() {
     expect(MemoryActions.lastSearchQueryFor(windowId), isNull);
   });
 
+  test('memory-disabled cleanup still captures local chat search tags', () {
+    const windowId = 'memory-disabled-chat-search';
+    addTearDown(() => MemoryActions.releaseWindow(windowId));
+
+    final visible = MemoryActions.stripReply(
+      '<SEARCH_CHAT>  previous promise  </SEARCH_CHAT>',
+      windowId: windowId,
+      captureSearchQuery: true,
+    );
+
+    expect(visible, isEmpty);
+    expect(MemoryActions.lastSearchQueryFor(windowId), 'previous promise');
+  });
+
   test(
     'a second response pass preserves earlier memory action state',
     () async {

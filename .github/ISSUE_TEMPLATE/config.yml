@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Report a security vulnerability privately
+    url: https://github.com/cedar-panda/Holt/security/advisories/new
+    about: Do not disclose unpatched security issues in a public issue.

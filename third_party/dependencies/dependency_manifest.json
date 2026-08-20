@@ -1,15 +1,15 @@
 {
   "schema_version": 1,
-  "generated_at_utc": "2026-07-11T01:32:13Z",
+  "generated_at_utc": "2026-08-16T16:38:23Z",
   "scope": {
     "source_tree": "All packages resolved in pubspec.lock, including dev and non-Android platform transitive packages",
     "binary_release": "Android only; Maven/native snapshots must be regenerated from the final release build"
   },
   "inputs": {
-    "pubspec_yaml_sha256": "3e34d3c0db9fa0cd6d0410ef885b843a00bda286e557df7d8bc750251f2d253e",
-    "pubspec_lock_sha256": "c28911a4248eaea5782d69a224e55890c4aedba63233cb822ad114f940bea806",
-    "package_config_sha256": "9b1c62fb92d7600b7f19d7e9e00b1e1b2005bb5fa1004e9d45c6be4697bce439",
-    "android_maven_report_sha256": "67e582fb35b83ea8ab087841130dde52fb0ff02d3e9349352436c245a4f9c90f"
+    "pubspec_yaml_sha256": "0f39a03a799d56c5ef9f282bc2169ff04768ceef038ece268c896a2260c97a0e",
+    "pubspec_lock_sha256": "69205f5365d9037787c59a693dc1f56008fa3382f2ad772197f1a09f002403ae",
+    "package_config_sha256": "a081ec7463cd3ba1807f3c67e834d3c9e9236434a7d8c2a63629ee6dc84b04d7",
+    "android_maven_report_sha256": "9dc96fefc4ce25b53faa8d24a3d855e86a36441562066d6f048b218d2bee3501"
   },
   "flutter": {
     "frameworkVersion": "3.44.2",
@@ -26,11 +26,11 @@
     "flutterVersion": "3.44.2"
   },
   "counts": {
-    "dart_flutter_packages": 148,
-    "android_maven_components": 140,
+    "dart_flutter_packages": 156,
+    "android_maven_components": 138,
     "native_component_groups": 6,
     "unresolved_dart_flutter_licenses": 0,
-    "unresolved_android_maven_declarations": 0,
+    "unresolved_android_maven_declarations": 23,
     "blocked_or_unresolved_native_groups": 0
   },
   "packages": [
@@ -141,7 +141,7 @@
     {
       "name": "archive",
       "version": "4.0.9",
-      "dependency": "transitive",
+      "dependency": "direct main",
       "source": "hosted",
       "source_links": {
         "package_page": "https://pub.dev/packages/archive/versions/4.0.9",
@@ -460,7 +460,7 @@
     {
       "name": "characters",
       "version": "1.4.1",
-      "dependency": "transitive",
+      "dependency": "direct main",
       "source": "hosted",
       "source_links": {
         "package_page": "https://pub.dev/packages/characters/versions/1.4.1",
@@ -479,6 +479,58 @@
             "path": "third_party/licenses/dart/characters-1.4.1/LICENSE",
             "sha256": "0371d1da6a57fb791db29d29b95333429205f51f3cb2eb3a0c12d91838a38744",
             "copied_from": "$PUB_CACHE/hosted/pub.dev/characters-1.4.1/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "checked_yaml",
+      "version": "2.0.4",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/checked_yaml/versions/2.0.4",
+        "license_page": "https://pub.dev/packages/checked_yaml/versions/2.0.4/license",
+        "archive": "https://pub.dev/api/archives/checked_yaml-2.0.4.tar.gz"
+      },
+      "hosted_sha256": "959525d3162f249993882720d52b7e0c833978df229be20702b33d48d91de70f",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/checked_yaml-2.0.4/LICENSE",
+            "sha256": "4771d808721f4d5f02318ab857c92f5a5dce87b14ae1c3770fe21ca7fd4a9280",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/checked_yaml-2.0.4/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "cli_util",
+      "version": "0.4.2",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/cli_util/versions/0.4.2",
+        "license_page": "https://pub.dev/packages/cli_util/versions/0.4.2/license",
+        "archive": "https://pub.dev/api/archives/cli_util-0.4.2.tar.gz"
+      },
+      "hosted_sha256": "ff6785f7e9e3c38ac98b2fb035701789de90154024a75b6cb926445e83197d1c",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/cli_util-0.4.2/LICENSE",
+            "sha256": "ff15faa32a2e638107b7789592b14426162a75ba620044ee2340a20ec6ce5e73",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/cli_util-0.4.2/LICENSE"
           }
         ]
       }
@@ -609,6 +661,58 @@
             "path": "third_party/licenses/dart/crypto-3.0.7/LICENSE",
             "sha256": "ad6a71997da90924b2cfb1fb47ec46537f70faf469efe016168794ae45ed6888",
             "copied_from": "$PUB_CACHE/hosted/pub.dev/crypto-3.0.7/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "cryptography",
+      "version": "2.9.0",
+      "dependency": "direct main",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/cryptography/versions/2.9.0",
+        "license_page": "https://pub.dev/packages/cryptography/versions/2.9.0/license",
+        "archive": "https://pub.dev/api/archives/cryptography-2.9.0.tar.gz"
+      },
+      "hosted_sha256": "3eda3029d34ec9095a27a198ac9785630fe525c0eb6a49f3d575272f8e792ef0",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "Apache-2.0"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/cryptography-2.9.0/LICENSE",
+            "sha256": "59899c6091b540582ed617e8eeaac4919dc985ccfc35459ee9752b699be5205b",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/cryptography-2.9.0/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "csslib",
+      "version": "1.0.2",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/csslib/versions/1.0.2",
+        "license_page": "https://pub.dev/packages/csslib/versions/1.0.2/license",
+        "archive": "https://pub.dev/api/archives/csslib-1.0.2.tar.gz"
+      },
+      "hosted_sha256": "09bad715f418841f976c77db72d5398dc1253c21fb9c0c7f0b0b985860b2d58e",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "BSD-3-Clause"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/csslib-1.0.2/LICENSE",
+            "sha256": "dfb09c74e29386cd3e2719f32d4995d59526179753931d31840757c77fbf2791",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/csslib-1.0.2/LICENSE"
           }
         ]
       }
@@ -972,6 +1076,32 @@
       }
     },
     {
+      "name": "flutter_foreground_task",
+      "version": "8.17.0",
+      "dependency": "direct main",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/flutter_foreground_task/versions/8.17.0",
+        "license_page": "https://pub.dev/packages/flutter_foreground_task/versions/8.17.0/license",
+        "archive": "https://pub.dev/api/archives/flutter_foreground_task-8.17.0.tar.gz"
+      },
+      "hosted_sha256": "206017ee1bf864f34b8d7bce664a172717caa21af8da23f55866470dfe316644",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "MIT"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/flutter_foreground_task-8.17.0/LICENSE",
+            "sha256": "2737ee5e5aa30df6d67f8b046a80d5d16923d37e846f5e2a38b22b756b2244bc",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/flutter_foreground_task-8.17.0/LICENSE"
+          }
+        ]
+      }
+    },
+    {
       "name": "flutter_gemma",
       "version": "0.16.5",
       "dependency": "direct main",
@@ -993,6 +1123,32 @@
             "path": "third_party/licenses/dart/flutter_gemma-0.16.5/LICENSE",
             "sha256": "32ea46effed11648de8248fe69c5cd44119bdbaf38db5b901fb11064dc263a40",
             "copied_from": "$PUB_CACHE/hosted/pub.dev/flutter_gemma-0.16.5/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "flutter_launcher_icons",
+      "version": "0.14.4",
+      "dependency": "direct dev",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/flutter_launcher_icons/versions/0.14.4",
+        "license_page": "https://pub.dev/packages/flutter_launcher_icons/versions/0.14.4/license",
+        "archive": "https://pub.dev/api/archives/flutter_launcher_icons-0.14.4.tar.gz"
+      },
+      "hosted_sha256": "10f13781741a2e3972126fae08393d3c4e01fa4cd7473326b94b72cf594195e7",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "MIT"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/flutter_launcher_icons-0.14.4/LICENSE",
+            "sha256": "02c454256448927423b4c0e517a083cadf78a8d9467a9d31ad3b4f4ff48ff7ca",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/flutter_launcher_icons-0.14.4/LICENSE"
           }
         ]
       }
@@ -1318,6 +1474,32 @@
       }
     },
     {
+      "name": "flutter_widget_from_html_core",
+      "version": "0.17.2",
+      "dependency": "direct main",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/flutter_widget_from_html_core/versions/0.17.2",
+        "license_page": "https://pub.dev/packages/flutter_widget_from_html_core/versions/0.17.2/license",
+        "archive": "https://pub.dev/api/archives/flutter_widget_from_html_core-0.17.2.tar.gz"
+      },
+      "hosted_sha256": "7ff010b116f6abc16429923e616fbc727f3f65ef4cee12ffdb280aeecbc21e7f",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "MIT"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/flutter_widget_from_html_core-0.17.2/LICENSE",
+            "sha256": "6479d9e1f089054ec952a263fd603e0e5a24ccd11db9a6c406d479fac7905327",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/flutter_widget_from_html_core-0.17.2/LICENSE"
+          }
+        ]
+      }
+    },
+    {
       "name": "gal",
       "version": "2.3.2",
       "dependency": "direct main",
@@ -1417,6 +1599,32 @@
             "path": "third_party/licenses/dart/hooks-1.0.3/LICENSE",
             "sha256": "21ae23b0b9ff67a2dc75ab085d1e8db8ac548c5faf370af17f28dd2ef3b52b7b",
             "copied_from": "$PUB_CACHE/hosted/pub.dev/hooks-1.0.3/LICENSE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "html",
+      "version": "0.15.6",
+      "dependency": "transitive",
+      "source": "hosted",
+      "source_links": {
+        "package_page": "https://pub.dev/packages/html/versions/0.15.6",
+        "license_page": "https://pub.dev/packages/html/versions/0.15.6/license",
+        "archive": "https://pub.dev/api/archives/html-0.15.6.tar.gz"
+      },
+      "hosted_sha256": "6d1264f2dffa1b1101c25a91dff0dc2daee4c18e87cd8538729773c073dbf602",
+      "hosted_repository": "https://pub.dev",
+      "license": {
+        "status": "VERIFIED_LOCAL_COPY",
+        "summary": [
+          "MIT"
+        ],
+        "files": [
+          {
+            "path": "third_party/licenses/dart/html-0.15.6/LICENSE",
+            "sha256": "6ed8a26ed0f30589422f86356eed53bb6dacffc3e2fd4feddc944c4331945151",
+            "copied_from": "$PUB_CACHE/hosted/pub.dev/html-0.15.6/LICENSE"
           }
         ]
       }

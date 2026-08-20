@@ -208,7 +208,7 @@ class KeepAliveService {
     final convId = prefs.getString(_keyActiveConvId);
     final charId = prefs.getString(_keyActiveCharId);
     final startTime = DateTime.tryParse(prefs.getString(_keyStartTime) ?? '');
-    final lastRequestAt = DateTime.tryParse(
+    var lastRequestAt = DateTime.tryParse(
       prefs.getString(_keyLastRequestAt) ?? '',
     );
     final leaseToken = prefs.getString(_keyLeaseToken);
@@ -225,19 +225,9 @@ class KeepAliveService {
     if (!keepAliveOn) return;
     await _loadSettings();
 
-    final now = DateTime.now();
-    if (now.difference(startTime) >= _maxDuration) {
-      // 窗口結束，順手把週期任務摘掉，別空轉到天荒地老
-      await instance._cancelBackgroundTask();
-      return;
-    }
-    if (_isQuietHours(now)) return;
-
-    final elapsed = now.difference(lastRequestAt);
-    if (elapsed < _bgRefreshAfter || elapsed > _resumeRefreshMax) return;
-
     // WorkManager 與主 isolate 可能同時醒來。真正重建請求前再讀一次，
-    // 只有仍持有同一窗口租約的一方可繼續。
+    // 並以 reload 後的錨點重新計算窗口；否則獨立 isolate 可能拿著舊的
+    // lastRequestAt 通過檢查，與另一條保活腿重複發送。
     await prefs.reload();
     if (!_leaseMatches(
       prefs,
@@ -247,12 +237,28 @@ class KeepAliveService {
     )) {
       return;
     }
+    final refreshedStartTime = DateTime.tryParse(
+      prefs.getString(_keyStartTime) ?? '',
+    );
+    lastRequestAt = DateTime.tryParse(prefs.getString(_keyLastRequestAt) ?? '');
+    if (refreshedStartTime == null || lastRequestAt == null) return;
+
+    final now = DateTime.now();
+    if (now.difference(refreshedStartTime) >= _maxDuration) {
+      // 窗口結束，順手把週期任務摘掉，別空轉到天荒地老
+      await instance._cancelBackgroundTask();
+      return;
+    }
+    if (_isQuietHours(now)) return;
+
+    final elapsed = now.difference(lastRequestAt);
+    if (elapsed < _bgRefreshAfter || elapsed > _resumeRefreshMax) return;
 
     // 後台 isolate 的 instance 是全新的：從 prefs 重建再 ping
     final svc = instance;
     svc._conversationId = convId;
     svc._characterId = charId;
-    svc._startTime = startTime;
+    svc._startTime = refreshedStartTime;
     svc._lastRequestAt = lastRequestAt;
     svc._leaseToken = leaseToken;
     svc._leaseGeneration = prefs.getInt(_keyLeaseGeneration) ?? 0;
@@ -527,6 +533,10 @@ class KeepAliveService {
   /// tick：只在距上次成功請求滿 [_refreshAfter] 時才真的 ping。
   Future<void> _maybePing() async {
     if (!_active) return;
+    // background isolate 可能剛寫入了新的成功時間；不要使用主 isolate
+    // 內存裡已過期的快照再次通過 50 分鐘門檻。
+    await _reloadPersistedAnchors();
+    if (!_active) return;
     final last = _lastRequestAt;
     if (last == null) return;
     if (DateTime.now().difference(last) < _refreshAfter) return;
@@ -614,6 +624,7 @@ class KeepAliveService {
 
     if (_isQuietHours(now)) return;
 
+    var pingClaimed = false;
     try {
       final provider = _cachedProvider ?? await ApiSettings.getApiProvider();
       final model = _cachedModel ?? await ApiSettings.getModel();
@@ -658,6 +669,17 @@ class KeepAliveService {
         return;
       }
 
+      // 主 isolate、WorkManager 與前台服務可能同時走到這裡；SQLite
+      // transaction 是跨 isolate 的原子 claim，只有一方能真正發送。
+      pingClaimed = await DatabaseHelper.tryClaimKeepAlivePing(
+        conversationId: convId,
+        characterId: charId,
+        leaseToken: leaseToken,
+        now: DateTime.now(),
+        claimFor: const Duration(minutes: 10),
+      );
+      if (!pingClaimed) return;
+
       CacheSession.conversationId = convId;
       _activePingAdapter = adapter;
       late String response;
@@ -686,8 +708,20 @@ class KeepAliveService {
         return;
       }
 
-      // ping 成功 = 緩存 TTL 續期，刷新錨點
-      _lastRequestAt = DateTime.now();
+      // ping 成功 = 緩存 TTL 續期，先把跨 isolate 的 cooldown 寫入 guard，
+      // 再更新 SharedPreferences 錨點。即使另一個 isolate 手上的 prefs 快照
+      // 還沒刷新，也不會在這段時間內重複燒同一針。
+      final completedAt = DateTime.now();
+      final guardCommitted = await DatabaseHelper.completeKeepAlivePing(
+        conversationId: convId,
+        characterId: charId,
+        leaseToken: leaseToken,
+        completedAt: completedAt,
+        cooldown: _refreshAfter,
+      );
+      if (!guardCommitted) return;
+      pingClaimed = false;
+      _lastRequestAt = completedAt;
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString(
         _keyLastRequestAt,
@@ -700,6 +734,23 @@ class KeepAliveService {
       }
     } catch (e) {
       developer.log('保活 ping 失敗', error: e, name: 'KeepAliveService');
+    } finally {
+      if (pingClaimed) {
+        try {
+          await DatabaseHelper.releaseKeepAlivePing(
+            conversationId: convId,
+            characterId: charId,
+            leaseToken: leaseToken,
+            releasedAt: DateTime.now(),
+          );
+        } catch (e) {
+          developer.log(
+            '保活 ping claim 釋放失敗',
+            error: e,
+            name: 'KeepAliveService',
+          );
+        }
+      }
     }
   }
 
@@ -911,6 +962,12 @@ class KeepAliveService {
     // token 先落地，讓任何持有上一代快照的 isolate 立即失效。
     await prefs.setInt(_keyLeaseGeneration, _leaseGeneration);
     await prefs.setString(_keyLeaseToken, _leaseToken!);
+    await DatabaseHelper.resetKeepAlivePingGuard(
+      conversationId: convId,
+      characterId: charId,
+      leaseToken: _leaseToken!,
+      now: DateTime.now(),
+    );
   }
 
   Future<bool> _ownsPersistedLease({

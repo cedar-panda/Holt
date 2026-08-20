@@ -41,9 +41,9 @@ void main() {
 
     await tester.tap(find.text(L.get('settings_cache_title')));
     await tester.pumpAndSettle();
-    final cacheSwitch = tester.widget<Switch>(find.byType(Switch).first);
+    final cacheCheckbox = tester.widget<Checkbox>(find.byType(Checkbox).first);
     await tester.runAsync(() async {
-      cacheSwitch.onChanged!(true);
+      cacheCheckbox.onChanged!(true);
       await Future<void>.delayed(const Duration(milliseconds: 100));
     });
     await tester.pumpAndSettle();

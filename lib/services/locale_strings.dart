@@ -884,11 +884,7 @@ class L {
     'usage_cache_hit': {'zh_TW': '緩存命中', 'zh_CN': '缓存命中', 'en': 'cache hits'},
 
     // ── character card ──
-    'char_edit_title': {
-      'zh_TW': '編輯人設卡',
-      'zh_CN': '编辑人设卡',
-      'en': 'Edit Character',
-    },
+    'char_edit_title': {'zh_TW': '編輯', 'zh_CN': '编辑', 'en': 'Edit'},
     'char_new_title': {
       'zh_TW': '新建人設卡',
       'zh_CN': '新建人设卡',
@@ -900,11 +896,7 @@ class L {
     'char_relation_label': {'zh_TW': '關係', 'zh_CN': '关系', 'en': 'Relation'},
     'char_relation_hint': {'zh_TW': '可空', 'zh_CN': '可空', 'en': 'Optional'},
     'char_tab_voice': {'zh_TW': '語音', 'zh_CN': '语音', 'en': 'Voice'},
-    'char_tab_sticker': {
-      'zh_TW': '專屬表情庫',
-      'zh_CN': '专属表情库',
-      'en': 'Exclusive Stickers',
-    },
+    'char_tab_sticker': {'zh_TW': '表情', 'zh_CN': '表情', 'en': 'Stickers'},
     'char_tab_memory': {'zh_TW': '記憶', 'zh_CN': '记忆', 'en': 'Memory'},
     'char_tab_saved': {'zh_TW': '收藏', 'zh_CN': '收藏', 'en': 'Saved'},
     'char_use': {'zh_TW': '交流', 'zh_CN': '交流', 'en': 'Talk'},
@@ -1160,6 +1152,11 @@ class L {
       'en': 'Sea Salt Soda',
     },
     'theme_preset_neon': {'zh_TW': '霓虹雨', 'zh_CN': '霓虹雨', 'en': 'Neon Rain'},
+    'theme_preset_swallow': {
+      'zh_TW': '春·燕',
+      'zh_CN': '春·燕',
+      'en': 'Spring Swallow',
+    },
     'theme_subtitle_dawn': {
       'zh_TW': '清晨透進紗簾的光',
       'zh_CN': '清晨透进纱帘的光',
@@ -1229,6 +1226,11 @@ class L {
       'zh_TW': '雨夜霓虹落在傘面上',
       'zh_CN': '雨夜霓虹落在伞面上',
       'en': 'Neon rain on the umbrella',
+    },
+    'theme_subtitle_swallow': {
+      'zh_TW': '燕子歸來的雨後',
+      'zh_CN': '燕子归来的雨后',
+      'en': 'Swallows returning after the rain',
     },
 
     // ── home ──

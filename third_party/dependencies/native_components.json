@@ -407,6 +407,11 @@
       "binary_snapshot": [
         {
           "name": "libsqlite3.so",
+          "size": 1802504,
+          "sha256": "52c7183d99b1d85df5d09d9cf11613213f92121756df2562e7319fbe6b2a00b3"
+        },
+        {
+          "name": "libsqlite3.so",
           "size": 1824456,
           "sha256": "9c4b75c2f7798d9aa6306811b3b412d1a0e54bd41f2304780daa4748b27a971e"
         },
@@ -414,11 +419,6 @@
           "name": "libsqlite3.so",
           "size": 1865016,
           "sha256": "807999cfe7e0ccf811e7c820d6b11d31c6bb2388c6659fbc6829cd18dae4f61e"
-        },
-        {
-          "name": "libsqlite3.so",
-          "size": 1802504,
-          "sha256": "52c7183d99b1d85df5d09d9cf11613213f92121756df2562e7319fbe6b2a00b3"
         }
       ],
       "license_files": [],

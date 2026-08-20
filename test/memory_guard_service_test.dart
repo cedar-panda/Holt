@@ -351,12 +351,12 @@ void main() {
     final results = await Future.wait([
       MemoryGuardService.guardNewMemory(
         candidate: candidate(),
-        source: 'model',
+        source: 'memory_ui',
         sourceConversationId: 'conv-a',
       ),
       MemoryGuardService.guardNewMemory(
         candidate: candidate(),
-        source: 'summary',
+        source: 'memory_ui',
         sourceConversationId: 'conv-a',
       ),
     ]);
@@ -511,6 +511,36 @@ void main() {
     expect(merged, hasLength(1));
     expect(merged.single['triggers'], '看電影,8月11日');
     expect(await db.query('archive'), hasLength(1));
+  });
+
+  test('new model memory stays out of the library until confirmed', () async {
+    final guarded = await MemoryGuardService.guardNewMemory(
+      candidate: Memory(
+        characterId: 'char-a',
+        mode: 'romance',
+        category: '偏好',
+        content: '昭昭喜歡喝熱牛奶',
+        confidence: 'high',
+        triggers: '熱牛奶',
+      ),
+      source: 'model',
+      sourceConversationId: 'conv-a',
+    );
+
+    expect(guarded.disposition, GuardedMemoryWriteDisposition.proposalCreated);
+    expect(await _memoryCount(db), 0);
+
+    final proposal = (await MemoryGuardService.listForReview('char-a')).single;
+    expect(proposal.targetIds, isEmpty);
+    expect(
+      await MemoryGuardService.execute(
+        proposal.id,
+        'char-a',
+        createDecision: MemoryGuardService.createDecisionUseNew,
+      ),
+      MemoryActionProposal.statusCompleted,
+    );
+    expect(await _memoryCount(db), 1);
   });
 }
 

@@ -14,6 +14,7 @@ import '../models/message.dart';
 import '../utils/app_file_safety.dart';
 import '../utils/iso_week.dart';
 import 'character_timeline_service.dart';
+import 'encrypted_backup_bundle.dart';
 import 'keep_alive_service.dart';
 import 'model_cost_policy.dart';
 import 'portable_backup_bundle.dart';
@@ -137,32 +138,6 @@ class BackupService {
     return result;
   }
 
-  // ════════════════════════════════════
-  // 1) JSON v5 導出
-  // ════════════════════════════════════
-
-  /// 導出所有 app 資料表及可攜式 SharedPreferences，返回暫存檔路徑。
-  static Future<String> exportAllAsJson() {
-    return _operationLock.synchronized(_exportAllAsJsonUnlocked);
-  }
-
-  static Future<String> _exportAllAsJsonUnlocked() async {
-    final data = await _buildExportDataUnlocked();
-    final timestamp = DateTime.now()
-        .toIso8601String()
-        .replaceAll(':', '-')
-        .split('.')
-        .first;
-    final fileName = 'holt_export_$timestamp.json';
-    final dir = await _prepareExportDir();
-    final filePath = p.join(dir.path, fileName);
-    await File(filePath).writeAsString(
-      const JsonEncoder.withIndent('  ').convert(data),
-      flush: true,
-    );
-    return filePath;
-  }
-
   static Future<Map<String, Object?>> _buildExportDataUnlocked() async {
     await _ensureOptionalTables();
     final db = await DatabaseHelper.database;
@@ -218,12 +193,14 @@ class BackupService {
     };
   }
 
-  /// Portable export containing JSON plus all app-owned referenced media.
-  static Future<String> exportPortableBundle() {
-    return _operationLock.synchronized(_exportPortableBundleUnlocked);
+  /// Password-encrypted portable export containing the database and media.
+  static Future<String> exportPortableBundle({required String password}) {
+    return _operationLock.synchronized(
+      () => _exportPortableBundleUnlocked(password),
+    );
   }
 
-  static Future<String> _exportPortableBundleUnlocked() async {
+  static Future<String> _exportPortableBundleUnlocked(String password) async {
     final data = await _buildExportDataUnlocked();
     final timestamp = DateTime.now()
         .toIso8601String()
@@ -241,20 +218,26 @@ class BackupService {
     );
     await snapshotDir.create(recursive: true);
     final databaseSnapshot = File(p.join(snapshotDir.path, 'yanci.db'));
-    final output = File(
-      p.join(exportDir.path, 'holt_backup_$timestamp.holt.zip'),
+    final plainBundle = File(p.join(snapshotDir.path, 'portable.holt.zip'));
+    final encryptedOutput = File(
+      p.join(exportDir.path, 'holt_backup_$timestamp.holt.backup'),
     );
     try {
       final db = await DatabaseHelper.database;
       await db.execute(_vacuumIntoSql(databaseSnapshot.path));
-      final bundle = await PortableBackupBundle.create(
+      await PortableBackupBundle.create(
         backupData: data,
         databaseSnapshot: databaseSnapshot,
         ownedRoot: documents,
         workingRoot: temporary,
-        outputFile: output,
+        outputFile: plainBundle,
       );
-      return bundle.path;
+      final encrypted = await EncryptedBackupBundle.encrypt(
+        source: plainBundle,
+        destination: encryptedOutput,
+        password: password,
+      );
+      return encrypted.path;
     } finally {
       if (await snapshotDir.exists()) {
         await snapshotDir.delete(recursive: true);
@@ -334,19 +317,57 @@ class BackupService {
   /// Imports a verified portable media bundle. Extracted files are retained
   /// only when the database transaction succeeds.
   static Future<String> importPortableBundle(String path) {
+    return _operationLock.synchronized(
+      () => _importPortableBundleUnlocked(path),
+    );
+  }
+
+  static Future<bool> isEncryptedBackup(String path) {
+    return EncryptedBackupBundle.isEncrypted(File(path));
+  }
+
+  /// Decrypts a Holt backup into app-private temporary storage and imports the
+  /// verified portable ZIP. The temporary plaintext is always removed.
+  static Future<String> importEncryptedPortableBundle({
+    required String path,
+    required String password,
+  }) {
     return _operationLock.synchronized(() async {
-      final documents = await getApplicationDocumentsDirectory();
-      final extracted = await PortableBackupBundle.extract(
-        bundle: File(path),
-        destinationRoot: documents,
-      );
+      final temporary = await getTemporaryDirectory();
+      final decryptDir = await Directory(
+        p.join(
+          temporary.path,
+          'holt_decrypt_${DateTime.now().microsecondsSinceEpoch}',
+        ),
+      ).create(recursive: true);
+      final plainBundle = File(p.join(decryptDir.path, 'portable.holt.zip'));
       try {
-        return await _importFromJsonUnlocked(extracted.data);
-      } catch (_) {
-        await extracted.discard();
-        rethrow;
+        await EncryptedBackupBundle.decrypt(
+          source: File(path),
+          destination: plainBundle,
+          password: password,
+        );
+        return await _importPortableBundleUnlocked(plainBundle.path);
+      } finally {
+        if (await decryptDir.exists()) {
+          await decryptDir.delete(recursive: true);
+        }
       }
     });
+  }
+
+  static Future<String> _importPortableBundleUnlocked(String path) async {
+    final documents = await getApplicationDocumentsDirectory();
+    final extracted = await PortableBackupBundle.extract(
+      bundle: File(path),
+      destinationRoot: documents,
+    );
+    try {
+      return await _importFromJsonUnlocked(extracted.data);
+    } catch (_) {
+      await extracted.discard();
+      rethrow;
+    }
   }
 
   static Future<String> _importFromJsonUnlocked(
@@ -1121,6 +1142,7 @@ class BackupService {
         AND name NOT LIKE 'sqlite_%'
         AND name != 'android_metadata'
         AND name NOT LIKE 'memories_fts%'
+        AND name != 'keepalive_ping_guard'
     ''');
     final actual = rows
         .map((row) => row['name']?.toString())
@@ -1332,7 +1354,8 @@ class BackupService {
   }
 
   static bool _isExportArtifactName(String name) {
-    return (name.startsWith('holt_backup_') && name.endsWith('.holt.zip')) ||
+    return (name.startsWith('holt_backup_') &&
+            (name.endsWith('.holt.backup') || name.endsWith('.holt.zip'))) ||
         (name.startsWith('holt_export_') && name.endsWith('.json'));
   }
 

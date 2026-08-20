@@ -28,7 +28,8 @@ class DatabaseHelper {
   static Future<Database>? _dbInitFuture;
   static Future<Database> Function() _databaseInitializer = _initDatabase;
   static const String _dbName = 'yanci.db';
-  static const int _dbVersion = 46;
+  static const int _dbVersion = 47;
+  static const String _keepAlivePingGuardTable = 'keepalive_ping_guard';
   static final Random _windowIdRandom = Random.secure();
 
   static Future<Database> get database async {
@@ -96,6 +97,181 @@ class DatabaseHelper {
   @visibleForTesting
   static Future<void> ensureRuntimeSchemaForTesting(Database db) {
     return _DatabaseSchema._ensureRuntimeSchema(db);
+  }
+
+  /// 跨 isolate 的保活請求閘門。
+  ///
+  /// SharedPreferences 在主 isolate、WorkManager 和前台服務之間沒有原子
+  /// compare-and-set；三個執行者可能同時讀到同一個舊錨點。這個小表只保存
+  /// 裝置本地的瞬時鎖，不屬於 appTables 的可攜式 JSON 資料。
+  static Future<bool> tryClaimKeepAlivePing({
+    required String conversationId,
+    required String characterId,
+    required String leaseToken,
+    required DateTime now,
+    Duration claimFor = const Duration(minutes: 10),
+  }) async {
+    final db = await database;
+    final nowUtc = now.toUtc();
+    final claimUntil = nowUtc.add(claimFor).toIso8601String();
+
+    return db.transaction<bool>((txn) async {
+      await txn.execute('''
+        CREATE TABLE IF NOT EXISTS $_keepAlivePingGuardTable (
+          id INTEGER PRIMARY KEY CHECK (id = 1),
+          conversation_id TEXT NOT NULL,
+          character_id TEXT NOT NULL,
+          lease_token TEXT NOT NULL,
+          next_allowed_at TEXT NOT NULL,
+          in_flight_until TEXT
+        )
+      ''');
+
+      final rows = await txn.query(
+        _keepAlivePingGuardTable,
+        where: 'id = 1',
+        limit: 1,
+      );
+      if (rows.isNotEmpty) {
+        final row = rows.first;
+        if (row['conversation_id'] != conversationId ||
+            row['character_id'] != characterId ||
+            row['lease_token'] != leaseToken) {
+          // 舊 isolate 不能覆蓋新窗口的 guard。
+          return false;
+        }
+
+        final inFlightUntil = DateTime.tryParse(
+          row['in_flight_until']?.toString() ?? '',
+        );
+        final nextAllowedAt = DateTime.tryParse(
+          row['next_allowed_at']?.toString() ?? '',
+        );
+        if (inFlightUntil != null && inFlightUntil.isAfter(nowUtc)) {
+          return false;
+        }
+        if (nextAllowedAt != null && nextAllowedAt.isAfter(nowUtc)) {
+          return false;
+        }
+      }
+
+      final values = <String, Object?>{
+        'id': 1,
+        'conversation_id': conversationId,
+        'character_id': characterId,
+        'lease_token': leaseToken,
+        'next_allowed_at': nowUtc.toIso8601String(),
+        'in_flight_until': claimUntil,
+      };
+      if (rows.isEmpty) {
+        await txn.insert(_keepAlivePingGuardTable, values);
+      } else {
+        final changed = await txn.update(
+          _keepAlivePingGuardTable,
+          {'in_flight_until': claimUntil},
+          where: 'id = 1 AND lease_token = ?',
+          whereArgs: [leaseToken],
+        );
+        if (changed != 1) return false;
+      }
+      return true;
+    });
+  }
+
+  /// 將成功的保活請求寫成跨 isolate 可見的下一次允許時間。
+  static Future<bool> completeKeepAlivePing({
+    required String conversationId,
+    required String characterId,
+    required String leaseToken,
+    required DateTime completedAt,
+    Duration cooldown = const Duration(minutes: 50),
+  }) async {
+    final db = await database;
+    final nextAllowedAt = completedAt.toUtc().add(cooldown).toIso8601String();
+    return db.transaction<bool>((txn) async {
+      await txn.execute('''
+        CREATE TABLE IF NOT EXISTS $_keepAlivePingGuardTable (
+          id INTEGER PRIMARY KEY CHECK (id = 1),
+          conversation_id TEXT NOT NULL,
+          character_id TEXT NOT NULL,
+          lease_token TEXT NOT NULL,
+          next_allowed_at TEXT NOT NULL,
+          in_flight_until TEXT
+        )
+      ''');
+      final changed = await txn.update(
+        _keepAlivePingGuardTable,
+        {'next_allowed_at': nextAllowedAt, 'in_flight_until': null},
+        where: '''
+          id = 1 AND conversation_id = ? AND character_id = ? AND lease_token = ?
+        ''',
+        whereArgs: [conversationId, characterId, leaseToken],
+      );
+      return changed == 1;
+    });
+  }
+
+  /// 請求失敗或租約失效時釋放 in-flight claim，讓下一個合法執行者可重試。
+  static Future<void> releaseKeepAlivePing({
+    required String conversationId,
+    required String characterId,
+    required String leaseToken,
+    required DateTime releasedAt,
+  }) async {
+    final db = await database;
+    await db.transaction<void>((txn) async {
+      await txn.execute('''
+        CREATE TABLE IF NOT EXISTS $_keepAlivePingGuardTable (
+          id INTEGER PRIMARY KEY CHECK (id = 1),
+          conversation_id TEXT NOT NULL,
+          character_id TEXT NOT NULL,
+          lease_token TEXT NOT NULL,
+          next_allowed_at TEXT NOT NULL,
+          in_flight_until TEXT
+        )
+      ''');
+      await txn.update(
+        _keepAlivePingGuardTable,
+        {
+          'next_allowed_at': releasedAt.toUtc().toIso8601String(),
+          'in_flight_until': null,
+        },
+        where: '''
+          id = 1 AND conversation_id = ? AND character_id = ? AND lease_token = ?
+        ''',
+        whereArgs: [conversationId, characterId, leaseToken],
+      );
+    });
+  }
+
+  /// 新租約落地後清掉前一窗口的瞬時 guard。
+  static Future<void> resetKeepAlivePingGuard({
+    required String conversationId,
+    required String characterId,
+    required String leaseToken,
+    required DateTime now,
+  }) async {
+    final db = await database;
+    await db.transaction<void>((txn) async {
+      await txn.execute('''
+        CREATE TABLE IF NOT EXISTS $_keepAlivePingGuardTable (
+          id INTEGER PRIMARY KEY CHECK (id = 1),
+          conversation_id TEXT NOT NULL,
+          character_id TEXT NOT NULL,
+          lease_token TEXT NOT NULL,
+          next_allowed_at TEXT NOT NULL,
+          in_flight_until TEXT
+        )
+      ''');
+      await txn.insert(_keepAlivePingGuardTable, {
+        'id': 1,
+        'conversation_id': conversationId,
+        'character_id': characterId,
+        'lease_token': leaseToken,
+        'next_allowed_at': now.toUtc().toIso8601String(),
+        'in_flight_until': null,
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
+    });
   }
 
   @visibleForTesting
@@ -331,13 +507,14 @@ class DatabaseHelper {
         SELECT m.id, m.text, m.is_user, m.created_at, c.title
         FROM messages m
         LEFT JOIN conversations c ON m.conversation_id = c.id
-        WHERE m.character_id = ? AND m.text LIKE ? ESCAPE '\'
+        WHERE m.character_id = ?
+          AND (m.text LIKE ? ESCAPE '\\' OR c.title LIKE ? ESCAPE '\\')
         ORDER BY m.created_at DESC, m.id DESC
         LIMIT ?
       ) AS recent
       ORDER BY recent.created_at ASC, recent.id ASC
     """,
-      [characterId, _likeContains(keyword), limit],
+      [characterId, _likeContains(keyword), _likeContains(keyword), limit],
     );
   }
 
@@ -378,6 +555,35 @@ class DatabaseHelper {
         );
       }
       return result.acceptedIncoming;
+    });
+  }
+
+  /// 刪除一條角色自我註記；不改動任何 conversation 的靜態註記快照。
+  static Future<bool> deleteSelfNote(String characterId, String note) async {
+    final db = await database;
+    return db.transaction<bool>((txn) async {
+      final rows = await txn.query(
+        'characters',
+        columns: ['self_notes'],
+        where: 'id = ?',
+        whereArgs: [characterId],
+        limit: 1,
+      );
+      if (rows.isEmpty) return false;
+
+      final stored = (rows.first['self_notes'] as String?) ?? '';
+      final lines = _selfNoteLines(stored).toList();
+      final target = _cleanSelfNote(note);
+      final index = lines.indexOf(target);
+      if (index < 0) return false;
+      lines.removeAt(index);
+      await txn.update(
+        'characters',
+        {'self_notes': _formatSelfNotes(lines)},
+        where: 'id = ?',
+        whereArgs: [characterId],
+      );
+      return true;
     });
   }
 
@@ -685,6 +891,20 @@ class DatabaseHelper {
     if (updates.isEmpty) return;
     final db = await database;
     await db.update('characters', updates, where: 'id = ?', whereArgs: [id]);
+  }
+
+  /// Runtime-generated signatures must not reorder the character carousel.
+  static Future<void> updateCharacterSignature(
+    String id,
+    String signature,
+  ) async {
+    final db = await database;
+    await db.update(
+      'characters',
+      {'signature': signature},
+      where: 'id = ?',
+      whereArgs: [id],
+    );
   }
 
   /// Builds a partial character update without allowing identity/creation

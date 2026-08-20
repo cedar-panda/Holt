@@ -56,7 +56,7 @@ void main() {
       find.byKey(const ValueKey('character-self-notes-preview')),
     );
     expect(preview.data, startsWith('　　'));
-    expect(preview.maxLines, 2);
+    expect(preview.maxLines, 4);
 
     await tester.tap(find.byKey(const ValueKey('character-self-notes-panel')));
     await tester.pumpAndSettle();

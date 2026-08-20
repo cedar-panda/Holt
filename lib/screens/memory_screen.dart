@@ -2255,7 +2255,11 @@ class _MemoryScreenState extends State<MemoryScreen>
                       1 => MemoryReviewTab(
                         characterId: _characterId,
                         sourceMessageId: _reviewSourceMessageId,
-                        onChanged: () => unawaited(_refreshReviewCounts()),
+                        // The review tab owns proposal state, but the memory
+                        // list is cached by this parent. Reload both after a
+                        // proposal is accepted so archived merge targets do
+                        // not remain visible until the screen is reopened.
+                        onChanged: () => unawaited(_loadMemories()),
                       ),
                       _ => MemorySummaryTab(
                         characterId: _characterId,
@@ -2551,35 +2555,37 @@ class _MemoryScreenState extends State<MemoryScreen>
     return Stack(
       children: [
         Positioned.fill(
-          child: SpiderWebGraphView(
-            key: ValueKey('spider-layer-${layer.id}'),
-            memories: layer.memories.map((m) => m.toMap()).toList(),
-            memoryGroups: [
-              for (final web in layer.webs)
-                web.memories.map((m) => m.toMap()).toList(),
-            ],
-            smallWebGroups: [for (final web in layer.webs) web.isSmall],
-            links: layer.links,
-            savedPositions: _savedNodePositions,
-            viewportRightInset: 70,
-            externalLinkCount: layer.crossLayerLinkCount,
-            onNodeTapped: _showMemoryNode,
-            onLinkTapped: _showMemoryLink,
-            onNodePositionChanged: _saveNodePosition,
-            onExternalLinksTapped: layer.crossLayerLinks.isEmpty
-                ? null
-                : () => _showCrossLayerLinks(layer),
-            onLinksTapped: () => _showLinkList(
+          child: RepaintBoundary(
+            child: SpiderWebGraphView(
+              key: ValueKey('spider-layer-${layer.id}'),
+              memories: layer.memories.map((m) => m.toMap()).toList(),
+              memoryGroups: [
+                for (final web in layer.webs)
+                  web.memories.map((m) => m.toMap()).toList(),
+              ],
+              smallWebGroups: [for (final web in layer.webs) web.isSmall],
               links: layer.links,
-              title: L.pick(
-                en: '${layer.links.length} memory relations',
-                zhTW: '${layer.links.length} 條記憶關係',
-                zhCN: '${layer.links.length} 条记忆关系',
+              savedPositions: _savedNodePositions,
+              viewportRightInset: 70,
+              externalLinkCount: layer.crossLayerLinkCount,
+              onNodeTapped: _showMemoryNode,
+              onLinkTapped: _showMemoryLink,
+              onNodePositionChanged: _saveNodePosition,
+              onExternalLinksTapped: layer.crossLayerLinks.isEmpty
+                  ? null
+                  : () => _showCrossLayerLinks(layer),
+              onLinksTapped: () => _showLinkList(
+                links: layer.links,
+                title: L.pick(
+                  en: '${layer.links.length} memory relations',
+                  zhTW: '${layer.links.length} 條記憶關係',
+                  zhCN: '${layer.links.length} 条记忆关系',
+                ),
               ),
+              // The same on-device check now lives in the shared action row so
+              // list and spider-web modes use one discoverable location.
+              onZeroLinksAction: null,
             ),
-            // The same on-device check now lives in the shared action row so
-            // list and spider-web modes use one discoverable location.
-            onZeroLinksAction: null,
           ),
         ),
         Positioned(

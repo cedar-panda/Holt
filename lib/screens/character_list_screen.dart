@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
@@ -13,6 +14,8 @@ import '../services/settings_manager.dart';
 import 'saved_messages_screen.dart';
 import '../widgets/character_timeline_panel.dart';
 import '../widgets/character_self_notes_panel.dart';
+import '../widgets/character_signature_panel.dart';
+import '../widgets/emotion_panel.dart';
 import '../widgets/x_post_panel.dart';
 import '../utils/latest_request_gate.dart';
 
@@ -33,6 +36,8 @@ class _CharacterListScreenState extends State<CharacterListScreen> {
   bool _isImporting = false;
   bool _timelineEnabled = true;
   bool _selfNotesEnabled = true;
+  bool _onlineDwellReady = false;
+  Timer? _onlineDwellTimer;
   final LatestRequestGate _loadGate = LatestRequestGate();
 
   @override
@@ -45,8 +50,42 @@ class _CharacterListScreenState extends State<CharacterListScreen> {
   @override
   void dispose() {
     _loadGate.invalidate();
+    _onlineDwellTimer?.cancel();
     _pageCtrl.dispose();
     super.dispose();
+  }
+
+  void _beginOnlineDwell(int index) {
+    _onlineDwellTimer?.cancel();
+    if (_onlineDwellReady) {
+      setState(() => _onlineDwellReady = false);
+    }
+    _onlineDwellTimer = Timer(const Duration(seconds: 1), () {
+      if (!mounted || index != _currentPage) return;
+      setState(() => _onlineDwellReady = true);
+      final character = _characters[index];
+      if (character['id'] != _activeId) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            L.pick(en: 'They are online', zhTW: '對方已上線', zhCN: '对方已上线'),
+            style: TextStyle(
+              color: YanciTheme.accent.computeLuminance() > 0.45
+                  ? const Color(0xFF2A2A2A)
+                  : Colors.white,
+            ),
+          ),
+          backgroundColor: YanciTheme.isDark
+              ? YanciTheme.accent.withValues(alpha: 0.88)
+              : YanciTheme.accent,
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 2),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(YanciTheme.radiusSm),
+          ),
+        ),
+      );
+    });
   }
 
   Future<void> _load() async {
@@ -72,6 +111,7 @@ class _CharacterListScreenState extends State<CharacterListScreen> {
           _pageCtrl.hasClients &&
           activeIndex >= 0) {
         _pageCtrl.jumpToPage(activeIndex);
+        _beginOnlineDwell(activeIndex);
       }
     });
   }
@@ -79,11 +119,6 @@ class _CharacterListScreenState extends State<CharacterListScreen> {
   String get _currentCharId {
     if (_characters.isEmpty) return 'default';
     return _characters[_currentPage]['id'] as String? ?? 'default';
-  }
-
-  String get _currentCharName {
-    if (_characters.isEmpty) return '';
-    return _characters[_currentPage]['name'] as String? ?? '';
   }
 
   @override
@@ -111,14 +146,7 @@ class _CharacterListScreenState extends State<CharacterListScreen> {
                       ),
                       onPressed: () => Navigator.pop(context),
                     ),
-                    const SizedBox(width: 48),
-                    Expanded(
-                      child: Text(
-                        L.get('nav_character'),
-                        textAlign: TextAlign.center,
-                        style: YanciTheme.headingMedium,
-                      ),
-                    ),
+                    const Spacer(),
                     IconButton(
                       icon: Icon(
                         Icons.download_rounded,
@@ -143,104 +171,136 @@ class _CharacterListScreenState extends State<CharacterListScreen> {
                 ),
               ),
 
-              const SizedBox(height: 12),
+              Expanded(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.only(bottom: 24),
+                  child: Column(
+                    children: [
+                      const SizedBox(height: 12),
 
-              // ═══ 橫向卡片輪盤 ═══
-              _isLoading
-                  ? const Padding(
-                      padding: EdgeInsets.all(40),
-                      child: CircularProgressIndicator(),
-                    )
-                  : _characters.isEmpty
-                  ? Padding(
-                      padding: const EdgeInsets.all(40),
-                      child: Column(
-                        children: [
-                          Icon(
-                            Icons.person_add_outlined,
-                            size: 48,
-                            color: YanciTheme.textSecondary.withValues(
-                              alpha: 0.3,
+                      // ═══ 橫向卡片輪盤 ═══
+                      _isLoading
+                          ? const Padding(
+                              padding: EdgeInsets.all(40),
+                              child: CircularProgressIndicator(),
+                            )
+                          : _characters.isEmpty
+                          ? Padding(
+                              padding: const EdgeInsets.all(40),
+                              child: Column(
+                                children: [
+                                  Icon(
+                                    Icons.person_add_outlined,
+                                    size: 48,
+                                    color: YanciTheme.textSecondary.withValues(
+                                      alpha: 0.3,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 12),
+                                  Text(
+                                    L.get('char_empty_hint'),
+                                    textAlign: TextAlign.center,
+                                    style: YanciTheme.bodySmall.copyWith(
+                                      color: YanciTheme.textSecondary
+                                          .withValues(alpha: 0.5),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            )
+                          : SizedBox(
+                              height: 360,
+                              child: PageView.builder(
+                                controller: _pageCtrl,
+                                itemCount: _characters.length,
+                                onPageChanged: (i) {
+                                  HapticFeedback.selectionClick();
+                                  setState(() => _currentPage = i);
+                                  _beginOnlineDwell(i);
+                                },
+                                itemBuilder: (ctx, i) =>
+                                    _buildCard(_characters[i], i),
+                              ),
                             ),
+
+                      // ═══ 頁面指示器 ═══
+                      if (_characters.length > 1)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 12),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: List.generate(_characters.length, (i) {
+                              final isActive = i == _currentPage;
+                              return AnimatedContainer(
+                                duration: const Duration(milliseconds: 200),
+                                margin: const EdgeInsets.symmetric(
+                                  horizontal: 3,
+                                ),
+                                width: isActive ? 18 : 6,
+                                height: 6,
+                                decoration: BoxDecoration(
+                                  color: isActive
+                                      ? YanciTheme.accent
+                                      : YanciTheme.textSecondary.withValues(
+                                          alpha: 0.2,
+                                        ),
+                                  borderRadius: BorderRadius.circular(3),
+                                ),
+                              );
+                            }),
                           ),
-                          const SizedBox(height: 12),
-                          Text(
-                            L.get('char_empty_hint'),
-                            textAlign: TextAlign.center,
-                            style: YanciTheme.bodySmall.copyWith(
-                              color: YanciTheme.textSecondary.withValues(
-                                alpha: 0.5,
+                        ),
+
+                      const SizedBox(height: 16),
+
+                      const SizedBox(height: 20),
+
+                      // ═══ 時間線 ═══
+                      if (_characters.isNotEmpty && _timelineEnabled)
+                        CharacterTimelinePanel(
+                          key: ValueKey('timeline-$_currentCharId'),
+                          characterId: _currentCharId,
+                        ),
+                      if (_characters.isNotEmpty && _selfNotesEnabled) ...[
+                        // 留出一段視線斷點；自我註記要滑過時間線後再進入視野。
+                        const SizedBox(height: 96),
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
+                          child: Align(
+                            alignment: Alignment.center,
+                            child: FractionallySizedBox(
+                              widthFactor: 0.88,
+                              child: CharacterSelfNotesPanel(
+                                key: ValueKey(
+                                  'self-notes-timeline-$_currentCharId',
+                                ),
+                                characterId: _currentCharId,
+                                embedded: true,
                               ),
                             ),
                           ),
-                        ],
-                      ),
-                    )
-                  : SizedBox(
-                      height: 260,
-                      child: PageView.builder(
-                        controller: _pageCtrl,
-                        itemCount: _characters.length,
-                        onPageChanged: (i) {
-                          HapticFeedback.selectionClick();
-                          setState(() => _currentPage = i);
-                        },
-                        itemBuilder: (ctx, i) => _buildCard(_characters[i], i),
-                      ),
-                    ),
-
-              // ═══ 頁面指示器 ═══
-              if (_characters.length > 1)
-                Padding(
-                  padding: const EdgeInsets.only(top: 12),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: List.generate(_characters.length, (i) {
-                      final isActive = i == _currentPage;
-                      return AnimatedContainer(
-                        duration: const Duration(milliseconds: 200),
-                        margin: const EdgeInsets.symmetric(horizontal: 3),
-                        width: isActive ? 18 : 6,
-                        height: 6,
-                        decoration: BoxDecoration(
-                          color: isActive
-                              ? YanciTheme.accent
-                              : YanciTheme.textSecondary.withValues(alpha: 0.2),
-                          borderRadius: BorderRadius.circular(3),
                         ),
-                      );
-                    }),
+                      ],
+                      if (_characters.isNotEmpty && EmotionPanel.kVisible)
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(24, 0, 24, 32),
+                          child: Align(
+                            alignment: Alignment.center,
+                            child: FractionallySizedBox(
+                              widthFactor: 0.88,
+                              child: EmotionPanel(
+                                key: ValueKey(
+                                  'emotion-below-notes-$_currentCharId',
+                                ),
+                                characterId: _currentCharId,
+                              ),
+                            ),
+                          ),
+                        ),
+                    ],
                   ),
                 ),
-
-              const SizedBox(height: 16),
-
-              // ═══ 時間線／偷偷記住你 ═══
-              if (_characters.isNotEmpty && _timelineEnabled)
-                CharacterTimelinePanel(
-                  key: ValueKey('timeline-$_currentCharId'),
-                  characterId: _currentCharId,
-                )
-              else if (_characters.isNotEmpty && _selfNotesEnabled)
-                CharacterSelfNotesPanel(
-                  key: ValueKey('self-notes-fallback-$_currentCharId'),
-                  characterId: _currentCharId,
-                ),
-
-              if (_characters.isNotEmpty &&
-                  _timelineEnabled &&
-                  _selfNotesEnabled)
-                CharacterSelfNotesPanel(
-                  key: ValueKey('self-notes-$_currentCharId'),
-                  characterId: _currentCharId,
-                ),
-
-              const Spacer(),
-
-              // ═══ 關聯資源入口（語音 / 表情庫 / 記憶 / 收藏）═══
-              if (_characters.isNotEmpty) _buildResourceTabs(),
-
-              const SizedBox(height: 24),
+              ),
             ],
           ),
         ),
@@ -251,9 +311,6 @@ class _CharacterListScreenState extends State<CharacterListScreen> {
   Widget _buildCard(Map<String, dynamic> c, int index) {
     final id = c['id'] as String;
     final name = c['name'] as String? ?? '未命名';
-    final gender = c['gender'] as String? ?? '';
-    final relationship = c['relationship'] as String? ?? '';
-    final desc = c['description'] as String? ?? '';
     final avatarPath = c['avatar_path'] as String? ?? '';
     final isActive = id == _activeId;
     final isCurrent = index == _currentPage;
@@ -272,23 +329,31 @@ class _CharacterListScreenState extends State<CharacterListScreen> {
           padding: const EdgeInsets.all(20),
           decoration: BoxDecoration(
             color: YanciTheme.isDark
-                ? Colors.white.withValues(alpha: isActive ? 0.08 : 0.04)
-                : Colors.white.withValues(alpha: isActive ? 0.8 : 0.5),
+                ? Color.lerp(
+                    Colors.white,
+                    YanciTheme.accent,
+                    0.15,
+                  )!.withValues(alpha: isActive ? 0.08 : 0.04)
+                : Color.lerp(
+                    Colors.white,
+                    YanciTheme.accent,
+                    isActive ? 0.08 : 0.05,
+                  )!.withValues(alpha: isActive ? 0.72 : 0.50),
             borderRadius: BorderRadius.circular(20),
             border: Border.all(
               color: isActive
-                  ? YanciTheme.accent.withValues(alpha: 0.4)
+                  ? YanciTheme.accent.withValues(alpha: 0.18)
                   : YanciTheme.isDark
-                  ? Colors.white.withValues(alpha: 0.08)
-                  : Colors.white.withValues(alpha: 0.6),
-              width: isActive ? 1.5 : 0.5,
+                  ? Colors.white.withValues(alpha: 0.06)
+                  : Colors.white.withValues(alpha: 0.5),
+              width: isActive ? 1.0 : 0.5,
             ),
             boxShadow: isCurrent
                 ? [
                     BoxShadow(
-                      color: YanciTheme.accent.withValues(alpha: 0.08),
-                      blurRadius: 16,
-                      offset: const Offset(0, 4),
+                      color: YanciTheme.accent.withValues(alpha: 0.05),
+                      blurRadius: 20,
+                      offset: const Offset(0, 6),
                     ),
                   ]
                 : null,
@@ -296,182 +361,170 @@ class _CharacterListScreenState extends State<CharacterListScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Container(
-                    width: 42,
-                    height: 42,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: YanciTheme.accent.withValues(alpha: 0.1),
-                      border: Border.all(
-                        color: isActive
-                            ? YanciTheme.accent.withValues(alpha: 0.3)
-                            : YanciTheme.textSecondary.withValues(alpha: 0.1),
-                        width: 1,
+              Padding(
+                padding: const EdgeInsets.only(left: 6, top: 8),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Container(
+                      width: 68,
+                      height: 68,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: YanciTheme.accent.withValues(alpha: 0.06),
+                        border: Border.all(
+                          color: isActive
+                              ? YanciTheme.accent.withValues(alpha: 0.15)
+                              : YanciTheme.textSecondary.withValues(
+                                  alpha: 0.08,
+                                ),
+                          width: 0.5,
+                        ),
+                        image:
+                            avatarPath.isNotEmpty &&
+                                File(avatarPath).existsSync()
+                            ? DecorationImage(
+                                image: FileImage(File(avatarPath)),
+                                fit: BoxFit.cover,
+                              )
+                            : null,
                       ),
-                      image:
-                          avatarPath.isNotEmpty && File(avatarPath).existsSync()
-                          ? DecorationImage(
-                              image: FileImage(File(avatarPath)),
-                              fit: BoxFit.cover,
+                      child:
+                          avatarPath.isEmpty || !File(avatarPath).existsSync()
+                          ? Icon(
+                              Icons.person_rounded,
+                              size: 36,
+                              color: YanciTheme.accent.withValues(alpha: 0.4),
                             )
                           : null,
                     ),
-                    child: avatarPath.isEmpty || !File(avatarPath).existsSync()
-                        ? Icon(
-                            Icons.person_rounded,
-                            size: 22,
-                            color: YanciTheme.accent.withValues(alpha: 0.4),
-                          )
-                        : null,
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          name,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: YanciTheme.headingMedium.copyWith(
-                            fontSize: 16,
-                          ),
-                        ),
-                        // ═══ 已婚標籤（結婚證彩蛋，簽署後常駐每個窗口）═══
-                        FutureBuilder<bool>(
-                          future: MarriageService.isMarried(id),
-                          builder: (context, snap) {
-                            if (snap.data != true) {
-                              return const SizedBox.shrink();
-                            }
-                            return Padding(
-                              padding: const EdgeInsets.only(top: 3),
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 8,
-                                  vertical: 2,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: YanciTheme.accent.withValues(
-                                    alpha: 0.12,
-                                  ),
-                                  borderRadius: BorderRadius.circular(10),
-                                  border: Border.all(
-                                    color: YanciTheme.accent.withValues(
-                                      alpha: 0.35,
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Padding(
+                        padding: const EdgeInsets.only(left: 4, top: 4),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    name,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: YanciTheme.headingMedium.copyWith(
+                                      fontSize: 18,
+                                      fontWeight: FontWeight.w400,
                                     ),
-                                    width: 0.6,
                                   ),
                                 ),
-                                child: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    Text(
-                                      '❦',
-                                      style: TextStyle(
-                                        fontSize: 9,
-                                        color: YanciTheme.accent,
-                                      ),
-                                    ),
-                                    const SizedBox(width: 4),
-                                    Text(
-                                      L.pick(
-                                        en: 'Married',
-                                        zhTW: '已婚',
-                                        zhCN: '已婚',
-                                      ),
-                                      style: TextStyle(
-                                        fontSize: 10,
-                                        fontWeight: FontWeight.w600,
-                                        color: YanciTheme.accent,
-                                        letterSpacing: 1,
-                                        fontFamily: YanciTheme.fontFamily,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            );
-                          },
-                        ),
-                        if (gender.isNotEmpty || relationship.isNotEmpty)
-                          Padding(
-                            padding: const EdgeInsets.only(top: 2),
-                            child: Text(
-                              [
-                                gender,
-                                relationship,
-                              ].where((s) => s.isNotEmpty).join(' · '),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: YanciTheme.bodySmall.copyWith(
-                                fontSize: 11,
-                                color: YanciTheme.textSecondary.withValues(
-                                  alpha: 0.6,
-                                ),
-                              ),
+                              ],
                             ),
-                          ),
-                      ],
+                            FutureBuilder<bool>(
+                              future: MarriageService.isMarried(id),
+                              builder: (context, snap) {
+                                if (snap.data != true) {
+                                  return const SizedBox.shrink();
+                                }
+                                final gold = YanciTheme.characterMarriageGold;
+                                return Padding(
+                                  padding: const EdgeInsets.only(top: 4),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Text(
+                                        '❦',
+                                        style: TextStyle(
+                                          fontSize: 9,
+                                          color: gold,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 4),
+                                      Text(
+                                        L.pick(
+                                          en: 'Married',
+                                          zhTW: '已婚',
+                                          zhCN: '已婚',
+                                        ),
+                                        style: TextStyle(
+                                          fontSize: 10,
+                                          fontWeight: FontWeight.w600,
+                                          color: gold,
+                                          letterSpacing: 1,
+                                          fontFamily: YanciTheme.fontFamily,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                );
+                              },
+                            ),
+                            CharacterSignaturePanel(
+                              key: ValueKey('character-signature-card-$id'),
+                              compact: true,
+                              signature: c['signature'] as String?,
+                            ),
+                          ],
+                        ),
+                      ),
                     ),
-                  ),
-                  const SizedBox(width: 8),
-                  if (isActive)
-                    _OnlineStatusPill(animate: isCurrent)
-                  else
-                    Semantics(
-                      button: true,
-                      label: L.get('char_use'),
-                      child: GestureDetector(
-                        behavior: HitTestBehavior.opaque,
-                        onTap: () async {
-                          HapticFeedback.mediumImpact();
-                          await UserSettings.saveActiveCharacterId(id);
-                          await UserSettings.saveCharacterName(name);
-                          if (!mounted) return;
-                          setState(() => _activeId = id);
-                        },
-                        child: Container(
-                          key: const ValueKey('character-card-talk-button'),
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 5,
-                          ),
-                          decoration: BoxDecoration(
-                            color: YanciTheme.accent.withValues(alpha: 0.1),
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: Text(
-                            L.get('char_use'),
-                            style: TextStyle(
-                              fontSize: 11,
-                              color: YanciTheme.accent,
+                    const SizedBox(width: 8),
+                    if (isActive && isCurrent && _onlineDwellReady)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 18),
+                        child: _OnlineStatusPill(animate: true),
+                      )
+                    else if (!isActive)
+                      Semantics(
+                        button: true,
+                        label: L.get('char_use'),
+                        child: GestureDetector(
+                          behavior: HitTestBehavior.opaque,
+                          onTap: () async {
+                            HapticFeedback.mediumImpact();
+                            await UserSettings.saveActiveCharacterId(id);
+                            await UserSettings.saveCharacterName(name);
+                            if (!mounted) return;
+                            setState(() {
+                              _activeId = id;
+                              _onlineDwellReady = false;
+                            });
+                            if (isCurrent) _beginOnlineDwell(index);
+                          },
+                          child: Container(
+                            key: const ValueKey('character-card-talk-button'),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 5,
+                            ),
+                            decoration: BoxDecoration(
+                              color: YanciTheme.accent.withValues(alpha: 0.1),
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Text(
+                              L.get('char_use'),
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: YanciTheme.accent,
+                              ),
                             ),
                           ),
                         ),
                       ),
-                    ),
-                ],
-              ),
-              if (desc.isNotEmpty) ...[
-                const SizedBox(height: 10),
-                Expanded(
-                  child: Text(
-                    desc,
-                    maxLines: 5,
-                    overflow: TextOverflow.ellipsis,
-                    style: YanciTheme.bodyText.copyWith(
-                      fontSize: 13,
-                      color: YanciTheme.textSecondary,
-                      height: 1.5,
-                    ),
-                  ),
+                  ],
                 ),
-              ],
+              ),
+              const SizedBox(height: 64),
               const Spacer(),
+              Transform.translate(
+                offset: const Offset(0, 6),
+                child: _buildResourceTabs(
+                  charId: id,
+                  charName: name,
+                  embedded: true,
+                ),
+              ),
+              const SizedBox(height: 4),
               Row(
                 mainAxisAlignment: MainAxisAlignment.end,
                 children: [
@@ -500,10 +553,11 @@ class _CharacterListScreenState extends State<CharacterListScreen> {
     );
   }
 
-  Widget _buildResourceTabs() {
-    final charId = _currentCharId;
-    final charName = _currentCharName;
-
+  Widget _buildResourceTabs({
+    required String charId,
+    required String charName,
+    bool embedded = false,
+  }) {
     final tabs = [
       _ResourceTab(Icons.graphic_eq_rounded, L.get('char_tab_voice'), () {
         Navigator.of(context).pushNamed('/voice_library', arguments: charId);
@@ -531,46 +585,36 @@ class _CharacterListScreenState extends State<CharacterListScreen> {
     ];
 
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 24),
+      padding: EdgeInsets.symmetric(horizontal: embedded ? 0 : 24),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceEvenly,
         children: tabs.map((tab) {
-          return GestureDetector(
-            onTap: tab.onTap,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  width: 48,
-                  height: 48,
-                  decoration: BoxDecoration(
+          return Semantics(
+            button: true,
+            label: tab.label,
+            child: GestureDetector(
+              onTap: tab.onTap,
+              child: Container(
+                width: embedded ? 44 : 48,
+                height: embedded ? 44 : 48,
+                decoration: BoxDecoration(
+                  color: YanciTheme.isDark
+                      ? Colors.white.withValues(alpha: 0.06)
+                      : Colors.white.withValues(alpha: 0.6),
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(
                     color: YanciTheme.isDark
-                        ? Colors.white.withValues(alpha: 0.06)
-                        : Colors.white.withValues(alpha: 0.6),
-                    borderRadius: BorderRadius.circular(14),
-                    border: Border.all(
-                      color: YanciTheme.isDark
-                          ? Colors.white.withValues(alpha: 0.08)
-                          : Colors.white.withValues(alpha: 0.7),
-                      width: 0.5,
-                    ),
-                  ),
-                  child: Icon(
-                    tab.icon,
-                    size: tab.icon == Icons.star_outline_rounded ? 20 : 22,
-                    color: YanciTheme.accent.withValues(alpha: 0.7),
+                        ? Colors.white.withValues(alpha: 0.08)
+                        : Colors.white.withValues(alpha: 0.7),
+                    width: 0.5,
                   ),
                 ),
-                const SizedBox(height: 6),
-                Text(
-                  tab.label,
-                  style: TextStyle(
-                    fontSize: 11,
-                    color: YanciTheme.textSecondary,
-                    fontFamily: YanciTheme.fontFamily,
-                  ),
+                child: Icon(
+                  tab.icon,
+                  size: tab.icon == Icons.star_outline_rounded ? 20 : 22,
+                  color: YanciTheme.accent.withValues(alpha: 0.7),
                 ),
-              ],
+              ),
             ),
           );
         }).toList(),
@@ -635,6 +679,7 @@ class _CharacterListScreenState extends State<CharacterListScreen> {
                   'skill': json['skill'] ?? '',
                   'age': json['age'] ?? '',
                   'height': json['height'] ?? '',
+                  'signature': json['signature'] ?? '',
                   'created_at': now,
                   'updated_at': now,
                 });
@@ -755,8 +800,8 @@ class _OnlineStatusPillState extends State<_OnlineStatusPill>
   @override
   Widget build(BuildContext context) {
     final onlineColor = YanciTheme.isDark
-        ? const Color(0xFF69D78E)
-        : const Color(0xFF2F9D5B);
+        ? YanciTheme.accentLight
+        : YanciTheme.accent;
 
     return Semantics(
       container: true,
@@ -764,11 +809,7 @@ class _OnlineStatusPillState extends State<_OnlineStatusPill>
       child: ExcludeSemantics(
         child: Container(
           key: const ValueKey('character-card-online-status'),
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-          decoration: BoxDecoration(
-            color: YanciTheme.accent.withValues(alpha: 0.1),
-            borderRadius: BorderRadius.circular(12),
-          ),
+          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -780,8 +821,8 @@ class _OnlineStatusPillState extends State<_OnlineStatusPill>
                       _breathController.value,
                     );
                     return SizedBox(
-                      width: 12,
-                      height: 12,
+                      width: 16,
+                      height: 16,
                       child: Stack(
                         alignment: Alignment.center,
                         children: [
@@ -790,8 +831,8 @@ class _OnlineStatusPillState extends State<_OnlineStatusPill>
                             child: Opacity(
                               opacity: 0.22 * (1 - breath),
                               child: Container(
-                                width: 10,
-                                height: 10,
+                                width: 14,
+                                height: 14,
                                 decoration: BoxDecoration(
                                   shape: BoxShape.circle,
                                   color: onlineColor,
@@ -802,8 +843,8 @@ class _OnlineStatusPillState extends State<_OnlineStatusPill>
                           Transform.scale(
                             scale: 0.92 + (breath * 0.08),
                             child: Container(
-                              width: 6,
-                              height: 6,
+                              width: 8,
+                              height: 8,
                               decoration: BoxDecoration(
                                 shape: BoxShape.circle,
                                 color: onlineColor,

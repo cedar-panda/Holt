@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:math' as math;
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
@@ -89,44 +90,38 @@ class _AvatarCropperScreenState extends State<AvatarCropperScreen> {
 
     try {
       final viewSize = MediaQuery.of(context).size;
-      final cropDiameter = viewSize.width * 0.75;
-      final cropCenter = Offset(viewSize.width / 2, viewSize.height / 2 - 30);
-      final cropRect = Rect.fromCenter(
-        center: cropCenter,
-        width: cropDiameter,
-        height: cropDiameter,
-      );
+      final metrics = _cropMetrics(viewSize);
+      final cropDiameter = metrics.cropDiameter;
+      final cropCenter = metrics.cropCenter;
 
       // 計算圖片在螢幕上的實際位置和縮放
       final matrix = _transformCtrl.value;
       final inv = Matrix4.inverted(matrix);
 
-      // 圖片適配螢幕的基礎縮放
       final imgW = _image!.width.toDouble();
       final imgH = _image!.height.toDouble();
-      final baseScale = viewSize.width / imgW;
-      final displayH = imgH * baseScale;
-      final offsetY = (viewSize.height - displayH) / 2;
-
-      // 裁切區域 → 圖片座標
-      final tl = _screenToImage(
-        cropRect.topLeft,
+      final sourceCenter = _screenToImage(
+        cropCenter,
         inv,
-        baseScale,
-        Offset(0, offsetY),
+        metrics.baseScale,
+        metrics.displayRect.topLeft,
       );
-      final br = _screenToImage(
-        cropRect.bottomRight,
-        inv,
-        baseScale,
-        Offset(0, offsetY),
-      );
-
-      final srcRect = Rect.fromLTRB(
-        tl.dx.clamp(0, imgW),
-        tl.dy.clamp(0, imgH),
-        br.dx.clamp(0, imgW),
-        br.dy.clamp(0, imgH),
+      // 以裁切框中心推導正方形來源區域，整個區域再夾回原圖邊界；
+      // 不再把超出圖片的矩形硬拉伸到 512px。
+      final sourceSide = (cropDiameter / metrics.baseScale)
+          .clamp(1.0, math.min(imgW, imgH))
+          .toDouble();
+      final sourceLeft = (sourceCenter.dx - sourceSide / 2)
+          .clamp(0.0, imgW - sourceSide)
+          .toDouble();
+      final sourceTop = (sourceCenter.dy - sourceSide / 2)
+          .clamp(0.0, imgH - sourceSide)
+          .toDouble();
+      final srcRect = Rect.fromLTWH(
+        sourceLeft,
+        sourceTop,
+        sourceSide,
+        sourceSide,
       );
 
       // 裁切並輸出 512x512
@@ -163,6 +158,37 @@ class _AvatarCropperScreenState extends State<AvatarCropperScreen> {
     }
   }
 
+  _CropMetrics _cropMetrics(Size viewSize) {
+    if (_image == null) {
+      return _CropMetrics(
+        cropCenter: viewSize.center(Offset.zero),
+        cropDiameter: viewSize.width * 0.75,
+        baseScale: 1,
+        displayRect: Offset.zero & viewSize,
+      );
+    }
+    final imgW = _image!.width.toDouble();
+    final imgH = _image!.height.toDouble();
+    // Image.file(fit: contain) 的實際圖片邊界，不假設圖片永遠以寬度填滿。
+    final baseScale = math.min(viewSize.width / imgW, viewSize.height / imgH);
+    final displaySize = Size(imgW * baseScale, imgH * baseScale);
+    final displayRect = Rect.fromCenter(
+      center: viewSize.center(Offset.zero),
+      width: displaySize.width,
+      height: displaySize.height,
+    );
+    final cropDiameter = math.min(
+      viewSize.width * 0.75,
+      math.min(displayRect.width, displayRect.height),
+    );
+    return _CropMetrics(
+      cropCenter: displayRect.center,
+      cropDiameter: cropDiameter,
+      baseScale: baseScale,
+      displayRect: displayRect,
+    );
+  }
+
   Offset _screenToImage(
     Offset screen,
     Matrix4 inv,
@@ -181,7 +207,8 @@ class _AvatarCropperScreenState extends State<AvatarCropperScreen> {
   @override
   Widget build(BuildContext context) {
     final viewSize = MediaQuery.of(context).size;
-    final cropDiameter = viewSize.width * 0.75;
+    final metrics = _cropMetrics(viewSize);
+    final cropDiameter = metrics.cropDiameter;
 
     return Scaffold(
       backgroundColor: Colors.black,
@@ -192,7 +219,7 @@ class _AvatarCropperScreenState extends State<AvatarCropperScreen> {
           if (_image != null)
             InteractiveViewer(
               transformationController: _transformCtrl,
-              minScale: 0.5,
+              minScale: 1.0,
               maxScale: 5.0,
               constrained: false,
               boundaryMargin: const EdgeInsets.all(double.infinity),
@@ -211,10 +238,7 @@ class _AvatarCropperScreenState extends State<AvatarCropperScreen> {
             child: CustomPaint(
               size: viewSize,
               painter: _CropOverlayPainter(
-                cropCenter: Offset(
-                  viewSize.width / 2,
-                  viewSize.height / 2 - 30,
-                ),
+                cropCenter: metrics.cropCenter,
                 cropDiameter: cropDiameter,
               ),
             ),
@@ -276,6 +300,20 @@ class _AvatarCropperScreenState extends State<AvatarCropperScreen> {
       ),
     );
   }
+}
+
+class _CropMetrics {
+  final Offset cropCenter;
+  final double cropDiameter;
+  final double baseScale;
+  final Rect displayRect;
+
+  const _CropMetrics({
+    required this.cropCenter,
+    required this.cropDiameter,
+    required this.baseScale,
+    required this.displayRect,
+  });
 }
 
 /// 圓形裁切遮罩 — 圓圈外半透明黑色，圓圈內透明

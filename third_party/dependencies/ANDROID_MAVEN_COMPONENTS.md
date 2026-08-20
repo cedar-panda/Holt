@@ -2,69 +2,13 @@
 
 > Generated from the most recent local release SDK dependency report.
 
-- Components: 140
-- Report SHA-256: `67e582fb35b83ea8ab087841130dde52fb0ff02d3e9349352436c245a4f9c90f`
+- Components: 138
+- Report SHA-256: `9dc96fefc4ce25b53faa8d24a3d855e86a36441562066d6f048b218d2bee3501`
 - Report older than current pubspec.lock: **false**
 
 A `false` stale flag does not replace a final release rebuild. Native libraries are tracked separately.
 
-## Apache 2.0
-
-- `com.google.errorprone:error_prone_annotations:2.41.0`
-- `com.google.flogger:flogger:0.6`
-- `com.google.flogger:flogger-system-backend:0.6`
-
 ## Apache License 2.0
-
-- `com.google.guava:failureaccess:1.0.1`
-- `com.google.guava:guava:27.0.1-android`
-- `com.google.guava:listenablefuture:9999.0-empty-to-avoid-conflict-with-guava`
-- `org.apache.commons:commons-imaging:1.0-alpha3`
-
-## Apache License, Version 2.0
-
-- `com.google.crypto.tink:tink-android:1.21.0`
-
-## Apache-2.0
-
-- `com.google.code.gson:gson:2.13.2`
-- `org.jetbrains.kotlin:kotlin-stdlib:2.2.20`
-- `org.jetbrains.kotlin:kotlin-stdlib-common:2.2.20`
-- `org.jetbrains.kotlinx:kotlinx-serialization-bom:1.9.0`
-- `org.jetbrains.kotlinx:kotlinx-serialization-core:1.9.0`
-- `org.jetbrains.kotlinx:kotlinx-serialization-core-jvm:1.9.0`
-- `org.jetbrains.kotlinx:kotlinx-serialization-json:1.9.0`
-- `org.jetbrains.kotlinx:kotlinx-serialization-json-jvm:1.9.0`
-
-## BSD-3-Clause
-
-- `androidx.datastore:datastore-preferences-external-protobuf:1.1.7`
-- `com.google.protobuf:protobuf-javalite:4.26.1`
-
-## Flutter BSD-3-Clause and engine composite notices
-
-- `io.flutter:arm64_v8a_release:1.0.0-77e2e94772b6eb43759e34ed1ad7da4674e19cab`
-- `io.flutter:armeabi_v7a_release:1.0.0-77e2e94772b6eb43759e34ed1ad7da4674e19cab`
-- `io.flutter:flutter_embedding_release:1.0.0-77e2e94772b6eb43759e34ed1ad7da4674e19cab`
-- `io.flutter:x86_64_release:1.0.0-77e2e94772b6eb43759e34ed1ad7da4674e19cab`
-
-## GNU General Public License, version 2 (GPL2), with the classpath exception OR The MIT License
-
-- `org.checkerframework:checker-compat-qual:2.5.3`
-
-## MIT
-
-- `org.codehaus.mojo:animal-sniffer-annotations:1.17`
-
-## The Apache License, Version 2.0
-
-- `org.jetbrains.kotlin:kotlin-android-extensions-runtime:1.9.22`
-- `org.jetbrains.kotlin:kotlin-parcelize-runtime:1.9.22`
-- `org.jetbrains.kotlin:kotlin-stdlib-jdk7:1.8.0`
-- `org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.8.0`
-- `org.jspecify:jspecify:1.0.0`
-
-## The Apache Software License, Version 2.0
 
 - `androidx.activity:activity:1.12.4`
 - `androidx.activity:activity-ktx:1.12.4`
@@ -100,6 +44,7 @@ A `false` stale flag does not replace a final release rebuild. Native libraries 
 - `androidx.datastore:datastore-preferences-android:1.1.7`
 - `androidx.datastore:datastore-preferences-core:1.1.7`
 - `androidx.datastore:datastore-preferences-core-android:1.1.7`
+- `androidx.datastore:datastore-preferences-external-protobuf:1.1.7`
 - `androidx.datastore:datastore-preferences-proto:1.1.7`
 - `androidx.documentfile:documentfile:1.0.0`
 - `androidx.drawerlayout:drawerlayout:1.0.0`
@@ -156,14 +101,55 @@ A `false` stale flag does not replace a final release rebuild. Native libraries 
 - `androidx.window.extensions.core:core:1.0.0`
 - `androidx.work:work-runtime:2.11.0`
 - `androidx.work:work-runtime-ktx:2.11.0`
+- `com.google.guava:failureaccess:1.0.1`
+- `com.google.guava:guava:27.0.1-android`
+- `com.google.guava:listenablefuture:9999.0-empty-to-avoid-conflict-with-guava`
+- `org.apache.commons:commons-imaging:1.0-alpha3`
+- `org.jetbrains:annotations:23.0.0`
+- `org.jetbrains.kotlin:kotlin-android-extensions-runtime:1.9.22`
+- `org.jetbrains.kotlin:kotlin-parcelize-runtime:1.9.22`
+- `org.jetbrains.kotlin:kotlin-stdlib:2.2.20`
+- `org.jetbrains.kotlin:kotlin-stdlib-common:2.2.20`
+- `org.jetbrains.kotlin:kotlin-stdlib-jdk7:1.8.0`
+- `org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.8.0`
+- `org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0`
+- `org.jetbrains.kotlinx:kotlinx-coroutines-bom:1.9.0`
+- `org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0`
+- `org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm:1.9.0`
+- `org.jetbrains.kotlinx:kotlinx-serialization-bom:1.9.0`
+- `org.jetbrains.kotlinx:kotlinx-serialization-core:1.9.0`
+- `org.jetbrains.kotlinx:kotlinx-serialization-core-jvm:1.9.0`
+- `org.jetbrains.kotlinx:kotlinx-serialization-json:1.9.0`
+- `org.jetbrains.kotlinx:kotlinx-serialization-json-jvm:1.9.0`
+
+## BSD-3-Clause
+
+- `com.google.protobuf:protobuf-javalite:4.26.1`
+
+## Flutter BSD-3-Clause and engine composite notices
+
+- `io.flutter:arm64_v8a_release:1.0.0-77e2e94772b6eb43759e34ed1ad7da4674e19cab`
+- `io.flutter:flutter_embedding_release:1.0.0-77e2e94772b6eb43759e34ed1ad7da4674e19cab`
+
+## MIT
+
+- `org.codehaus.mojo:animal-sniffer-annotations:1.17`
+
+## UNRESOLVED
+
 - `com.getkeepsafe.relinker:relinker:1.4.5`
 - `com.google.android.datatransport:transport-api:3.0.0`
 - `com.google.android.datatransport:transport-backend-cct:3.1.0`
 - `com.google.android.datatransport:transport-runtime:3.1.0`
 - `com.google.code.findbugs:jsr305:3.0.2`
+- `com.google.code.gson:gson:2.13.2`
+- `com.google.crypto.tink:tink-android:1.21.0`
+- `com.google.errorprone:error_prone_annotations:2.41.0`
 - `com.google.firebase:firebase-encoders:17.0.0`
 - `com.google.firebase:firebase-encoders-json:18.0.0`
 - `com.google.firebase:firebase-encoders-proto:16.0.0`
+- `com.google.flogger:flogger:0.6`
+- `com.google.flogger:flogger-system-backend:0.6`
 - `com.google.j2objc:j2objc-annotations:1.1`
 - `com.google.mediapipe:tasks-core:0.10.26.1`
 - `com.google.mediapipe:tasks-genai:0.10.33`
@@ -172,8 +158,5 @@ A `false` stale flag does not replace a final release rebuild. Native libraries 
 - `com.squareup.okio:okio:3.4.0`
 - `com.squareup.okio:okio-jvm:3.4.0`
 - `javax.inject:javax.inject:1`
-- `org.jetbrains:annotations:23.0.0`
-- `org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0`
-- `org.jetbrains.kotlinx:kotlinx-coroutines-bom:1.9.0`
-- `org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0`
-- `org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm:1.9.0`
+- `org.checkerframework:checker-compat-qual:2.5.3`
+- `org.jspecify:jspecify:1.0.0`

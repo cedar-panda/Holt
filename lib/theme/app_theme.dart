@@ -97,6 +97,15 @@ class YanciTheme {
   static Color get textAccent => accent;
   static Color get textOnBubble => _preset.textOnBubble;
 
+  /// 角色卡資源提示與自我註記正文使用的淡色文字。
+  /// 讓文字退到背景後方，把視線留給資源 icon 與角色名字。
+  static Color get characterResourceLabel =>
+      Color.lerp(textSecondary, Colors.white, isDark ? 0.38 : 0.48)!;
+
+  /// 婚姻標記的淡金色；亮暗主題都維持足夠辨識度，僅用於文字、icon 和細邊框。
+  static Color get characterMarriageGold =>
+      isDark ? const Color(0xFFF3D995) : const Color(0xFFE2C978);
+
   static Color get accent => _preset.accent;
   static Color get accentLight => _preset.accentLight;
   static Color get accentGlow => _preset.accentGlow;
@@ -111,6 +120,10 @@ class YanciTheme {
 
   static Color get starColor => _preset.starColor;
   static Color get starGlow => _preset.starGlow;
+
+  // 氣泡裝飾 PNG（特色主題用）
+  static String? get bubbleAiAsset => _preset.bubbleAiAsset;
+  static String? get bubbleUserAsset => _preset.bubbleUserAsset;
 
   // ═══════════════════════════════════
   // 衍生色（配色協調層）
@@ -130,8 +143,9 @@ class YanciTheme {
       : Color.lerp(_preset.accentLight, Colors.white, 0.3)!;
 
   /// 心電圖掃描頭亮點 — 比主線再亮半階
-  static Color get ecgHead =>
-      isDark ? Colors.white : Color.lerp(_preset.accentLight, Colors.white, 0.55)!;
+  static Color get ecgHead => isDark
+      ? Colors.white
+      : Color.lerp(_preset.accentLight, Colors.white, 0.55)!;
 
   /// 心電圖光暈色 — 亮色主題用更輕盈的發光，不壓沉背景
   static Color get ecgGlow => isDark

@@ -32,7 +32,7 @@ void main() {
     () async {
       await DatabaseHelper.createSchemaForTesting(db);
 
-      expect(DatabaseHelper.schemaVersionForTesting, 46);
+      expect(DatabaseHelper.schemaVersionForTesting, 47);
       expect(await _columnNames(db, 'messages'), contains('status'));
       expect(
         await _columnNames(db, 'messages'),
@@ -40,6 +40,7 @@ void main() {
       );
       expect(await _columnNames(db, 'messages'), contains('email_draft_json'));
       expect(await _columnNames(db, 'characters'), contains('bio_clock'));
+      expect(await _columnNames(db, 'characters'), contains('signature'));
       expect(
         await _columnNames(db, 'characters'),
         containsAll([
@@ -144,6 +145,21 @@ void main() {
       );
     },
   );
+
+  test('v46 upgrade adds the saved character signature column', () async {
+    await db.execute('''
+      CREATE TABLE characters (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )
+    ''');
+
+    await DatabaseHelper.upgradeSchemaForTesting(db, 46);
+
+    expect(await _columnNames(db, 'characters'), contains('signature'));
+  });
 
   test(
     'runtime schema repair recreates and backfills missing memory FTS',
@@ -712,6 +728,33 @@ void main() {
       DatabaseHelper.likeContainsForTesting(r'100%_done\ok'),
       r'%100\%\_done\\ok%',
     );
+  });
+
+  test('chat history search executes against SQLite', () async {
+    await DatabaseHelper.createSchemaForTesting(db);
+    await db.insert('conversations', {
+      'id': 'conv-search-a',
+      'character_id': 'char-a',
+      'title': '跨窗口線索',
+      'created_at': '2026-08-20T00:00:00.000',
+      'updated_at': '2026-08-20T00:00:00.000',
+    });
+    await db.insert('messages', {
+      'conversation_id': 'conv-search-a',
+      'character_id': 'char-a',
+      'text': '睫毛根旁邊有一顆小痣。',
+      'is_user': 0,
+      'created_at': '2026-08-20T00:01:00.000',
+    });
+
+    final results = await DatabaseHelper.searchMessages(
+      keyword: '小痣',
+      characterId: 'char-a',
+    );
+
+    expect(results, hasLength(1));
+    expect(results.single['text'], contains('小痣'));
+    expect(results.single['title'], '跨窗口線索');
   });
 
   test(

@@ -159,4 +159,28 @@ void main() {
 
     expect(find.text('慢慢說，我在聽'), findsOneWidget);
   });
+
+  testWidgets('InputBar opens an inline two-layer action panel', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(body: InputBar(onSend: (_) {})),
+      ),
+    );
+
+    await tester.tap(find.byTooltip('Add content'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+
+    expect(find.text('Photo'), findsOneWidget);
+    expect(find.text('Sticker'), findsOneWidget);
+    expect(find.text('Transfer'), findsOneWidget);
+    expect(find.text('Scratch card'), findsOneWidget);
+    expect(find.text('Gift shop'), findsOneWidget);
+    expect(find.text('Backpack'), findsOneWidget);
+    expect(find.text('Add to this message'), findsNothing);
+    expect(find.text('QUICK ADD'), findsNothing);
+    expect(find.text('MORE INTERACTIONS'), findsNothing);
+  });
 }

@@ -32,6 +32,7 @@ import 'screens/character_list_screen.dart';
 import 'screens/memory_screen.dart';
 import 'screens/sticker_library_screen.dart';
 import 'screens/user_profile_screen.dart';
+import 'screens/profile_screen.dart';
 import 'screens/voice_library_screen.dart';
 import 'screens/theme_workshop_screen.dart';
 import 'screens/local_model_screen.dart';
@@ -314,6 +315,7 @@ class _YanciAppState extends State<YanciApp> with WidgetsBindingObserver {
           '/tool_model': (context) => const ToolModelScreen(),
           '/character_list': (context) => const CharacterListScreen(),
           '/user_profile': (context) => const UserProfileScreen(),
+          '/profile': (context) => const ProfileScreen(),
           '/theme_workshop': (context) => const ThemeWorkshopScreen(),
           '/local_models': (context) => const LocalModelScreen(),
           '/usage': (context) => const UsageDashboardScreen(),

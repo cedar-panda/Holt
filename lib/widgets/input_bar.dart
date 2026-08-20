@@ -83,7 +83,7 @@ class _InputBarState extends State<InputBar> with TickerProviderStateMixin {
   final FocusNode _focusNode = FocusNode();
   bool _ownsController = false;
   final ImagePicker _picker = ImagePicker();
-  bool _menuOpen = false;
+  bool _drawerOpen = false;
 
   // ═══ 葉子動效 ═══
   late AnimationController _swayCtrl; // 待機搖擺
@@ -250,97 +250,6 @@ class _InputBarState extends State<InputBar> with TickerProviderStateMixin {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // ═══ 展開選單（圖片 + 表情包 + 禮物 + 轉帳）═══
-          // 200ms 高度滑出 + 淡入；舊版 if 直接插拔，硬切
-          ClipRect(
-            child: AnimatedSize(
-              duration: const Duration(milliseconds: 200),
-              curve: Curves.easeOutCubic,
-              alignment: Alignment.topCenter,
-              child: !_menuOpen
-                  ? const SizedBox(width: double.infinity, height: 0)
-                  : AnimatedOpacity(
-                      opacity: _menuOpen ? 1.0 : 0.0,
-                      duration: const Duration(milliseconds: 200),
-                      child: Padding(
-                        // 無底色展開選單：去掉玻璃膠囊，按鈕直接鋪開、更大
-                        padding: const EdgeInsets.only(bottom: 10, left: 8),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            _menuBtn(
-                              iconData: Icons.image_outlined,
-                              onTap: () async {
-                                setState(() => _menuOpen = false);
-                                final file = await _picker.pickImage(
-                                  source: ImageSource.gallery,
-                                  maxWidth: 800,
-                                  maxHeight: 800,
-                                  imageQuality: 70,
-                                );
-                                if (file != null) {
-                                  widget.onImagePicked?.call(file.path);
-                                }
-                              },
-                            ),
-                            const SizedBox(width: 14),
-                            _menuBtn(
-                              iconData: Icons.emoji_emotions_outlined,
-                              onTap: () {
-                                setState(() => _menuOpen = false);
-                                widget.onStickerTap?.call();
-                              },
-                            ),
-                            const SizedBox(width: 14),
-                            _menuBtn(
-                              iconData: Icons.local_activity_outlined,
-                              onTap: () {
-                                setState(() => _menuOpen = false);
-                                _showScratchGiftPicker();
-                              },
-                            ),
-                            const SizedBox(width: 14),
-                            _menuBtn(
-                              iconData: Icons.storefront_outlined,
-                              onTap: () {
-                                setState(() => _menuOpen = false);
-                                widget.onShopGift?.call();
-                              },
-                            ),
-                            const SizedBox(width: 14),
-                            _menuBtn(
-                              iconData: Icons.backpack_outlined,
-                              onTap: () {
-                                setState(() => _menuOpen = false);
-                                widget.onBackpackTap?.call();
-                              },
-                            ),
-                            const SizedBox(width: 14),
-                            _menuBtn(
-                              assetPath: 'assets/images/shell_coin.png',
-                              onTap: () {
-                                setState(() => _menuOpen = false);
-                                _showTransferDialog();
-                              },
-                            ),
-                            // ═══ 結婚證簽署書（彩蛋：提及達標才解鎖）═══
-                            if (widget.showMarriageCert) ...[
-                              const SizedBox(width: 14),
-                              _menuBtn(
-                                iconData: Icons.history_edu_outlined,
-                                onTap: () {
-                                  setState(() => _menuOpen = false);
-                                  widget.onMarriageCert?.call();
-                                },
-                              ),
-                            ],
-                          ],
-                        ),
-                      ),
-                    ),
-            ),
-          ),
-
           // ═══ 掛起禮物 chip：隨下一條消息送出，× 取消退回 ═══
           if (widget.pendingGiftName != null)
             Padding(
@@ -488,25 +397,38 @@ class _InputBarState extends State<InputBar> with TickerProviderStateMixin {
                       child: Row(
                         crossAxisAlignment: CrossAxisAlignment.end,
                         children: [
-                          // ＋ 按鈕（純圖標，無背景）
-                          GestureDetector(
-                            onTap: () => setState(() => _menuOpen = !_menuOpen),
-                            // Padding 在旋轉外層：軸心=圖標自身中心，
-                            // 原地轉 45°，位置不漂（舊版不對稱 Padding 在
-                            // 旋轉內層，轉起來畫小弧）
-                            child: Padding(
-                              padding: const EdgeInsets.only(
-                                bottom: 13,
-                                left: 4,
+                          // ＋ 按鈕：在輸入框下方展開雙層玻璃工具盒。
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 1),
+                            child: Semantics(
+                              button: true,
+                              expanded: _drawerOpen,
+                              label: L.pick(
+                                en: 'Open add actions',
+                                zhTW: '打開添加工具',
+                                zhCN: '打开添加工具',
                               ),
-                              child: AnimatedRotation(
-                                turns: _menuOpen ? 0.125 : 0,
-                                duration: const Duration(milliseconds: 200),
-                                child: Icon(
-                                  Icons.add_rounded,
-                                  size: 22,
-                                  color: YanciTheme.textSecondary.withValues(
-                                    alpha: _menuOpen ? 0.7 : 0.45,
+                              child: IconButton(
+                                tooltip: L.pick(
+                                  en: 'Add content',
+                                  zhTW: '添加內容',
+                                  zhCN: '添加内容',
+                                ),
+                                onPressed: _toggleActionPanel,
+                                padding: EdgeInsets.zero,
+                                constraints: const BoxConstraints(
+                                  minWidth: 48,
+                                  minHeight: 48,
+                                ),
+                                icon: AnimatedRotation(
+                                  turns: _drawerOpen ? 0.125 : 0,
+                                  duration: const Duration(milliseconds: 220),
+                                  child: Icon(
+                                    Icons.add_rounded,
+                                    size: 23,
+                                    color: YanciTheme.textSecondary.withValues(
+                                      alpha: _drawerOpen ? 0.78 : 0.55,
+                                    ),
                                   ),
                                 ),
                               ),
@@ -684,9 +606,236 @@ class _InputBarState extends State<InputBar> with TickerProviderStateMixin {
               ),
             ],
           ),
+          // ＋ 展開盒：固定在輸入框下方，輸入列在上、工具盒在下。
+          ClipRect(
+            child: AnimatedSize(
+              duration: const Duration(milliseconds: 220),
+              curve: Curves.easeOutCubic,
+              alignment: Alignment.topCenter,
+              child: _drawerOpen
+                  ? Padding(
+                      padding: const EdgeInsets.only(top: 10),
+                      child: _buildActionPanel(),
+                    )
+                  : const SizedBox(width: double.infinity, height: 0),
+            ),
+          ),
         ],
       ),
     );
+  }
+
+  void _toggleActionPanel() {
+    _focusNode.unfocus();
+    setState(() => _drawerOpen = !_drawerOpen);
+  }
+
+  Widget _buildActionPanel() {
+    final panelColor = YanciTheme.isDark
+        ? const Color(0xD91B1820)
+        : const Color(0xD9FFFFFF);
+
+    return Semantics(
+      container: true,
+      label: L.pick(en: 'Message add actions', zhTW: '消息添加工具', zhCN: '消息添加工具'),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(24),
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              color: panelColor,
+              borderRadius: BorderRadius.circular(24),
+              border: Border.all(
+                color: YanciTheme.glassBorder.withValues(alpha: 0.9),
+                width: 0.8,
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(
+                    alpha: YanciTheme.isDark ? 0.28 : 0.12,
+                  ),
+                  blurRadius: 24,
+                  offset: const Offset(0, 6),
+                ),
+              ],
+            ),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(10, 10, 10, 10),
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final width = (constraints.maxWidth - 27) / 4;
+                  return Wrap(
+                    spacing: 9,
+                    runSpacing: 9,
+                    children: [
+                      SizedBox(
+                        width: width,
+                        child: _drawerAction(
+                          iconData: Icons.image_outlined,
+                          label: L.pick(en: 'Photo', zhTW: '圖片', zhCN: '图片'),
+                          onTap: () => _runPanelAction(_pickImageFromGallery),
+                        ),
+                      ),
+                      SizedBox(
+                        width: width,
+                        child: _drawerAction(
+                          iconData: Icons.emoji_emotions_outlined,
+                          label: L.pick(
+                            en: 'Sticker',
+                            zhTW: '表情包',
+                            zhCN: '表情包',
+                          ),
+                          onTap: () => _runPanelAction(
+                            () => widget.onStickerTap?.call(),
+                          ),
+                        ),
+                      ),
+                      SizedBox(
+                        width: width,
+                        child: _drawerAction(
+                          assetPath: 'assets/images/shell_coin.png',
+                          label: L.pick(en: 'Transfer', zhTW: '轉帳', zhCN: '转账'),
+                          onTap: () => _runPanelAction(_showTransferDialog),
+                        ),
+                      ),
+                      SizedBox(
+                        width: width,
+                        child: _drawerAction(
+                          iconData: Icons.local_activity_outlined,
+                          label: L.pick(
+                            en: 'Scratch card',
+                            zhTW: '刮刮卡',
+                            zhCN: '刮刮卡',
+                          ),
+                          onTap: () => _runPanelAction(_showScratchGiftPicker),
+                        ),
+                      ),
+                      SizedBox(
+                        width: width,
+                        child: _drawerAction(
+                          iconData: Icons.storefront_outlined,
+                          label: L.pick(
+                            en: 'Gift shop',
+                            zhTW: '禮物商店',
+                            zhCN: '礼物商店',
+                          ),
+                          onTap: () =>
+                              _runPanelAction(() => widget.onShopGift?.call()),
+                        ),
+                      ),
+                      SizedBox(
+                        width: width,
+                        child: _drawerAction(
+                          iconData: Icons.backpack_outlined,
+                          label: L.pick(en: 'Backpack', zhTW: '背包', zhCN: '背包'),
+                          onTap: () => _runPanelAction(
+                            () => widget.onBackpackTap?.call(),
+                          ),
+                        ),
+                      ),
+                      if (widget.showMarriageCert)
+                        SizedBox(
+                          width: width,
+                          child: _drawerAction(
+                            iconData: Icons.history_edu_outlined,
+                            label: L.pick(
+                              en: 'Marriage letter',
+                              zhTW: '簽署書',
+                              zhCN: '签署书',
+                            ),
+                            onTap: () => _runPanelAction(
+                              () => widget.onMarriageCert?.call(),
+                            ),
+                          ),
+                        ),
+                    ],
+                  );
+                },
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _drawerAction({
+    IconData? iconData,
+    String? assetPath,
+    required String label,
+    required VoidCallback onTap,
+  }) {
+    return Semantics(
+      button: true,
+      label: label,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(17),
+          child: Container(
+            constraints: const BoxConstraints(minHeight: 66),
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 9),
+            decoration: BoxDecoration(
+              color: YanciTheme.glassWhite.withValues(alpha: 0.18),
+              borderRadius: BorderRadius.circular(17),
+              border: Border.all(
+                color: YanciTheme.glassBorder.withValues(alpha: 0.72),
+                width: 0.6,
+              ),
+            ),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                SizedBox(
+                  width: 28,
+                  height: 28,
+                  child: iconData != null
+                      ? Icon(iconData, size: 25, color: YanciTheme.accent)
+                      : Image.asset(
+                          assetPath!,
+                          width: 25,
+                          height: 25,
+                          filterQuality: FilterQuality.none,
+                        ),
+                ),
+                const SizedBox(height: 5),
+                Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: YanciTheme.textPrimary,
+                    fontFamily: YanciTheme.fontFamily,
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _runPanelAction(VoidCallback action) {
+    setState(() => _drawerOpen = false);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) action();
+    });
+  }
+
+  Future<void> _pickImageFromGallery() async {
+    final file = await _picker.pickImage(
+      source: ImageSource.gallery,
+      maxWidth: 800,
+      maxHeight: 800,
+      imageQuality: 70,
+    );
+    if (file != null) widget.onImagePicked?.call(file.path);
   }
 
   void _showScratchGiftPicker() {
@@ -913,36 +1062,6 @@ class _InputBarState extends State<InputBar> with TickerProviderStateMixin {
               ),
             ],
           ),
-        ),
-      ),
-    );
-  }
-
-  Widget _menuBtn({
-    IconData? iconData,
-    String? assetPath,
-    required VoidCallback onTap,
-  }) {
-    // 無底色大按鈕（44dp 觸摸目標，圖標裸放）
-    return GestureDetector(
-      onTap: onTap,
-      behavior: HitTestBehavior.opaque,
-      child: SizedBox(
-        width: 44,
-        height: 44,
-        child: Center(
-          child: iconData != null
-              ? Icon(
-                  iconData,
-                  size: 24,
-                  color: YanciTheme.accent.withValues(alpha: 0.85),
-                )
-              : Image.asset(
-                  assetPath!,
-                  width: 24,
-                  height: 24,
-                  filterQuality: FilterQuality.none,
-                ),
         ),
       ),
     );

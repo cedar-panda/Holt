@@ -175,6 +175,7 @@ class _MemoryReviewTabState extends State<MemoryReviewTab> {
   }
 
   Future<void> _useNewCandidate(MemoryActionProposal proposal) async {
+    final hasExistingTarget = proposal.targetIds.isNotEmpty;
     final targetPermanent = proposal.targetSnapshots.any(
       (target) => target['permanent'] == true,
     );
@@ -184,18 +185,28 @@ class _MemoryReviewTabState extends State<MemoryReviewTab> {
         backgroundColor: YanciTheme.surfacePanel,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
         title: Text(
-          L.pick(en: 'Use the new memory?', zhTW: '改用新記憶？', zhCN: '改用新记忆？'),
+          L.pick(
+            en: hasExistingTarget ? 'Use the new memory?' : 'Save this memory?',
+            zhTW: hasExistingTarget ? '改用新記憶？' : '保存這條記憶？',
+            zhCN: hasExistingTarget ? '改用新记忆？' : '保存这条记忆？',
+          ),
           style: YanciTheme.headingMedium,
         ),
         content: Text(
           L.pick(
-            en: targetPermanent
+            en: !hasExistingTarget
+                ? 'This model suggestion will be added to the memory library.'
+                : targetPermanent
                 ? 'The old permanent memory will move to the archive. Its permanent protection and web links will carry over to the new memory.'
                 : 'The old memory will move to the archive and its web links will carry over to the new memory.',
-            zhTW: targetPermanent
+            zhTW: !hasExistingTarget
+                ? '確認後，這條模型建議才會加入記憶庫。'
+                : targetPermanent
                 ? '舊的永久記憶會移至回收區；永久保護與蛛網連線都會繼承到新記憶。'
                 : '舊記憶會移至回收區，蛛網連線會繼承到新記憶。',
-            zhCN: targetPermanent
+            zhCN: !hasExistingTarget
+                ? '确认后，这条模型建议才会加入记忆库。'
+                : targetPermanent
                 ? '旧的永久记忆会移至回收区；永久保护与蛛网连线都会继承到新记忆。'
                 : '旧记忆会移至回收区，蛛网连线会继承到新记忆。',
           ),
@@ -208,7 +219,13 @@ class _MemoryReviewTabState extends State<MemoryReviewTab> {
           ),
           FilledButton.tonal(
             onPressed: () => Navigator.pop(context, true),
-            child: Text(L.pick(en: 'Use new', zhTW: '使用新條', zhCN: '使用新条')),
+            child: Text(
+              L.pick(
+                en: hasExistingTarget ? 'Use new' : 'Save',
+                zhTW: hasExistingTarget ? '使用新條' : '保存',
+                zhCN: hasExistingTarget ? '使用新条' : '保存',
+              ),
+            ),
           ),
         ],
       ),
@@ -302,6 +319,7 @@ class _MemoryReviewTabState extends State<MemoryReviewTab> {
             onPressed: () {
               final content = contentController.text.trim();
               if (content.isEmpty) return;
+              FocusManager.instance.primaryFocus?.unfocus();
               Navigator.pop(context, <String, Object?>{
                 'category': categoryController.text.trim(),
                 'content': content,
@@ -313,6 +331,7 @@ class _MemoryReviewTabState extends State<MemoryReviewTab> {
         ],
       ),
     );
+    await Future<void>.delayed(const Duration(milliseconds: 250));
     categoryController.dispose();
     contentController.dispose();
     triggersController.dispose();
@@ -521,6 +540,7 @@ class _MemoryReviewTabState extends State<MemoryReviewTab> {
             onPressed: () {
               final content = contentController.text.trim();
               if (content.isEmpty) return;
+              FocusManager.instance.primaryFocus?.unfocus();
               Navigator.pop(context, <String, Object?>{
                 'category': categoryController.text.trim(),
                 'content': content,
@@ -532,6 +552,7 @@ class _MemoryReviewTabState extends State<MemoryReviewTab> {
         ],
       ),
     );
+    await Future<void>.delayed(const Duration(milliseconds: 250));
     categoryController.dispose();
     contentController.dispose();
     triggersController.dispose();
@@ -593,7 +614,10 @@ class _MemoryReviewTabState extends State<MemoryReviewTab> {
             ),
             FilledButton.tonal(
               onPressed: controller.text.trim() == 'PERMANENT'
-                  ? () => Navigator.pop(context, true)
+                  ? () {
+                      FocusManager.instance.primaryFocus?.unfocus();
+                      Navigator.pop(context, true);
+                    }
                   : null,
               child: Text(L.pick(en: 'Confirm', zhTW: '確認', zhCN: '确认')),
             ),
@@ -601,6 +625,7 @@ class _MemoryReviewTabState extends State<MemoryReviewTab> {
         ),
       ),
     );
+    await Future<void>.delayed(const Duration(milliseconds: 250));
     controller.dispose();
     return result ?? false;
   }
@@ -724,6 +749,7 @@ class _MemoryReviewTabState extends State<MemoryReviewTab> {
   Widget _buildProposalCard(MemoryActionProposal proposal) {
     final isBusy = _busyId == proposal.id;
     final isCreate = proposal.action == MemoryActionProposal.actionCreate;
+    final isNewModelSuggestion = isCreate && proposal.targetIds.isEmpty;
     final isMerge = proposal.action == MemoryActionProposal.actionMerge;
     final isLink = proposal.action == MemoryActionProposal.actionLink;
     final disabled = isBusy || !proposal.canExecute;
@@ -773,7 +799,13 @@ class _MemoryReviewTabState extends State<MemoryReviewTab> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        isCreate
+                        isNewModelSuggestion
+                            ? L.pick(
+                                en: 'Model memory suggestion',
+                                zhTW: '模型記憶建議',
+                                zhCN: '模型记忆建议',
+                              )
+                            : isCreate
                             ? L.pick(
                                 en: 'Possible duplicate memory',
                                 zhTW: '疑似重複記憶',
@@ -824,15 +856,17 @@ class _MemoryReviewTabState extends State<MemoryReviewTab> {
               ],
             ),
             const SizedBox(height: 12),
-            if (isCreate) ...[
+            if (isCreate && !isNewModelSuggestion) ...[
               _sectionLabel(L.pick(en: 'EXISTING', zhTW: '現有記憶', zhCN: '现有记忆')),
               const SizedBox(height: 6),
             ],
             for (final target in proposal.targetSnapshots) _buildTarget(target),
             if (isCreate) ...[
               _buildCandidatePreview(proposal),
-              _buildDuplicateEvidence(proposal),
-              _buildMergePreview(proposal),
+              if (!isNewModelSuggestion) ...[
+                _buildDuplicateEvidence(proposal),
+                _buildMergePreview(proposal),
+              ],
             ] else if (isMerge) ...[
               if (proposal.duplicateScore > 0)
                 _buildDuplicateEvidence(proposal),
@@ -940,6 +974,7 @@ class _MemoryReviewTabState extends State<MemoryReviewTab> {
     required bool disabled,
     required bool isBusy,
   }) {
+    final hasExistingTarget = proposal.targetIds.isNotEmpty;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -956,24 +991,40 @@ class _MemoryReviewTabState extends State<MemoryReviewTab> {
           spacing: 8,
           runSpacing: 8,
           children: [
-            FilledButton.tonal(
-              onPressed: disabled ? null : () => _keepExisting(proposal),
-              style: FilledButton.styleFrom(minimumSize: const Size(112, 44)),
-              child: Text(
-                L.pick(en: 'Keep existing', zhTW: '保留舊條', zhCN: '保留旧条'),
+            if (hasExistingTarget)
+              FilledButton.tonal(
+                onPressed: disabled ? null : () => _keepExisting(proposal),
+                style: FilledButton.styleFrom(minimumSize: const Size(112, 44)),
+                child: Text(
+                  L.pick(en: 'Keep existing', zhTW: '保留舊條', zhCN: '保留旧条'),
+                ),
+              )
+            else
+              TextButton(
+                onPressed: disabled ? null : () => _keepExisting(proposal),
+                style: TextButton.styleFrom(minimumSize: const Size(88, 44)),
+                child: Text(L.pick(en: 'Reject', zhTW: '拒絕', zhCN: '拒绝')),
               ),
-            ),
             OutlinedButton(
               onPressed: disabled ? null : () => _useNewCandidate(proposal),
               style: OutlinedButton.styleFrom(minimumSize: const Size(104, 44)),
-              child: Text(L.pick(en: 'Use new', zhTW: '使用新條', zhCN: '使用新条')),
+              child: Text(
+                L.pick(
+                  en: hasExistingTarget ? 'Use new' : 'Save memory',
+                  zhTW: hasExistingTarget ? '使用新條' : '保存記憶',
+                  zhCN: hasExistingTarget ? '使用新条' : '保存记忆',
+                ),
+              ),
             ),
-            OutlinedButton.icon(
-              onPressed: disabled ? null : () => _mergeCandidate(proposal),
-              style: OutlinedButton.styleFrom(minimumSize: const Size(96, 44)),
-              icon: const Icon(Icons.merge_rounded, size: 17),
-              label: Text(L.pick(en: 'Merge', zhTW: '合併', zhCN: '合并')),
-            ),
+            if (hasExistingTarget)
+              OutlinedButton.icon(
+                onPressed: disabled ? null : () => _mergeCandidate(proposal),
+                style: OutlinedButton.styleFrom(
+                  minimumSize: const Size(96, 44),
+                ),
+                icon: const Icon(Icons.merge_rounded, size: 17),
+                label: Text(L.pick(en: 'Merge', zhTW: '合併', zhCN: '合并')),
+              ),
           ],
         ),
       ],
@@ -1244,6 +1295,14 @@ class _MemoryReviewTabState extends State<MemoryReviewTab> {
         en: 'Apply failed · no memory was lost',
         zhTW: '套用失敗 · 記憶未丟失',
       ),
+      _
+          when proposal.action == MemoryActionProposal.actionCreate &&
+              proposal.targetIds.isEmpty =>
+        L.pick(
+          en: 'Waiting for your confirmation · not saved yet',
+          zhTW: '等待你確認 · 尚未寫入記憶庫',
+          zhCN: '等待你确认 · 尚未写入记忆库',
+        ),
       _ when proposal.action == MemoryActionProposal.actionCreate => L.pick(
         en: 'Held by the local duplicate guard · not saved yet',
         zhTW: '本地去重防護攔下 · 尚未寫入',

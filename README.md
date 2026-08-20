@@ -3,12 +3,13 @@
 Holt is a local-first, multi-provider AI companion app built with Flutter. The
 currently supported distributable target is Android arm64.
 
-Conversations, memories and emotion data stay entirely on your device.
-Network requests go only to API endpoints **you** configure — no analytics,
-no ads, no telemetry. Supports multiple model providers and offline local
-models, with deep prompt-caching optimisation to keep long-conversation
-costs down. Build and signing instructions below; privacy details in
-[PRIVACY.md](PRIVACY.md).
+Conversations, memories and emotion data are stored locally on your device.
+When you use a remote model or another network feature, the content required
+for that request is sent to the provider or endpoint **you** configure. Holt
+operates no analytics, advertising or telemetry backend. It supports multiple
+model providers and offline local models, with deep prompt-caching optimisation
+to keep long-conversation costs down. Build and signing instructions are below;
+privacy details are in [PRIVACY.md](PRIVACY.md).
 
 **[Download Holt v1.3.7 APK](https://github.com/cedar-panda/Holt/releases/tag/v1.3.7)**
 
@@ -43,18 +44,21 @@ flutter test
 flutter build apk --release
 ```
 
-Release signing is read from `android/key.properties`. If it or the referenced
-keystore is missing, the project intentionally falls back to a debug signature;
-such an APK must not be distributed.
+Release signing is read from `android/key.properties`. Release APK/AAB tasks
+fail when it or the referenced keystore is missing; the project never falls
+back to a debug signature for a release artifact.
 
 ## Data and network behavior
 
 Chats and app settings are stored locally. Network requests are sent only to
 providers or endpoints configured by the user, except for explicitly requested
-model/file downloads and platform integrations. See [PRIVACY.md](PRIVACY.md).
+model/file downloads and platform integrations. Public compatible endpoints
+must use HTTPS; plain HTTP is accepted only for localhost and private-network
+model servers. See [PRIVACY.md](PRIVACY.md).
 
 Changing the visible product name does not change the Android application ID or
-the Holt JSON backup format. Existing exports remain importable.
+the backup data format. New portable exports are password-encrypted; existing
+JSON and `.holt.zip` exports remain importable.
 
 ## Licensing
 

@@ -1,4 +1,3 @@
-import 'dart:ui';
 import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
 import '../services/locale_strings.dart';
@@ -32,7 +31,14 @@ class KeepAliveGuard {
 }
 
 class ApiAdvancedSettings extends StatefulWidget {
-  const ApiAdvancedSettings({super.key});
+  final bool cacheOnly;
+  final bool showCacheSection;
+
+  const ApiAdvancedSettings({
+    super.key,
+    this.cacheOnly = false,
+    this.showCacheSection = true,
+  });
 
   @override
   State<ApiAdvancedSettings> createState() => _ApiAdvancedSettingsState();
@@ -100,23 +106,52 @@ class _ApiAdvancedSettingsState extends State<ApiAdvancedSettings> {
     setState(() {});
   }
 
-  Widget _buildGlassCard({required Widget child}) {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(YanciTheme.radiusMd),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-        child: Container(
-          padding: const EdgeInsets.symmetric(
-            horizontal: YanciTheme.spacingMd,
-            vertical: YanciTheme.spacingXs,
+  Widget _buildGlassCard({required Widget child, bool bordered = true}) {
+    return Container(
+      padding: const EdgeInsets.symmetric(
+        horizontal: YanciTheme.spacingMd,
+        vertical: YanciTheme.spacingXs,
+      ),
+      decoration: BoxDecoration(
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(YanciTheme.radiusMd),
+        border: bordered
+            ? Border.all(color: _settingsBorderColor, width: 0.75)
+            : null,
+      ),
+      child: child,
+    );
+  }
+
+  Color get _settingsBorderColor => Color.lerp(
+    YanciTheme.textSecondary,
+    YanciTheme.accent,
+    YanciTheme.isDark ? 0.38 : 0.28,
+  )!.withValues(alpha: 0.82);
+
+  Widget _buildFadeDivider() {
+    return SizedBox(
+      height: 1,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            colors: [
+              _settingsBorderColor.withValues(alpha: 0),
+              _settingsBorderColor.withValues(alpha: 0.72),
+              _settingsBorderColor.withValues(alpha: 0),
+            ],
           ),
-          decoration: BoxDecoration(
-            color: YanciTheme.glassInputBg,
-            borderRadius: BorderRadius.circular(YanciTheme.radiusMd),
-            border: Border.all(color: YanciTheme.glassBorder, width: 0.5),
-          ),
-          child: child,
         ),
+      ),
+    );
+  }
+
+  OutlineInputBorder _thinInputBorder({Color? color, double width = 0.75}) {
+    return OutlineInputBorder(
+      borderRadius: BorderRadius.circular(YanciTheme.radiusSm),
+      borderSide: BorderSide(
+        color: color ?? _settingsBorderColor,
+        width: width,
       ),
     );
   }
@@ -152,6 +187,70 @@ class _ApiAdvancedSettingsState extends State<ApiAdvancedSettings> {
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  /// Green remains the semantic "enabled" cue, while the accent tint keeps
+  /// the checkbox coherent across the available theme presets.
+  Color get _checkColor =>
+      Color.lerp(const Color(0xFF4CAF6A), YanciTheme.accent, 0.28)!;
+
+  Widget _buildCheckBox({
+    required bool value,
+    required ValueChanged<bool?>? onChanged,
+  }) {
+    return Checkbox(
+      value: value,
+      onChanged: onChanged,
+      activeColor: _checkColor,
+      checkColor: Colors.white,
+      side: BorderSide(
+        color: YanciTheme.textSecondary.withValues(alpha: 0.56),
+        width: 1.5,
+      ),
+      materialTapTargetSize: MaterialTapTargetSize.padded,
+      visualDensity: VisualDensity.compact,
+    );
+  }
+
+  Widget _buildCheckOption({
+    required String title,
+    required String description,
+    required bool value,
+    required ValueChanged<bool?>? onChanged,
+    double indent = 0,
+  }) {
+    return Padding(
+      padding: EdgeInsets.only(left: indent),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _buildCheckBox(value: value, onChanged: onChanged),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.only(top: 7),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: YanciTheme.bodyText.copyWith(fontSize: 13),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    description,
+                    style: YanciTheme.bodySmall.copyWith(
+                      fontSize: 11,
+                      color: YanciTheme.textSecondary.withValues(alpha: 0.5),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -204,132 +303,77 @@ class _ApiAdvancedSettingsState extends State<ApiAdvancedSettings> {
     );
   }
 
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        _buildCollapsibleTitle(
-          L.get('settings_cache_title'),
-          _showCacheSection,
-          () => setState(() => _showCacheSection = !_showCacheSection),
-        ),
-        if (_showCacheSection) ...[
-          const SizedBox(height: YanciTheme.spacingSm),
-          _buildGlassCard(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            L.get('settings_cache_on'),
-                            style: YanciTheme.bodyText.copyWith(fontSize: 13),
-                          ),
-                          const SizedBox(height: 2),
-                          Text(
-                            L.get('settings_cache_hint'),
-                            style: YanciTheme.bodySmall.copyWith(
-                              fontSize: 11,
-                              color: YanciTheme.textSecondary.withValues(
-                                alpha: 0.5,
-                              ),
-                            ),
-                          ),
-                        ],
+  Widget _buildCacheCard() {
+    return _buildGlassCard(
+      bordered: !widget.cacheOnly,
+      child: FutureBuilder<bool>(
+        future: MemorySettings.getEnablePromptCaching(),
+        builder: (ctx, cacheSnap) {
+          final cacheOn = cacheSnap.data ?? false;
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _buildCheckOption(
+                title: L.get('settings_cache_on'),
+                description: L.get('settings_cache_hint'),
+                value: cacheOn,
+                onChanged: (value) =>
+                    _handlePromptCachingChanged(value ?? false),
+              ),
+              if (cacheOn) ...[
+                const SizedBox(height: 10),
+                _buildFadeDivider(),
+                const SizedBox(height: 8),
+                FutureBuilder<bool>(
+                  future: MemorySettings.getCacheWindowSummaryEnabled(),
+                  builder: (ctx, summarySnap) {
+                    final summaryEnabled = summarySnap.data ?? false;
+                    return _buildCheckOption(
+                      indent: 32,
+                      title: L.pick(
+                        en: '— Dedicated window summary',
+                        zhTW: '— 專用窗口摘要',
                       ),
-                    ),
-                    FutureBuilder<bool>(
-                      future: MemorySettings.getEnablePromptCaching(),
-                      builder: (ctx, snap) {
-                        final enabled = snap.data ?? false;
-                        return Switch(
-                          value: enabled,
-                          activeThumbColor: YanciTheme.accent,
-                          onChanged: _handlePromptCachingChanged,
+                      description: L.pick(
+                        en: 'Pins a window summary into the cacheable prompt for new windows.',
+                        zhTW: '新窗口把窗口摘要釘入可緩存提示。',
+                      ),
+                      value: summaryEnabled,
+                      onChanged: (value) {
+                        MemorySettings.saveCacheWindowSummaryEnabled(
+                          value ?? false,
                         );
+                        setState(() {});
+                        StaticTokenEstimator.showAfterToggle(context);
                       },
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 14),
-                Divider(
-                  height: 1,
-                  color: YanciTheme.glassBorder.withValues(alpha: 0.5),
-                ),
-                const SizedBox(height: 12),
-                FutureBuilder<List<bool>>(
-                  future: Future.wait([
-                    MemorySettings.getEnablePromptCaching(),
-                    MemorySettings.getCacheWindowSummaryEnabled(),
-                  ]),
-                  builder: (ctx, snap) {
-                    final cacheOn = snap.data?[0] ?? false;
-                    final enabled = cacheOn && (snap.data?[1] ?? false);
-                    return Row(
-                      children: [
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                L.pick(
-                                  en: 'Dedicated window summary',
-                                  zhTW: '專用窗口摘要',
-                                ),
-                                style: YanciTheme.bodyText.copyWith(
-                                  fontSize: 13,
-                                  color: cacheOn
-                                      ? YanciTheme.textPrimary
-                                      : YanciTheme.textSecondary.withValues(
-                                          alpha: 0.45,
-                                        ),
-                                ),
-                              ),
-                              const SizedBox(height: 2),
-                              Text(
-                                L.pick(
-                                  en: cacheOn
-                                      ? 'Injects the latest four summaries into the cacheable prompt for new windows.'
-                                      : 'Enable cache hits before turning this on.',
-                                  zhTW: cacheOn
-                                      ? '新窗口把最新四段摘要注入可緩存提示。'
-                                      : '請先開啟緩存命中，才能使用此摘要。',
-                                ),
-                                style: YanciTheme.bodySmall.copyWith(
-                                  fontSize: 11,
-                                  color: YanciTheme.textSecondary.withValues(
-                                    alpha: 0.5,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        Switch(
-                          value: enabled,
-                          activeThumbColor: YanciTheme.accent,
-                          onChanged: cacheOn
-                              ? (v) {
-                                  MemorySettings.saveCacheWindowSummaryEnabled(
-                                    v,
-                                  );
-                                  setState(() {});
-                                  StaticTokenEstimator.showAfterToggle(context);
-                                }
-                              : null,
-                        ),
-                      ],
                     );
                   },
                 ),
               ],
-            ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (widget.cacheOnly) return _buildCacheCard();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (widget.showCacheSection) ...[
+          _buildCollapsibleTitle(
+            L.get('settings_cache_title'),
+            _showCacheSection,
+            () => setState(() => _showCacheSection = !_showCacheSection),
           ),
+          if (_showCacheSection) ...[
+            const SizedBox(height: YanciTheme.spacingSm),
+            _buildCacheCard(),
+          ],
         ],
 
         const SizedBox(height: YanciTheme.spacingLg),
@@ -528,6 +572,7 @@ class _ApiAdvancedSettingsState extends State<ApiAdvancedSettings> {
         if (_showContextSection) ...[
           const SizedBox(height: YanciTheme.spacingSm),
           _buildGlassCard(
+            bordered: false,
             child: FutureBuilder<List<dynamic>>(
               future: Future.wait([
                 MemorySettings.getContextLimitEnabled(),
@@ -547,24 +592,18 @@ class _ApiAdvancedSettingsState extends State<ApiAdvancedSettings> {
                 return Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            L.get('settings_context_desc'),
-                            style: YanciTheme.bodyText.copyWith(fontSize: 13),
-                          ),
-                        ),
-                        Switch(
-                          value: enabled,
-                          activeThumbColor: YanciTheme.accent,
-                          onChanged: cacheOn
-                              ? null
-                              : (v) => _handleContextLimitChanged(v, limit),
-                        ),
-                      ],
+                    _buildCheckOption(
+                      title: L.get('settings_context_desc'),
+                      description: L.get('settings_context_detail'),
+                      value: enabled,
+                      onChanged: cacheOn
+                          ? null
+                          : (v) =>
+                                _handleContextLimitChanged(v ?? false, limit),
                     ),
                     if (enabled) ...[
+                      const SizedBox(height: 10),
+                      _buildFadeDivider(),
                       const SizedBox(height: 8),
                       Row(
                         children: [
@@ -589,8 +628,13 @@ class _ApiAdvancedSettingsState extends State<ApiAdvancedSettings> {
                                   horizontal: 8,
                                   vertical: 6,
                                 ),
-                                border: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(8),
+                                border: _thinInputBorder(),
+                                enabledBorder: _thinInputBorder(),
+                                focusedBorder: _thinInputBorder(
+                                  color: YanciTheme.accent.withValues(
+                                    alpha: 0.85,
+                                  ),
+                                  width: 1,
                                 ),
                               ),
                               controller: TextEditingController(text: '$limit'),
@@ -618,86 +662,42 @@ class _ApiAdvancedSettingsState extends State<ApiAdvancedSettings> {
                         ),
                       ),
                     ],
-                    const SizedBox(height: 4),
-                    Text(
-                      cacheOn
-                          ? (L.pick(
-                              en: 'Turn off cache hits before using context send limit.',
-                              zhTW: '已開啟緩存命中；需先關閉緩存命中才能使用上下文發送限制。',
-                            ))
-                          : enabled
-                          ? (L.pick(
-                              en: '⚠ Context limit may reduce prompt cache hit rate',
-                              zhTW: '⚠ 開啟上下文限制可能降低緩存命中率',
-                            ))
-                          : L.get('settings_context_detail'),
-                      style: YanciTheme.bodySmall.copyWith(
-                        fontSize: 11,
-                        color: enabled || cacheOn
-                            ? Colors.orange.withValues(alpha: 0.7)
-                            : YanciTheme.textSecondary.withValues(alpha: 0.5),
+                    if (cacheOn) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        L.pick(
+                          en: 'Turn off cache hits before using context send limit.',
+                          zhTW: '已開啟緩存命中；需先關閉緩存命中才能使用上下文發送限制。',
+                        ),
+                        style: YanciTheme.bodySmall.copyWith(
+                          fontSize: 11,
+                          color: Colors.orange.withValues(alpha: 0.7),
+                        ),
                       ),
-                    ),
-                    const SizedBox(height: 14),
-                    Divider(
-                      height: 1,
-                      color: YanciTheme.glassBorder.withValues(alpha: 0.5),
-                    ),
-                    const SizedBox(height: 12),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                L.pick(
-                                  en: 'Dynamic window summary',
-                                  zhTW: '動態窗口摘要',
-                                ),
-                                style: YanciTheme.bodyText.copyWith(
-                                  fontSize: 13,
-                                  color: enabled
-                                      ? YanciTheme.textPrimary
-                                      : YanciTheme.textSecondary.withValues(
-                                          alpha: 0.45,
-                                        ),
-                                ),
-                              ),
-                              const SizedBox(height: 2),
-                              Text(
-                                L.pick(
-                                  en: enabled
-                                      ? 'For non-cache models. Sends recent summaries through dynamic context.'
-                                      : 'Enable context send limit before turning this on.',
-                                  zhTW: enabled
-                                      ? '給無緩存模型使用，摘要走動態上下文。'
-                                      : '請先開啟上下文發送限制，才能使用此摘要。',
-                                ),
-                                style: YanciTheme.bodySmall.copyWith(
-                                  fontSize: 11,
-                                  color: YanciTheme.textSecondary.withValues(
-                                    alpha: 0.5,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
+                    ],
+                    if (enabled) ...[
+                      const SizedBox(height: 10),
+                      _buildFadeDivider(),
+                      const SizedBox(height: 8),
+                      _buildCheckOption(
+                        indent: 32,
+                        title: L.pick(
+                          en: '— Dynamic window summary',
+                          zhTW: '— 動態窗口摘要',
                         ),
-                        Switch(
-                          value: enabled && summaryEnabled,
-                          activeThumbColor: YanciTheme.accent,
-                          onChanged: enabled
-                              ? (v) {
-                                  MemorySettings.saveContextWindowSummaryEnabled(
-                                    v,
-                                  );
-                                  setState(() {});
-                                }
-                              : null,
+                        description: L.pick(
+                          en: 'For non-cache models. Sends recent summaries through dynamic context.',
+                          zhTW: '給無緩存模型使用，摘要走動態上下文。',
                         ),
-                      ],
-                    ),
+                        value: summaryEnabled,
+                        onChanged: (v) {
+                          MemorySettings.saveContextWindowSummaryEnabled(
+                            v ?? false,
+                          );
+                          setState(() {});
+                        },
+                      ),
+                    ],
                     if (enabled && summaryEnabled) ...[
                       const SizedBox(height: 10),
                       Row(
@@ -723,8 +723,13 @@ class _ApiAdvancedSettingsState extends State<ApiAdvancedSettings> {
                                   horizontal: 8,
                                   vertical: 6,
                                 ),
-                                border: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(8),
+                                border: _thinInputBorder(),
+                                enabledBorder: _thinInputBorder(),
+                                focusedBorder: _thinInputBorder(
+                                  color: YanciTheme.accent.withValues(
+                                    alpha: 0.85,
+                                  ),
+                                  width: 1,
                                 ),
                               ),
                               controller: TextEditingController(

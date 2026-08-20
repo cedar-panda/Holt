@@ -11,7 +11,9 @@ import '../services/sticker_service.dart';
 import '../services/locale_strings.dart';
 import '../services/tts_service.dart';
 import '../services/settings_manager.dart';
+import '../services/memory_guard_service.dart';
 import '../memory/database.dart';
+import '../models/memory_action_proposal.dart';
 import '../models/web_search_trace.dart';
 import '../services/scratch_service.dart';
 import '../services/transfer_service.dart';
@@ -55,6 +57,9 @@ class ChatBubble extends StatefulWidget {
   final int pendingMemoryActionCount;
   final bool hasUnreadMemoryActions;
   final VoidCallback? onMemoryReviewTap;
+  final List<MemoryActionProposal> pendingMemoryProposals;
+  final Future<void> Function(MemoryActionProposal proposal, String decision)?
+  onInlineMemoryProposal;
   final WebSearchDisplayTrace? webSearchTrace;
 
   /// 記憶過程日誌（注入/寫入/刪除/合併，Done 收尾），空則不顯示
@@ -108,6 +113,8 @@ class ChatBubble extends StatefulWidget {
     this.pendingMemoryActionCount = 0,
     this.hasUnreadMemoryActions = false,
     this.onMemoryReviewTap,
+    this.pendingMemoryProposals = const [],
+    this.onInlineMemoryProposal,
     this.webSearchTrace,
     this.memoryLog = '',
     this.scratchData,
@@ -130,6 +137,7 @@ class _ChatBubbleState extends State<ChatBubble>
 
   bool _thinkingExpanded = false;
   bool _memLogExpanded = false;
+  String? _inlineMemoryBusyId;
   bool _isSaved = false;
   late AnimationController _entryCtrl;
 
@@ -779,6 +787,21 @@ class _ChatBubbleState extends State<ChatBubble>
                                 if (hasBubbleContent)
                                   Builder(
                                     builder: (context) {
+                                      final overlayAsset = widget.isUser
+                                          ? YanciTheme.bubbleUserAsset
+                                          : YanciTheme.bubbleAiAsset;
+                                      final bubbleRadius = overlayAsset != null
+                                          ? BorderRadius.circular(r)
+                                          : BorderRadius.only(
+                                              topLeft: Radius.circular(r),
+                                              topRight: Radius.circular(r),
+                                              bottomLeft: Radius.circular(
+                                                widget.isUser ? r : 4,
+                                              ),
+                                              bottomRight: Radius.circular(
+                                                widget.isUser ? 4 : r,
+                                              ),
+                                            );
                                       final bubble = Container(
                                         padding: const EdgeInsets.symmetric(
                                           horizontal: YanciTheme.spacingMd,
@@ -796,22 +819,17 @@ class _ChatBubbleState extends State<ChatBubble>
                                           gradient: !widget.isUser
                                               ? YanciTheme.aiBubbleGradient
                                               : null,
-                                          borderRadius: BorderRadius.only(
-                                            topLeft: Radius.circular(r),
-                                            topRight: Radius.circular(r),
-                                            bottomLeft: Radius.circular(
-                                              widget.isUser ? r : 4,
-                                            ),
-                                            bottomRight: Radius.circular(
-                                              widget.isUser ? 4 : r,
-                                            ),
-                                          ),
-                                          border: Border.all(
-                                            color: widget.isUser
-                                                ? YanciTheme.userBubbleBorder
-                                                : YanciTheme.aiBubbleBorder,
-                                            width: 0.5,
-                                          ),
+                                          borderRadius: bubbleRadius,
+                                          border: overlayAsset == null
+                                              ? Border.all(
+                                                  color: widget.isUser
+                                                      ? YanciTheme
+                                                            .userBubbleBorder
+                                                      : YanciTheme
+                                                            .aiBubbleBorder,
+                                                  width: 0.5,
+                                                )
+                                              : null,
                                           // 陰影跟主題走：淺色模式輕托一下就好；
                                           // 深色模式黑影在深底上只會發灰，要深一點才成型
                                           boxShadow: [
@@ -933,9 +951,43 @@ class _ChatBubbleState extends State<ChatBubble>
                                           ),
                                         ),
                                       );
+
+                                      // ═══ 特色主題可縮放 PNG 氣泡框 ═══
+                                      final bubbleWithOverlay =
+                                          overlayAsset != null
+                                          ? Stack(
+                                              children: [
+                                                bubble,
+                                                Positioned.fill(
+                                                  child: IgnorePointer(
+                                                    child: Image.asset(
+                                                      overlayAsset,
+                                                      key: const ValueKey(
+                                                        'themed-bubble-frame',
+                                                      ),
+                                                      scale: 16,
+                                                      fit: BoxFit.fill,
+                                                      centerSlice:
+                                                          const Rect.fromLTRB(
+                                                            20,
+                                                            20,
+                                                            60,
+                                                            60,
+                                                          ),
+                                                      filterQuality:
+                                                          FilterQuality.high,
+                                                      errorBuilder: (_, _, _) =>
+                                                          const SizedBox.shrink(),
+                                                    ),
+                                                  ),
+                                                ),
+                                              ],
+                                            )
+                                          : bubble;
+
                                       if (!widget.isUser ||
                                           widget.captureMode) {
-                                        return bubble;
+                                        return bubbleWithOverlay;
                                       }
                                       return GestureDetector(
                                         onLongPressStart: (d) =>
@@ -943,7 +995,7 @@ class _ChatBubbleState extends State<ChatBubble>
                                               context,
                                               d.globalPosition,
                                             ),
-                                        child: bubble,
+                                        child: bubbleWithOverlay,
                                       );
                                     },
                                   ),
@@ -1343,19 +1395,198 @@ class _ChatBubbleState extends State<ChatBubble>
     String emotionCoordinate = '',
   }) {
     final forcedExpanded = widget.thinkingExpandedOverride == true;
-    return _buildToolLog(
+    final hasInlineProposals = _inlineMemoryProposals.isNotEmpty;
+    final logWidget = _buildToolLog(
       log,
       containerKey: const ValueKey('memory-log-container'),
       label: 'Memory',
       icon: Icons.auto_awesome_outlined,
-      expanded: forcedExpanded || _memLogExpanded,
-      onTap: forcedExpanded
+      expanded: forcedExpanded || _memLogExpanded || hasInlineProposals,
+      onTap: forcedExpanded || hasInlineProposals
           ? null
           : () => setState(() => _memLogExpanded = !_memLogExpanded),
       headerTrailing: _buildPendingMemoryActionBadge(),
       trailing: emotionLog.isNotEmpty || emotionCoordinate.isNotEmpty
           ? _buildEmotionBranch(emotionLog, emotionCoordinate)
           : null,
+    );
+    final proposals = _inlineMemoryProposals;
+    if (proposals.isEmpty) return logWidget;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        logWidget,
+        for (final proposal in proposals) _buildInlineMemoryProposal(proposal),
+      ],
+    );
+  }
+
+  List<MemoryActionProposal> get _inlineMemoryProposals => widget
+      .pendingMemoryProposals
+      .where(
+        (proposal) =>
+            proposal.action == MemoryActionProposal.actionCreate &&
+            proposal.canExecute,
+      )
+      .toList(growable: false);
+
+  Future<void> _runInlineMemoryProposal(
+    MemoryActionProposal proposal,
+    String decision,
+  ) async {
+    final callback = widget.onInlineMemoryProposal;
+    if (callback == null || _inlineMemoryBusyId != null) return;
+    setState(() => _inlineMemoryBusyId = proposal.id);
+    try {
+      await callback(proposal, decision);
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('記憶處理失敗：$error')));
+      }
+    } finally {
+      if (mounted) setState(() => _inlineMemoryBusyId = null);
+    }
+  }
+
+  Widget _buildInlineMemoryProposal(MemoryActionProposal proposal) {
+    final candidate = proposal.candidatePreview;
+    final category = candidate['category']?.toString() ?? '';
+    final content = candidate['content']?.toString() ?? '';
+    final triggers = candidate['triggers']?.toString() ?? '';
+    final existing = proposal.targetSnapshots;
+    final hasExisting = existing.isNotEmpty;
+    final busy = _inlineMemoryBusyId == proposal.id;
+    final buttonDisabled = busy || widget.onInlineMemoryProposal == null;
+
+    return Container(
+      key: ValueKey('inline-memory-proposal-${proposal.id}'),
+      width: double.infinity,
+      margin: const EdgeInsets.only(right: 8, top: 7),
+      padding: const EdgeInsets.all(11),
+      decoration: BoxDecoration(
+        color: YanciTheme.accent.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: YanciTheme.accent.withValues(alpha: 0.24),
+          width: 0.7,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                Icons.auto_awesome_outlined,
+                size: 15,
+                color: YanciTheme.accent,
+              ),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  hasExisting
+                      ? L.pick(
+                          en: 'The model suggests updating a memory',
+                          zhTW: '模型建議更新一條記憶',
+                          zhCN: '模型建议更新一条记忆',
+                        )
+                      : L.pick(
+                          en: 'The model wants to remember this',
+                          zhTW: '模型想記住這件事',
+                          zhCN: '模型想记住这件事',
+                        ),
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: YanciTheme.accent,
+                  ),
+                ),
+              ),
+              if (busy)
+                const SizedBox.square(
+                  dimension: 15,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            '[${category.isEmpty ? L.pick(en: 'Memory', zhTW: '記憶', zhCN: '记忆') : category}] $content',
+            style: TextStyle(
+              fontSize: 12,
+              height: 1.45,
+              color: YanciTheme.textPrimary,
+            ),
+          ),
+          if (triggers.isNotEmpty)
+            Text(
+              '@$triggers',
+              style: TextStyle(fontSize: 11, color: YanciTheme.textSecondary),
+            ),
+          if (hasExisting) ...[
+            const SizedBox(height: 5),
+            Text(
+              L.pick(en: 'Current: ', zhTW: '目前記憶：', zhCN: '当前记忆：') +
+                  (existing.first['content']?.toString() ?? ''),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 10,
+                height: 1.4,
+                color: YanciTheme.textSecondary,
+              ),
+            ),
+          ],
+          const SizedBox(height: 7),
+          Wrap(
+            alignment: WrapAlignment.end,
+            spacing: 5,
+            runSpacing: 4,
+            children: [
+              TextButton(
+                onPressed: buttonDisabled
+                    ? null
+                    : () => _runInlineMemoryProposal(proposal, 'reject'),
+                style: TextButton.styleFrom(minimumSize: const Size(0, 40)),
+                child: Text(
+                  hasExisting
+                      ? L.pick(en: 'Keep current', zhTW: '保留目前', zhCN: '保留当前')
+                      : L.pick(en: 'Reject', zhTW: '拒絕', zhCN: '拒绝'),
+                ),
+              ),
+              if (hasExisting && proposal.mergePreview.isNotEmpty)
+                OutlinedButton(
+                  onPressed: buttonDisabled
+                      ? null
+                      : () => _runInlineMemoryProposal(
+                          proposal,
+                          MemoryGuardService.createDecisionMerge,
+                        ),
+                  style: OutlinedButton.styleFrom(
+                    minimumSize: const Size(0, 40),
+                  ),
+                  child: Text(L.pick(en: 'Merge', zhTW: '合併', zhCN: '合并')),
+                ),
+              FilledButton.tonal(
+                onPressed: buttonDisabled
+                    ? null
+                    : () => _runInlineMemoryProposal(
+                        proposal,
+                        MemoryGuardService.createDecisionUseNew,
+                      ),
+                style: FilledButton.styleFrom(minimumSize: const Size(0, 40)),
+                child: Text(
+                  hasExisting
+                      ? L.pick(en: 'Use new', zhTW: '使用新記憶', zhCN: '使用新记忆')
+                      : L.pick(en: 'Save memory', zhTW: '保存記憶', zhCN: '保存记忆'),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
     );
   }
 
@@ -1604,11 +1835,13 @@ class _ChatBubbleState extends State<ChatBubble>
         thinking.isNotEmpty ||
         widget.webSearchTrace != null ||
         memoryLog.isNotEmpty ||
+        _inlineMemoryProposals.isNotEmpty ||
         emotionLog.isNotEmpty ||
         emotionCoordinate.isNotEmpty;
     final expanded = widget.thinkingExpandedOverride == true
         ? hasVisibleDetails
-        : widget.thinkingExpandedOverride ?? _thinkingExpanded;
+        : (widget.thinkingExpandedOverride ?? _thinkingExpanded) ||
+              _inlineMemoryProposals.isNotEmpty;
     final labelColor = _thinkingTreeLabelColor();
     final reduceMotion =
         MediaQuery.disableAnimationsOf(context) || widget.captureMode;
@@ -1685,6 +1918,7 @@ class _ChatBubbleState extends State<ChatBubble>
                       ),
                     ),
                   if (memoryLog.isNotEmpty ||
+                      _inlineMemoryProposals.isNotEmpty ||
                       emotionLog.isNotEmpty ||
                       emotionCoordinate.isNotEmpty)
                     Padding(
@@ -1692,7 +1926,8 @@ class _ChatBubbleState extends State<ChatBubble>
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          if (memoryLog.isNotEmpty)
+                          if (memoryLog.isNotEmpty ||
+                              _inlineMemoryProposals.isNotEmpty)
                             _buildMemoryLog(
                               memoryLog,
                               emotionLog: emotionLog,
@@ -1752,12 +1987,16 @@ class _ChatBubbleState extends State<ChatBubble>
               validLines.join('\n'),
               key: const ValueKey('memory-root-markdown-content'),
             ),
+          for (final proposal in _inlineMemoryProposals)
+            _buildInlineMemoryProposal(proposal),
           if (done)
             Text(
               'Done ✓',
               style: TextStyle(fontSize: 11, color: bodyColor, height: 1.5),
             ),
-          if (validLines.isEmpty && widget.pendingMemoryActionCount > 0)
+          if (validLines.isEmpty &&
+              widget.pendingMemoryActionCount > 0 &&
+              _inlineMemoryProposals.isEmpty)
             Text(
               L.pick(
                 en: 'A memory change is waiting for your review.',

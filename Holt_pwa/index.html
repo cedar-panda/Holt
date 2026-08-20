@@ -1,0 +1,520 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="theme-color" content="#faf9f6">
+    <meta name="description" content="Holt：本機優先的陪伴式對話 PWA">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Holt">
+    <link rel="manifest" href="./manifest.webmanifest">
+    <link rel="apple-touch-icon" href="./assets/images/app_icon.png">
+    <style id="criticalShellStyle">
+      /* Keep an update from exposing unstyled HTML while the shell CSS arrives. */
+      html:not(.holt-css-ready) { background: #faf9f6; }
+      html:not(.holt-css-ready) body { margin: 0; background: #faf9f6; }
+      html:not(.holt-css-ready) .gradient-bg,
+      html:not(.holt-css-ready) .app-root { visibility: hidden; }
+      html:not(.holt-splash-done) .app-root { visibility: hidden; }
+      html:not(.holt-css-ready) #pwaSplash {
+        position: fixed; inset: 0; z-index: 100; display: grid; place-items: center;
+        visibility: visible; background: #faf9f6;
+      }
+    </style>
+    <link rel="stylesheet" href="./styles.css?v=84" onload="document.documentElement.classList.add('holt-css-ready'); window.dispatchEvent(new Event('holt:css-ready'))">
+    <script>
+      // Emergency escape only; normal exit is driven by the stylesheet load event.
+      window.setTimeout(function () {
+        document.documentElement.classList.add('holt-css-ready');
+        window.dispatchEvent(new Event('holt:css-ready'));
+      }, 8000);
+    </script>
+    <title>Holt</title>
+  </head>
+  <body>
+    <!-- ═══ 漸層背景 ═══ -->
+    <div class="gradient-bg"></div>
+
+    <!-- ═══ Holt 原生 App 同步開屏動畫 ═══ -->
+    <div class="pwa-splash" id="pwaSplash" aria-hidden="true">
+      <div class="pwa-splash-stage">
+        <span class="pwa-splash-spark" style="--angle: 0deg; --distance: 112px; --delay: 0ms; --size: 3px"></span>
+        <span class="pwa-splash-spark" style="--angle: 30deg; --distance: 92px; --delay: 80ms; --size: 2px"></span>
+        <span class="pwa-splash-spark" style="--angle: 60deg; --distance: 128px; --delay: 150ms; --size: 3px"></span>
+        <span class="pwa-splash-spark" style="--angle: 90deg; --distance: 102px; --delay: 40ms; --size: 2px"></span>
+        <span class="pwa-splash-spark" style="--angle: 120deg; --distance: 136px; --delay: 220ms; --size: 3px"></span>
+        <span class="pwa-splash-spark" style="--angle: 150deg; --distance: 88px; --delay: 120ms; --size: 2px"></span>
+        <span class="pwa-splash-spark" style="--angle: 180deg; --distance: 118px; --delay: 190ms; --size: 3px"></span>
+        <span class="pwa-splash-spark" style="--angle: 210deg; --distance: 96px; --delay: 60ms; --size: 2px"></span>
+        <span class="pwa-splash-spark" style="--angle: 240deg; --distance: 130px; --delay: 250ms; --size: 3px"></span>
+        <span class="pwa-splash-spark" style="--angle: 270deg; --distance: 108px; --delay: 100ms; --size: 2px"></span>
+        <span class="pwa-splash-spark" style="--angle: 300deg; --distance: 124px; --delay: 180ms; --size: 3px"></span>
+        <span class="pwa-splash-spark" style="--angle: 330deg; --distance: 90px; --delay: 30ms; --size: 2px"></span>
+        <img class="pwa-splash-logo" src="./assets/images/holt_logo.png" alt="Holt">
+        <div class="pwa-splash-title" aria-label="Holt">
+          <span style="--letter: 0">H</span>
+          <span style="--letter: 1">o</span>
+          <span style="--letter: 2">l</span>
+          <span style="--letter: 3">t</span>
+        </div>
+        <span class="pwa-splash-mark" aria-hidden="true">✦</span>
+      </div>
+    </div>
+
+    <!-- ═══ App 外殼 ═══ -->
+    <div class="app-root">
+
+      <!-- Tab 0: API 設定 -->
+      <section class="tab-page" id="tabApi" hidden>
+        <header class="page-header"><h1>API 設定</h1></header>
+        <div class="page-scroll" id="apiPageContent"></div>
+      </section>
+
+      <!-- Tab 1: 用量 -->
+      <section class="tab-page" id="tabUsage" hidden>
+        <header class="page-header"><h1>用量監控</h1></header>
+        <div class="page-scroll" id="usagePageContent">
+          <!-- 時段切換 -->
+          <div class="usage-period-bar" id="usagePeriodBar">
+            <button class="usage-period-btn is-active" data-period="0" type="button">今天</button>
+            <button class="usage-period-btn" data-period="1" type="button">本週</button>
+            <button class="usage-period-btn" data-period="2" type="button">本月</button>
+          </div>
+          <!-- 摘要 -->
+          <div id="usageSummaryArea"></div>
+          <!-- 折線圖 -->
+          <div id="usageChartArea"></div>
+          <!-- 模型分佈 -->
+          <div id="usageModelArea"></div>
+        </div>
+      </section>
+
+      <!-- Tab 2: 首頁 / 對話 (默認) -->
+      <section class="tab-page" id="tabHome">
+        <!-- 首頁視圖 -->
+        <div class="home-view" id="homeView">
+          <button class="home-history-btn" id="homeHistoryBtn" type="button" aria-label="歷史對話" title="歷史對話">
+            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
+              <path d="M3 3v5h5"/>
+              <path d="M12 7v5l4 2"/>
+            </svg>
+          </button>
+          <div class="home-greeting" id="homeGreeting"></div>
+          <div class="home-carousel-stage">
+            <button class="home-carousel-arrow home-carousel-prev" id="homeCarouselPrev" type="button" aria-label="上一個角色" title="上一個角色" hidden>
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>
+            </button>
+            <div class="home-carousel" id="homeCarousel"></div>
+            <button class="home-carousel-arrow home-carousel-next" id="homeCarouselNext" type="button" aria-label="下一個角色" title="下一個角色" hidden>
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>
+            </button>
+          </div>
+          <div class="home-live-stage" id="homeLiveStage">
+            <div class="home-heartbeat-val" id="homeHeartbeatVal" hidden>
+              <svg class="heart-icon" viewBox="0 0 24 24" width="12" height="12" fill="currentColor" aria-hidden="true">
+                <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/>
+              </svg>
+              <span id="homeBpmValue">72</span>
+            </div>
+            <div class="home-ecg-dock" id="homeEcgDock" role="button" tabindex="0" aria-label="開始新對話">
+              <canvas class="home-ecg-canvas" id="homeEcgCanvas"></canvas>
+              <div class="home-pulsing-dot" id="homePulsingDot" aria-hidden="true"></div>
+            </div>
+          </div>
+        </div>
+        <!-- 對話視圖 -->
+        <div class="chat-view" id="chatView" hidden>
+          <header class="chat-appbar">
+            <button class="appbar-back-btn" id="chatBackBtn" type="button" aria-label="返回首頁">
+              <span>‹</span>
+            </button>
+            <div class="appbar-center">
+              <h1 class="appbar-name" id="chatName">對話</h1>
+              <button class="appbar-model-btn" id="chatModelBtn" type="button">… ⌄</button>
+            </div>
+            <div class="appbar-right">
+              <span class="privacy-pill">本機</span>
+            </div>
+          </header>
+
+          <!-- ═══ 對話頂部模型切換彈窗 ═══ -->
+          <div class="chat-model-picker-modal" id="chatModelPickerModal" hidden>
+            <div class="chat-model-picker-panel" role="dialog" aria-modal="true" aria-label="切換模型與思考鏈">
+              <!-- 思考鏈 Ripple Toggle -->
+              <div class="thinking-ripple-toggle-row">
+                <div class="thinking-toggle-info">
+                  <div class="thinking-toggle-title">
+                    <span class="thinking-toggle-sparkle">✦</span>
+                    <span>思考過程</span>
+                  </div>
+                  <small class="thinking-toggle-sub">開啟模型的深度思考鏈 (Reasoning)</small>
+                </div>
+                <label class="thinking-switch" aria-label="開關思考鏈">
+                  <input type="checkbox" id="chatThinkingToggle">
+                  <span class="thinking-slider"></span>
+                </label>
+              </div>
+
+              <div class="model-picker-divider"></div>
+
+              <!-- 搜索框 -->
+              <div class="model-picker-search-wrap">
+                <svg class="model-picker-search-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <circle cx="11" cy="11" r="8"></circle>
+                  <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                </svg>
+                <input type="text" id="chatModelSearchInput" class="model-picker-search-input" placeholder="搜索模型…" autocomplete="off" spellcheck="false">
+              </div>
+
+              <!-- 模型列表 (星標置頂) -->
+              <div class="model-picker-list" id="chatModelPickerList" role="list">
+                <!-- 動態注入模型條目 -->
+              </div>
+
+              <!-- 自訂模型快速輸入 -->
+              <div class="model-picker-custom-row">
+                <input type="text" id="chatCustomModelInput" class="model-picker-custom-input" placeholder="輸入模型 ID…">
+                <button type="button" id="chatCustomModelApply" class="btn-plain">切換</button>
+              </div>
+            </div>
+          </div>
+
+          <section class="message-list" id="messageList" aria-live="polite">
+            <div class="empty-state" id="emptyState">
+              <div class="empty-bubble-icon"><span>···</span></div>
+              <p>想說什麼都可以。</p>
+              <span>從一句話開始。</span>
+            </div>
+          </section>
+          <section class="composer-dock">
+            <div class="composer-shell" id="composerShell">
+              <div class="composer-row">
+                <button class="composer-plus" id="addButton" type="button" aria-label="添加" aria-expanded="false">
+                  <span>＋</span>
+                </button>
+                <textarea id="messageInput" rows="1" maxlength="4000" placeholder="我在……"></textarea>
+                <button class="send-btn" id="sendButton" type="button" aria-label="發送">
+                  <img id="sendLeaf" data-src="./assets/images/send_leaf_optimized.png" alt="" width="32" height="32" decoding="async">
+                </button>
+              </div>
+              <div class="action-panel" id="actionPanel" aria-hidden="true">
+                <div class="action-grid">
+                  <button class="action-tile" type="button" data-action="image">
+                    <span class="action-icon">▧</span><span>圖片</span>
+                  </button>
+                  <button class="action-tile" type="button" data-action="sticker">
+                    <span class="action-icon">☺</span><span>表情包</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+            <input id="imagePicker" class="sr-only" type="file" accept="image/*">
+          </section>
+        </div>
+      </section>
+
+      <!-- Tab 3: 角色列表 (像素級複製 Flutter CharacterListScreen) -->
+      <section class="tab-page" id="tabCharacters" hidden>
+        <header class="page-header">
+          <h1>角色</h1>
+          <div class="page-header-actions">
+            <button class="header-icon-btn" id="importCharBtn" type="button" aria-label="匯入">
+              <svg class="line-icon" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+            </button>
+            <button class="header-icon-btn" id="exportCharBtn" type="button" aria-label="匯出">
+              <svg class="line-icon" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+            </button>
+            <button class="header-icon-btn" id="newCharBtnNav" type="button" aria-label="新增">
+              <svg class="line-icon" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+            </button>
+          </div>
+        </header>
+        <div class="char-page-scroll" id="charPageScroll">
+          <!-- 橫向卡片輪盤 -->
+          <div class="char-carousel-wrap" id="charCarouselWrap">
+            <div class="char-carousel" id="charCarousel"></div>
+          </div>
+          <!-- 頁面指示器 -->
+          <div class="char-dots" id="charDots"></div>
+          <!-- 時間線面板 -->
+          <div class="char-timeline-panel" id="charTimelinePanel" hidden></div>
+          <!-- 偷偷記住你面板 -->
+          <div class="char-selfnotes-panel" id="charSelfNotesPanel" hidden></div>
+          <!-- 底部資源入口 -->
+          <div class="char-resources" id="charResources"></div>
+        </div>
+        <!-- 空狀態 -->
+        <div class="char-empty" id="charEmpty" hidden>
+          <span class="char-empty-icon">👤</span>
+          <p>還沒有角色</p>
+          <small>點右上角 ＋ 建一個</small>
+        </div>
+      </section>
+
+      <!-- Tab 4: 我 -->
+      <section class="tab-page" id="tabProfile" hidden>
+        <div class="page-scroll profile-page" id="profilePageContent">
+          <!-- 原生「我的」頁：保留關鍵入口，不放商店／背包。 -->
+          <header class="profile-topbar">
+            <button class="profile-icon-btn" id="profileThemeToggle" type="button" aria-label="切換日夜模式" aria-pressed="false">
+              <svg class="line-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M2 12h2m16 0h2M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42"/></svg>
+            </button>
+            <h1>我的</h1>
+            <div class="profile-topbar-actions">
+              <button class="profile-icon-btn" id="importDataBtn" type="button" aria-label="匯入備份">
+                <svg class="line-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0 4-4m-4 4-4-4"/><path d="M5 13v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6"/></svg>
+              </button>
+              <button class="profile-icon-btn" id="exportDataBtn" type="button" aria-label="匯出備份">
+                <svg class="line-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 13v5a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-5"/><path d="M12 16V4m0 0-4 4m4-4 4 4"/></svg>
+              </button>
+            </div>
+          </header>
+
+          <button class="profile-identity" id="profileIdentity" type="button" aria-label="編輯個人資料" aria-expanded="false">
+            <span class="profile-avatar-area">
+              <span class="profile-avatar" id="profileAvatar"><svg class="line-icon profile-avatar-default" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3.2"/><path d="M5.5 20a6.5 6.5 0 0 1 13 0"/></svg></span>
+              <span class="profile-avatar-cam" id="profileAvatarBtn" role="button" aria-label="更換頭像">
+                <svg class="line-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h3l1.5-2h7L17 7h3a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2Z"/><circle cx="12" cy="13" r="3.5"/></svg>
+              </span>
+            </span>
+            <span class="profile-name-row"><span class="profile-display-name" id="profileDisplayName">未設定</span><span class="profile-inline-edit" aria-hidden="true"><svg class="line-icon" viewBox="0 0 24 24"><path d="m4 16 9.5-9.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/><path d="m14 6 3 3"/></svg></span></span>
+          </button>
+
+          <div class="profile-divider"><span>✦</span></div>
+
+          <section class="profile-core-actions" aria-label="核心功能">
+            <button class="profile-action-card profile-action-primary" id="profileUsageBtn" type="button">
+              <span class="profile-action-icon"><svg class="line-icon segmented-usage-icon" viewBox="0 0 28 28" aria-hidden="true"><path class="segmented-usage-long" d="M25.99 15.08A12.04 12.04 0 1 1 11.91 2.13"/><path class="segmented-usage-short" d="M18.13 2.69A12.04 12.04 0 0 1 24.89 8.88"/></svg></span>
+              <span class="profile-action-text"><strong>開關</strong><small>查看用量與核心控制</small></span><span class="profile-action-arrow">›</span>
+            </button>
+            <button class="profile-action-card profile-action-primary" id="themeWorkshopBtn" type="button">
+              <span class="profile-action-icon"><svg class="line-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9c0-1.1-.9-2-2-2h-2.5a1.5 1.5 0 0 1-1.5-1.5V7a4 4 0 0 0-4-4Z"/><circle cx="7.5" cy="11" r="1"/><circle cx="10" cy="7.5" r="1"/><circle cx="7.5" cy="15" r="1"/></svg></span>
+              <span class="profile-action-text"><strong>主題工坊</strong><small>主題、氣泡與介面氛圍</small></span><span class="profile-action-arrow">›</span>
+            </button>
+          </section>
+
+          <div class="profile-divider dots"><span>•••</span></div>
+
+          <section class="profile-editor" id="profileEditor" hidden>
+            <div class="profile-form">
+              <label class="field-label" for="profileNick">暱稱</label>
+              <input class="field-input glass-field" id="profileNick" type="text" placeholder="TA 怎麼稱呼你">
+              <label class="field-label" for="profilePronoun">代詞</label>
+              <input class="field-input glass-field" id="profilePronoun" type="text" placeholder="他／她／…">
+              <label class="field-label" for="profileBio">自我介紹</label>
+              <textarea class="field-input field-textarea glass-field" id="profileBio" rows="4" placeholder="告訴 TA 你是誰。&#10;填了才有故事～"></textarea>
+              <label class="field-label" for="profileFont">介面字體</label>
+              <select class="field-input field-select glass-field" id="profileFont"></select>
+              <p class="settings-hint" id="profileFontHint">預設使用裝置內建字體，不會拖慢啟動。</p>
+              <button class="btn-accent-soft profile-save-btn" id="profileSaveBtn" type="button">儲存</button>
+            </div>
+          </section>
+
+          <div class="profile-about">
+            <img src="./assets/images/holt_logo.png" alt="" width="36" height="36" class="profile-about-logo">
+            <p>Holt PWA · 本機優先</p>
+            <small>資料只存在你的裝置上</small>
+          </div>
+        </div>
+        <input id="profileAvatarPicker" class="sr-only" type="file" accept="image/*">
+      </section>
+
+      <!-- PWA 適配版主題工坊：保留預設、氣泡微調；不加入原生粒子／商店／背包。 -->
+      <div class="modal-backdrop theme-workshop-backdrop" id="themeWorkshop" hidden>
+        <section class="theme-workshop-card" role="dialog" aria-modal="true" aria-labelledby="themeWorkshopTitle">
+          <header class="theme-workshop-header"><div><h2 id="themeWorkshopTitle" class="eyebrow" style="margin:0">HOLT ATMOSPHERE</h2></div><button class="modal-close" id="themeWorkshopClose" type="button" aria-label="關閉">×</button></header>
+          <div class="theme-preview" id="themePreview"><div class="theme-preview-bubble ai">想說什麼都可以。</div><div class="theme-preview-bubble user">我在這裡。</div><div class="theme-preview-meta"><strong id="themePreviewName">象牙白</strong><small id="themePreviewSubtitle">窗外透進來的一點天色</small></div></div>
+          <section class="theme-rail-group" aria-labelledby="themeLightLabel"><div class="theme-rail-label" id="themeLightLabel"><strong>日間</strong></div><div class="theme-preset-list" id="themePresetListLight" role="list" aria-label="日間主題"></div></section>
+          <section class="theme-rail-group" aria-labelledby="themeDarkLabel"><div class="theme-rail-label" id="themeDarkLabel"><strong>夜間</strong></div><div class="theme-preset-list" id="themePresetListDark" role="list" aria-label="夜間主題"></div></section>
+          <div class="theme-control-group"><label for="themeBubbleOpacity">氣泡透明度 <output id="themeBubbleOpacityValue">100%</output></label><input id="themeBubbleOpacity" type="range" min="60" max="100" value="100"></div>
+          <div class="theme-control-group"><label for="themeBubbleRadius">氣泡圓角 <output id="themeBubbleRadiusValue">18</output></label><input id="themeBubbleRadius" type="range" min="8" max="28" value="18"></div>
+        </section>
+      </div>
+
+      <!-- ═══ 歷史對話彈窗 ═══ -->
+      <div class="modal-backdrop history-modal-backdrop" id="historyModal" hidden>
+        <section class="history-card" role="dialog" aria-modal="true" aria-labelledby="historyTitle">
+          <header class="history-header">
+            <button class="history-close-btn" id="historyCloseBtn" type="button" aria-label="關閉">
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <line x1="18" y1="6" x2="6" y2="18"></line>
+                <line x1="6" y1="6" x2="18" y2="18"></line>
+              </svg>
+            </button>
+            <h2 id="historyTitle" class="history-title">歷史對話</h2>
+            <button class="history-new-btn" id="historyNewConvBtn" type="button" aria-label="開啟新對話" title="開啟新對話">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <line x1="12" y1="5" x2="12" y2="19"></line>
+                <line x1="5" y1="12" x2="19" y2="12"></line>
+              </svg>
+            </button>
+          </header>
+
+          <div class="history-search-wrap">
+            <svg class="history-search-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="11" cy="11" r="8"></circle>
+              <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+            </svg>
+            <input type="text" id="historySearchInput" class="history-search-input" placeholder="搜索……" autocomplete="off" spellcheck="false">
+            <button class="history-search-clear" id="historySearchClear" type="button" aria-label="清除搜索" hidden>×</button>
+          </div>
+
+          <div class="history-list" id="historyList" role="list">
+            <!-- 歷史對話列表 -->
+          </div>
+        </section>
+      </div>
+
+      <!-- ═══ 底部藥丸導航 ═══ -->
+      <nav class="pill-nav" id="pillNav" aria-label="主導航">
+        <button class="pill-nav-item" data-tab="0" type="button">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>
+          <span>API</span>
+        </button>
+        <button class="pill-nav-item" data-tab="1" type="button">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 20V10M12 20V4M6 20v-6"/></svg>
+          <span>用量</span>
+        </button>
+        <button class="pill-nav-item is-active" data-tab="2" type="button">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+          <span>對話</span>
+        </button>
+        <button class="pill-nav-item" data-tab="3" type="button">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+          <span>角色</span>
+        </button>
+        <button class="pill-nav-item" data-tab="4" type="button">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+          <span>我</span>
+        </button>
+      </nav>
+    </div>
+
+    <!-- 浮層 -->
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+    <!-- 角色編輯（全屏，像素級複製 Flutter CharacterCardScreen）-->
+    <div class="char-edit-page" id="charModal" hidden>
+      <!-- 頂部導航列 -->
+      <header class="char-edit-header">
+        <button class="header-icon-btn" id="charCancelBtn" type="button" aria-label="返回">
+          <svg class="line-icon" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg>
+        </button>
+        <h2 class="char-edit-title" id="charModalTitle">新角色</h2>
+        <div class="char-edit-header-actions" id="charEditActions">
+          <button class="header-icon-btn" id="charShareBtn" type="button" aria-label="分享" hidden>
+            <svg class="line-icon" viewBox="0 0 24 24"><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg>
+          </button>
+          <button class="header-icon-btn char-delete-btn" id="charDeleteBtn" type="button" aria-label="刪除" hidden>
+            <svg class="line-icon" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+          </button>
+        </div>
+      </header>
+
+      <!-- 可滾動主體 -->
+      <div class="char-edit-scroll">
+        <!-- 頂部：頭像（左）+ 基本欄位（右）-->
+        <div class="char-edit-top-row">
+          <!-- 2:3 頭像區 -->
+          <div class="char-avatar-upload" id="charAvatarUpload">
+            <div class="char-avatar-placeholder" id="charAvatarPreview">
+              <svg class="line-icon" viewBox="0 0 24 24" style="width:36px;height:36px;opacity:.3"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+              <span class="char-avatar-hint">上傳圖片</span>
+            </div>
+            <input type="file" id="charAvatarInput" accept="image/*" hidden>
+          </div>
+
+          <!-- 右側基本資訊玻璃卡 -->
+          <div class="char-info-glass">
+            <div class="char-compact-field">
+              <span class="char-compact-label">名字：</span>
+              <input class="char-compact-input" id="charName" type="text" placeholder="角色名稱">
+            </div>
+            <div class="char-compact-field">
+              <span class="char-compact-label">性別：</span>
+              <input class="char-compact-input" id="charGender" type="text" placeholder="不限">
+            </div>
+            <div class="char-compact-field">
+              <span class="char-compact-label">關係：</span>
+              <input class="char-compact-input" id="charRelationship" type="text" placeholder="伴侶、朋友……">
+            </div>
+          </div>
+        </div>
+
+        <!-- 角色設定（大文字框）-->
+        <div class="char-desc-wrap">
+          <textarea class="char-desc-input" id="charDesc" rows="6" placeholder="性格、說話方式、背景故事……"></textarea>
+        </div>
+
+        <!-- 更多屬性 -->
+        <div class="char-extras-toggle" id="charExtrasToggle">
+          <span class="char-extras-check" id="charExtrasIcon">☐</span>
+          <span>更多屬性</span>
+        </div>
+        <div class="char-extras" id="charExtras" hidden>
+          <div class="char-field-row">
+            <span class="char-field-label">種族</span>
+            <div class="char-field-glass"><input class="char-field-input" id="charRace" type="text" placeholder="人類、精靈……"></div>
+          </div>
+          <div class="char-field-row">
+            <span class="char-field-label">特長</span>
+            <div class="char-field-glass"><input class="char-field-input" id="charSkill" type="text" placeholder="技能"></div>
+          </div>
+          <div class="char-field-row">
+            <span class="char-field-label">年齡</span>
+            <div class="char-field-glass"><input class="char-field-input" id="charAge" type="text"></div>
+          </div>
+          <div class="char-field-row">
+            <span class="char-field-label">身高</span>
+            <div class="char-field-glass"><input class="char-field-input" id="charHeight" type="text"></div>
+          </div>
+        </div>
+
+        <!-- 角色筆記 -->
+        <div class="char-desc-wrap">
+          <label class="char-section-label">角色筆記</label>
+          <textarea class="char-desc-input" id="charSelfNotes" rows="4" placeholder="注入 system prompt 的自由文字"></textarea>
+        </div>
+
+        <!-- 儲存按鈕 -->
+        <button class="char-save-btn" id="charSaveBtn" type="button">準備好了</button>
+
+        <div style="height:40px"></div>
+      </div>
+    </div>
+
+    <!-- Onboarding -->
+    <div class="onboarding-backdrop" id="onboarding" hidden>
+      <section class="onboarding-card" role="dialog" aria-modal="true">
+        <div class="onboarding-mark"><img src="./assets/images/holt_logo.png" alt="" width="56" height="56"></div>
+        <div id="onboardingSteps">
+          <article class="ob-step is-active" data-step="0">
+            <p class="eyebrow">WELCOME TO HOLT</p>
+            <h2>這是你的本機優先對話空間</h2>
+            <p>所有資料留在這個裝置的瀏覽器裡，不會上傳。</p>
+          </article>
+          <article class="ob-step" data-step="1">
+            <p class="eyebrow">SETUP</p>
+            <h2>先設定 API Key</h2>
+            <p>點底部 API tab，填入 OpenRouter 或其他 provider 的 key。</p>
+          </article>
+          <article class="ob-step" data-step="2">
+            <p class="eyebrow">CHARACTERS</p>
+            <h2>創建角色開始對話</h2>
+            <p>在角色 tab 建一個角色，回首頁點星號開始聊。</p>
+          </article>
+        </div>
+        <div class="ob-footer">
+          <button class="btn-plain" id="skipOb" type="button">略過</button>
+          <div class="ob-dots"><span class="ob-dot is-active"></span><span class="ob-dot"></span><span class="ob-dot"></span></div>
+          <button class="btn-primary" id="nextOb" type="button">下一步</button>
+        </div>
+      </section>
+    </div>
+
+    <script src="./splash.js?v=4"></script>
+    <script type="module" src="./app.js?v=84"></script>
+  </body>
+</html>

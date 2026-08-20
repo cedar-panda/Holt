@@ -461,12 +461,15 @@ extension _HomeProfileMethods on _HomeScreenState {
               children: [
                 Expanded(
                   child: _buildGridTile(
-                    title: L.pick(en: 'Local Models', zhTW: '本地模型'),
-                    icon: Icons.phone_android_rounded,
+                    title: L.pick(
+                      en: 'Profile',
+                      zhTW: 'Profile',
+                      zhCN: 'Profile',
+                    ),
+                    icon: Icons.person_outline_rounded,
                     height: 76,
                     isSecondary: true,
-                    onTap: () =>
-                        Navigator.of(context).pushNamed('/local_models'),
+                    onTap: () => Navigator.of(context).pushNamed('/profile'),
                   ),
                 ),
                 const SizedBox(width: 14),
@@ -599,6 +602,26 @@ extension _HomeProfileMethods on _HomeScreenState {
     if (confirmed != true) return;
     if (!mounted) return;
 
+    final selectedFile = File(filePath);
+    if (!await selectedFile.exists()) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(L.pick(en: 'Backup file not found.', zhTW: '找不到備份檔。')),
+          backgroundColor: Colors.red.shade400,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
+    final isEncrypted = await BackupService.isEncryptedBackup(filePath);
+    String? password;
+    if (isEncrypted) {
+      password = await _promptBackupPassword(confirmPassword: false);
+      if (password == null || !mounted) return;
+    }
+    if (!mounted) return;
+
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Row(
@@ -622,15 +645,19 @@ extension _HomeProfileMethods on _HomeScreenState {
     );
 
     try {
-      final file = File(filePath);
-      if (!await file.exists()) throw '檔案不存在：$filePath';
-      final header = await file.openRead(0, 4).first;
+      final header = await selectedFile.openRead(0, 4).first;
       final isZip =
           header.length >= 2 && header[0] == 0x50 && header[1] == 0x4B;
-      final result = isZip
+      final result = isEncrypted
+          ? await BackupService.importEncryptedPortableBundle(
+              path: filePath,
+              password: password!,
+            )
+          : isZip
           ? await BackupService.importPortableBundle(filePath)
           : await BackupService.importFromJson(
-              jsonDecode(await file.readAsString()) as Map<String, dynamic>,
+              jsonDecode(await selectedFile.readAsString())
+                  as Map<String, dynamic>,
             );
       await _reloadHomeAfterRestore();
       if (!mounted) return;
@@ -667,6 +694,8 @@ extension _HomeProfileMethods on _HomeScreenState {
 
   Future<void> _handleExportBackup(_BackupExportMode mode) async {
     if (!mounted || _backupExportRunning) return;
+    final password = await _promptBackupPassword(confirmPassword: true);
+    if (password == null || !mounted) return;
     _backupExportRunning = true;
     String? artifactPath;
     ScaffoldMessenger.of(context).showSnackBar(
@@ -691,7 +720,9 @@ extension _HomeProfileMethods on _HomeScreenState {
       ),
     );
     try {
-      artifactPath = await BackupService.exportPortableBundle();
+      artifactPath = await BackupService.exportPortableBundle(
+        password: password,
+      );
       if (!mounted) return;
       ScaffoldMessenger.of(context).hideCurrentSnackBar();
 
@@ -738,10 +769,17 @@ extension _HomeProfileMethods on _HomeScreenState {
         try {
           await BackupService.discardExportArtifact(artifactPath);
         } catch (error) {
-          debugPrint('Export artifact cleanup failed: $error');
+          debugPrint('Export artifact cleanup failed (${error.runtimeType})');
         }
       }
     }
+  }
+
+  Future<String?> _promptBackupPassword({required bool confirmPassword}) async {
+    return showDialog<String>(
+      context: context,
+      builder: (_) => _BackupPasswordDialog(confirmPassword: confirmPassword),
+    );
   }
 
   Future<bool> _saveExportedBackup(String path) async {
@@ -753,7 +791,7 @@ extension _HomeProfileMethods on _HomeScreenState {
       final uri = await DeviceFileSaver.saveAndroidFile(
         sourcePath: path,
         suggestedName: fileName,
-        mimeType: 'application/zip',
+        mimeType: 'application/octet-stream',
       );
       return uri != null;
     }
@@ -774,7 +812,7 @@ extension _HomeProfileMethods on _HomeScreenState {
     final fileName = p.basename(path);
     final result = await SharePlus.instance.share(
       ShareParams(
-        files: <XFile>[XFile(path, mimeType: 'application/zip')],
+        files: <XFile>[XFile(path, mimeType: 'application/octet-stream')],
         fileNameOverrides: <String>[fileName],
         title: L.pick(en: 'Share Holt backup', zhTW: '分享 Holt 備份'),
         sharePositionOrigin: const Rect.fromLTWH(0, 0, 1, 1),
@@ -877,7 +915,7 @@ extension _HomeProfileMethods on _HomeScreenState {
     if (!mounted) return;
     final legacyStats = await BackupService.getLegacyExportStats();
     if (!mounted) return;
-    showModalBottomSheet<void>(
+    final action = await showModalBottomSheet<_BackupSheetAction>(
       context: context,
       backgroundColor: Colors.transparent,
       isScrollControlled: true,
@@ -934,8 +972,7 @@ extension _HomeProfileMethods on _HomeScreenState {
                       const Spacer(),
                       IconButton(
                         onPressed: () {
-                          Navigator.pop(sheetContext);
-                          _handleExportBackup(_BackupExportMode.share);
+                          Navigator.pop(sheetContext, _BackupSheetAction.share);
                         },
                         tooltip: L.get('me_share_backup'),
                         constraints: const BoxConstraints(
@@ -952,8 +989,10 @@ extension _HomeProfileMethods on _HomeScreenState {
                         const SizedBox(width: 4),
                         IconButton(
                           onPressed: () {
-                            Navigator.pop(sheetContext);
-                            _confirmDeleteLegacyExports(legacyStats);
+                            Navigator.pop(
+                              sheetContext,
+                              _BackupSheetAction.cleanup,
+                            );
                           },
                           tooltip:
                               '${L.get('me_cleanup_exports')} · '
@@ -1040,8 +1079,7 @@ extension _HomeProfileMethods on _HomeScreenState {
                     title: L.get('me_export_json'),
                     subtitle: L.get('me_export_json_sub'),
                     onTap: () {
-                      Navigator.pop(sheetContext);
-                      _handleExportBackup(_BackupExportMode.save);
+                      Navigator.pop(sheetContext, _BackupSheetAction.save);
                     },
                   ),
                   const SizedBox(height: 8),
@@ -1051,8 +1089,7 @@ extension _HomeProfileMethods on _HomeScreenState {
                     subtitle: L.get('me_import_json_sub'),
                     warning: true,
                     onTap: () {
-                      Navigator.pop(sheetContext);
-                      _handleImportBackup();
+                      Navigator.pop(sheetContext, _BackupSheetAction.import);
                     },
                   ),
                 ],
@@ -1062,6 +1099,21 @@ extension _HomeProfileMethods on _HomeScreenState {
         ),
       ),
     );
+
+    // 先等待底部窗口完整退出，再建立下一個 dialog/文件選擇器。
+    // 若在 pop 動畫期間立即 push，Flutter 會在 InheritedElement 尚未
+    // 完成 deactivate 時看到仍有 dependents，觸發 framework assertion。
+    if (!mounted || action == null) return;
+    switch (action) {
+      case _BackupSheetAction.save:
+        await _handleExportBackup(_BackupExportMode.save);
+      case _BackupSheetAction.share:
+        await _handleExportBackup(_BackupExportMode.share);
+      case _BackupSheetAction.import:
+        await _handleImportBackup();
+      case _BackupSheetAction.cleanup:
+        await _confirmDeleteLegacyExports(legacyStats);
+    }
   }
 
   String _formatBackupTime(DateTime? value) {
@@ -1166,6 +1218,148 @@ extension _HomeProfileMethods on _HomeScreenState {
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (ctx) => BackpackBottomSheet(ownerId: ownerId),
+    );
+  }
+}
+
+class _BackupPasswordDialog extends StatefulWidget {
+  final bool confirmPassword;
+
+  const _BackupPasswordDialog({required this.confirmPassword});
+
+  @override
+  State<_BackupPasswordDialog> createState() => _BackupPasswordDialogState();
+}
+
+class _BackupPasswordDialogState extends State<_BackupPasswordDialog> {
+  final TextEditingController _passwordController = TextEditingController();
+  final TextEditingController _confirmationController = TextEditingController();
+  String? _errorText;
+
+  @override
+  void dispose() {
+    _passwordController.dispose();
+    _confirmationController.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final password = _passwordController.text;
+    if (password.isEmpty) {
+      setState(
+        () => _errorText = L.pick(
+          en: 'Enter the backup password.',
+          zhTW: '請輸入備份密碼。',
+        ),
+      );
+      return;
+    }
+    if (widget.confirmPassword && password.length < 8) {
+      setState(
+        () => _errorText = L.pick(
+          en: 'Use at least 8 characters.',
+          zhTW: '請至少使用 8 個字元。',
+        ),
+      );
+      return;
+    }
+    if (widget.confirmPassword && password != _confirmationController.text) {
+      setState(
+        () => _errorText = L.pick(
+          en: 'The passwords do not match.',
+          zhTW: '兩次輸入的密碼不一致。',
+        ),
+      );
+      return;
+    }
+    Navigator.pop(context, password);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final confirmPassword = widget.confirmPassword;
+    return AlertDialog(
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(YanciTheme.radiusMd),
+      ),
+      backgroundColor: YanciTheme.isDark
+          ? const Color(0xFF1E1E2E)
+          : Colors.white,
+      title: Text(
+        L.pick(
+          en: confirmPassword ? 'Encrypt backup' : 'Unlock backup',
+          zhTW: confirmPassword ? '加密備份' : '解鎖備份',
+        ),
+        style: TextStyle(
+          color: YanciTheme.textPrimary,
+          fontFamily: YanciTheme.fontFamily,
+        ),
+      ),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            L.pick(
+              en: confirmPassword
+                  ? 'This password is required to restore the backup. Holt cannot recover it for you.'
+                  : 'Enter the password used when this backup was created.',
+              zhTW: confirmPassword
+                  ? '還原備份時必須輸入此密碼；Holt 無法替你找回。'
+                  : '請輸入建立這份備份時使用的密碼。',
+            ),
+            style: TextStyle(
+              color: YanciTheme.textSecondary,
+              fontFamily: YanciTheme.fontFamily,
+            ),
+          ),
+          const SizedBox(height: 16),
+          TextField(
+            controller: _passwordController,
+            autofocus: true,
+            obscureText: true,
+            enableSuggestions: false,
+            autocorrect: false,
+            textInputAction: confirmPassword
+                ? TextInputAction.next
+                : TextInputAction.done,
+            onSubmitted: confirmPassword ? null : (_) => _submit(),
+            decoration: InputDecoration(
+              labelText: L.pick(en: 'Password', zhTW: '備份密碼'),
+              errorText: _errorText,
+            ),
+          ),
+          if (confirmPassword) ...[
+            const SizedBox(height: 12),
+            TextField(
+              controller: _confirmationController,
+              obscureText: true,
+              enableSuggestions: false,
+              autocorrect: false,
+              textInputAction: TextInputAction.done,
+              onSubmitted: (_) => _submit(),
+              decoration: InputDecoration(
+                labelText: L.pick(en: 'Confirm password', zhTW: '再次輸入密碼'),
+              ),
+            ),
+          ],
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: Text(L.get('cancel')),
+        ),
+        TextButton(
+          onPressed: _submit,
+          child: Text(
+            L.pick(
+              en: confirmPassword ? 'Encrypt' : 'Unlock',
+              zhTW: confirmPassword ? '加密匯出' : '解鎖',
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

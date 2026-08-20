@@ -11,9 +11,11 @@ services they add.
 - API credentials, which are stored through platform secure storage where the
   platform supports it
 
-Android system backup is disabled for the app. User-controlled JSON export and
-import is the supported migration mechanism. Exported JSON may contain private
-conversation data and should be protected by the user.
+Android system backup and device-transfer extraction are excluded for app data.
+User-controlled export and import is the supported migration mechanism. New
+portable exports are encrypted with a user-supplied password; existing JSON and
+`.holt.zip` exports remain importable for compatibility and must still be
+treated as plaintext private data.
 
 ## Data sent off the device
 
@@ -22,6 +24,10 @@ context are sent to that provider or to the user-configured compatible
 endpoint. Provider handling is governed by that provider's terms and privacy
 policy. Voice, image, X/OAuth and model-download features contact their
 respective service only when configured or invoked.
+
+User-configured public OpenAI-compatible endpoints must use HTTPS. Plain HTTP
+is accepted only for localhost, private-network IP addresses and `.local`
+hosts, where transport security remains the user's network responsibility.
 
 Local-model inference remains on the device after the required model files have
 been downloaded. Android speech recognition behavior depends on the recognition
@@ -32,12 +38,13 @@ service installed on the device and may use that service's network processing.
 Web search is a developer preview and is disabled by default. Release builds
 also exclude live execution unless the distributor explicitly enables it at
 build time after reviewing the current provider terms, audience and available
-regions. When it is enabled, the app shows the exact
-outgoing search request and the planned recipients before every search. No
-request is sent until the user confirms it. A provider may rewrite that request
-into one or more underlying search queries.
+regions. Enabling web search authorizes the app to execute detected explicit
+web-search requests without a separate confirmation dialog before each search.
+The in-chat search activity shows the outgoing request and selected providers
+while the search runs. A provider may rewrite that request into one or more
+underlying search queries.
 
-- Gemini mode sends the confirmed request to the selected Gemini model and
+- Gemini mode sends the outgoing request to the selected Gemini model and
   Google Search. Gemini Developer API is intended for professional or business
   use, and API clients must not be directed to or likely accessed by people
   under 18. Google states that grounding prompt, context and output data may be
@@ -46,7 +53,7 @@ into one or more underlying search queries.
   reviewers may process them. The app blocks credential-like text and some
   recognizable personal-data patterns, but this detection is not complete; do
   not submit personal, sensitive, confidential or identifying information.
-- OpenRouter mode sends the confirmed request to OpenRouter, one inference
+- OpenRouter mode sends the outgoing request to OpenRouter, one inference
   endpoint dynamically selected for the explicitly named model, and the Exa
   web-search tool. The app asks OpenRouter to use a non-collecting Zero Data
   Retention inference endpoint and disables endpoint fallback. Router aliases,
@@ -58,7 +65,7 @@ into one or more underlying search queries.
   confirmed that no default web plugin is enforced, otherwise an additional
   search route and charge may occur. The Exa server-tool route can have separate
   retention terms, and each recipient's terms and privacy policy apply.
-- Dual mode sends the same confirmed request to both routes and counts as two
+- Dual mode sends the same outgoing request to both routes and counts as two
   provider launches. The two providers may create different underlying search
   queries, and their results, retention and charges remain separate.
 
@@ -80,5 +87,7 @@ records.
 
 ## Logs
 
-Debug builds can emit diagnostic information to Android logs. Distributors
-should use release builds and review logging before publication.
+Debug builds can emit diagnostic metadata to Android logs. Confirmed sensitive
+paths log counts or error types instead of search text, credentials or provider
+response bodies. Distributors should still use release builds and review any
+new logging before publication.

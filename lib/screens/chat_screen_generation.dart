@@ -1028,6 +1028,21 @@ extension _ChatGenerationMethods on _ChatScreenState {
     unawaited(
       DreamCurationService.maybeTrigger(characterId: _activeCharacterId),
     );
+
+    // 簽名使用獨立請求，不進聊天歷史、StructuredPrompt 或 cache 前綴。
+    final signatureCharacterId = _activeCharacterId;
+    unawaited(
+      CharacterSignatureService.generateAndSave(
+        characterId: signatureCharacterId,
+        latestUserMessage: userText,
+        latestAssistantReply: assistantText,
+        model: model,
+        provider: provider,
+      ).catchError((Object error) {
+        debugPrint('個性簽名生成失敗：$error');
+        return null;
+      }),
+    );
   }
 
   Future<void> _maybeRunTokenTriggeredMaintenance({
@@ -1425,7 +1440,19 @@ extension _ChatGenerationMethods on _ChatScreenState {
         WebSearchSettings.getDailyProviderLaunchCap(),
         WebSearchSettings.getMaxResults(),
       ]);
-      if (settings[0] != true) return;
+      if (settings[0] != true) {
+        _setWebSearchFailure(
+          generationSerial: generationSerial,
+          query: query,
+          providers: const <String>[],
+          safeMessage: L.pick(
+            en: 'Web search is turned off in API settings.',
+            zhTW: '網路搜尋已在 API 設定中關閉。',
+            zhCN: '网络搜索已在 API 设置中关闭。',
+          ),
+        );
+        return;
+      }
       resolvedPlan = await _webSearchService.resolvePlan(
         settings[1] as WebSearchMode,
       );
@@ -2258,7 +2285,8 @@ extension _ChatGenerationMethods on _ChatScreenState {
     if (preflightExplicitQuery != null) {
       preflightSearchExecuted = true;
       debugPrint(
-        '[WebSearch] Executing pre-flight search for: "$preflightExplicitQuery"',
+        '[WebSearch] Executing pre-flight search '
+        '(queryChars=${preflightExplicitQuery.runes.length})',
       );
       await _runWebSearchIntent(
         query: preflightExplicitQuery,
@@ -2391,6 +2419,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
           : MemoryActions.stripReply(
               replyTextWithoutWebSearch,
               windowId: widget.conversationId,
+              captureSearchQuery: true,
             );
 
       // ═══ 蛛網專屬標籤：<memo_link> 與 <force_recall> 處理 ═══
@@ -2639,8 +2668,10 @@ extension _ChatGenerationMethods on _ChatScreenState {
           _finishFailedGeneration();
           return;
         }
-        final searchResults = searchResult
-            .requireData<List<Map<String, dynamic>>>();
+        final searchFailed = !searchResult.isSuccess;
+        final searchResults = searchFailed
+            ? <Map<String, dynamic>>[]
+            : searchResult.requireData<List<Map<String, dynamic>>>();
         // Phase 2: 顯示搜索結果
         if (mounted) {
           _refreshChatState(() {
@@ -2649,53 +2680,51 @@ extension _ChatGenerationMethods on _ChatScreenState {
           });
           _scrollToBottom();
         }
-        if (searchResults.isNotEmpty) {
+        {
           final nick = userNicknameStr.isNotEmpty
               ? userNicknameStr
               : L.pick(en: 'the other person', zhTW: '對方');
-          final resultLines = searchResults.map((r) {
-            final who = (r['is_user'] as int) == 1
-                ? nick
-                : L.pick(en: 'you', zhTW: '你');
-            final date = (r['created_at'] as String).substring(0, 10);
-            var t = r['text'] as String;
-            if (t.length > 200) t = '${t.substring(0, 200)}…';
-            return '[$date] $who${L.pick(en: ': ', zhTW: '：')}$t';
-          }).toList();
-          final searchHeader = L.pick(
-            en: '【Hidden Chat Retrieval Results | invisible to user】\nQuery: ',
-            zhTW: '【隱藏歷史檢索結果｜user 不可見】\n查詢詞：',
+          final resultLines = searchResults
+              .map((r) {
+                final who = (r['is_user'] as int) == 1
+                    ? nick
+                    : L.pick(en: 'you', zhTW: '你');
+                final rawDate = r['created_at']?.toString() ?? '';
+                final date = rawDate.length >= 10
+                    ? rawDate.substring(0, 10)
+                    : rawDate;
+                var t = r['text']?.toString() ?? '';
+                if (t.length > 200) t = '${t.substring(0, 200)}…';
+                return '[$date] $who${L.pick(en: ': ', zhTW: '：')}$t';
+              })
+              .toList(growable: false);
+          final retrievalContext = ChatSearchFollowUp.context(
+            query: searchQuery,
+            excerpts: resultLines,
+            failed: searchFailed,
           );
-          final searchRules = L.pick(
-            en: 'Rules: This is internal reference material only. Do not say “I searched”, mention chat records, keywords, browsers, or reveal the retrieval process; do not output a list. Weave useful information naturally into the next visible reply while continuing the prior tone and relationship state.',
-            zhTW:
-                '規則：這些內容只是系統給你的內部參考。不要說「我搜尋到了」「聊天記錄」「關鍵詞」「瀏覽器」或展示檢索過程；不要列清單。請把有用資訊自然融入下一句正式回覆，延續先前語氣與關係狀態。',
-          );
-          final injection =
-              '$searchHeader「$searchQuery」\n${resultLines.join('\n')}\n---\n$searchRules';
-          // TODO(tool-result-transport): ApiAdapter 目前只接受字串 role；待所有
-          // provider 有統一 typed event 後，改用真正 tool_result／request-only
-          // sidecar，不能長期把 App 產生的檢索資料借作 user role。
-          final followHistory = [
-            ...history,
-            if (processedText.trim().isNotEmpty)
-              {'role': 'assistant', 'content': processedText},
-            {'role': 'user', 'content': injection},
-          ];
           // Phase 3: 二次流式生成
           final buf = StringBuffer();
           var followUsage = const ApiUsage();
           if (mounted) {
-            _onStreamChunk('\n\n');
+            _refreshChatState(() {
+              _clearStreamQueue();
+              _streamingText = '';
+            });
           }
           if (_stopGenerationRequested) {
             _finishFailedGeneration();
             return;
           }
           await for (final chunk in adapter.sendMessageStream(
-            messages: followHistory,
+            messages: history,
             model: model,
-            structuredPrompt: structured,
+            structuredPrompt: structured.copyWith(
+              liveStatePart: SystemContextMarkdown.join(<String>[
+                structured.liveStatePart,
+                retrievalContext,
+              ]),
+            ),
             onUsage: (usage) => followUsage = usage,
           )) {
             if (!_isCurrentGeneration(generationSerial)) return;
@@ -2753,7 +2782,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
               .replaceAll(RegExp(r'<draw>[\s\S]*?</draw>'), '')
               .trim();
           if (followUp.isNotEmpty) {
-            processedText = '$processedText\n\n$followUp'.trim();
+            processedText = followUp;
           }
         }
         // Phase 4: 清除搜索卡片
@@ -3244,6 +3273,10 @@ extension _ChatGenerationMethods on _ChatScreenState {
       'imagegen',
     );
     final imgProviderName = await ApiSettings.getApiProviderName();
+    // Keep the image path's stable prompt prefix identical to the text path.
+    // The image request itself still does not execute web.search here; this
+    // flag only keeps the cacheable capability contract from drifting.
+    final imgWebSearchEnabled = await WebSearchSettings.getEnabled();
     final staticBundle = await _buildCommonStaticParts(
       characterId: _activeCharacterId,
       systemPrompt: systemPrompt,
@@ -3257,9 +3290,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
       emotionEnabled: emotionEnabled,
       bioclockEnabled: imgBioclockEnabled,
       imagegenEnabled: imgImagegenEnabled,
-      // Image/call paths do not execute web.search in v1. Keep the capability
-      // out of their static prompt so a tag is never silently ignored.
-      webSearchEnabled: false,
+      webSearchEnabled: imgWebSearchEnabled,
       whisperModelOverrideEnabled:
           (charDataImg?['whisper_model_override'] as int? ?? 1) == 1,
       providerName: imgProviderName,
@@ -3441,6 +3472,28 @@ extension _ChatGenerationMethods on _ChatScreenState {
       );
     }
 
+    // Keep the same stable control prompt as text messages. If this is
+    // omitted, concise/freeform settings change the cacheable prefix only
+    // when the user sends an image.
+    final imgConciseOn = await ApiSettings.getConciseMode();
+    final imgFreeformOn = await ApiSettings.getFreeformMode();
+    final imgReplyStyle = ToolPrompts.selectedReplyStyle(
+      conciseOn: imgConciseOn,
+      freeformOn: imgFreeformOn,
+      emotionEnabled: emotionEnabled,
+      maxLines: imgFreeformOn ? await ApiSettings.getFreeformMaxLines() : 0,
+    );
+    if (imgReplyStyle.isNotEmpty) {
+      controlParts.add(
+        SystemContextMarkdown.section(
+          enTitle: 'Reply Style',
+          zhTWTitle: '回覆風格',
+          zhCNTitle: '回复风格',
+          content: imgReplyStyle,
+        ),
+      );
+    }
+
     final liveDynamicPart = SystemContextMarkdown.join(dynamicParts);
     final structured = StructuredPrompt(
       staticPart: staticBundle.staticPart,
@@ -3587,6 +3640,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
           : MemoryActions.stripReply(
               replyText,
               windowId: widget.conversationId,
+              captureSearchQuery: true,
             );
       // ═══ 蛛網專屬標籤：<memo_link> 與 <force_recall> 處理 ═══
       if (isSpiderWebEnabledImg) {

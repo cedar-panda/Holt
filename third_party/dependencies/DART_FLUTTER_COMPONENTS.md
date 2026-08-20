@@ -4,7 +4,7 @@
 
 - Flutter: 3.44.2 (`c9a6c484230f8b5e408ec57be1ef71dee1e77020`)
 - Engine: `77e2e94772b6eb43759e34ed1ad7da4674e19cab`
-- Packages: 148
+- Packages: 156
 
 | Package | Version | Scope | License summary | Status |
 |---|---:|---|---|---|
@@ -24,12 +24,16 @@
 | `audioplayers_windows` | `4.4.1` | transitive | MIT | VERIFIED_LOCAL_COPY |
 | `background_downloader` | `9.5.5` | direct main | BSD-3-Clause, MIT | VERIFIED_LOCAL_COPY |
 | `boolean_selector` | `2.1.2` | transitive | BSD-3-Clause | VERIFIED_LOCAL_COPY |
-| `characters` | `1.4.1` | transitive | BSD-3-Clause | VERIFIED_LOCAL_COPY |
+| `characters` | `1.4.1` | direct main | BSD-3-Clause | VERIFIED_LOCAL_COPY |
+| `checked_yaml` | `2.0.4` | transitive | BSD-3-Clause | VERIFIED_LOCAL_COPY |
+| `cli_util` | `0.4.2` | transitive | BSD-3-Clause | VERIFIED_LOCAL_COPY |
 | `clock` | `1.1.2` | transitive | Apache-2.0 | VERIFIED_LOCAL_COPY |
 | `code_assets` | `1.0.0` | transitive | BSD-3-Clause | VERIFIED_LOCAL_COPY |
 | `collection` | `1.19.1` | transitive | BSD-3-Clause | VERIFIED_LOCAL_COPY |
 | `cross_file` | `0.3.5+2` | transitive | BSD-3-Clause | VERIFIED_LOCAL_COPY |
 | `crypto` | `3.0.7` | direct main | BSD-3-Clause | VERIFIED_LOCAL_COPY |
+| `cryptography` | `2.9.0` | direct main | Apache-2.0 | VERIFIED_LOCAL_COPY |
+| `csslib` | `1.0.2` | transitive | BSD-3-Clause | VERIFIED_LOCAL_COPY |
 | `cupertino_icons` | `1.0.9` | direct main | MIT | VERIFIED_LOCAL_COPY |
 | `dart_sentencepiece_tokenizer` | `1.3.2` | transitive | MIT | VERIFIED_LOCAL_COPY |
 | `dinja` | `1.0.0` | transitive | MIT | VERIFIED_LOCAL_COPY |
@@ -44,7 +48,9 @@
 | `fixnum` | `1.1.1` | transitive | BSD-3-Clause | VERIFIED_LOCAL_COPY |
 | `flame` | `1.37.0` | direct main | MIT | VERIFIED_LOCAL_COPY |
 | `flutter` | `0.0.0` | direct main | BSD-3-Clause | VERIFIED_LOCAL_COPY |
+| `flutter_foreground_task` | `8.17.0` | direct main | MIT | VERIFIED_LOCAL_COPY |
 | `flutter_gemma` | `0.16.5` | direct main | MIT | VERIFIED_LOCAL_COPY |
+| `flutter_launcher_icons` | `0.14.4` | direct dev | MIT | VERIFIED_LOCAL_COPY |
 | `flutter_lints` | `6.0.0` | direct dev | BSD-3-Clause | VERIFIED_LOCAL_COPY |
 | `flutter_localizations` | `0.0.0` | direct main | BSD-3-Clause | INHERITED_FROM_FLUTTER_SDK |
 | `flutter_markdown` | `0.7.7+1` | direct main | BSD-3-Clause | VERIFIED_LOCAL_COPY |
@@ -58,10 +64,12 @@
 | `flutter_soloud` | `4.0.12` | direct main | MIT | VERIFIED_LOCAL_COPY |
 | `flutter_test` | `0.0.0` | direct dev | BSD-3-Clause | INHERITED_FROM_FLUTTER_SDK |
 | `flutter_web_plugins` | `0.0.0` | transitive | BSD-3-Clause | INHERITED_FROM_FLUTTER_SDK |
+| `flutter_widget_from_html_core` | `0.17.2` | direct main | MIT | VERIFIED_LOCAL_COPY |
 | `gal` | `2.3.2` | direct main | BSD-3-Clause | VERIFIED_LOCAL_COPY |
 | `glob` | `2.1.3` | transitive | BSD-3-Clause | VERIFIED_LOCAL_COPY |
 | `gtk` | `2.2.0` | transitive | MPL-2.0 | VERIFIED_LOCAL_COPY |
 | `hooks` | `1.0.3` | transitive | BSD-3-Clause | VERIFIED_LOCAL_COPY |
+| `html` | `0.15.6` | transitive | MIT | VERIFIED_LOCAL_COPY |
 | `http` | `1.6.0` | direct main | BSD-3-Clause | VERIFIED_LOCAL_COPY |
 | `http_parser` | `4.1.2` | transitive | BSD-3-Clause | VERIFIED_LOCAL_COPY |
 | `image` | `4.9.1` | direct main | Apache-2.0, BSD-3-Clause, MIT | VERIFIED_LOCAL_COPY |

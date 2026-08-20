@@ -20,8 +20,10 @@ import '../services/settings_manager.dart';
 import '../services/token_estimator.dart';
 import '../services/deferred_prompt.dart';
 import '../services/prompt_cache_channels.dart';
+import '../services/character_signature_service.dart';
 import '../services/model_cost_policy.dart';
 import '../services/memory_actions.dart';
+import '../services/chat_search_follow_up.dart';
 import '../services/memory_guard_service.dart';
 import '../services/image_gen_service.dart';
 import '../memory/emotion_coordinates.dart';
@@ -55,6 +57,7 @@ import '../memory/spider_web_core.dart';
 import '../services/spider_web_service.dart';
 import '../services/local_model_service.dart';
 import '../models/message.dart';
+import '../models/memory_action_proposal.dart';
 import '../models/chat_session_identity.dart';
 import '../services/keep_alive_foreground.dart';
 import '../services/keep_alive_service.dart';
@@ -258,6 +261,7 @@ class _ChatScreenState extends State<ChatScreen> {
   final Map<String, ScratchData> _scratchDataMap = {};
   final Map<String, TransferData> _transferDataMap = {};
   final Map<int, ({int total, int unread})> _pendingMemoryActionCounts = {};
+  final Map<int, List<MemoryActionProposal>> _pendingMemoryProposals = {};
   bool _walletChanged = false;
   List<Map<String, String>>? _lastKeepAliveMessages;
   StructuredPrompt? _lastKeepAliveStructuredPrompt;
@@ -497,6 +501,7 @@ class _ChatScreenState extends State<ChatScreen> {
       _scratchDataMap.clear();
       _transferDataMap.clear();
       _pendingMemoryActionCounts.clear();
+      _pendingMemoryProposals.clear();
       _tokensSinceSummary = 0;
       _charAvatarPath = null;
     });
@@ -701,6 +706,11 @@ class _ChatScreenState extends State<ChatScreen> {
         : false;
     final pendingMemoryActions =
         await MemoryGuardService.pendingCountsByMessage(widget.conversationId);
+    final pendingMemoryProposals =
+        await MemoryGuardService.pendingProposalsByMessage(
+          characterId: _activeCharacterId,
+          conversationId: widget.conversationId,
+        );
 
     if (!mounted) return;
     setState(() {
@@ -719,6 +729,9 @@ class _ChatScreenState extends State<ChatScreen> {
       _pendingMemoryActionCounts
         ..clear()
         ..addAll(pendingMemoryActions);
+      _pendingMemoryProposals
+        ..clear()
+        ..addAll(pendingMemoryProposals);
       _cacheHitIndices.clear();
       for (int i = 0; i < _messages.length; i++) {
         if (_messages[i].cacheHit) {
@@ -743,18 +756,47 @@ class _ChatScreenState extends State<ChatScreen> {
     final counts = await MemoryGuardService.pendingCountsByMessage(
       widget.conversationId,
     );
+    final proposals = await MemoryGuardService.pendingProposalsByMessage(
+      characterId: _activeCharacterId,
+      conversationId: widget.conversationId,
+    );
     if (!mounted) return;
     if (notify) {
       setState(() {
         _pendingMemoryActionCounts
           ..clear()
           ..addAll(counts);
+        _pendingMemoryProposals
+          ..clear()
+          ..addAll(proposals);
       });
     } else {
       _pendingMemoryActionCounts
         ..clear()
         ..addAll(counts);
+      _pendingMemoryProposals
+        ..clear()
+        ..addAll(proposals);
     }
+  }
+
+  Future<void> _applyInlineMemoryProposal(
+    MemoryActionProposal proposal,
+    String decision,
+  ) async {
+    if (decision == 'reject') {
+      await MemoryGuardService.reject(proposal.id, _activeCharacterId);
+    } else {
+      final result = await MemoryGuardService.execute(
+        proposal.id,
+        _activeCharacterId,
+        createDecision: decision,
+      );
+      if (result != MemoryActionProposal.statusCompleted) {
+        throw StateError('記憶提案未完成：$result');
+      }
+    }
+    await _refreshPendingMemoryActionCounts();
   }
 
   Future<void> _bindMemoryProposalsToMessage(int messageId) async {
@@ -2009,6 +2051,10 @@ class _ChatScreenState extends State<ChatScreen> {
                 memoryLog: item.memoryLog,
                 pendingMemoryActionCount: item.pendingMemoryActionCount,
                 hasUnreadMemoryActions: item.hasUnreadMemoryActions,
+                pendingMemoryProposals: item.dbMessageId == null
+                    ? const []
+                    : (_pendingMemoryProposals[item.dbMessageId] ?? const []),
+                onInlineMemoryProposal: _applyInlineMemoryProposal,
                 onMemoryReviewTap:
                     item.pendingMemoryActionCount > 0 &&
                         item.dbMessageId != null

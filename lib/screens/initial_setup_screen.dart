@@ -394,8 +394,8 @@ class _InitialSetupScreenState extends State<InitialSetupScreen> {
       await MemorySettings.saveSelfNotesEnabled(true);
       await MemorySettings.saveTimelinePromptMode('normal');
     } else if (mode == 'rp') {
-      await MemorySettings.setAbilityEnabled('emotion', true);
-      await MemorySettings.setAbilityEnabled('bioclock', true);
+      await MemorySettings.setAbilityEnabled('emotion', false);
+      await MemorySettings.setAbilityEnabled('bioclock', false);
       await MemorySettings.saveTimelineEnabled(true);
       await MemorySettings.saveSelfNotesEnabled(false);
       await MemorySettings.saveTimelinePromptMode('plot');
@@ -639,9 +639,9 @@ class _ModeStep extends StatelessWidget {
       zhCN: '基础 / 情绪 / 生物钟 / 时间线',
     ),
     'rp' => L.pick(
-      en: 'Advanced options / Story timeline',
-      zhTW: '進階選項 / 劇情時間線',
-      zhCN: '进阶选项 / 剧情时间线',
+      en: 'Memory / Story timeline',
+      zhTW: '記憶 / 劇情時間線',
+      zhCN: '记忆 / 剧情时间线',
     ),
     _ => L.pick(
       en: 'Choose each switch yourself',
@@ -654,7 +654,7 @@ class _ModeStep extends StatelessWidget {
     final selected = selectedMode == mode;
     return Center(
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 280),
+        constraints: const BoxConstraints(maxWidth: 300),
         child: Semantics(
           button: true,
           selected: selected,
@@ -665,7 +665,7 @@ class _ModeStep extends StatelessWidget {
             child: Container(
               width: double.infinity,
               margin: const EdgeInsets.only(bottom: 10),
-              padding: const EdgeInsets.fromLTRB(24, 10, 24, 10),
+              padding: const EdgeInsets.fromLTRB(18, 10, 18, 10),
               decoration: BoxDecoration(
                 color: selected
                     ? YanciTheme.accent.withValues(alpha: 0.12)

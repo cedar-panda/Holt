@@ -580,7 +580,7 @@ class SentenceTtsPipeline {
     _currentHandle = null;
     _currentSource = null;
     try {
-      if (handle != null) {
+      if (handle != null && SoLoud.instance.getIsValidVoiceHandle(handle)) {
         await SoLoud.instance.stop(handle);
       }
       if (source != null) {
@@ -661,7 +661,9 @@ class RingtonePlayer {
     _handle = null;
     _source = null;
     try {
-      if (handle != null) await SoLoud.instance.stop(handle);
+      if (handle != null && SoLoud.instance.getIsValidVoiceHandle(handle)) {
+        await SoLoud.instance.stop(handle);
+      }
       if (source != null) await SoLoud.instance.disposeSource(source);
     } catch (_) {}
   }

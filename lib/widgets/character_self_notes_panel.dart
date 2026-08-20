@@ -5,13 +5,18 @@ import '../services/locale_strings.dart';
 import '../theme/app_theme.dart';
 import '../utils/latest_request_gate.dart';
 
-/// A quiet, read-only window into the character's self notes.
-/// The authoritative text remains on the character row; this widget never
-/// edits, clears, or duplicates it.
+/// A quiet window into the character's self notes.
+/// The authoritative text remains on the character row. Deletion only updates
+/// that local row; conversation-level static snapshots remain untouched.
 class CharacterSelfNotesPanel extends StatefulWidget {
   final String characterId;
+  final bool embedded;
 
-  const CharacterSelfNotesPanel({super.key, required this.characterId});
+  const CharacterSelfNotesPanel({
+    super.key,
+    required this.characterId,
+    this.embedded = false,
+  });
 
   @override
   State<CharacterSelfNotesPanel> createState() =>
@@ -65,6 +70,91 @@ class _CharacterSelfNotesPanelState extends State<CharacterSelfNotesPanel> {
 
   String get _title =>
       L.pick(en: 'Secretly remembering you', zhTW: '偷偷記住你', zhCN: '偷偷记住你');
+
+  Future<void> _deleteNoteAt(int index, BuildContext sheetContext) async {
+    if (index < 0 || index >= _notes.length) return;
+    final note = _notes[index];
+    final confirmed = await showDialog<bool>(
+      context: sheetContext,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(
+          L.pick(
+            en: 'Delete this self-note?',
+            zhTW: '刪除這條自我註記？',
+            zhCN: '删除这条自我注记？',
+          ),
+        ),
+        content: Text(
+          L.pick(
+            en: 'This cannot be undone. It will stop being injected into new prompts; the current static cache will not be changed.',
+            zhTW: '刪除後不可復原。它會從之後的新注入內容中移除，但不會改寫目前的靜態 cache。',
+            zhCN: '删除后不可恢复。它会从之后的新注入内容中移除，但不会改写当前的静态 cache。',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: Text(L.pick(en: 'Cancel', zhTW: '取消', zhCN: '取消')),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            style: TextButton.styleFrom(
+              foregroundColor: Theme.of(dialogContext).colorScheme.error,
+            ),
+            child: Text(L.pick(en: 'Delete', zhTW: '刪除', zhCN: '删除')),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    final deleted = await DatabaseHelper.deleteSelfNote(
+      widget.characterId,
+      note,
+    );
+    if (!mounted || !deleted) return;
+    setState(() {
+      _notes = List<String>.of(_notes)..removeAt(index);
+    });
+    if (_notes.isEmpty && sheetContext.mounted) {
+      Navigator.of(sheetContext).pop();
+    }
+  }
+
+  Color get _notePaperColor => Color.alphaBlend(
+    YanciTheme.accentLight.withValues(alpha: YanciTheme.isDark ? 0.10 : 0.07),
+    YanciTheme.surfacePanel,
+  );
+
+  Color get _notePaperBorder =>
+      (YanciTheme.isDark ? YanciTheme.accentLight : YanciTheme.accent)
+          .withValues(alpha: YanciTheme.isDark ? 0.28 : 0.20);
+
+  Widget _buildTitleRow(bool hasNotes) {
+    return Row(
+      children: [
+        Text(
+          _title,
+          style: TextStyle(
+            fontSize: 13,
+            fontWeight: FontWeight.w500,
+            color: YanciTheme.textPrimary.withValues(alpha: 0.7),
+            fontFamily: YanciTheme.fontFamily,
+          ),
+        ),
+        const Spacer(),
+        if (hasNotes)
+          Text(
+            '${_notes.length}',
+            style: TextStyle(
+              fontSize: 10,
+              color: YanciTheme.textSecondary.withValues(alpha: 0.38),
+              fontFamily: YanciTheme.fontFamily,
+            ),
+          ),
+      ],
+    );
+  }
 
   Future<void> _showAll() async {
     if (_notes.isEmpty) return;
@@ -125,9 +215,37 @@ class _CharacterSelfNotesPanelState extends State<CharacterSelfNotesPanel> {
                         ),
                       ),
                     ),
-                    itemBuilder: (context, index) => Text(
-                      '　　${_notes[index]}',
-                      style: YanciTheme.bodyText.copyWith(height: 1.65),
+                    itemBuilder: (context, index) => Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(
+                          child: Text(
+                            '　　${_notes[index]}',
+                            style: YanciTheme.bodyText.copyWith(
+                              height: 1.65,
+                              color: YanciTheme.characterResourceLabel,
+                            ),
+                          ),
+                        ),
+                        IconButton(
+                          tooltip: L.pick(
+                            en: 'Delete self-note',
+                            zhTW: '刪除自我註記',
+                            zhCN: '删除自我注记',
+                          ),
+                          onPressed: () => _deleteNoteAt(index, context),
+                          icon: const Icon(Icons.delete_outline_rounded),
+                          iconSize: 18,
+                          color: YanciTheme.textSecondary.withValues(
+                            alpha: 0.48,
+                          ),
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(
+                            minWidth: 44,
+                            minHeight: 44,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ),
@@ -150,7 +268,9 @@ class _CharacterSelfNotesPanelState extends State<CharacterSelfNotesPanel> {
             zhCN: '还没有偷偷记下的事',
           );
     return Padding(
-      padding: const EdgeInsets.fromLTRB(24, 8, 24, 0),
+      padding: widget.embedded
+          ? EdgeInsets.zero
+          : const EdgeInsets.fromLTRB(24, 8, 24, 0),
       child: Semantics(
         container: true,
         button: hasNotes,
@@ -163,75 +283,77 @@ class _CharacterSelfNotesPanelState extends State<CharacterSelfNotesPanel> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(
-                  children: [
-                    Text(
-                      _title,
-                      style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w500,
-                        color: YanciTheme.textPrimary.withValues(alpha: 0.7),
-                        fontFamily: YanciTheme.fontFamily,
-                      ),
-                    ),
-                    const Spacer(),
-                    if (hasNotes)
-                      Text(
-                        '${_notes.length}',
-                        style: TextStyle(
-                          fontSize: 10,
-                          color: YanciTheme.textSecondary.withValues(
-                            alpha: 0.38,
-                          ),
-                          fontFamily: YanciTheme.fontFamily,
-                        ),
-                      ),
-                  ],
-                ),
-                const SizedBox(height: 4),
+                if (!widget.embedded) _buildTitleRow(hasNotes),
+                if (!widget.embedded) const SizedBox(height: 4),
                 ConstrainedBox(
-                  constraints: const BoxConstraints(minHeight: 48),
-                  child: CustomPaint(
-                    painter: _HandRuledNotePainter(
-                      color: YanciTheme.accent.withValues(alpha: 0.14),
-                      lineCount: 2,
+                  constraints: BoxConstraints(
+                    minHeight: widget.embedded ? 58 : 36,
+                  ),
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: widget.embedded
+                          ? Colors.transparent
+                          : _notePaperColor,
+                      border: widget.embedded
+                          ? null
+                          : Border.all(color: _notePaperBorder, width: 0.6),
+                      borderRadius: BorderRadius.circular(4),
                     ),
-                    child: Padding(
-                      padding: const EdgeInsets.fromLTRB(0, 3, 4, 5),
-                      child: _loading
-                          ? Align(
-                              alignment: Alignment.topLeft,
-                              child: Text(
-                                '　　……',
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  height: 1.85,
-                                  color: YanciTheme.textSecondary.withValues(
-                                    alpha: 0.3,
-                                  ),
-                                  fontFamily: YanciTheme.fontFamily,
-                                ),
-                              ),
-                            )
-                          : Align(
-                              alignment: Alignment.topLeft,
-                              child: Text(
-                                '　　$preview',
-                                key: const ValueKey(
-                                  'character-self-notes-preview',
-                                ),
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  height: 1.85,
-                                  color: YanciTheme.textSecondary.withValues(
-                                    alpha: hasNotes ? 0.64 : 0.34,
-                                  ),
-                                  fontFamily: YanciTheme.fontFamily,
-                                ),
-                              ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        if (widget.embedded)
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(8, 5, 8, 0),
+                            child: _buildTitleRow(hasNotes),
+                          ),
+                        if (widget.embedded) const SizedBox(height: 2),
+                        CustomPaint(
+                          painter: _HandRuledNotePainter(
+                            color: YanciTheme.accent.withValues(
+                              alpha: YanciTheme.isDark ? 0.14 : 0.10,
                             ),
+                            lineCount: 2,
+                          ),
+                          child: Padding(
+                            padding: const EdgeInsets.fromLTRB(0, 2, 4, 3),
+                            child: _loading
+                                ? Align(
+                                    alignment: Alignment.topLeft,
+                                    child: Text(
+                                      '　　……',
+                                      style: TextStyle(
+                                        fontSize: 10.5,
+                                        height: 1.55,
+                                        color: YanciTheme.characterResourceLabel
+                                            .withValues(alpha: 0.72),
+                                        fontFamily: YanciTheme.fontFamily,
+                                      ),
+                                    ),
+                                  )
+                                : Align(
+                                    alignment: Alignment.topLeft,
+                                    child: Text(
+                                      '　　$preview',
+                                      key: const ValueKey(
+                                        'character-self-notes-preview',
+                                      ),
+                                      maxLines: 4,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        fontSize: 10.5,
+                                        height: 1.55,
+                                        color: YanciTheme.characterResourceLabel
+                                            .withValues(
+                                              alpha: hasNotes ? 1.0 : 0.58,
+                                            ),
+                                        fontFamily: YanciTheme.fontFamily,
+                                      ),
+                                    ),
+                                  ),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ),

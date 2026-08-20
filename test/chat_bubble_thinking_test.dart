@@ -5,6 +5,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:project_yanci/services/locale_strings.dart';
+import 'package:project_yanci/services/memory_guard_service.dart';
+import 'package:project_yanci/models/memory_action_proposal.dart';
 import 'package:project_yanci/theme/app_theme.dart';
 import 'package:project_yanci/theme/theme_presets.dart';
 import 'package:project_yanci/widgets/chat_bubble.dart';
@@ -72,9 +74,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('unclosed think tag stays in the thinking tree', (
-    tester,
-  ) async {
+  testWidgets('unclosed think tag stays in the thinking tree', (tester) async {
     SharedPreferences.setMockInitialValues(<String, Object>{});
     await L.setLocale('zh_TW');
 
@@ -129,6 +129,31 @@ void main() {
         reason: '${preset.id} should preserve the transparent treatment',
       );
     }
+  });
+
+  testWidgets('spring swallow uses the PNG as a scalable bubble frame', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    final originalPreset = YanciTheme.presetId;
+    addTearDown(() => YanciTheme.setPreset(originalPreset));
+    YanciTheme.setPreset('swallow');
+
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: ChatBubble(text: '燕子歸來的雨後', isUser: false, captureMode: true),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final frameFinder = find.byKey(const ValueKey('themed-bubble-frame'));
+    expect(frameFinder, findsOneWidget);
+    final frame = tester.widget<Image>(frameFinder);
+    expect(frame.fit, BoxFit.fill);
+    expect(frame.centerSlice, const Rect.fromLTRB(20, 20, 60, 60));
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('valid custom image gives context metadata a readable surface', (
@@ -679,6 +704,70 @@ void main() {
     await tester.tap(find.text('2 待確認').first);
     await tester.pump();
     expect(opened, isTrue);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('model memory proposal is confirmed inside the Memory branch', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    await L.setLocale('zh_TW');
+    MemoryActionProposal? actedProposal;
+    String? decision;
+    final proposal = MemoryActionProposal(
+      id: 'proposal-inline-1',
+      characterId: 'char-a',
+      mode: 'romance',
+      action: MemoryActionProposal.actionCreate,
+      source: 'model',
+      sourceConversationId: 'conv-a',
+      sourceMessageId: 7,
+      targetIds: const [],
+      payload: const <String, dynamic>{
+        'candidate': <String, dynamic>{
+          'category': '偏好',
+          'content': '昭昭喜歡喝熱牛奶',
+          'triggers': '熱牛奶',
+        },
+      },
+      baseVersions: const <String, dynamic>{},
+      fingerprint: 'inline-fingerprint',
+      status: MemoryActionProposal.statusPending,
+      createdAt: DateTime(2026, 8, 16),
+      seenAt: null,
+      resolvedAt: null,
+      error: '',
+      result: const <String, dynamic>{},
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ChatBubble(
+            text: '<think>正在整理</think>正常回覆',
+            isUser: false,
+            captureMode: true,
+            thinkingExpandedOverride: true,
+            memoryLog: '◌ 模型記憶已送往待確認區\nDone',
+            pendingMemoryActionCount: 1,
+            pendingMemoryProposals: [proposal],
+            onInlineMemoryProposal: (proposal, selectedDecision) async {
+              actedProposal = proposal;
+              decision = selectedDecision;
+            },
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text('模型想記住這件事'), findsOneWidget);
+    expect(find.text('保存記憶'), findsOneWidget);
+    await tester.tap(find.text('保存記憶'));
+    await tester.pump();
+
+    expect(actedProposal?.id, 'proposal-inline-1');
+    expect(decision, MemoryGuardService.createDecisionUseNew);
     expect(tester.takeException(), isNull);
   });
 }

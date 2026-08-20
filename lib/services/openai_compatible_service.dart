@@ -1,7 +1,9 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'package:flutter/foundation.dart' show debugPrint, kDebugMode;
 import 'package:http/http.dart' as http;
+import '../utils/endpoint_security.dart';
 import 'api_adapter.dart';
 import 'model_info.dart';
 import 'settings/memory_settings.dart';
@@ -49,10 +51,7 @@ class OpenAICompatibleService implements ApiAdapter {
     String apiKey = '',
     http.Client? client,
   }) async {
-    final base = Uri.tryParse(baseUrl.trim());
-    if (base == null || !base.hasScheme || base.host.isEmpty) {
-      throw const FormatException('Base URL 無效');
-    }
+    final base = EndpointSecurity.parseAndValidate(baseUrl);
 
     final ownedClient = client == null ? http.Client() : null;
     final activeClient = client ?? ownedClient!;
@@ -116,10 +115,7 @@ class OpenAICompatibleService implements ApiAdapter {
   }
 
   static Uri modelsUriForBase(String baseUrl) {
-    final base = Uri.tryParse(baseUrl.trim());
-    if (base == null || !base.hasScheme || base.host.isEmpty) {
-      throw const FormatException('Base URL 無效');
-    }
+    final base = EndpointSecurity.parseAndValidate(baseUrl);
     return _modelsUri(base);
   }
 
@@ -155,14 +151,16 @@ class OpenAICompatibleService implements ApiAdapter {
     return result;
   }
 
-  String get _completionsUrl {
-    final url = baseUrl.endsWith('/')
-        ? baseUrl.substring(0, baseUrl.length - 1)
-        : baseUrl;
+  Uri get _completionsUri {
+    final validated = EndpointSecurity.parseAndValidate(baseUrl);
+    final rawUrl = validated.toString();
+    final url = rawUrl.endsWith('/')
+        ? rawUrl.substring(0, rawUrl.length - 1)
+        : rawUrl;
     // 如果已經包含完整路徑就直接用，否則補上
-    if (url.endsWith('/chat/completions')) return url;
-    if (url.endsWith('/v1')) return '$url/chat/completions';
-    return '$url/v1/chat/completions';
+    if (url.endsWith('/chat/completions')) return Uri.parse(url);
+    if (url.endsWith('/v1')) return Uri.parse('$url/chat/completions');
+    return Uri.parse('$url/v1/chat/completions');
   }
 
   @override
@@ -185,14 +183,11 @@ class OpenAICompatibleService implements ApiAdapter {
         stream: false,
       );
       final response = await client
-          .post(
-            Uri.parse(_completionsUrl),
-            headers: _headers(),
-            body: jsonEncode(body),
-          )
+          .post(_completionsUri, headers: _headers(), body: jsonEncode(body))
           .timeout(const Duration(seconds: 180));
       if (response.statusCode != 200) {
-        throw Exception('API 錯誤 ${response.statusCode}: ${response.body}');
+        _debugHttpFailure(response.statusCode, response.bodyBytes.length);
+        throw Exception('API 錯誤 ${response.statusCode}');
       }
 
       final data = jsonDecode(response.body);
@@ -237,7 +232,7 @@ class OpenAICompatibleService implements ApiAdapter {
         stream: true,
       );
 
-      final request = http.Request('POST', Uri.parse(_completionsUrl));
+      final request = http.Request('POST', _completionsUri);
       request.headers.addAll(_headers());
       request.body = jsonEncode(body);
 
@@ -254,10 +249,11 @@ class OpenAICompatibleService implements ApiAdapter {
       }
 
       if (response.statusCode != 200) {
-        final errorBody = await response.stream.bytesToString().timeout(
-          SseStream.defaultIdleTimeout,
-        );
-        throw Exception('API 錯誤 ${response.statusCode}: $errorBody');
+        final errorBytes = await response.stream
+            .fold<int>(0, (total, chunk) => total + chunk.length)
+            .timeout(SseStream.defaultIdleTimeout);
+        _debugHttpFailure(response.statusCode, errorBytes);
+        throw Exception('API 錯誤 ${response.statusCode}');
       }
 
       Map<String, int>? requestStats;
@@ -357,7 +353,14 @@ class OpenAICompatibleService implements ApiAdapter {
     if (msg.contains('network is unreachable')) {
       return '網路不可用。請確認手機已連接 WiFi。';
     }
-    return '網路錯誤：$e';
+    return '網路錯誤（${e.runtimeType}）';
+  }
+
+  static void _debugHttpFailure(int statusCode, int responseBytes) {
+    if (!kDebugMode) return;
+    debugPrint(
+      '[OpenAICompatible] HTTP $statusCode (responseBytes=$responseBytes)',
+    );
   }
 
   String _modelForRequest(String model) {
