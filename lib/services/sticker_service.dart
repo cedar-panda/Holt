@@ -348,16 +348,23 @@ Output JSON only, with no other text or Markdown:
 
   /// 從 AI 回覆中解析表情包標記
   /// 支持格式：[sticker:5]、[sticker:ID:5]（本地模型常見變體）
+  ///
+  /// 標記裡的數字沒有位數上限，模型（尤其本地小模型）可能吐出超出 int
+  /// 範圍的 ID。這個方法跑在 ChatBubble 的 build 期，拋錯會讓該訊息永久
+  /// 紅屏，所以解析失敗時不推進 lastEnd，整段非法標記原樣留在文字裡。
   static List<ChatSegment> parseResponse(String response) {
     final segments = <ChatSegment>[];
     final pattern = RegExp(r'\[sticker:(?:ID:)?(\d+)\]');
     int lastEnd = 0;
 
     for (final match in pattern.allMatches(response)) {
+      final stickerId = int.tryParse(match.group(1)!);
+      if (stickerId == null) continue;
+
       if (match.start > lastEnd) {
         segments.add(TextSegment(response.substring(lastEnd, match.start)));
       }
-      segments.add(StickerSegment(int.parse(match.group(1)!)));
+      segments.add(StickerSegment(stickerId));
       lastEnd = match.end;
     }
 
