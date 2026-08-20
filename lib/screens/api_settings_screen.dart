@@ -1831,82 +1831,94 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
                               const SizedBox(height: YanciTheme.spacingLg),
                               const SizedBox(height: YanciTheme.spacingSm),
                               ApiWebSearchSettingsCard(
-                                openRouterKeyController: _apiKeyController,
-                                geminiKeyController: _geminiKeyCtrl,
-                                xaiKeyController: _xaiKeyCtrl,
-                                relayEndpointController:
-                                    _webSearchRelayEndpointCtrl,
-                                relayKeyController: _webSearchRelayKeyCtrl,
-                                relayModelController: _webSearchRelayModelCtrl,
-                                enabled: _webSearchEnabled,
-                                mode: _webSearchMode,
-                                dailyProviderLaunchCap:
-                                    _webSearchDailyProviderLaunchCap,
-                                maxResults: _webSearchMaxResults,
-                                geminiModel: _webSearchGeminiModel,
-                                xaiModel: _webSearchXaiModel,
-                                openRouterModelOverride:
-                                    _wsSearchOrModelOverride,
-                                geminiModelOverride:
-                                    _wsSearchGeminiModelOverride,
-                                xaiModelOverride: _wsSearchXaiModelOverride,
-                                currentProvider: _provider,
-                                starredModels: _starredModels,
-                                starredModelProviders: _starredModelProviders,
-                                obscureProviderKeys: _obscureProviderKeys,
-                                enabledToggleActive:
-                                    webSearchLiveDeveloperPreviewEnabled,
-                                borderColor: _settingsBorderColor,
-                                onEnabledChanged: (value) {
-                                  setState(() => _webSearchEnabled = value);
-                                  _debouncedSave();
-                                  StaticTokenEstimator.showAfterToggle(context);
-                                },
-                                onModeChanged: (value) {
-                                  setState(() => _webSearchMode = value);
-                                  _debouncedSave();
-                                },
-                                onDailyProviderLaunchCapChanged: (value) {
-                                  setState(
-                                    () => _webSearchDailyProviderLaunchCap =
-                                        value,
-                                  );
-                                  _debouncedSave();
-                                },
-                                onMaxResultsChanged: (value) {
-                                  setState(() => _webSearchMaxResults = value);
-                                  _debouncedSave();
-                                },
-                                onOpenRouterModelChanged: (value) {
-                                  setState(
-                                    () => _wsSearchOrModelOverride = value,
-                                  );
-                                  _debouncedSave();
-                                },
-                                onGeminiModelChanged: (value) {
-                                  setState(
-                                    () => _wsSearchGeminiModelOverride = value,
-                                  );
-                                  _debouncedSave();
-                                },
-                                onXaiModelChanged: (value) {
-                                  setState(
-                                    () => _wsSearchXaiModelOverride = value,
-                                  );
-                                  _debouncedSave();
-                                },
-                                onRelayModelChanged: (value) {
-                                  setState(
-                                    () => _webSearchRelayModelCtrl.text = value,
-                                  );
-                                  _debouncedSave();
-                                },
-                                onToggleObscureProviderKeys: () => setState(
-                                  () => _obscureProviderKeys =
-                                      !_obscureProviderKeys,
+                                viewState: ApiWebSearchViewState(
+                                  openRouterKeyController: _apiKeyController,
+                                  geminiKeyController: _geminiKeyCtrl,
+                                  xaiKeyController: _xaiKeyCtrl,
+                                  relayEndpointController:
+                                      _webSearchRelayEndpointCtrl,
+                                  relayKeyController: _webSearchRelayKeyCtrl,
+                                  relayModelController:
+                                      _webSearchRelayModelCtrl,
+                                  enabled: _webSearchEnabled,
+                                  mode: _webSearchMode,
+                                  dailyProviderLaunchCap:
+                                      _webSearchDailyProviderLaunchCap,
+                                  maxResults: _webSearchMaxResults,
+                                  geminiModel: _webSearchGeminiModel,
+                                  xaiModel: _webSearchXaiModel,
+                                  openRouterModelOverride:
+                                      _wsSearchOrModelOverride,
+                                  geminiModelOverride:
+                                      _wsSearchGeminiModelOverride,
+                                  xaiModelOverride: _wsSearchXaiModelOverride,
+                                  currentProvider: _provider,
+                                  starredModels: _starredModels,
+                                  starredModelProviders: _starredModelProviders,
+                                  obscureProviderKeys: _obscureProviderKeys,
+                                  enabledToggleActive:
+                                      webSearchLiveDeveloperPreviewEnabled,
+                                  borderColor: _settingsBorderColor,
                                 ),
-                                onRelayEndpointChanged: (_) => _debouncedSave(),
-                                onRelayKeyChanged: (_) => _debouncedSave(),
+                                actions: ApiWebSearchViewActions(
+                                  onEnabledChanged: (value) {
+                                    setState(() => _webSearchEnabled = value);
+                                    _debouncedSave();
+                                    StaticTokenEstimator.showAfterToggle(
+                                      context,
+                                    );
+                                  },
+                                  onModeChanged: (value) {
+                                    setState(() => _webSearchMode = value);
+                                    _debouncedSave();
+                                  },
+                                  onDailyProviderLaunchCapChanged: (value) {
+                                    setState(
+                                      () => _webSearchDailyProviderLaunchCap =
+                                          value,
+                                    );
+                                    _debouncedSave();
+                                  },
+                                  onMaxResultsChanged: (value) {
+                                    setState(
+                                      () => _webSearchMaxResults = value,
+                                    );
+                                    _debouncedSave();
+                                  },
+                                  onOpenRouterModelChanged: (value) {
+                                    setState(
+                                      () => _wsSearchOrModelOverride = value,
+                                    );
+                                    _debouncedSave();
+                                  },
+                                  onGeminiModelChanged: (value) {
+                                    setState(
+                                      () =>
+                                          _wsSearchGeminiModelOverride = value,
+                                    );
+                                    _debouncedSave();
+                                  },
+                                  onXaiModelChanged: (value) {
+                                    setState(
+                                      () => _wsSearchXaiModelOverride = value,
+                                    );
+                                    _debouncedSave();
+                                  },
+                                  onRelayModelChanged: (value) {
+                                    setState(
+                                      () =>
+                                          _webSearchRelayModelCtrl.text = value,
+                                    );
+                                    _debouncedSave();
+                                  },
+                                  onToggleObscureProviderKeys: () => setState(
+                                    () => _obscureProviderKeys =
+                                        !_obscureProviderKeys,
+                                  ),
+                                  onRelayEndpointChanged: (_) =>
+                                      _debouncedSave(),
+                                  onRelayKeyChanged: (_) => _debouncedSave(),
+                                ),
                               ),
                               const SizedBox(height: YanciTheme.spacingLg),
                               _buildSectionTitle(

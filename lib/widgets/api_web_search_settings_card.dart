@@ -5,7 +5,7 @@ import '../services/settings_manager.dart';
 import '../services/web_search_service.dart';
 import '../theme/app_theme.dart';
 
-class ApiWebSearchSettingsCard extends StatelessWidget {
+class ApiWebSearchViewState {
   final TextEditingController openRouterKeyController;
   final TextEditingController geminiKeyController;
   final TextEditingController xaiKeyController;
@@ -27,20 +27,8 @@ class ApiWebSearchSettingsCard extends StatelessWidget {
   final bool obscureProviderKeys;
   final bool enabledToggleActive;
   final Color borderColor;
-  final ValueChanged<bool> onEnabledChanged;
-  final ValueChanged<WebSearchMode> onModeChanged;
-  final ValueChanged<int> onDailyProviderLaunchCapChanged;
-  final ValueChanged<int> onMaxResultsChanged;
-  final ValueChanged<String> onOpenRouterModelChanged;
-  final ValueChanged<String> onGeminiModelChanged;
-  final ValueChanged<String> onXaiModelChanged;
-  final ValueChanged<String> onRelayModelChanged;
-  final VoidCallback onToggleObscureProviderKeys;
-  final ValueChanged<String> onRelayEndpointChanged;
-  final ValueChanged<String> onRelayKeyChanged;
 
-  const ApiWebSearchSettingsCard({
-    super.key,
+  const ApiWebSearchViewState({
     required this.openRouterKeyController,
     required this.geminiKeyController,
     required this.xaiKeyController,
@@ -62,6 +50,23 @@ class ApiWebSearchSettingsCard extends StatelessWidget {
     required this.obscureProviderKeys,
     required this.enabledToggleActive,
     required this.borderColor,
+  });
+}
+
+class ApiWebSearchViewActions {
+  final ValueChanged<bool> onEnabledChanged;
+  final ValueChanged<WebSearchMode> onModeChanged;
+  final ValueChanged<int> onDailyProviderLaunchCapChanged;
+  final ValueChanged<int> onMaxResultsChanged;
+  final ValueChanged<String> onOpenRouterModelChanged;
+  final ValueChanged<String> onGeminiModelChanged;
+  final ValueChanged<String> onXaiModelChanged;
+  final ValueChanged<String> onRelayModelChanged;
+  final VoidCallback onToggleObscureProviderKeys;
+  final ValueChanged<String> onRelayEndpointChanged;
+  final ValueChanged<String> onRelayKeyChanged;
+
+  const ApiWebSearchViewActions({
     required this.onEnabledChanged,
     required this.onModeChanged,
     required this.onDailyProviderLaunchCapChanged,
@@ -74,6 +79,59 @@ class ApiWebSearchSettingsCard extends StatelessWidget {
     required this.onRelayEndpointChanged,
     required this.onRelayKeyChanged,
   });
+}
+
+class ApiWebSearchSettingsCard extends StatelessWidget {
+  final ApiWebSearchViewState viewState;
+  final ApiWebSearchViewActions actions;
+
+  const ApiWebSearchSettingsCard({
+    super.key,
+    required this.viewState,
+    required this.actions,
+  });
+
+  TextEditingController get openRouterKeyController =>
+      viewState.openRouterKeyController;
+  TextEditingController get geminiKeyController =>
+      viewState.geminiKeyController;
+  TextEditingController get xaiKeyController => viewState.xaiKeyController;
+  TextEditingController get relayEndpointController =>
+      viewState.relayEndpointController;
+  TextEditingController get relayKeyController => viewState.relayKeyController;
+  TextEditingController get relayModelController =>
+      viewState.relayModelController;
+  bool get enabled => viewState.enabled;
+  WebSearchMode get mode => viewState.mode;
+  int get dailyProviderLaunchCap => viewState.dailyProviderLaunchCap;
+  int get maxResults => viewState.maxResults;
+  String get geminiModel => viewState.geminiModel;
+  String get xaiModel => viewState.xaiModel;
+  String get openRouterModelOverride => viewState.openRouterModelOverride;
+  String get geminiModelOverride => viewState.geminiModelOverride;
+  String get xaiModelOverride => viewState.xaiModelOverride;
+  String get currentProvider => viewState.currentProvider;
+  Set<String> get starredModels => viewState.starredModels;
+  Map<String, String> get starredModelProviders =>
+      viewState.starredModelProviders;
+  bool get obscureProviderKeys => viewState.obscureProviderKeys;
+  bool get enabledToggleActive => viewState.enabledToggleActive;
+  Color get borderColor => viewState.borderColor;
+  ValueChanged<bool> get onEnabledChanged => actions.onEnabledChanged;
+  ValueChanged<WebSearchMode> get onModeChanged => actions.onModeChanged;
+  ValueChanged<int> get onDailyProviderLaunchCapChanged =>
+      actions.onDailyProviderLaunchCapChanged;
+  ValueChanged<int> get onMaxResultsChanged => actions.onMaxResultsChanged;
+  ValueChanged<String> get onOpenRouterModelChanged =>
+      actions.onOpenRouterModelChanged;
+  ValueChanged<String> get onGeminiModelChanged => actions.onGeminiModelChanged;
+  ValueChanged<String> get onXaiModelChanged => actions.onXaiModelChanged;
+  ValueChanged<String> get onRelayModelChanged => actions.onRelayModelChanged;
+  VoidCallback get onToggleObscureProviderKeys =>
+      actions.onToggleObscureProviderKeys;
+  ValueChanged<String> get onRelayEndpointChanged =>
+      actions.onRelayEndpointChanged;
+  ValueChanged<String> get onRelayKeyChanged => actions.onRelayKeyChanged;
 
   String _modeLabel(WebSearchMode value) => switch (value) {
     WebSearchMode.auto => L.pick(en: 'Auto', zhTW: '自動選擇', zhCN: '自动选择'),
