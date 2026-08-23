@@ -9,6 +9,22 @@ import '../services/sticker_service.dart';
 import '../memory/database.dart';
 import '../utils/latest_request_gate.dart';
 
+@visibleForTesting
+String stickerLibraryTitle({
+  required String characterId,
+  String? characterName,
+}) {
+  if (characterId == StickerService.userBucket) return L.get('me_sticker');
+  final ownerName = characterName?.trim().isNotEmpty == true
+      ? characterName!.trim()
+      : L.pick(en: 'Character', zhTW: '角色', zhCN: '角色');
+  return L.pick(
+    en: "$ownerName's Stickers",
+    zhTW: '$ownerName的表情庫',
+    zhCN: '$ownerName的表情库',
+  );
+}
+
 /// 表情包庫管理頁 — 上傳 + 三種描述方式 + Vision API
 class StickerLibraryScreen extends StatefulWidget {
   final String characterId;
@@ -22,6 +38,7 @@ class StickerLibraryScreen extends StatefulWidget {
 class _StickerLibraryScreenState extends State<StickerLibraryScreen> {
   List<StickerInfo> _stickers = [];
   bool _isLoading = true;
+  String _libraryTitle = L.get('me_sticker');
   final _picker = ImagePicker();
   final LatestRequestGate _loadGate = LatestRequestGate();
 
@@ -34,9 +51,23 @@ class _StickerLibraryScreenState extends State<StickerLibraryScreen> {
   Future<void> _loadStickers() async {
     final generation = _loadGate.begin();
     final characterId = widget.characterId;
-    final stickers = characterId == StickerService.userBucket
-        ? await StickerService.getUserStickers()
-        : await StickerService.getStickers(characterId: characterId);
+    final isUserLibrary = characterId == StickerService.userBucket;
+    final results = await Future.wait<Object?>([
+      isUserLibrary
+          ? StickerService.getUserStickers()
+          : StickerService.getStickers(characterId: characterId),
+      if (isUserLibrary)
+        Future<Map<String, dynamic>?>.value(null)
+      else
+        DatabaseHelper.getCharacter(characterId),
+    ]);
+    final stickers = results[0] as List<StickerInfo>;
+    final character = results[1] as Map<String, dynamic>?;
+    final characterName = character?['name']?.toString().trim();
+    final title = stickerLibraryTitle(
+      characterId: characterId,
+      characterName: characterName,
+    );
     if (!mounted ||
         characterId != widget.characterId ||
         !_loadGate.isCurrent(generation)) {
@@ -44,6 +75,7 @@ class _StickerLibraryScreenState extends State<StickerLibraryScreen> {
     }
     setState(() {
       _stickers = stickers;
+      _libraryTitle = title;
       _isLoading = false;
     });
   }
@@ -646,7 +678,7 @@ class _StickerLibraryScreenState extends State<StickerLibraryScreen> {
                     ),
                     Expanded(
                       child: Text(
-                        L.get('me_sticker'),
+                        _libraryTitle,
                         textAlign: TextAlign.center,
                         style: YanciTheme.headingMedium,
                       ),
