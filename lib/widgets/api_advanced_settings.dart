@@ -229,9 +229,14 @@ class _ApiAdvancedSettingsState extends State<ApiAdvancedSettings> {
         children: [
           if (leadingMarker != null) ...[
             ExcludeSemantics(
-              child: Text(
-                leadingMarker,
-                style: YanciTheme.bodyText.copyWith(fontSize: 13),
+              child: SizedBox(
+                height: 40,
+                child: Center(
+                  child: Text(
+                    leadingMarker,
+                    style: YanciTheme.bodyText.copyWith(fontSize: 13),
+                  ),
+                ),
               ),
             ),
             const SizedBox(width: 4),
