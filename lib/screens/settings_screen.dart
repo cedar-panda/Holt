@@ -1,10 +1,12 @@
 import 'dart:async';
 import 'dart:ui';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../theme/app_theme.dart';
 import '../services/locale_strings.dart';
 import '../services/settings_manager.dart';
+import '../services/custom_font_service.dart';
 import '../widgets/gradient_background.dart';
 import '../main.dart'; // for changeFont, changeFontScale, previewFontScale
 
@@ -18,16 +20,41 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen> {
   double _fontScale = YanciTheme.fontScale;
   bool _fontScaleDirty = false;
+  bool _fontImporting = false;
+  CustomFontInfo? _customFont;
 
   @override
   void initState() {
     super.initState();
     _loadFontScale();
+    _loadCustomFont();
   }
 
   Future<void> _loadFontScale() async {
     final scale = await ThemeSettings.getFontSizeScale();
     if (mounted && !_fontScaleDirty) setState(() => _fontScale = scale);
+  }
+
+  Future<void> _loadCustomFont() async {
+    final font = await CustomFontService.getSavedFont();
+    if (mounted && !_fontImporting) setState(() => _customFont = font);
+  }
+
+  List<String> get _fontFamilies => [
+    ...YanciTheme.fontPairings.keys,
+    if (_customFont != null) _customFont!.family,
+  ];
+
+  Map<String, String> get _fontLabels => {
+    ...YanciTheme.fontDisplayNames,
+    if (_customFont != null) _customFont!.family: _customFont!.displayName,
+  };
+
+  String get _selectedFontFamily {
+    final families = _fontFamilies;
+    return families.contains(YanciTheme.fontFamily)
+        ? YanciTheme.fontFamily
+        : 'Lora';
   }
 
   void _previewFontScale(double v) {
@@ -42,6 +69,190 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final scale = v ?? _fontScale;
     _fontScaleDirty = false;
     await changeFontScale(scale);
+  }
+
+  Future<void> _selectFont(String family) async {
+    final customFont = _customFont;
+    if (customFont != null && family == customFont.family) {
+      await changeCustomFont(customFont);
+    } else {
+      await changeFont(family);
+    }
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _importFont() async {
+    if (_fontImporting) return;
+    setState(() => _fontImporting = true);
+    try {
+      final selection = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: const ['ttf', 'otf'],
+        allowMultiple: false,
+        withData: false,
+      );
+      if (selection == null) return;
+      final picked = selection.files.single;
+      final path = picked.path;
+      if (path == null || path.isEmpty) {
+        throw const CustomFontException(CustomFontFailure.missingFile);
+      }
+      final font = await CustomFontService.importFont(
+        sourcePath: path,
+        originalName: picked.name,
+      );
+      await changeCustomFont(font);
+      if (!mounted) return;
+      setState(() => _customFont = font);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            L.pick(
+              en: '${font.displayName} imported and applied',
+              zhTW: '已導入並套用 ${font.displayName}',
+              zhCN: '已导入并应用 ${font.displayName}',
+            ),
+          ),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } on CustomFontException catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(_customFontError(error.failure)),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            L.pick(
+              en: 'Could not import this font',
+              zhTW: '無法導入這個字體',
+              zhCN: '无法导入这个字体',
+            ),
+          ),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _fontImporting = false);
+    }
+  }
+
+  String _customFontError(CustomFontFailure failure) {
+    return switch (failure) {
+      CustomFontFailure.unsupportedFormat => L.pick(
+        en: 'Choose a TTF or OTF font',
+        zhTW: '請選擇 TTF 或 OTF 字體',
+        zhCN: '请选择 TTF 或 OTF 字体',
+      ),
+      CustomFontFailure.tooLarge => L.pick(
+        en: 'Font files must be 50 MB or smaller',
+        zhTW: '字體檔不可超過 50 MB',
+        zhCN: '字体文件不可超过 50 MB',
+      ),
+      CustomFontFailure.emptyFile || CustomFontFailure.invalidFont => L.pick(
+        en: 'This is not a valid TTF or OTF font',
+        zhTW: '這不是有效的 TTF 或 OTF 字體',
+        zhCN: '这不是有效的 TTF 或 OTF 字体',
+      ),
+      CustomFontFailure.missingFile || CustomFontFailure.loadFailed => L.pick(
+        en: 'The font could not be read or loaded',
+        zhTW: '無法讀取或載入這個字體',
+        zhCN: '无法读取或载入这个字体',
+      ),
+    };
+  }
+
+  Widget _buildFontImportRow() {
+    final customFont = _customFont;
+    final active =
+        customFont != null && YanciTheme.fontFamily == customFont.family;
+    final subtitle = customFont == null
+        ? L.pick(
+            en: 'TTF or OTF · up to 50 MB',
+            zhTW: '支援 TTF、OTF · 最大 50 MB',
+            zhCN: '支持 TTF、OTF · 最大 50 MB',
+          )
+        : L.pick(
+            en: '${active ? 'Applied' : 'Imported'} · ${customFont.displayName}',
+            zhTW: '${active ? '已套用' : '已導入'} · ${customFont.displayName}',
+            zhCN: '${active ? '已应用' : '已导入'} · ${customFont.displayName}',
+          );
+    return Semantics(
+      button: true,
+      enabled: !_fontImporting,
+      label: L.pick(
+        en: 'Import and apply a custom font',
+        zhTW: '導入並套用自訂字體',
+        zhCN: '导入并应用自定义字体',
+      ),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(YanciTheme.radiusSm),
+        onTap: _fontImporting ? null : _importFont,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minHeight: 56),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            child: Row(
+              children: [
+                Icon(
+                  Icons.font_download_outlined,
+                  color: YanciTheme.accent,
+                  size: 22,
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Text(
+                        L.pick(
+                          en: 'Import font',
+                          zhTW: '一鍵導入字體',
+                          zhCN: '一键导入字体',
+                        ),
+                        style: YanciTheme.bodyText.copyWith(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                          color: YanciTheme.textPrimary,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        subtitle,
+                        style: YanciTheme.bodySmall.copyWith(fontSize: 11),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                if (_fontImporting)
+                  SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: YanciTheme.accent,
+                    ),
+                  )
+                else
+                  Icon(
+                    Icons.file_open_outlined,
+                    color: YanciTheme.textSecondary,
+                    size: 20,
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
   }
 
   Future<void> _showBundledDocument(String asset, String title) async {
@@ -257,14 +468,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           _softDivider(),
                           _buildDropdownRow(
                             L.pick(en: 'Font', zhTW: '字體'),
-                            YanciTheme.fontFamily,
-                            YanciTheme.fontPairings.keys.toList(),
-                            (v) async {
-                              await changeFont(v);
-                              setState(() {});
-                            },
-                            labels: YanciTheme.fontDisplayNames,
+                            _selectedFontFamily,
+                            _fontFamilies,
+                            _selectFont,
+                            labels: _fontLabels,
                           ),
+                          _softDivider(),
+                          _buildFontImportRow(),
                           _softDivider(),
                           Padding(
                             padding: const EdgeInsets.symmetric(vertical: 12),

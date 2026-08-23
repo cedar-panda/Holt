@@ -18,6 +18,7 @@ import 'services/holt_license_registry.dart';
 import 'services/keep_alive_service.dart';
 import 'services/character_timeline_service.dart';
 import 'services/model_cost_policy.dart';
+import 'services/custom_font_service.dart';
 import 'memory/emotion_coordinates.dart';
 import 'screens/splash_screen.dart';
 import 'screens/initial_setup_screen.dart';
@@ -110,11 +111,16 @@ void main() async {
         await ThemeSettings.getBackgroundImageOffsetY('chat');
 
     // 讀取字體偏好
-    final fontCn = await ThemeSettings.getFontChinese();
-    final fontEn = await ThemeSettings.getFontEnglish();
+    final customFont = await CustomFontService.restoreActiveFont();
+    final fontCn = customFont?.family ?? await ThemeSettings.getFontChinese();
+    final fontEn = customFont == null
+        ? await ThemeSettings.getFontEnglish()
+        : 'LXGW WenKai TC';
     final fontScale = await ThemeSettings.getFontSizeScale();
     YanciTheme.setFont(fontCn, fontEn);
     YanciTheme.setFontScale(fontScale);
+    // 大型自訂字體若跨過 startup timeout，載入完成後仍要刷新已運行的 App。
+    themeNotifier.value++;
   });
 
   await _startupStep(
@@ -213,9 +219,17 @@ Future<void> toggleTheme() async {
 Future<void> changeFont(String cn) async {
   final primary = YanciTheme.fontPairings.containsKey(cn) ? cn : 'Lora';
   final en = YanciTheme.fontPairings[primary] ?? 'LXGW WenKai TC';
+  await CustomFontService.deactivate();
   YanciTheme.setFont(primary, en);
   await ThemeSettings.saveFontChinese(primary);
   await ThemeSettings.saveFontEnglish(en);
+  themeNotifier.value++;
+}
+
+/// 套用已驗證並載入的自訂字體；缺字時回退內置落霞文楷。
+Future<void> changeCustomFont(CustomFontInfo info) async {
+  await CustomFontService.activate(info);
+  YanciTheme.setFont(info.family, 'LXGW WenKai TC');
   themeNotifier.value++;
 }
 
