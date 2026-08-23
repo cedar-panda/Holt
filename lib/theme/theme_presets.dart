@@ -87,8 +87,6 @@ const presets = <ThemePreset>[
   bloomPreset,
   pinkPreset,
   sodaPreset,
-  // ── 特色組（季節×動物）──
-  swallowPreset,
   // ── 暗色組 ──
   midnightPreset,
   nightlampPreset,
@@ -253,6 +251,7 @@ const mistPreset = ThemePreset(
 
 /// 根據 ID 查找預設
 ThemePreset findPreset(String id) {
+  if (id == swallowPreset.id) return swallowPreset;
   return presets.firstWhere((p) => p.id == id, orElse: () => presets[0]);
 }
 

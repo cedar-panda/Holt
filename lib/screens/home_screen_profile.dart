@@ -258,21 +258,25 @@ extension _HomeProfileMethods on _HomeScreenState {
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 // 左上角：日/夜模式切換（回到最近選過的對應主題）
-                IconButton(
-                  tooltip: YanciTheme.isDark
-                      ? (L.pick(en: 'Light Mode', zhTW: '日間模式'))
-                      : (L.pick(en: 'Dark Mode', zhTW: '夜間模式')),
-                  onPressed: _toggleProfileThemeMode,
-                  icon: Icon(
-                    YanciTheme.isDark
-                        ? Icons.light_mode_rounded
-                        : Icons.dark_mode_rounded,
-                    size: 22,
-                  ),
-                  style: IconButton.styleFrom(
-                    foregroundColor: YanciTheme.accent,
-                  ),
-                ),
+                if (YanciTheme.homeBackgroundImagePath.isEmpty &&
+                    YanciTheme.chatBackgroundImagePath.isEmpty)
+                  IconButton(
+                    tooltip: YanciTheme.isDark
+                        ? (L.pick(en: 'Light Mode', zhTW: '日間模式'))
+                        : (L.pick(en: 'Dark Mode', zhTW: '夜間模式')),
+                    onPressed: _toggleProfileThemeMode,
+                    icon: Icon(
+                      YanciTheme.isDark
+                          ? Icons.light_mode_rounded
+                          : Icons.dark_mode_rounded,
+                      size: 22,
+                    ),
+                    style: IconButton.styleFrom(
+                      foregroundColor: YanciTheme.accent,
+                    ),
+                  )
+                else
+                  const SizedBox(width: 48, height: 48),
                 // 右上角：備份與設定
                 Row(
                   mainAxisSize: MainAxisSize.min,

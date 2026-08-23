@@ -32,6 +32,11 @@ class _ThemeWorkshopScreenState extends State<ThemeWorkshopScreen> {
   double _chatBgScale = 1.0;
   double _chatBgOffsetX = 0.0;
   double _chatBgOffsetY = 0.0;
+  Color? _chatBgAiBubbleColor;
+  Color? _chatBgUserBubbleColor;
+  Color? _chatBgBubbleTextColor;
+  Color? _chatBgThinkingTextColor;
+  double? _chatBgBubbleOpacity;
   List<Color> _colorHistory = [];
   String _lightShortcutId = 'ivory';
   String _darkShortcutId = 'nightlamp';
@@ -55,6 +60,11 @@ class _ThemeWorkshopScreenState extends State<ThemeWorkshopScreen> {
     _chatBgScale = YanciTheme.chatBackgroundImageScale;
     _chatBgOffsetX = YanciTheme.chatBackgroundImageOffsetX;
     _chatBgOffsetY = YanciTheme.chatBackgroundImageOffsetY;
+    _chatBgAiBubbleColor = YanciTheme.chatBackgroundAiBubbleOverride;
+    _chatBgUserBubbleColor = YanciTheme.chatBackgroundUserBubbleOverride;
+    _chatBgBubbleTextColor = YanciTheme.chatBackgroundBubbleTextOverride;
+    _chatBgThinkingTextColor = YanciTheme.chatBackgroundThinkingTextOverride;
+    _chatBgBubbleOpacity = YanciTheme.chatBackgroundBubbleOpacityOverride;
     _currentCarouselPage = presets
         .indexWhere((p) => p.id == _selectedId)
         .clamp(0, presets.length - 1);
@@ -211,7 +221,100 @@ class _ThemeWorkshopScreenState extends State<ThemeWorkshopScreen> {
     _notifyThemeChanged();
   }
 
+  Color? _chatBackgroundColorOverride(_ChatBackgroundColorRole role) =>
+      switch (role) {
+        _ChatBackgroundColorRole.aiBubble => _chatBgAiBubbleColor,
+        _ChatBackgroundColorRole.userBubble => _chatBgUserBubbleColor,
+        _ChatBackgroundColorRole.bubbleText => _chatBgBubbleTextColor,
+        _ChatBackgroundColorRole.thinkingText => _chatBgThinkingTextColor,
+      };
+
+  Color _chatBackgroundColor(_ChatBackgroundColorRole role) => switch (role) {
+    _ChatBackgroundColorRole.aiBubble =>
+      (_chatBgAiBubbleColor ?? YanciTheme.aiBubble).withValues(
+        alpha: _chatBackgroundBubbleOpacity,
+      ),
+    _ChatBackgroundColorRole.userBubble =>
+      (_chatBgUserBubbleColor ?? YanciTheme.userBubble).withValues(
+        alpha: _chatBackgroundBubbleOpacity,
+      ),
+    _ChatBackgroundColorRole.bubbleText =>
+      _chatBgBubbleTextColor ?? YanciTheme.chatBackgroundBubbleTextColor,
+    _ChatBackgroundColorRole.thinkingText =>
+      _chatBgThinkingTextColor ?? YanciTheme.chatBackgroundThinkingTextColor,
+  };
+
+  double get _chatBackgroundBubbleOpacity =>
+      _chatBgBubbleOpacity ?? YanciTheme.bubbleOpacity;
+
+  Future<void> _saveChatBackgroundColor(
+    _ChatBackgroundColorRole role,
+    Color? color,
+  ) async {
+    final argb = color?.toARGB32();
+    switch (role) {
+      case _ChatBackgroundColorRole.aiBubble:
+        _chatBgAiBubbleColor = color;
+        YanciTheme.chatBackgroundAiBubbleOverride = color;
+        await ThemeSettings.saveChatBackgroundAiBubbleColor(argb);
+      case _ChatBackgroundColorRole.userBubble:
+        _chatBgUserBubbleColor = color;
+        YanciTheme.chatBackgroundUserBubbleOverride = color;
+        await ThemeSettings.saveChatBackgroundUserBubbleColor(argb);
+      case _ChatBackgroundColorRole.bubbleText:
+        _chatBgBubbleTextColor = color;
+        YanciTheme.chatBackgroundBubbleTextOverride = color;
+        await ThemeSettings.saveChatBackgroundBubbleTextColor(argb);
+      case _ChatBackgroundColorRole.thinkingText:
+        _chatBgThinkingTextColor = color;
+        YanciTheme.chatBackgroundThinkingTextOverride = color;
+        await ThemeSettings.saveChatBackgroundThinkingTextColor(argb);
+    }
+    _notifyThemeChanged();
+  }
+
+  Future<void> _saveChatBackgroundBubbleOpacity(double? opacity) async {
+    _chatBgBubbleOpacity = opacity;
+    YanciTheme.chatBackgroundBubbleOpacityOverride = opacity;
+    await ThemeSettings.saveChatBackgroundBubbleOpacity(opacity);
+    _notifyThemeChanged();
+  }
+
+  void _pickChatBackgroundColor(
+    _ChatBackgroundColorRole role,
+    String label,
+    StateSetter setSheetState,
+  ) {
+    final entry = _ColorEntry(
+      label,
+      _chatBackgroundColor(role),
+      'chatBackground-${role.name}',
+    );
+    _showColorPicker(
+      entry,
+      setSheetState,
+      onApplied: (color) async {
+        await _saveChatBackgroundColor(role, color);
+        if (mounted) setSheetState(() {});
+      },
+      presetColors: role == _ChatBackgroundColorRole.bubbleText
+          ? const [
+              Color(0xFF343840),
+              Color(0xFF242126),
+              Color(0xFFFFFFFF),
+              Color(0xFF654F45),
+              Color(0xFF384C68),
+            ]
+          : null,
+    );
+  }
+
   void _showBackgroundSettings() {
+    var homePreviewExpanded = true;
+    var chatPreviewExpanded = true;
+    var homePositionExpanded = false;
+    var chatPositionExpanded = false;
+    var chatColorsExpanded = false;
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
@@ -272,6 +375,14 @@ class _ThemeWorkshopScreenState extends State<ThemeWorkshopScreen> {
                         scale: _homeBgScale,
                         offsetX: _homeBgOffsetX,
                         offsetY: _homeBgOffsetY,
+                        previewExpanded: homePreviewExpanded,
+                        onPreviewToggle: () => setSheetState(
+                          () => homePreviewExpanded = !homePreviewExpanded,
+                        ),
+                        positionExpanded: homePositionExpanded,
+                        onPositionToggle: () => setSheetState(
+                          () => homePositionExpanded = !homePositionExpanded,
+                        ),
                         setSheetState: setSheetState,
                       ),
                       const SizedBox(height: 14),
@@ -282,6 +393,18 @@ class _ThemeWorkshopScreenState extends State<ThemeWorkshopScreen> {
                         scale: _chatBgScale,
                         offsetX: _chatBgOffsetX,
                         offsetY: _chatBgOffsetY,
+                        previewExpanded: chatPreviewExpanded,
+                        onPreviewToggle: () => setSheetState(
+                          () => chatPreviewExpanded = !chatPreviewExpanded,
+                        ),
+                        positionExpanded: chatPositionExpanded,
+                        onPositionToggle: () => setSheetState(
+                          () => chatPositionExpanded = !chatPositionExpanded,
+                        ),
+                        colorsExpanded: chatColorsExpanded,
+                        onColorsToggle: () => setSheetState(
+                          () => chatColorsExpanded = !chatColorsExpanded,
+                        ),
                         setSheetState: setSheetState,
                       ),
                     ],
@@ -302,6 +425,12 @@ class _ThemeWorkshopScreenState extends State<ThemeWorkshopScreen> {
     required double scale,
     required double offsetX,
     required double offsetY,
+    required bool previewExpanded,
+    required VoidCallback onPreviewToggle,
+    required bool positionExpanded,
+    required VoidCallback onPositionToggle,
+    bool colorsExpanded = false,
+    VoidCallback? onColorsToggle,
     required StateSetter setSheetState,
   }) {
     final fileExists = path.isNotEmpty && File(path).existsSync();
@@ -341,115 +470,744 @@ class _ThemeWorkshopScreenState extends State<ThemeWorkshopScreen> {
               ),
             ],
           ),
-          const SizedBox(height: 8),
-          Center(
-            child: SizedBox(
-              width: 126,
-              child: AspectRatio(
-                aspectRatio: 9 / 20,
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(12),
-                  child: Stack(
-                    fit: StackFit.expand,
-                    children: [
-                      Container(
-                        decoration: BoxDecoration(
-                          gradient: LinearGradient(
-                            begin: Alignment.topCenter,
-                            end: Alignment.bottomCenter,
-                            colors: YanciTheme.backgroundGradient,
-                          ),
-                        ),
-                      ),
-                      if (fileExists)
-                        LayoutBuilder(
-                          builder: (context, constraints) {
-                            return Transform.translate(
-                              offset: Offset(
-                                offsetX.clamp(-0.5, 0.5).toDouble() *
-                                    constraints.maxWidth,
-                                offsetY.clamp(-0.5, 0.5).toDouble() *
-                                    constraints.maxHeight,
-                              ),
-                              child: Transform.scale(
-                                scale: scale.clamp(0.8, 2.0).toDouble(),
-                                child: Image.file(
-                                  File(path),
-                                  fit: BoxFit.cover,
-                                  filterQuality: FilterQuality.high,
-                                ),
-                              ),
-                            );
-                          },
-                        ),
-                      if (!fileExists)
-                        Center(
-                          child: Icon(
-                            Icons.image_outlined,
-                            color: YanciTheme.textSecondary.withValues(
-                              alpha: 0.35,
-                            ),
-                          ),
-                        ),
-                      Positioned(
-                        top: 10,
-                        left: 10,
-                        right: 10,
-                        child: Container(
-                          height: 18,
-                          decoration: BoxDecoration(
-                            color: YanciTheme.glassWhite.withValues(
-                              alpha: 0.55,
-                            ),
-                            borderRadius: BorderRadius.circular(9),
-                          ),
-                        ),
-                      ),
-                      Positioned(
-                        bottom: 12,
-                        left: 12,
-                        right: 28,
-                        child: Container(
-                          height: 26,
-                          decoration: BoxDecoration(
-                            color: YanciTheme.aiBubble.withValues(alpha: 0.72),
-                            borderRadius: BorderRadius.circular(13),
-                          ),
-                        ),
-                      ),
-                    ],
+          const SizedBox(height: 4),
+          _collapsibleBackgroundGroup(
+            key: ValueKey('background-$scope-preview-section'),
+            title: L.pick(en: 'Preview', zhTW: '預覽', zhCN: '预览'),
+            expanded: previewExpanded,
+            onToggle: onPreviewToggle,
+            child: Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Center(
+                child: SizedBox(
+                  width: 126,
+                  child: AspectRatio(
+                    aspectRatio: 9 / 20,
+                    child: _backgroundPreviewCanvas(
+                      path: path,
+                      scale: scale,
+                      offsetX: offsetX,
+                      offsetY: offsetY,
+                      fileExists: fileExists,
+                      overlay: scope == 'chat'
+                          ? _buildPortraitChatPreview()
+                          : _buildPortraitHomePreview(),
+                    ),
                   ),
                 ),
               ),
             ),
           ),
-          const SizedBox(height: 10),
-          _slider(
-            L.pick(en: 'Scale', zhTW: '大小'),
-            scale,
-            0.8,
-            2.0,
-            12,
-            '${(scale * 100).round()}%',
-            (v) => _setBackgroundScale(scope, v, setSheetState),
+          const SizedBox(height: 8),
+          _collapsibleBackgroundGroup(
+            key: ValueKey('background-$scope-position-section'),
+            title: L.pick(
+              en: 'Image position tuning',
+              zhTW: '圖片位置微調',
+              zhCN: '图片位置微调',
+            ),
+            expanded: positionExpanded,
+            onToggle: onPositionToggle,
+            child: Column(
+              children: [
+                _slider(
+                  L.pick(en: 'Scale', zhTW: '大小'),
+                  scale,
+                  0.8,
+                  2.0,
+                  12,
+                  '${(scale * 100).round()}%',
+                  (v) => _setBackgroundScale(scope, v, setSheetState),
+                ),
+                _slider(
+                  L.pick(en: 'X', zhTW: '左右'),
+                  offsetX,
+                  -0.5,
+                  0.5,
+                  20,
+                  _offsetDisplay(offsetX, axis: Axis.horizontal),
+                  (v) => _setBackgroundOffset(scope, v, offsetY, setSheetState),
+                ),
+                _slider(
+                  L.pick(en: 'Y', zhTW: '上下'),
+                  offsetY,
+                  -0.5,
+                  0.5,
+                  20,
+                  _offsetDisplay(offsetY, axis: Axis.vertical),
+                  (v) => _setBackgroundOffset(scope, offsetX, v, setSheetState),
+                ),
+              ],
+            ),
           ),
-          _slider(
-            L.pick(en: 'X', zhTW: '左右'),
-            offsetX,
-            -0.5,
-            0.5,
-            20,
-            _offsetDisplay(offsetX, axis: Axis.horizontal),
-            (v) => _setBackgroundOffset(scope, v, offsetY, setSheetState),
+          if (scope == 'chat') ...[
+            const SizedBox(height: 8),
+            _collapsibleBackgroundGroup(
+              key: const ValueKey('background-chat-colors-section'),
+              title: L.pick(
+                en: 'Text & bubble colors',
+                zhTW: '字體氣泡顏色',
+                zhCN: '字体气泡颜色',
+              ),
+              expanded: colorsExpanded,
+              onToggle: onColorsToggle!,
+              child: Column(
+                children: [
+                  _buildChatBackgroundColorPreview(
+                    path: path,
+                    scale: scale,
+                    offsetX: offsetX,
+                    offsetY: offsetY,
+                    fileExists: fileExists,
+                  ),
+                  const SizedBox(height: 10),
+                  _chatBackgroundColorRow(
+                    role: _ChatBackgroundColorRole.aiBubble,
+                    label: L.pick(
+                      en: 'Character bubble',
+                      zhTW: '角色氣泡',
+                      zhCN: '角色气泡',
+                    ),
+                    setSheetState: setSheetState,
+                  ),
+                  _chatBackgroundColorRow(
+                    role: _ChatBackgroundColorRole.userBubble,
+                    label: L.pick(
+                      en: 'User bubble',
+                      zhTW: '用戶氣泡',
+                      zhCN: '用户气泡',
+                    ),
+                    setSheetState: setSheetState,
+                  ),
+                  _chatBackgroundColorRow(
+                    role: _ChatBackgroundColorRole.bubbleText,
+                    label: L.pick(
+                      en: 'Bubble text color',
+                      zhTW: '氣泡內字體顏色',
+                      zhCN: '气泡内字体颜色',
+                    ),
+                    setSheetState: setSheetState,
+                  ),
+                  _chatBackgroundColorRow(
+                    role: _ChatBackgroundColorRole.thinkingText,
+                    label: L.pick(
+                      en: 'Thinking text color',
+                      zhTW: 'Thinking 字體顏色',
+                      zhCN: 'Thinking 字体颜色',
+                    ),
+                    setSheetState: setSheetState,
+                  ),
+                  _chatBackgroundOpacityControl(setSheetState),
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _backgroundPreviewCanvas({
+    required String path,
+    required double scale,
+    required double offsetX,
+    required double offsetY,
+    required bool fileExists,
+    required Widget overlay,
+  }) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(12),
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          Container(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: YanciTheme.backgroundGradient,
+              ),
+            ),
           ),
-          _slider(
-            L.pick(en: 'Y', zhTW: '上下'),
-            offsetY,
-            -0.5,
-            0.5,
-            20,
-            _offsetDisplay(offsetY, axis: Axis.vertical),
-            (v) => _setBackgroundOffset(scope, offsetX, v, setSheetState),
+          if (fileExists)
+            LayoutBuilder(
+              builder: (context, constraints) => Transform.translate(
+                offset: Offset(
+                  offsetX.clamp(-0.5, 0.5).toDouble() * constraints.maxWidth,
+                  offsetY.clamp(-0.5, 0.5).toDouble() * constraints.maxHeight,
+                ),
+                child: Transform.scale(
+                  scale: scale.clamp(0.8, 2.0).toDouble(),
+                  child: Image.file(
+                    File(path),
+                    fit: BoxFit.cover,
+                    filterQuality: FilterQuality.high,
+                    errorBuilder: (_, _, _) => const SizedBox.shrink(),
+                  ),
+                ),
+              ),
+            ),
+          if (!fileExists)
+            Center(
+              child: Icon(
+                Icons.image_outlined,
+                color: YanciTheme.textSecondary.withValues(alpha: 0.35),
+              ),
+            ),
+          overlay,
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPortraitHomePreview() {
+    return Stack(
+      children: [
+        Positioned(
+          top: 10,
+          left: 10,
+          right: 10,
+          child: Container(
+            height: 18,
+            decoration: BoxDecoration(
+              color: YanciTheme.glassWhite.withValues(alpha: 0.55),
+              borderRadius: BorderRadius.circular(9),
+            ),
+          ),
+        ),
+        Positioned(
+          bottom: 12,
+          left: 12,
+          right: 28,
+          child: Container(
+            height: 26,
+            decoration: BoxDecoration(
+              color: YanciTheme.aiBubble.withValues(alpha: 0.72),
+              borderRadius: BorderRadius.circular(13),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildPortraitChatPreview() {
+    final thinkingColor = _chatBackgroundColor(
+      _ChatBackgroundColorRole.thinkingText,
+    );
+    final r = _bubbleRadius * 0.42; // 按比例縮放圓角
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Spacer(flex: 3),
+          // Thinking 提示
+          Padding(
+            padding: const EdgeInsets.only(left: 2, bottom: 4),
+            child: Text(
+              'Thinking  ›',
+              style: TextStyle(fontSize: 6.5, color: thinkingColor),
+            ),
+          ),
+          // AI 氣泡（左對齊，左下角小圓角）
+          Align(
+            alignment: Alignment.centerLeft,
+            child: _miniPreviewBubble(
+              color: _chatBackgroundColor(_ChatBackgroundColorRole.aiBubble),
+              textColor: _chatBackgroundColor(
+                _ChatBackgroundColorRole.bubbleText,
+              ),
+              borderColor: YanciTheme.aiBubbleBorder,
+              text: L.get('theme_preview_hi'),
+              radius: r,
+              isUser: false,
+            ),
+          ),
+          const SizedBox(height: 8),
+          // 用戶氣泡（右對齊，右下角小圓角）
+          Align(
+            alignment: Alignment.centerRight,
+            child: _miniPreviewBubble(
+              color: _chatBackgroundColor(_ChatBackgroundColorRole.userBubble),
+              textColor: _chatBackgroundColor(
+                _ChatBackgroundColorRole.bubbleText,
+              ),
+              borderColor: YanciTheme.userBubbleBorder,
+              text: L.get('theme_preview_reply'),
+              radius: r,
+              isUser: true,
+            ),
+          ),
+          const Spacer(flex: 5),
+        ],
+      ),
+    );
+  }
+
+  Widget _miniPreviewBubble({
+    required Color color,
+    required Color textColor,
+    required Color borderColor,
+    required String text,
+    required double radius,
+    required bool isUser,
+  }) {
+    final r = radius.clamp(3.0, 14.0);
+    return Container(
+      constraints: const BoxConstraints(maxWidth: 84),
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 5),
+      decoration: BoxDecoration(
+        color: color,
+        borderRadius: BorderRadius.only(
+          topLeft: Radius.circular(r),
+          topRight: Radius.circular(r),
+          bottomLeft: Radius.circular(isUser ? r : 2),
+          bottomRight: Radius.circular(isUser ? 2 : r),
+        ),
+        border: Border.all(
+          color: borderColor.withValues(alpha: 0.5),
+          width: 0.4,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(
+              alpha: YanciTheme.isDark ? 0.16 : 0.04,
+            ),
+            blurRadius: 4,
+            offset: const Offset(0, 1),
+          ),
+        ],
+      ),
+      child: Text(
+        text,
+        key: ValueKey(
+          isUser
+              ? 'chat-portrait-preview-user-text'
+              : 'chat-portrait-preview-ai-text',
+        ),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(
+          fontSize: 6.5,
+          color: textColor,
+          fontFamily: YanciTheme.fontFamily,
+        ),
+      ),
+    );
+  }
+
+  Widget _collapsibleBackgroundGroup({
+    required Key key,
+    required String title,
+    required bool expanded,
+    required VoidCallback onToggle,
+    required Widget child,
+  }) {
+    return Container(
+      key: key,
+      decoration: BoxDecoration(
+        color: YanciTheme.glassInputBg.withValues(alpha: 0.5),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Column(
+        children: [
+          Semantics(
+            button: true,
+            expanded: expanded,
+            label: title,
+            child: InkWell(
+              borderRadius: BorderRadius.circular(10),
+              onTap: onToggle,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 11,
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        title,
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: YanciTheme.textPrimary,
+                        ),
+                      ),
+                    ),
+                    Icon(
+                      expanded
+                          ? Icons.keyboard_arrow_up_rounded
+                          : Icons.keyboard_arrow_down_rounded,
+                      size: 18,
+                      color: YanciTheme.textSecondary,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          if (expanded)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(10, 2, 10, 10),
+              child: child,
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildChatBackgroundColorPreview({
+    required String path,
+    required double scale,
+    required double offsetX,
+    required double offsetY,
+    required bool fileExists,
+  }) {
+    final thinkingColor = _chatBackgroundColor(
+      _ChatBackgroundColorRole.thinkingText,
+    );
+    final r = _bubbleRadius.clamp(6.0, 32.0);
+    return SizedBox(
+      key: const ValueKey('chat-background-color-preview'),
+      height: 178,
+      width: double.infinity,
+      child: _backgroundPreviewCanvas(
+        path: path,
+        scale: scale,
+        offsetX: offsetX,
+        offsetY: offsetY,
+        fileExists: fileExists,
+        overlay: Padding(
+          padding: const EdgeInsets.fromLTRB(14, 14, 14, 16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Thinking 提示行
+              Row(
+                children: [
+                  Icon(
+                    Icons.auto_awesome,
+                    size: 10,
+                    color: thinkingColor.withValues(alpha: 0.7),
+                  ),
+                  const SizedBox(width: 4),
+                  Text(
+                    'Thinking  ›  Memory · Mood',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: thinkingColor,
+                      fontFamily: YanciTheme.fontFamily,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              // AI 氣泡（左對齊，左下角尖）
+              Align(
+                alignment: Alignment.centerLeft,
+                child: _colorPreviewBubble(
+                  color: _chatBackgroundColor(
+                    _ChatBackgroundColorRole.aiBubble,
+                  ),
+                  textColor: _chatBackgroundColor(
+                    _ChatBackgroundColorRole.bubbleText,
+                  ),
+                  borderColor: YanciTheme.aiBubbleBorder,
+                  text: L.get('theme_preview_hi'),
+                  radius: r,
+                  isUser: false,
+                ),
+              ),
+              const Spacer(),
+              // 用戶氣泡（右對齊，右下角尖）
+              Align(
+                alignment: Alignment.centerRight,
+                child: _colorPreviewBubble(
+                  color: _chatBackgroundColor(
+                    _ChatBackgroundColorRole.userBubble,
+                  ),
+                  textColor: _chatBackgroundColor(
+                    _ChatBackgroundColorRole.bubbleText,
+                  ),
+                  borderColor: YanciTheme.userBubbleBorder,
+                  text: L.get('theme_preview_reply'),
+                  radius: r,
+                  isUser: true,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _colorPreviewBubble({
+    required Color color,
+    required Color textColor,
+    required Color borderColor,
+    required String text,
+    required double radius,
+    required bool isUser,
+  }) {
+    return Container(
+      constraints: const BoxConstraints(maxWidth: 200),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: color,
+        borderRadius: BorderRadius.only(
+          topLeft: Radius.circular(radius),
+          topRight: Radius.circular(radius),
+          bottomLeft: Radius.circular(isUser ? radius : 4),
+          bottomRight: Radius.circular(isUser ? 4 : radius),
+        ),
+        border: Border.all(
+          color: borderColor.withValues(alpha: 0.5),
+          width: 0.5,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(
+              alpha: YanciTheme.isDark ? 0.18 : 0.05,
+            ),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Text(
+        text,
+        key: ValueKey(
+          isUser
+              ? 'chat-color-preview-user-text'
+              : 'chat-color-preview-ai-text',
+        ),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: YanciTheme.bodyText.copyWith(fontSize: 12, color: textColor),
+      ),
+    );
+  }
+
+  Widget _chatBackgroundColorRow({
+    required _ChatBackgroundColorRole role,
+    required String label,
+    required StateSetter setSheetState,
+  }) {
+    final color = _chatBackgroundColor(role);
+    final hasOverride = _chatBackgroundColorOverride(role) != null;
+    final isText =
+        role == _ChatBackgroundColorRole.thinkingText ||
+        role == _ChatBackgroundColorRole.bubbleText;
+    final isUser = role == _ChatBackgroundColorRole.userBubble;
+    final r = _bubbleRadius.clamp(6.0, 32.0) * 0.6;
+
+    // 氣泡型色塊 / 文字色條
+    Widget colorChip;
+    if (isText) {
+      // Thinking 顏色 → 用文字預覽取代色塊
+      colorChip = Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.10),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              role == _ChatBackgroundColorRole.thinkingText
+                  ? Icons.auto_awesome
+                  : Icons.text_fields_rounded,
+              size: 11,
+              color: color.withValues(alpha: 0.7),
+            ),
+            const SizedBox(width: 4),
+            Text(
+              role == _ChatBackgroundColorRole.thinkingText ? 'Thinking' : 'Aa',
+              style: TextStyle(
+                fontSize: 11,
+                color: color,
+                fontFamily: YanciTheme.fontFamily,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ],
+        ),
+      );
+    } else {
+      // 氣泡顏色 → 用 mini bubble 形狀預覽
+      colorChip = Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        decoration: BoxDecoration(
+          color: color,
+          borderRadius: BorderRadius.only(
+            topLeft: Radius.circular(r),
+            topRight: Radius.circular(r),
+            bottomLeft: Radius.circular(isUser ? r : 3),
+            bottomRight: Radius.circular(isUser ? 3 : r),
+          ),
+          border: Border.all(
+            color:
+                (isUser
+                        ? YanciTheme.userBubbleBorder
+                        : YanciTheme.aiBubbleBorder)
+                    .withValues(alpha: 0.5),
+            width: 0.5,
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(
+                alpha: YanciTheme.isDark ? 0.12 : 0.04,
+              ),
+              blurRadius: 4,
+              offset: const Offset(0, 1),
+            ),
+          ],
+        ),
+        child: Text(
+          isUser ? 'Hi' : 'Hello',
+          style: TextStyle(
+            fontSize: 10,
+            color: YanciTheme.textOnBubble,
+            fontFamily: YanciTheme.fontFamily,
+          ),
+        ),
+      );
+    }
+
+    return Container(
+      margin: const EdgeInsets.only(top: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: YanciTheme.glassInputBg.withValues(alpha: 0.3),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Row(
+        children: [
+          Semantics(
+            button: true,
+            label: label,
+            child: InkWell(
+              borderRadius: BorderRadius.circular(8),
+              onTap: () => _pickChatBackgroundColor(role, label, setSheetState),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                child: Row(
+                  children: [
+                    colorChip,
+                    const SizedBox(width: 10),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          label,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: YanciTheme.textPrimary,
+                          ),
+                        ),
+                        Text(
+                          '#${_colorToHex(color)}',
+                          style: TextStyle(
+                            fontSize: 9,
+                            fontFamily: 'monospace',
+                            color: YanciTheme.textSecondary.withValues(
+                              alpha: 0.6,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          const Spacer(),
+          if (hasOverride)
+            SizedBox(
+              width: 28,
+              height: 28,
+              child: IconButton(
+                key: ValueKey('chat-background-${role.name}-reset'),
+                tooltip: L.pick(en: 'Use theme default', zhTW: '恢復主題預設'),
+                padding: EdgeInsets.zero,
+                visualDensity: VisualDensity.compact,
+                onPressed: () async {
+                  await _saveChatBackgroundColor(role, null);
+                  setSheetState(() {});
+                },
+                icon: Icon(
+                  Icons.restart_alt_rounded,
+                  size: 16,
+                  color: YanciTheme.textSecondary.withValues(alpha: 0.6),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _chatBackgroundOpacityControl(StateSetter setSheetState) {
+    final opacity = _chatBackgroundBubbleOpacity;
+    final hasOverride = _chatBgBubbleOpacity != null;
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            L.pick(en: 'Bubble opacity', zhTW: '氣泡透明度', zhCN: '气泡透明度'),
+            style: YanciTheme.bodyText.copyWith(fontSize: 12),
+          ),
+          const SizedBox(height: 2),
+          Row(
+            children: [
+              Expanded(
+                child: Slider(
+                  key: const ValueKey('chat-background-bubble-opacity'),
+                  value: opacity.clamp(0.0, 1.0),
+                  min: 0.0,
+                  max: 1.0,
+                  divisions: 20,
+                  onChanged: (value) {
+                    setSheetState(() => _chatBgBubbleOpacity = value);
+                    YanciTheme.chatBackgroundBubbleOpacityOverride = value;
+                    _notifyThemeChanged();
+                  },
+                  onChangeEnd: (value) =>
+                      _saveChatBackgroundBubbleOpacity(value),
+                ),
+              ),
+              SizedBox(
+                width: 52,
+                child: Text(
+                  '${(opacity * 100).round()}%',
+                  key: const ValueKey('chat-background-bubble-opacity-value'),
+                  textAlign: TextAlign.right,
+                  maxLines: 1,
+                  softWrap: false,
+                  style: YanciTheme.bodySmall.copyWith(
+                    color: YanciTheme.accent,
+                  ),
+                ),
+              ),
+              IconButton(
+                key: const ValueKey('chat-background-bubble-opacity-reset'),
+                tooltip: L.pick(en: 'Use theme default', zhTW: '恢復主題預設'),
+                visualDensity: VisualDensity.compact,
+                onPressed: hasOverride
+                    ? () async {
+                        await _saveChatBackgroundBubbleOpacity(null);
+                        setSheetState(() {});
+                      }
+                    : null,
+                icon: const Icon(Icons.restart_alt_rounded, size: 18),
+              ),
+            ],
           ),
         ],
       ),
@@ -553,7 +1311,9 @@ class _ThemeWorkshopScreenState extends State<ThemeWorkshopScreen> {
                           height: 104,
                           child: PageView.builder(
                             clipBehavior: Clip.none,
-                            physics: const BouncingScrollPhysics(),
+                            physics: const PageScrollPhysics(
+                              parent: ClampingScrollPhysics(),
+                            ),
                             controller: _themeCarouselController,
                             itemCount: presets.length,
                             onPageChanged: (index) {
@@ -1430,16 +2190,20 @@ class _ThemeWorkshopScreenState extends State<ThemeWorkshopScreen> {
     _ColorEntry entry,
     StateSetter parentState, {
     List<_ColorEntry>? allEntries,
+    ValueChanged<Color>? onApplied,
+    List<Color>? presetColors,
   }) {
     var hsl = HSLColor.fromColor(entry.color);
     var previewColor = entry.color;
+    var hexValid = true;
 
-    showDialog(
+    showDialog<void>(
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setPickerState) {
           void updateColor() {
             previewColor = hsl.toColor();
+            hexValid = true;
             setPickerState(() {});
           }
 
@@ -1469,6 +2233,56 @@ class _ThemeWorkshopScreenState extends State<ThemeWorkshopScreen> {
                     ),
                   ),
                   const SizedBox(height: 14),
+
+                  if (presetColors != null) ...[
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                      children: presetColors
+                          .map(
+                            (color) => InkWell(
+                              onTap: () {
+                                hsl = HSLColor.fromColor(color);
+                                updateColor();
+                              },
+                              borderRadius: BorderRadius.circular(14),
+                              child: Container(
+                                width: 28,
+                                height: 28,
+                                decoration: BoxDecoration(
+                                  color: color,
+                                  shape: BoxShape.circle,
+                                  border: Border.all(
+                                    color: YanciTheme.textSecondary.withValues(
+                                      alpha: 0.25,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          )
+                          .toList(),
+                    ),
+                    const SizedBox(height: 12),
+                  ],
+
+                  _HexColorInput(
+                    color: previewColor,
+                    valid: hexValid,
+                    onChanged: (value) {
+                      final normalized = value.replaceAll('#', '').trim();
+                      final parsed = normalized.length == 6
+                          ? int.tryParse(normalized, radix: 16)
+                          : null;
+                      setPickerState(() {
+                        hexValid = parsed != null;
+                        if (parsed != null) {
+                          previewColor = Color(0xFF000000 | parsed);
+                          hsl = HSLColor.fromColor(previewColor);
+                        }
+                      });
+                    },
+                  ),
+                  const SizedBox(height: 12),
 
                   // ── 色相 ──
                   _pickerSlider(
@@ -1578,28 +2392,34 @@ class _ThemeWorkshopScreenState extends State<ThemeWorkshopScreen> {
               ),
               // 儲存到歷史 + 套用
               TextButton(
-                onPressed: () {
-                  final color = previewColor;
-                  // 加入歷史（去重，最多 8 個）
-                  _colorHistory.removeWhere(
-                    (c) => _colorToHex(c) == _colorToHex(color),
-                  );
-                  _colorHistory.insert(0, color);
-                  if (_colorHistory.length > 8) _colorHistory.removeLast();
-                  _saveColorHistory();
-                  Navigator.pop(ctx);
-                  parentState(() {
-                    // 套用到當前 + 所有勾選的元素
-                    entry.color = color;
-                    if (allEntries != null) {
-                      for (final e in allEntries) {
-                        if (e.selected && e.key != entry.key) {
-                          e.color = color;
+                key: const ValueKey('theme-color-apply'),
+                onPressed: hexValid
+                    ? () {
+                        final color = previewColor;
+                        // 加入歷史（去重，最多 8 個）
+                        _colorHistory.removeWhere(
+                          (c) => _colorToHex(c) == _colorToHex(color),
+                        );
+                        _colorHistory.insert(0, color);
+                        if (_colorHistory.length > 8) {
+                          _colorHistory.removeLast();
                         }
+                        _saveColorHistory();
+                        Navigator.pop(ctx);
+                        parentState(() {
+                          // 套用到當前 + 所有勾選的元素
+                          entry.color = color;
+                          if (allEntries != null) {
+                            for (final e in allEntries) {
+                              if (e.selected && e.key != entry.key) {
+                                e.color = color;
+                              }
+                            }
+                          }
+                        });
+                        onApplied?.call(color);
                       }
-                    }
-                  });
-                },
+                    : null,
                 child: Text(
                   '✓ ${L.get('theme_apply')}',
                   style: TextStyle(color: YanciTheme.accent),
@@ -1776,6 +2596,83 @@ class _ThemeWorkshopScreenState extends State<ThemeWorkshopScreen> {
       if (v != null) return Color(v);
     }
     return null;
+  }
+}
+
+enum _ChatBackgroundColorRole { aiBubble, userBubble, bubbleText, thinkingText }
+
+class _HexColorInput extends StatefulWidget {
+  const _HexColorInput({
+    required this.color,
+    required this.valid,
+    required this.onChanged,
+  });
+
+  final Color color;
+  final bool valid;
+  final ValueChanged<String> onChanged;
+
+  @override
+  State<_HexColorInput> createState() => _HexColorInputState();
+}
+
+class _HexColorInputState extends State<_HexColorInput> {
+  late final TextEditingController _controller;
+  late final FocusNode _focusNode;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: _textFor(widget.color));
+    _focusNode = FocusNode();
+  }
+
+  @override
+  void didUpdateWidget(covariant _HexColorInput oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.color != widget.color && !_focusNode.hasFocus) {
+      final text = _textFor(widget.color);
+      _controller.value = TextEditingValue(
+        text: text,
+        selection: TextSelection.collapsed(offset: text.length),
+      );
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    _focusNode.dispose();
+    super.dispose();
+  }
+
+  String _textFor(Color color) =>
+      '#${color.toARGB32().toRadixString(16).padLeft(8, '0').substring(2).toUpperCase()}';
+
+  @override
+  Widget build(BuildContext context) {
+    return TextField(
+      key: const ValueKey('theme-color-hex-input'),
+      controller: _controller,
+      focusNode: _focusNode,
+      autocorrect: false,
+      enableSuggestions: false,
+      textCapitalization: TextCapitalization.characters,
+      decoration: InputDecoration(
+        labelText: 'HEX',
+        hintText: '#RRGGBB',
+        errorText: widget.valid
+            ? null
+            : L.pick(
+                en: 'Enter a 6-digit HEX color',
+                zhTW: '請輸入 6 位 HEX 色碼',
+                zhCN: '请输入 6 位 HEX 色码',
+              ),
+        isDense: true,
+        border: const OutlineInputBorder(),
+      ),
+      onChanged: widget.onChanged,
+    );
   }
 }
 

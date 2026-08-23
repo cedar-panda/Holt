@@ -11,6 +11,7 @@ import 'package:project_yanci/theme/app_theme.dart';
 import 'package:project_yanci/theme/theme_presets.dart';
 import 'package:project_yanci/widgets/chat_bubble.dart';
 import 'package:project_yanci/widgets/bubble_action_glyph.dart';
+import 'package:project_yanci/widgets/thinking_context_widgets.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -28,9 +29,7 @@ void main() {
     },
   );
 
-  testWidgets('thinking tree stays transparent and remains expandable', (
-    tester,
-  ) async {
+  testWidgets('thinking opens a two-stage draggable sheet', (tester) async {
     SharedPreferences.setMockInitialValues(<String, Object>{});
     await L.setLocale('zh_TW');
 
@@ -62,15 +61,91 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('正在整理想法'), findsOneWidget);
     expect(find.byKey(const ValueKey('thinking-tree-body')), findsOneWidget);
-    expect(
-      tester
-          .widget<AnimatedRotation>(
-            find.byKey(const ValueKey('thinking-tree-chevron')),
-          )
-          .turns,
-      0.25,
+    expect(find.byKey(const ValueKey('thinking-detail-sheet')), findsOneWidget);
+    final sheet = tester.widget<DraggableScrollableSheet>(
+      find.byKey(const ValueKey('thinking-detail-sheet')),
     );
+    expect(sheet.initialChildSize, 0.58);
+    expect(sheet.maxChildSize, 1.0);
+    expect(sheet.snap, isTrue);
+    expect(sheet.snapSizes, const [0.58, 1.0]);
     expect(find.text('正常回覆'), findsOneWidget);
+
+    await tester.drag(
+      find.byKey(const ValueKey('thinking-sheet-scroll-view')),
+      const Offset(0, -900),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('thinking-sheet-close')), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('thinking-sheet-close')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('thinking-detail-sheet')), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('thinking sheet syncs saved thinking color across history', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    await L.setLocale('zh_TW');
+    final originalPath = YanciTheme.chatBackgroundImagePath;
+    final originalThinkingColor = YanciTheme.chatBackgroundThinkingTextOverride;
+    addTearDown(() {
+      YanciTheme.chatBackgroundImagePath = originalPath;
+      YanciTheme.chatBackgroundThinkingTextOverride = originalThinkingColor;
+    });
+
+    YanciTheme.chatBackgroundImagePath = '';
+    YanciTheme.chatBackgroundThinkingTextOverride = const Color(0xFF2B5876);
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: ChatBubble(
+            text: '<think>圖片背景思考內容</think>正常回覆',
+            isUser: false,
+            memoryLog:
+                '讀取相關記憶\n'
+                '📍 情緒打點：安心\n'
+                '情緒座標: (0.3, -0.2)\n'
+                'Done',
+          ),
+        ),
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.tap(find.byKey(const ValueKey('thinking-chain-container')));
+    await tester.pumpAndSettle();
+
+    final title = tester.widget<Text>(
+      find.byKey(const ValueKey('thinking-sheet-title')),
+    );
+    expect(title.style?.color, const Color(0xFF2B5876));
+    expect(title.style?.fontSize, 14);
+    expect(title.style?.fontWeight, FontWeight.w700);
+    final body = tester.widget<ThinkingMarkdown>(
+      find.byKey(const ValueKey('thinking-chain-content')),
+    );
+    expect(body.bodyColor, const Color(0xFF2B5876));
+    expect(body.fontSize, 13);
+    expect(
+      tester.widget<Text>(find.text('Memory')).style?.color,
+      const Color(0xFF2B5876),
+    );
+    await tester.tap(find.byKey(const ValueKey('memory-log-container')));
+    await tester.pumpAndSettle();
+    final memory = tester.widget<ThinkingMarkdown>(
+      find.byKey(const ValueKey('memory-markdown-content')),
+    );
+    expect(memory.bodyColor, const Color(0xFF2B5876));
+    expect(
+      tester.widget<Text>(find.text('Mood')).style?.color,
+      const Color(0xFF2B5876),
+    );
+    expect(
+      tester.widget<Text>(find.text('📍 情緒打點：安心')).style?.color,
+      const Color(0xFF2B5876),
+    );
+    expect(find.text('圖片背景思考內容'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -156,49 +231,139 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('valid custom image gives context metadata a readable surface', (
+  test('spring swallow is hidden but legacy selections still resolve', () {
+    expect(presets.any((preset) => preset.id == 'swallow'), isFalse);
+    expect(findPreset('swallow').id, 'swallow');
+  });
+
+  testWidgets(
+    'valid custom image keeps context transparent and uses custom text color',
+    (tester) async {
+      SharedPreferences.setMockInitialValues(<String, Object>{});
+      await L.setLocale('zh_TW');
+      final originalPath = YanciTheme.chatBackgroundImagePath;
+      final originalThinkingColor =
+          YanciTheme.chatBackgroundThinkingTextOverride;
+      final tempDir = Directory.systemTemp.createTempSync(
+        'holt_chat_background_test_',
+      );
+      final background = File('${tempDir.path}/background.jpg')
+        ..writeAsBytesSync(const <int>[1, 2, 3]);
+      addTearDown(() {
+        YanciTheme.chatBackgroundImagePath = originalPath;
+        YanciTheme.chatBackgroundThinkingTextOverride = originalThinkingColor;
+        tempDir.deleteSync(recursive: true);
+      });
+
+      YanciTheme.chatBackgroundImagePath = background.path;
+      YanciTheme.chatBackgroundThinkingTextOverride = const Color(0xFF2B5876);
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: Scaffold(
+            body: ChatBubble(
+              text: '<think>正在整理想法</think>正常回覆',
+              isUser: false,
+              captureMode: true,
+              thinkingExpandedOverride: true,
+              memoryLog: '讀取相關記憶\nDone',
+            ),
+          ),
+        ),
+      );
+
+      expect(
+        find.byKey(const ValueKey('context-tree-image-surface')),
+        findsNothing,
+      );
+      expect(find.text('Thinking'), findsOneWidget);
+      expect(find.text('Memory'), findsOneWidget);
+      expect(
+        tester.widget<Text>(find.text('Thinking')).style?.color,
+        const Color(0xFF2B5876),
+      );
+      expect(
+        tester.widget<Text>(find.text('Memory')).style?.color,
+        const Color(0xFF2B5876),
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('valid custom image uses image-specific bubble colors', (
     tester,
   ) async {
     SharedPreferences.setMockInitialValues(<String, Object>{});
-    await L.setLocale('zh_TW');
     final originalPath = YanciTheme.chatBackgroundImagePath;
+    final originalAiColor = YanciTheme.chatBackgroundAiBubbleOverride;
+    final originalUserColor = YanciTheme.chatBackgroundUserBubbleOverride;
+    final originalOpacity = YanciTheme.chatBackgroundBubbleOpacityOverride;
     final tempDir = Directory.systemTemp.createTempSync(
-      'holt_chat_background_test_',
+      'holt_chat_bubble_color_test_',
     );
     final background = File('${tempDir.path}/background.jpg')
       ..writeAsBytesSync(const <int>[1, 2, 3]);
     addTearDown(() {
       YanciTheme.chatBackgroundImagePath = originalPath;
+      YanciTheme.chatBackgroundAiBubbleOverride = originalAiColor;
+      YanciTheme.chatBackgroundUserBubbleOverride = originalUserColor;
+      YanciTheme.chatBackgroundBubbleOpacityOverride = originalOpacity;
       tempDir.deleteSync(recursive: true);
     });
 
     YanciTheme.chatBackgroundImagePath = background.path;
+    YanciTheme.chatBackgroundAiBubbleOverride = const Color(0xFF456789);
+    YanciTheme.chatBackgroundUserBubbleOverride = const Color(0xFF987654);
+    YanciTheme.chatBackgroundBubbleOpacityOverride = 0.5;
     await tester.pumpWidget(
       const MaterialApp(
         home: Scaffold(
-          body: ChatBubble(
-            text: '<think>正在整理想法</think>正常回覆',
-            isUser: false,
-            captureMode: true,
-            thinkingExpandedOverride: true,
-            memoryLog: '讀取相關記憶\nDone',
+          body: Column(
+            children: [
+              ChatBubble(text: '角色訊息', isUser: false, captureMode: true),
+              ChatBubble(text: '用戶訊息', isUser: true, captureMode: true),
+            ],
           ),
         ),
       ),
     );
 
-    final surfaceFinder = find.byKey(
-      const ValueKey('context-tree-image-surface'),
+    final bubbles = tester
+        .widgetList<Container>(
+          find.byKey(const ValueKey('chat-bubble-surface')),
+        )
+        .toList();
+    expect(bubbles, hasLength(2));
+    final aiBubbleColor = (bubbles[0].decoration! as BoxDecoration).color!;
+    final userBubbleColor = (bubbles[1].decoration! as BoxDecoration).color!;
+    expect(aiBubbleColor.withValues(alpha: 1), const Color(0xFF456789));
+    expect(userBubbleColor.withValues(alpha: 1), const Color(0xFF987654));
+    expect(aiBubbleColor.a, closeTo(0.5, 0.0001));
+    expect(userBubbleColor.a, closeTo(0.5, 0.0001));
+
+    YanciTheme.chatBackgroundBubbleOpacityOverride = 0.0;
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: Column(
+            children: [
+              ChatBubble(text: '角色訊息', isUser: false, captureMode: true),
+              ChatBubble(text: '用戶訊息', isUser: true, captureMode: true),
+            ],
+          ),
+        ),
+      ),
     );
-    expect(surfaceFinder, findsOneWidget);
-    final surface = tester.widget<Container>(surfaceFinder);
-    final decoration = surface.decoration! as BoxDecoration;
-    expect(decoration.color, isNotNull);
-    expect(decoration.color!.a, closeTo(0.88, 0.001));
-    expect(decoration.border, isNotNull);
-    expect(decoration.borderRadius, isNotNull);
-    expect(find.text('Thinking'), findsOneWidget);
-    expect(find.text('Memory'), findsOneWidget);
+    final hiddenSurface = tester
+        .widgetList<Container>(
+          find.byKey(const ValueKey('chat-bubble-surface')),
+        )
+        .first;
+    final hiddenDecoration = hiddenSurface.decoration! as BoxDecoration;
+    expect(hiddenDecoration.color!.a, 0.0);
+    expect(hiddenDecoration.border!.top.color.a, 0.0);
+    expect(hiddenDecoration.boxShadow!.first.color.a, 0.0);
+    expect(find.text('角色訊息'), findsOneWidget);
+    expect(find.text('用戶訊息'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 

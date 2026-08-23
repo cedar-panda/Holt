@@ -27,6 +27,8 @@ import 'sticker_preview_quality.dart';
 import 'bubble_action_glyph.dart';
 import 'chat_avatar.dart';
 import 'web_search_thinking_node.dart';
+import 'thinking_detail_sheet.dart';
+import 'thinking_context_widgets.dart';
 
 /// 聊天氣泡 — 思考鏈 + markdown + 表情包圖片 + 長按菜單
 class ChatBubble extends StatefulWidget {
@@ -137,12 +139,11 @@ class _ChatBubbleState extends State<ChatBubble>
 
   bool _thinkingExpanded = false;
   bool _memLogExpanded = false;
+  final ThinkingSheetCoordinator _thinkingSheet = ThinkingSheetCoordinator();
   String? _inlineMemoryBusyId;
   bool _isSaved = false;
   late AnimationController _entryCtrl;
 
-  // ═══ 四階段氣泡動畫 ═══
-  // ① 淡入  ② Q彈  ③ 橫向展開  ④ 內容顯現
   late Animation<double> _bubbleOpacity;
   late Animation<double> _scaleY;
   late Animation<double> _scaleX;
@@ -155,11 +156,9 @@ class _ChatBubbleState extends State<ChatBubble>
     super.initState();
     _entryCtrl = AnimationController(
       vsync: this,
-      // 短促 QQ 彈跳；避免把生成中的大內容長時間鎖在入場動效裡。
       duration: const Duration(milliseconds: 240),
     );
 
-    // ① 氣泡淡入（一瞬）
     _bubbleOpacity = Tween(begin: 0.0, end: 1.0).animate(
       CurvedAnimation(
         parent: _entryCtrl,
@@ -167,7 +166,6 @@ class _ChatBubbleState extends State<ChatBubble>
       ),
     );
 
-    // ② Q彈 — 垂直方向彈起 + 回彈
     _scaleY =
         TweenSequence<double>([
           TweenSequenceItem(
@@ -195,10 +193,8 @@ class _ChatBubbleState extends State<ChatBubble>
           CurvedAnimation(parent: _entryCtrl, curve: const Interval(0.0, 0.6)),
         );
 
-    // ③ 橫向展開 — 從壓縮到全寬，微彈
     _scaleX =
         TweenSequence<double>([
-          // 彈跳期間保持窄
           TweenSequenceItem(
             tween: Tween(
               begin: 0.3,
@@ -206,7 +202,6 @@ class _ChatBubbleState extends State<ChatBubble>
             ).chain(CurveTween(curve: Curves.easeOut)),
             weight: 30,
           ),
-          // 展開，輕微過衝
           TweenSequenceItem(
             tween: Tween(
               begin: 0.5,
@@ -214,7 +209,6 @@ class _ChatBubbleState extends State<ChatBubble>
             ).chain(CurveTween(curve: Curves.easeOut)),
             weight: 30,
           ),
-          // 回落
           TweenSequenceItem(
             tween: Tween(
               begin: 1.03,
@@ -226,7 +220,6 @@ class _ChatBubbleState extends State<ChatBubble>
           CurvedAnimation(parent: _entryCtrl, curve: const Interval(0.0, 0.7)),
         );
 
-    // ④ 內容顯現
     _contentOpacity = Tween(begin: 0.0, end: 1.0).animate(
       CurvedAnimation(
         parent: _entryCtrl,
@@ -234,7 +227,6 @@ class _ChatBubbleState extends State<ChatBubble>
       ),
     );
 
-    // 頭像：原地漸顯 ~200ms（320×0.65），不彈不縮，只淡入
     _avatarOpacity = Tween(begin: 0.0, end: 1.0).animate(
       CurvedAnimation(
         parent: _entryCtrl,
@@ -257,14 +249,18 @@ class _ChatBubbleState extends State<ChatBubble>
     }
   }
 
+  @override
+  void didUpdateWidget(covariant ChatBubble oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _thinkingSheet.notify();
+  }
+
   Future<void> _checkSaved() async {
     if (widget.isUser || widget.messageId == null) return;
     try {
       final saved = await DatabaseHelper.isMessageSaved(widget.messageId!);
       if (mounted) setState(() => _isSaved = saved);
-    } catch (_) {
-      // 表可能尚未建立
-    }
+    } catch (_) {}
   }
 
   Future<void> _toggleSave() async {
@@ -290,13 +286,26 @@ class _ChatBubbleState extends State<ChatBubble>
     }
   }
 
+  void _updateContextState(VoidCallback update) {
+    setState(update);
+    _thinkingSheet.notify();
+  }
+
+  ThinkingContextLogParts _contextLogParts() {
+    return parseThinkingContextLog(
+      widget.memoryLog,
+      includeMemory: widget.includeMemoryDetails,
+      includeEmotion: widget.includeEmotionDetails,
+    );
+  }
+
   @override
   void dispose() {
+    _thinkingSheet.dispose();
     _entryCtrl.dispose();
     super.dispose();
   }
 
-  /// 圖片長按菜單：保存
   void _showImageMenu(BuildContext ctx, String imagePath) {
     HapticFeedback.mediumImpact();
     showModalBottomSheet(
@@ -364,12 +373,10 @@ class _ChatBubbleState extends State<ChatBubble>
               backgroundColor: Colors.transparent,
               body: Stack(
                 children: [
-                  // 點擊背景關閉
                   GestureDetector(
                     onTap: () => Navigator.pop(context),
                     child: const SizedBox.expand(),
                   ),
-                  // 可縮放圖片
                   Center(
                     child: InteractiveViewer(
                       minScale: 0.5,
@@ -381,13 +388,11 @@ class _ChatBubbleState extends State<ChatBubble>
                       ),
                     ),
                   ),
-                  // 頂部按鈕列
                   Positioned(
                     top: MediaQuery.of(context).padding.top + 8,
                     right: 16,
                     child: Row(
                       children: [
-                        // 保存
                         GestureDetector(
                           onTap: () {
                             _saveImage(imagePath);
@@ -407,7 +412,6 @@ class _ChatBubbleState extends State<ChatBubble>
                           ),
                         ),
                         const SizedBox(width: 12),
-                        // 關閉
                         GestureDetector(
                           onTap: () => Navigator.pop(context),
                           child: Container(
@@ -437,7 +441,6 @@ class _ChatBubbleState extends State<ChatBubble>
     );
   }
 
-  /// 保存圖片到本地相冊
   Future<void> _saveImage(String imagePath) async {
     try {
       final file = File(imagePath);
@@ -472,7 +475,6 @@ class _ChatBubbleState extends State<ChatBubble>
   }
 
   Future<void> _speakText(String text) async {
-    // v3 保留 [tag] 語氣標記給 TTS（顯示側已剝除）
     final provider = await TtsSettings.getTtsProvider();
     final model = await TtsSettings.getTtsElevenlabsModel();
     final keepTags = provider == 'elevenlabs' && model == 'eleven_v3';
@@ -491,7 +493,6 @@ class _ChatBubbleState extends State<ChatBubble>
   }
 
   (String?, String) _parseThinking(String text) {
-    // 完整標籤
     final patterns = [
       RegExp(r'<think>(.*?)</think>', dotAll: true),
       RegExp(r'<thinking>(.*?)</thinking>', dotAll: true),
@@ -603,15 +604,14 @@ class _ChatBubbleState extends State<ChatBubble>
   @override
   Widget build(BuildContext context) {
     final sw = MediaQuery.of(context).size.width;
+    final hasCustomChatBackground = _hasCustomChatBackground();
     final r = widget.isUser
         ? YanciTheme.bubbleRadiusUser
         : YanciTheme.radiusBubble;
     final (thinking, rawDisplay) = widget.isUser
         ? (null, widget.text)
         : _parseThinking(widget.text);
-    // 剝離情緒標記（[sigh] [laughing] 等），TTS 用但不顯示
     var displayText = MarriageService.stripHiddenCertMetadata(rawDisplay)
-        // 語音標籤（v3 audio tags 含中文變體）永不顯示——它們只給 TTS
         .replaceAll(TtsService.audioTagRe, '')
         .replaceAll(RegExp(r'\[call_event:[^\]]*\]'), '') // 通話事件隱藏
         .replaceAll(RegExp(r'\[call_action:[^\]]*\]'), '') // 通話操作隱藏
@@ -619,7 +619,6 @@ class _ChatBubbleState extends State<ChatBubble>
         .replaceAll(RegExp(r'\[gift:[^\]\n]{1,40}\]'), '') // 送禮標記隱藏
         .replaceAll(RegExp(r'\[scratch_gift:\w+\]'), '') // 刮刮卡禮物標記隱藏
         .trim();
-    // ═══ 商店同逛邀請：目錄只給模型看，氣泡顯示成邀請文案 ═══
     if (widget.isUser && displayText.startsWith('[shop_invite]')) {
       final name = widget.conversationTitle ?? '';
       displayText = L.pick(
@@ -627,7 +626,6 @@ class _ChatBubbleState extends State<ChatBubble>
         zhTW: '🛍 邀請${name.isEmpty ? '對方' : ' $name '}一起逛商店',
       );
     }
-    // 流式期間隱藏記憶動作標籤（落庫時已剝離，這裡防打字機閃現）
     if (!widget.isUser) {
       displayText = displayText
           .replaceAll(RegExp(r'<memo>[\s\S]*?(</memo>|$)'), '')
@@ -646,43 +644,10 @@ class _ChatBubbleState extends State<ChatBubble>
         displayText.isNotEmpty ||
         widget.isStreaming;
 
-    // ═══ 分離記憶日誌、畫圖狀態、情緒座標 ═══
-    String pureMemoryLog = '';
-    String pureEmotionLog = '';
-    String emoLine = '';
-    if (widget.memoryLog.isNotEmpty) {
-      final allLines = widget.memoryLog.split('\n');
-      final memLines = <String>[];
-      final emotionLines = <String>[];
-      var done = false;
-      for (final line in allLines) {
-        final trimmed = line.trim();
-        if (trimmed == 'Done') {
-          done = true;
-          continue;
-        }
-        if (line.startsWith('🎨')) {
-          continue;
-        } else if (line.startsWith('情緒座標')) {
-          emoLine = line;
-        } else if (_isEmotionLogLine(line)) {
-          emotionLines.add(line);
-        } else {
-          memLines.add(line);
-        }
-      }
-      if (done && memLines.isNotEmpty) memLines.add('Done');
-      if (done && emotionLines.isNotEmpty) emotionLines.add('Done');
-      pureMemoryLog = memLines.join('\n');
-      pureEmotionLog = emotionLines.join('\n');
-    }
-    final visibleMemoryLog = widget.includeMemoryDetails ? pureMemoryLog : '';
-    final visibleEmotionLog = widget.includeEmotionDetails
-        ? pureEmotionLog
-        : '';
-    final visibleEmotionCoordinate = widget.includeEmotionDetails
-        ? emoLine
-        : '';
+    final contextLog = _contextLogParts();
+    final visibleMemoryLog = contextLog.memoryLog;
+    final visibleEmotionLog = contextLog.emotionLog;
+    final visibleEmotionCoordinate = contextLog.emotionCoordinate;
 
     final shouldShowScratch =
         widget.scratchData != null &&
@@ -721,7 +686,6 @@ class _ChatBubbleState extends State<ChatBubble>
         final origin = widget.isUser
             ? Alignment.bottomRight
             : Alignment.bottomLeft;
-        // 縮放只作用於氣泡本體（下方 Flexible 內），頭像原地漸顯不參與
         return Padding(
           padding: EdgeInsets.only(
             left: widget.isUser
@@ -745,14 +709,11 @@ class _ChatBubbleState extends State<ChatBubble>
                   _buildSelectionMark(),
                   const SizedBox(width: 8),
                 ],
-                // AI 頭像（左側）：原地漸顯
                 if (widget.showAvatar && !widget.isUser) ...[
                   Opacity(opacity: _avatarOpacity.value, child: _buildAvatar()),
                   const SizedBox(width: 8),
                 ],
                 Flexible(
-                  // 外層 Column：禮物/證書卡在 IntrinsicWidth 之外——
-                  // 氣泡寬度只由文字決定，不被固定寬的卡片撐開
                   child: Column(
                     crossAxisAlignment: widget.isUser
                         ? CrossAxisAlignment.end
@@ -773,16 +734,13 @@ class _ChatBubbleState extends State<ChatBubble>
                               crossAxisAlignment: CrossAxisAlignment.stretch,
                               children: [
                                 if (hasContextTree)
-                                  _buildContextSurface(
-                                    _buildContextTree(
-                                      thinking: widget.includeThinkingDetails
-                                          ? thinking
-                                          : null,
-                                      memoryLog: visibleMemoryLog,
-                                      emotionLog: visibleEmotionLog,
-                                      emotionCoordinate:
-                                          visibleEmotionCoordinate,
-                                    ),
+                                  _buildContextTree(
+                                    thinking: widget.includeThinkingDetails
+                                        ? thinking
+                                        : null,
+                                    memoryLog: visibleMemoryLog,
+                                    emotionLog: visibleEmotionLog,
+                                    emotionCoordinate: visibleEmotionCoordinate,
                                   ),
                                 if (hasBubbleContent)
                                   Builder(
@@ -790,6 +748,19 @@ class _ChatBubbleState extends State<ChatBubble>
                                       final overlayAsset = widget.isUser
                                           ? YanciTheme.bubbleUserAsset
                                           : YanciTheme.bubbleAiAsset;
+                                      final imageBackgroundBubbleColor =
+                                          hasCustomChatBackground
+                                          ? (widget.isUser
+                                                ? YanciTheme
+                                                      .chatBackgroundUserBubbleColor
+                                                : YanciTheme
+                                                      .chatBackgroundAiBubbleColor)
+                                          : null;
+                                      final imageBackgroundBubbleOpacity =
+                                          hasCustomChatBackground
+                                          ? YanciTheme
+                                                .chatBackgroundBubbleOpacity
+                                          : 1.0;
                                       final bubbleRadius = overlayAsset != null
                                           ? BorderRadius.circular(r)
                                           : BorderRadius.only(
@@ -803,41 +774,61 @@ class _ChatBubbleState extends State<ChatBubble>
                                               ),
                                             );
                                       final bubble = Container(
+                                        key: const ValueKey(
+                                          'chat-bubble-surface',
+                                        ),
                                         padding: const EdgeInsets.symmetric(
                                           horizontal: YanciTheme.spacingMd,
                                           vertical: 12,
                                         ),
                                         decoration: BoxDecoration(
                                           color:
-                                              widget.isUser ||
-                                                  YanciTheme.aiBubbleGradient ==
-                                                      null
-                                              ? (widget.isUser
-                                                    ? YanciTheme.userBubble
-                                                    : YanciTheme.aiBubble)
-                                              : null,
-                                          gradient: !widget.isUser
+                                              imageBackgroundBubbleColor ??
+                                              (widget.isUser ||
+                                                      YanciTheme
+                                                              .aiBubbleGradient ==
+                                                          null
+                                                  ? (widget.isUser
+                                                        ? YanciTheme.userBubble
+                                                        : YanciTheme.aiBubble)
+                                                  : null),
+                                          gradient:
+                                              imageBackgroundBubbleColor ==
+                                                      null &&
+                                                  !widget.isUser
                                               ? YanciTheme.aiBubbleGradient
                                               : null,
                                           borderRadius: bubbleRadius,
                                           border: overlayAsset == null
                                               ? Border.all(
-                                                  color: widget.isUser
-                                                      ? YanciTheme
-                                                            .userBubbleBorder
-                                                      : YanciTheme
-                                                            .aiBubbleBorder,
+                                                  color:
+                                                      (widget.isUser
+                                                              ? YanciTheme
+                                                                    .userBubbleBorder
+                                                              : YanciTheme
+                                                                    .aiBubbleBorder)
+                                                          .withValues(
+                                                            alpha:
+                                                                (widget.isUser
+                                                                    ? YanciTheme
+                                                                          .userBubbleBorder
+                                                                          .a
+                                                                    : YanciTheme
+                                                                          .aiBubbleBorder
+                                                                          .a) *
+                                                                imageBackgroundBubbleOpacity,
+                                                          ),
                                                   width: 0.5,
                                                 )
                                               : null,
-                                          // 陰影跟主題走：淺色模式輕托一下就好；
-                                          // 深色模式黑影在深底上只會發灰，要深一點才成型
                                           boxShadow: [
                                             BoxShadow(
                                               color: Colors.black.withValues(
                                                 alpha: YanciTheme.isDark
-                                                    ? 0.20
-                                                    : 0.05,
+                                                    ? 0.20 *
+                                                          imageBackgroundBubbleOpacity
+                                                    : 0.05 *
+                                                          imageBackgroundBubbleOpacity,
                                               ),
                                               blurRadius: 10,
                                               offset: const Offset(0, 3),
@@ -852,7 +843,6 @@ class _ChatBubbleState extends State<ChatBubble>
                                                 ? CrossAxisAlignment.end
                                                 : CrossAxisAlignment.start,
                                             children: [
-                                              // ═══ 圖片（用戶發送 / AI 生成）═══
                                               if (widget.imagePath != null)
                                                 GestureDetector(
                                                   onTap: () =>
@@ -924,7 +914,6 @@ class _ChatBubbleState extends State<ChatBubble>
                                                     ),
                                                   ),
                                                 ),
-                                              // ═══ 文字內容 ═══
                                               if (displayText.isNotEmpty)
                                                 Row(
                                                   mainAxisSize:
@@ -933,11 +922,15 @@ class _ChatBubbleState extends State<ChatBubble>
                                                       CrossAxisAlignment.end,
                                                   children: [
                                                     Flexible(
-                                                      // 雙端混合渲染：markdown + [sticker:ID] 本地圖
                                                       child: _MixedContent(
                                                         text: displayText,
                                                         characterId:
                                                             widget.characterId,
+                                                        color:
+                                                            hasCustomChatBackground
+                                                            ? YanciTheme
+                                                                  .chatBackgroundBubbleTextColor
+                                                            : null,
                                                         selectable:
                                                             !widget.isUser,
                                                       ),
@@ -952,7 +945,6 @@ class _ChatBubbleState extends State<ChatBubble>
                                         ),
                                       );
 
-                                      // ═══ 特色主題可縮放 PNG 氣泡框 ═══
                                       final bubbleWithOverlay =
                                           overlayAsset != null
                                           ? Stack(
@@ -960,24 +952,28 @@ class _ChatBubbleState extends State<ChatBubble>
                                                 bubble,
                                                 Positioned.fill(
                                                   child: IgnorePointer(
-                                                    child: Image.asset(
-                                                      overlayAsset,
-                                                      key: const ValueKey(
-                                                        'themed-bubble-frame',
+                                                    child: Opacity(
+                                                      opacity:
+                                                          imageBackgroundBubbleOpacity,
+                                                      child: Image.asset(
+                                                        overlayAsset,
+                                                        key: const ValueKey(
+                                                          'themed-bubble-frame',
+                                                        ),
+                                                        scale: 16,
+                                                        fit: BoxFit.fill,
+                                                        centerSlice:
+                                                            const Rect.fromLTRB(
+                                                              20,
+                                                              20,
+                                                              60,
+                                                              60,
+                                                            ),
+                                                        filterQuality:
+                                                            FilterQuality.high,
+                                                        errorBuilder: (_, _, _) =>
+                                                            const SizedBox.shrink(),
                                                       ),
-                                                      scale: 16,
-                                                      fit: BoxFit.fill,
-                                                      centerSlice:
-                                                          const Rect.fromLTRB(
-                                                            20,
-                                                            20,
-                                                            60,
-                                                            60,
-                                                          ),
-                                                      filterQuality:
-                                                          FilterQuality.high,
-                                                      errorBuilder: (_, _, _) =>
-                                                          const SizedBox.shrink(),
                                                     ),
                                                   ),
                                                 ),
@@ -1026,7 +1022,6 @@ class _ChatBubbleState extends State<ChatBubble>
                                                   .withValues(alpha: 0.4),
                                             ),
                                           ),
-                                          // ═══ AI 消息操作按鈕（只在非拆分模式顯示）═══
                                           if (!widget.isUser &&
                                               widget.showToolbar) ...[
                                             const SizedBox(width: 10),
@@ -1095,7 +1090,6 @@ class _ChatBubbleState extends State<ChatBubble>
                                               ),
                                             ),
                                           ],
-                                          // ═══ 緩存命中閃電 ═══
                                           if (widget.cacheHit) ...[
                                             const SizedBox(width: 6),
                                             Icon(
@@ -1149,16 +1143,37 @@ class _ChatBubbleState extends State<ChatBubble>
                                       ),
                                     ),
                                   ),
-                                // ═══ 刮刮樂迷你卡片 ═══
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                      if (shouldShowScratch || shouldShowTransfer)
+                        Opacity(
+                          opacity: _bubbleOpacity.value,
+                          child: Transform(
+                            alignment: origin,
+                            transform: Matrix4.diagonal3Values(
+                              _scaleX.value,
+                              _scaleY.value,
+                              1,
+                            ),
+                            child: Column(
+                              crossAxisAlignment: widget.isUser
+                                  ? CrossAxisAlignment.end
+                                  : CrossAxisAlignment.start,
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
                                 if (shouldShowScratch &&
                                     widget.messageId != null &&
                                     widget.characterId != null)
-                                  ScratchMiniCard(
-                                    messageId: widget.messageId!,
-                                    data: widget.scratchData!,
-                                    characterId: widget.characterId!,
+                                  IntrinsicWidth(
+                                    child: ScratchMiniCard(
+                                      messageId: widget.messageId!,
+                                      data: widget.scratchData!,
+                                      characterId: widget.characterId!,
+                                    ),
                                   ),
-                                // ═══ 轉帳卡片 ═══
                                 if (shouldShowTransfer &&
                                     widget.messageId != null &&
                                     widget.characterId != null)
@@ -1166,8 +1181,6 @@ class _ChatBubbleState extends State<ChatBubble>
                                     messageId: widget.messageId!,
                                     data: widget.transferData!,
                                     characterId: widget.characterId!,
-                                    // user 收到角色轉帳 → user 能操作
-                                    // 角色收到 user 轉帳 → AI 自動決定，不給按鈕
                                     canAct:
                                         widget.transferData!.direction ==
                                             'toUser' &&
@@ -1179,14 +1192,11 @@ class _ChatBubbleState extends State<ChatBubble>
                             ),
                           ),
                         ),
-                      ),
-                      // ═══ 禮物卡片（跟隨氣泡，固定寬不撐氣泡）═══
                       if (shouldShowGift)
                         GiftMiniCard(
                           giftName: widget.giftName!,
                           accepted: widget.giftAccepted,
                         ),
-                      // ═══ 結婚證書（一紙證書，跟隨氣泡）═══
                       if (shouldShowMarriageCert)
                         MarriageCertCard(
                           userName: widget.marriageCert!.userName,
@@ -1198,7 +1208,6 @@ class _ChatBubbleState extends State<ChatBubble>
                     ],
                   ),
                 ),
-                // User 頭像（右側）：原地漸顯
                 if (widget.showAvatar && widget.isUser) ...[
                   const SizedBox(width: 8),
                   Opacity(opacity: _avatarOpacity.value, child: _buildAvatar()),
@@ -1252,21 +1261,12 @@ class _ChatBubbleState extends State<ChatBubble>
     );
   }
 
-  /// 統一工具欄圖標樣式
-  bool _isEmotionLogLine(String line) {
-    final trimmed = line.trimLeft();
-    return trimmed.startsWith('📍') ||
-        trimmed.startsWith('🌊') ||
-        trimmed.startsWith('🔒') ||
-        trimmed.startsWith('情緒') ||
-        trimmed.contains('打點 ') ||
-        trimmed.contains('消解 ');
-  }
-
   Color _thinkingTreeLabelColor() =>
+      YanciTheme.chatBackgroundThinkingTextOverride ??
       Color.lerp(YanciTheme.textSecondary, YanciTheme.textPrimary, 0.12)!;
 
   Color _thinkingTreeBodyColor() =>
+      YanciTheme.chatBackgroundThinkingTextOverride ??
       Color.lerp(YanciTheme.textSecondary, YanciTheme.textPrimary, 0.34)!;
 
   bool _hasCustomChatBackground() {
@@ -1279,66 +1279,12 @@ class _ChatBubbleState extends State<ChatBubble>
     return _checkedChatBackgroundExists;
   }
 
-  Widget _buildContextSurface(Widget child) {
-    if (!_hasCustomChatBackground()) return child;
-
-    return Container(
-      key: const ValueKey('context-tree-image-surface'),
-      margin: const EdgeInsets.only(bottom: 4),
-      decoration: BoxDecoration(
-        color: YanciTheme.surfacePanel.withValues(alpha: 0.88),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(
-          color: YanciTheme.glassBorder.withValues(alpha: 0.64),
-          width: 0.6,
-        ),
-      ),
-      child: child,
-    );
-  }
-
-  Widget _buildThinkingMarkdown(String text, {Key? key}) {
-    final bodyColor = _thinkingTreeBodyColor();
-    final base = TextStyle(fontSize: 11, color: bodyColor, height: 1.55);
-    return MarkdownBody(
+  Widget _buildThinkingMarkdown(String text, {Key? key, bool inSheet = false}) {
+    return ThinkingMarkdown(
       key: key,
-      data: text,
-      selectable: false,
-      softLineBreak: true,
-      styleSheet: MarkdownStyleSheet(
-        p: base,
-        strong: base.copyWith(fontWeight: FontWeight.w600),
-        em: base.copyWith(fontStyle: FontStyle.italic),
-        code: base.copyWith(
-          fontFamily: 'monospace',
-          color: YanciTheme.accent,
-          backgroundColor: YanciTheme.isDark
-              ? Colors.white.withValues(alpha: 0.06)
-              : Colors.black.withValues(alpha: 0.04),
-        ),
-        codeblockPadding: const EdgeInsets.all(8),
-        codeblockDecoration: BoxDecoration(
-          color: YanciTheme.isDark
-              ? Colors.white.withValues(alpha: 0.05)
-              : Colors.black.withValues(alpha: 0.03),
-          borderRadius: BorderRadius.circular(6),
-        ),
-        blockquote: base.copyWith(fontStyle: FontStyle.italic),
-        blockquotePadding: const EdgeInsets.only(left: 8, top: 2, bottom: 2),
-        blockquoteDecoration: BoxDecoration(
-          border: Border(
-            left: BorderSide(
-              color: YanciTheme.accent.withValues(alpha: 0.32),
-              width: 2,
-            ),
-          ),
-        ),
-        h1: base.copyWith(fontSize: 14, fontWeight: FontWeight.w600),
-        h2: base.copyWith(fontSize: 13, fontWeight: FontWeight.w600),
-        h3: base.copyWith(fontSize: 12, fontWeight: FontWeight.w600),
-        listBullet: base,
-        pPadding: const EdgeInsets.only(bottom: 2),
-      ),
+      text: text,
+      bodyColor: _thinkingTreeBodyColor(),
+      fontSize: inSheet ? 13 : 11,
     );
   }
 
@@ -1393,6 +1339,7 @@ class _ChatBubbleState extends State<ChatBubble>
     String log, {
     String emotionLog = '',
     String emotionCoordinate = '',
+    bool inSheet = false,
   }) {
     final forcedExpanded = widget.thinkingExpandedOverride == true;
     final hasInlineProposals = _inlineMemoryProposals.isNotEmpty;
@@ -1404,10 +1351,11 @@ class _ChatBubbleState extends State<ChatBubble>
       expanded: forcedExpanded || _memLogExpanded || hasInlineProposals,
       onTap: forcedExpanded || hasInlineProposals
           ? null
-          : () => setState(() => _memLogExpanded = !_memLogExpanded),
+          : () => _updateContextState(() => _memLogExpanded = !_memLogExpanded),
       headerTrailing: _buildPendingMemoryActionBadge(),
+      inSheet: inSheet,
       trailing: emotionLog.isNotEmpty || emotionCoordinate.isNotEmpty
-          ? _buildEmotionBranch(emotionLog, emotionCoordinate)
+          ? _buildEmotionBranch(emotionLog, emotionCoordinate, inSheet: inSheet)
           : null,
     );
     final proposals = _inlineMemoryProposals;
@@ -1436,7 +1384,7 @@ class _ChatBubbleState extends State<ChatBubble>
   ) async {
     final callback = widget.onInlineMemoryProposal;
     if (callback == null || _inlineMemoryBusyId != null) return;
-    setState(() => _inlineMemoryBusyId = proposal.id);
+    _updateContextState(() => _inlineMemoryBusyId = proposal.id);
     try {
       await callback(proposal, decision);
     } catch (error) {
@@ -1446,7 +1394,9 @@ class _ChatBubbleState extends State<ChatBubble>
         ).showSnackBar(SnackBar(content: Text('記憶處理失敗：$error')));
       }
     } finally {
-      if (mounted) setState(() => _inlineMemoryBusyId = null);
+      if (mounted) {
+        _updateContextState(() => _inlineMemoryBusyId = null);
+      }
     }
   }
 
@@ -1599,15 +1549,16 @@ class _ChatBubbleState extends State<ChatBubble>
     required VoidCallback? onTap,
     Widget? headerTrailing,
     Widget? trailing,
+    bool inSheet = false,
   }) {
     final lines = log.split('\n');
     final done = lines.isNotEmpty && lines.last.trim() == 'Done';
     final bodyLines = done ? lines.sublist(0, lines.length - 1) : lines;
-    // 過濾掉空行
     final validLines = bodyLines.where((l) => l.trim().isNotEmpty).toList();
     if (validLines.isEmpty) return const SizedBox.shrink();
     final bodyColor = _thinkingTreeBodyColor();
     final labelColor = _thinkingTreeLabelColor();
+    final fontSize = inSheet ? 13.0 : 11.0;
     final reduceMotion = MediaQuery.disableAnimationsOf(context);
     final duration = reduceMotion
         ? Duration.zero
@@ -1634,7 +1585,7 @@ class _ChatBubbleState extends State<ChatBubble>
                   Text(
                     label,
                     style: TextStyle(
-                      fontSize: 11,
+                      fontSize: fontSize,
                       color: labelColor,
                       fontFamily: YanciTheme.fontFamily,
                     ),
@@ -1665,12 +1616,13 @@ class _ChatBubbleState extends State<ChatBubble>
                       _buildThinkingMarkdown(
                         validLines.join('\n'),
                         key: const ValueKey('memory-markdown-content'),
+                        inSheet: inSheet,
                       ),
                       if (done)
                         Text(
                           'Done ✓',
                           style: TextStyle(
-                            fontSize: 11,
+                            fontSize: fontSize,
                             color: bodyColor,
                             height: 1.5,
                           ),
@@ -1689,8 +1641,11 @@ class _ChatBubbleState extends State<ChatBubble>
     );
   }
 
-  /// 情緒是 Thinking 樹的常駐狀態，不再建立第三層折疊。
-  Widget _buildEmotionBranch(String log, String emoLine) {
+  Widget _buildEmotionBranch(
+    String log,
+    String emoLine, {
+    bool inSheet = false,
+  }) {
     final lines = log.split('\n');
     final done = lines.isNotEmpty && lines.last.trim() == 'Done';
     final bodyLines = done ? lines.sublist(0, lines.length - 1) : lines;
@@ -1703,6 +1658,7 @@ class _ChatBubbleState extends State<ChatBubble>
 
     final labelColor = _thinkingTreeLabelColor();
     final bodyColor = _thinkingTreeBodyColor();
+    final fontSize = inSheet ? 13.0 : 11.0;
     const label = 'Mood';
     return Semantics(
       container: true,
@@ -1732,7 +1688,7 @@ class _ChatBubbleState extends State<ChatBubble>
                   Text(
                     label,
                     style: TextStyle(
-                      fontSize: 11,
+                      fontSize: fontSize,
                       color: labelColor,
                       fontFamily: YanciTheme.fontFamily,
                     ),
@@ -1766,7 +1722,7 @@ class _ChatBubbleState extends State<ChatBubble>
                           child: Text(
                             line,
                             style: TextStyle(
-                              fontSize: 11,
+                              fontSize: fontSize,
                               color: bodyColor,
                               height: 1.5,
                             ),
@@ -1777,7 +1733,7 @@ class _ChatBubbleState extends State<ChatBubble>
                         Text(
                           'Done ✓',
                           style: TextStyle(
-                            fontSize: 11,
+                            fontSize: fontSize,
                             color: bodyColor,
                             height: 1.5,
                           ),
@@ -1831,6 +1787,10 @@ class _ChatBubbleState extends State<ChatBubble>
     required String emotionLog,
     required String emotionCoordinate,
   }) {
+    if (!widget.captureMode && widget.thinkingExpandedOverride == null) {
+      return _buildThinkingSheetLauncher();
+    }
+
     final hasVisibleDetails =
         thinking.isNotEmpty ||
         widget.webSearchTrace != null ||
@@ -1849,7 +1809,8 @@ class _ChatBubbleState extends State<ChatBubble>
         ? Duration.zero
         : const Duration(milliseconds: 180);
     final onTap = widget.thinkingExpandedOverride == null
-        ? () => setState(() => _thinkingExpanded = !_thinkingExpanded)
+        ? () =>
+              _updateContextState(() => _thinkingExpanded = !_thinkingExpanded)
         : null;
     final label = L.get('chat_thinking_tree');
 
@@ -1904,59 +1865,83 @@ class _ChatBubbleState extends State<ChatBubble>
             ),
           ),
           if (expanded)
-            Container(
-              key: const ValueKey('thinking-tree-body'),
-              margin: const EdgeInsets.only(bottom: 4),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  if (widget.webSearchTrace != null)
-                    Padding(
-                      padding: const EdgeInsets.only(left: 26, right: 8),
-                      child: WebSearchThinkingNode.completed(
-                        trace: widget.webSearchTrace!,
-                      ),
-                    ),
-                  if (memoryLog.isNotEmpty ||
-                      _inlineMemoryProposals.isNotEmpty ||
-                      emotionLog.isNotEmpty ||
-                      emotionCoordinate.isNotEmpty)
-                    Padding(
-                      padding: const EdgeInsets.only(left: 26, right: 8),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          if (memoryLog.isNotEmpty ||
-                              _inlineMemoryProposals.isNotEmpty)
-                            _buildMemoryLog(
-                              memoryLog,
-                              emotionLog: emotionLog,
-                              emotionCoordinate: emotionCoordinate,
-                            )
-                          else if (emotionLog.isNotEmpty ||
-                              emotionCoordinate.isNotEmpty)
-                            _buildEmotionBranch(emotionLog, emotionCoordinate),
-                        ],
-                      ),
-                    ),
-                  if (thinking.isNotEmpty)
-                    Padding(
-                      padding: const EdgeInsets.only(
-                        left: 10,
-                        top: 7,
-                        right: 8,
-                        bottom: 7,
-                      ),
-                      child: _buildThinkingMarkdown(
-                        thinking,
-                        key: const ValueKey('thinking-chain-content'),
-                      ),
-                    ),
-                ],
-              ),
+            _buildThinkingTreeBody(
+              thinking: thinking,
+              memoryLog: memoryLog,
+              emotionLog: emotionLog,
+              emotionCoordinate: emotionCoordinate,
             ),
         ],
       ),
+    );
+  }
+
+  Widget _buildThinkingSheetLauncher() {
+    return ThinkingSheetLauncher(
+      color: _thinkingTreeLabelColor(),
+      onTap: _showThinkingSheet,
+      badge: widget.pendingMemoryActionCount > 0
+          ? _buildPendingMemoryActionBadge()
+          : null,
+    );
+  }
+
+  Future<void> _showThinkingSheet() async {
+    if (!mounted) return;
+    await _thinkingSheet.show(
+      context: context,
+      titleColor: _thinkingTreeLabelColor(),
+      contentBuilder: (_) => _buildCurrentThinkingSheetBody(),
+    );
+  }
+
+  Widget _buildCurrentThinkingSheetBody() {
+    final (thinking, _) = _parseThinking(widget.text);
+    final contextLog = _contextLogParts();
+    return _buildThinkingTreeBody(
+      thinking: widget.includeThinkingDetails ? (thinking ?? '') : '',
+      memoryLog: contextLog.memoryLog,
+      emotionLog: contextLog.emotionLog,
+      emotionCoordinate: contextLog.emotionCoordinate,
+      inSheet: true,
+    );
+  }
+
+  Widget _buildThinkingTreeBody({
+    required String thinking,
+    required String memoryLog,
+    required String emotionLog,
+    required String emotionCoordinate,
+    bool inSheet = false,
+  }) {
+    final hasContextDetails =
+        memoryLog.isNotEmpty ||
+        _inlineMemoryProposals.isNotEmpty ||
+        emotionLog.isNotEmpty ||
+        emotionCoordinate.isNotEmpty;
+    final contextDetails = !hasContextDetails
+        ? null
+        : memoryLog.isNotEmpty || _inlineMemoryProposals.isNotEmpty
+        ? _buildMemoryLog(
+            memoryLog,
+            emotionLog: emotionLog,
+            emotionCoordinate: emotionCoordinate,
+            inSheet: inSheet,
+          )
+        : _buildEmotionBranch(emotionLog, emotionCoordinate, inSheet: inSheet);
+    return ThinkingTreeBodyLayout(
+      inSheet: inSheet,
+      webSearch: widget.webSearchTrace == null
+          ? null
+          : WebSearchThinkingNode.completed(trace: widget.webSearchTrace!),
+      contextDetails: contextDetails,
+      thinkingContent: thinking.isEmpty
+          ? null
+          : _buildThinkingMarkdown(
+              thinking,
+              key: const ValueKey('thinking-chain-content'),
+              inSheet: inSheet,
+            ),
     );
   }
 
@@ -2080,7 +2065,8 @@ class _ChatBubbleState extends State<ChatBubble>
         ? Duration.zero
         : const Duration(milliseconds: 180);
     final onTap = canToggle
-        ? () => setState(() => _thinkingExpanded = !_thinkingExpanded)
+        ? () =>
+              _updateContextState(() => _thinkingExpanded = !_thinkingExpanded)
         : null;
     final semanticLabel = subtitle.isEmpty ? label : '$label, $subtitle';
 
@@ -2165,12 +2151,8 @@ class _ChatBubbleState extends State<ChatBubble>
     );
   }
 
-  /// 方形複製圖標（兩個重疊的細線正方形）
-  /// 緩存命中閃電顏色：避開主題色，綠色色弱友好
   Color _cacheHitColor() {
     final hue = HSLColor.fromColor(YanciTheme.accent).hue;
-    // 主題色偏綠/青 (hue 90~210) → 用琥珀色
-    // 其他 → 用 teal（偏青的綠，帶藍調）
     if (hue >= 90 && hue <= 210) {
       return const Color(0xFFE8A735).withValues(alpha: 0.8); // 琥珀
     }
@@ -2189,7 +2171,6 @@ class _ChatBubbleState extends State<ChatBubble>
     );
   }
 
-  /// 書籤收藏圖標；收藏後保留細輪廓，以淡填色表示狀態。
   Widget _buildBookmarkIcon({Color? color}) {
     final c = color ?? YanciTheme.textSecondary.withValues(alpha: 0.4);
     return _buildActionIconSlot(
@@ -2251,7 +2232,6 @@ class _TypingIndicatorState extends State<_TypingIndicator>
     final gap = (fontSize * 0.2).clamp(2.0, 4.0).toDouble();
     final lineHeight = fontSize * (textStyle.height ?? 1.5);
     return SizedBox(
-      // The middle dot sits exactly at the center of the content width.
       width: dotSize * 3 + gap * 2,
       height: lineHeight,
       child: AnimatedBuilder(
@@ -2287,15 +2267,16 @@ class _TypingIndicatorState extends State<_TypingIndicator>
   }
 }
 
-/// 混合渲染：markdown 文字 + [sticker:ID] 本地圖片
 class _MixedContent extends StatelessWidget {
   final String text;
   final String? characterId;
   final bool selectable;
+  final Color? color;
   const _MixedContent({
     required this.text,
     this.characterId,
     this.selectable = false,
+    this.color,
   });
 
   @override
@@ -2304,7 +2285,7 @@ class _MixedContent extends StatelessWidget {
     final hasStickers = segments.any((s) => s is StickerSegment);
 
     if (!hasStickers) {
-      return _MarkdownBlock(text: text, selectable: selectable);
+      return _MarkdownBlock(text: text, selectable: selectable, color: color);
     }
 
     return Column(
@@ -2316,7 +2297,11 @@ class _MixedContent extends StatelessWidget {
           if (t.isEmpty) return const SizedBox.shrink();
           return Padding(
             padding: const EdgeInsets.only(bottom: 4),
-            child: _MarkdownBlock(text: t, selectable: selectable),
+            child: _MarkdownBlock(
+              text: t,
+              selectable: selectable,
+              color: color,
+            ),
           );
         } else if (seg is StickerSegment) {
           return _StickerImage(
@@ -2330,7 +2315,6 @@ class _MixedContent extends StatelessWidget {
   }
 }
 
-/// 表情包圖片（從本地加載）
 class _StickerImage extends StatelessWidget {
   final int stickerId;
   final String? characterId;
@@ -2385,7 +2369,6 @@ class _StickerImage extends StatelessWidget {
     );
   }
 
-  /// 先查角色專屬表情包，再查我的表情，最後兼容舊 default 桶。
   Future<List<StickerInfo>> _findSticker() async {
     final cid = characterId ?? 'default';
     final buckets = <String>[
@@ -2404,11 +2387,15 @@ class _StickerImage extends StatelessWidget {
   }
 }
 
-/// Markdown 渲染塊
 class _MarkdownBlock extends StatelessWidget {
   final String text;
   final bool selectable;
-  const _MarkdownBlock({required this.text, this.selectable = false});
+  final Color? color;
+  const _MarkdownBlock({
+    required this.text,
+    this.selectable = false,
+    this.color,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -2422,9 +2409,15 @@ class _MarkdownBlock extends StatelessWidget {
         }
       },
       styleSheet: MarkdownStyleSheet(
-        p: YanciTheme.bodyText,
-        strong: YanciTheme.bodyText.copyWith(fontWeight: FontWeight.w600),
-        em: YanciTheme.bodyText.copyWith(fontStyle: FontStyle.italic),
+        p: YanciTheme.bodyText.copyWith(color: color),
+        strong: YanciTheme.bodyText.copyWith(
+          color: color,
+          fontWeight: FontWeight.w600,
+        ),
+        em: YanciTheme.bodyText.copyWith(
+          color: color,
+          fontStyle: FontStyle.italic,
+        ),
         code: TextStyle(
           fontFamily: 'monospace',
           fontSize: YanciTheme.bodyText.fontSize! * 0.9,
@@ -2450,16 +2443,17 @@ class _MarkdownBlock extends StatelessWidget {
         ),
         blockquotePadding: const EdgeInsets.only(left: 12, top: 4, bottom: 4),
         blockquote: YanciTheme.bodyText.copyWith(
-          color: YanciTheme.textSecondary,
+          color: color ?? YanciTheme.textSecondary,
           fontStyle: FontStyle.italic,
         ),
-        h1: YanciTheme.headingMedium.copyWith(fontSize: 18),
-        h2: YanciTheme.headingMedium.copyWith(fontSize: 16),
+        h1: YanciTheme.headingMedium.copyWith(fontSize: 18, color: color),
+        h2: YanciTheme.headingMedium.copyWith(fontSize: 16, color: color),
         h3: YanciTheme.bodyText.copyWith(
           fontSize: 15,
+          color: color,
           fontWeight: FontWeight.w600,
         ),
-        listBullet: YanciTheme.bodyText,
+        listBullet: YanciTheme.bodyText.copyWith(color: color),
         horizontalRuleDecoration: BoxDecoration(
           border: Border(
             top: BorderSide(

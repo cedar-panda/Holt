@@ -109,6 +109,28 @@ void main() async {
         await ThemeSettings.getBackgroundImageOffsetX('chat');
     YanciTheme.chatBackgroundImageOffsetY =
         await ThemeSettings.getBackgroundImageOffsetY('chat');
+    final chatAiBubbleColor =
+        await ThemeSettings.getChatBackgroundAiBubbleColor();
+    final chatUserBubbleColor =
+        await ThemeSettings.getChatBackgroundUserBubbleColor();
+    final chatBubbleTextColor =
+        await ThemeSettings.getChatBackgroundBubbleTextColor();
+    final chatThinkingTextColor =
+        await ThemeSettings.getChatBackgroundThinkingTextColor();
+    final chatBubbleOpacity =
+        await ThemeSettings.getChatBackgroundBubbleOpacity();
+    YanciTheme.chatBackgroundAiBubbleOverride = chatAiBubbleColor == null
+        ? null
+        : Color(chatAiBubbleColor);
+    YanciTheme.chatBackgroundUserBubbleOverride = chatUserBubbleColor == null
+        ? null
+        : Color(chatUserBubbleColor);
+    YanciTheme.chatBackgroundBubbleTextOverride = chatBubbleTextColor == null
+        ? null
+        : Color(chatBubbleTextColor);
+    YanciTheme.chatBackgroundThinkingTextOverride =
+        chatThinkingTextColor == null ? null : Color(chatThinkingTextColor);
+    YanciTheme.chatBackgroundBubbleOpacityOverride = chatBubbleOpacity;
 
     // 讀取字體偏好
     final customFont = await CustomFontService.restoreActiveFont();

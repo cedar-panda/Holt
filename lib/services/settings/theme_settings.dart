@@ -217,6 +217,73 @@ class ThemeSettings {
     return p.getDouble(_backgroundOffsetYKey(scope)) ?? 0.0;
   }
 
+  // ═══ 對話圖片背景專用配色 ═══
+  static const String _keyChatBackgroundAiBubbleColor =
+      'bg_image_chat_ai_bubble_color';
+  static const String _keyChatBackgroundUserBubbleColor =
+      'bg_image_chat_user_bubble_color';
+  static const String _keyChatBackgroundBubbleTextColor =
+      'bg_image_chat_bubble_text_color';
+  static const String _keyChatBackgroundThinkingTextColor =
+      'bg_image_chat_thinking_text_color';
+  static const String _keyChatBackgroundBubbleOpacity =
+      'bg_image_chat_bubble_opacity';
+
+  static Future<void> _saveOptionalColor(String key, int? argb) async {
+    final p = await SharedPreferences.getInstance();
+    if (argb == null) {
+      await p.remove(key);
+    } else {
+      await p.setInt(key, argb);
+    }
+  }
+
+  static Future<int?> _getOptionalColor(String key) async {
+    final p = await SharedPreferences.getInstance();
+    return p.getInt(key);
+  }
+
+  static Future<void> saveChatBackgroundAiBubbleColor(int? argb) =>
+      _saveOptionalColor(_keyChatBackgroundAiBubbleColor, argb);
+
+  static Future<int?> getChatBackgroundAiBubbleColor() =>
+      _getOptionalColor(_keyChatBackgroundAiBubbleColor);
+
+  static Future<void> saveChatBackgroundUserBubbleColor(int? argb) =>
+      _saveOptionalColor(_keyChatBackgroundUserBubbleColor, argb);
+
+  static Future<int?> getChatBackgroundUserBubbleColor() =>
+      _getOptionalColor(_keyChatBackgroundUserBubbleColor);
+
+  static Future<void> saveChatBackgroundBubbleTextColor(int? argb) =>
+      _saveOptionalColor(_keyChatBackgroundBubbleTextColor, argb);
+
+  static Future<int?> getChatBackgroundBubbleTextColor() =>
+      _getOptionalColor(_keyChatBackgroundBubbleTextColor);
+
+  static Future<void> saveChatBackgroundThinkingTextColor(int? argb) =>
+      _saveOptionalColor(_keyChatBackgroundThinkingTextColor, argb);
+
+  static Future<int?> getChatBackgroundThinkingTextColor() =>
+      _getOptionalColor(_keyChatBackgroundThinkingTextColor);
+
+  static Future<void> saveChatBackgroundBubbleOpacity(double? opacity) async {
+    final p = await SharedPreferences.getInstance();
+    if (opacity == null) {
+      await p.remove(_keyChatBackgroundBubbleOpacity);
+    } else {
+      await p.setDouble(
+        _keyChatBackgroundBubbleOpacity,
+        opacity.clamp(0.0, 1.0).toDouble(),
+      );
+    }
+  }
+
+  static Future<double?> getChatBackgroundBubbleOpacity() async {
+    final p = await SharedPreferences.getInstance();
+    return p.getDouble(_keyChatBackgroundBubbleOpacity);
+  }
+
   // ═══ 自定義色覆蓋 ═══
 
   static Future<void> saveCustomColor(String key, String hex) async {

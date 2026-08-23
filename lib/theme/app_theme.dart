@@ -27,6 +27,11 @@ class YanciTheme {
   static double chatBackgroundImageScale = 1.0;
   static double chatBackgroundImageOffsetX = 0.0;
   static double chatBackgroundImageOffsetY = 0.0;
+  static Color? chatBackgroundAiBubbleOverride;
+  static Color? chatBackgroundUserBubbleOverride;
+  static Color? chatBackgroundBubbleTextOverride;
+  static Color? chatBackgroundThinkingTextOverride;
+  static double? chatBackgroundBubbleOpacityOverride;
 
   // ═══ Getters ═══
   static ThemePreset get preset => _preset;
@@ -96,6 +101,24 @@ class YanciTheme {
   static Color get textSecondary => _preset.textSecondary;
   static Color get textAccent => accent;
   static Color get textOnBubble => _preset.textOnBubble;
+
+  /// 對話圖片背景專用配色。沒有覆蓋時仍跟隨目前主題預設；一般漸層背景
+  /// 不讀取這些值，避免自訂圖片的可讀性調整污染全域主題。
+  static double get chatBackgroundBubbleOpacity =>
+      chatBackgroundBubbleOpacityOverride ?? bubbleOpacity;
+  static Color get chatBackgroundAiBubbleColor =>
+      (chatBackgroundAiBubbleOverride ?? aiBubble).withValues(
+        alpha: chatBackgroundBubbleOpacity,
+      );
+  static Color get chatBackgroundUserBubbleColor =>
+      (chatBackgroundUserBubbleOverride ?? userBubble).withValues(
+        alpha: chatBackgroundBubbleOpacity,
+      );
+  static Color get chatBackgroundBubbleTextColor =>
+      chatBackgroundBubbleTextOverride ?? textOnBubble;
+  static Color get chatBackgroundThinkingTextColor =>
+      chatBackgroundThinkingTextOverride ??
+      Color.lerp(textSecondary, textPrimary, 0.34)!;
 
   /// 角色卡資源提示與自我註記正文使用的淡色文字。
   /// 讓文字退到背景後方，把視線留給資源 icon 與角色名字。
