@@ -306,6 +306,7 @@ class XaiService implements ApiAdapter {
       'x_grok_conv_id': affinity.isEmpty ? null : affinity,
       'session_id': affinity.isEmpty ? null : affinity,
       'cache_channel': cacheChannel,
+      'context_mode': structuredPrompt?.cacheContextMode ?? '',
       'runtime_event_count': prepared?.runtimeEventCount ?? 0,
       'runtime_event_reused': prepared?.reusedCurrentRuntime ?? false,
       'reasoning_payload_preserved': (prepared?.reasoningPayloadCount ?? 0) > 0,
@@ -410,6 +411,7 @@ class XaiService implements ApiAdapter {
       'internal': diagnostics['is_structured'] != true,
       'session_id': diagnostics['session_id'],
       'cache_channel': diagnostics['cache_channel'],
+      'context_mode': diagnostics['context_mode'],
       'cache_mode': diagnostics['cache_mode'],
       'prompt_t': stats['prompt_tokens'],
       'read': cached,
@@ -431,15 +433,16 @@ class XaiService implements ApiAdapter {
   static Map<String, dynamic> _plainApiMessage(Map<String, String> source) {
     final role = source['role'] ?? 'user';
     final content = source['content'] ?? '';
-    final image = source['image_data_url'];
-    if (role == 'user' && image != null && image.isNotEmpty) {
+    final images = ApiMessageMedia.imageDataUrls(source);
+    if (role == 'user' && images.isNotEmpty) {
       return <String, dynamic>{
         'role': role,
         'content': <Map<String, dynamic>>[
-          <String, dynamic>{
-            'type': 'image_url',
-            'image_url': <String, dynamic>{'url': image},
-          },
+          for (final image in images)
+            <String, dynamic>{
+              'type': 'image_url',
+              'image_url': <String, dynamic>{'url': image},
+            },
           <String, dynamic>{'type': 'text', 'text': content},
         ],
       };

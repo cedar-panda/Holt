@@ -34,11 +34,15 @@ class ChatLongScreenshotService {
   static const int _chunkSize = 4;
   static const int _maxOutputHeight = 20000;
   static const int _highQualitySelectionLimit = 4;
+  // Keep every raster request comfortably below the Metal texture limit.
+  // The rendered widget may still be arbitrarily tall; it is captured as
+  // several vertical tiles and stitched with the other chunks afterwards.
+  static const int _maxRasterTileDimension = 8192;
 
   static Future<ChatLongScreenshotResult> captureAndSave({
     required BuildContext context,
     required List<Widget> items,
-    required Color backgroundColor,
+    required List<Color> backgroundGradient,
     double? pixelRatio,
   }) async {
     if (items.isEmpty) {
@@ -62,7 +66,7 @@ class ChatLongScreenshotService {
         items: items,
         logicalWidth: logicalWidth,
         pixelRatio: ratio,
-        backgroundColor: backgroundColor,
+        backgroundGradient: backgroundGradient,
       ),
     );
 
@@ -96,13 +100,13 @@ class _LongScreenshotCaptureHost extends StatefulWidget {
   final List<Widget> items;
   final double logicalWidth;
   final double pixelRatio;
-  final Color backgroundColor;
+  final List<Color> backgroundGradient;
 
   const _LongScreenshotCaptureHost({
     required this.items,
     required this.logicalWidth,
     required this.pixelRatio,
-    required this.backgroundColor,
+    required this.backgroundGradient,
   });
 
   @override
@@ -155,21 +159,10 @@ class _LongScreenshotCaptureHostState
         if (!mounted) return;
 
         final boundary = _boundaryKey.currentContext?.findRenderObject();
-        if (boundary is! RenderRepaintBoundary) {
+        if (boundary is! _LongScreenshotRenderBoundary) {
           throw StateError('Long screenshot surface is unavailable');
         }
-        final image = await boundary.toImage(pixelRatio: widget.pixelRatio);
-        try {
-          final data = await image.toByteData(format: ui.ImageByteFormat.png);
-          if (data == null) {
-            throw StateError('Could not encode screenshot chunk');
-          }
-          _pngChunks.add(data.buffer.asUint8List());
-          _chunkWidths.add(image.width);
-          _chunkHeights.add(image.height);
-        } finally {
-          image.dispose();
-        }
+        await _captureBoundaryTiles(boundary);
       }
 
       final stitched = await compute<Map<String, Object>, Map<String, Object>>(
@@ -179,6 +172,9 @@ class _LongScreenshotCaptureHostState
           'widths': _chunkWidths,
           'heights': _chunkHeights,
           'maxHeight': ChatLongScreenshotService._maxOutputHeight,
+          'backgroundGradient': widget.backgroundGradient
+              .map((color) => color.toARGB32())
+              .toList(growable: false),
         },
       );
       if (!mounted) return;
@@ -199,13 +195,42 @@ class _LongScreenshotCaptureHostState
     }
   }
 
+  Future<void> _captureBoundaryTiles(
+    _LongScreenshotRenderBoundary boundary,
+  ) async {
+    final tiles = _splitLongScreenshotTileBounds(
+      logicalWidth: boundary.size.width,
+      logicalHeight: boundary.size.height,
+      pixelRatio: widget.pixelRatio,
+      maxRasterDimension: ChatLongScreenshotService._maxRasterTileDimension,
+    );
+    for (final bounds in tiles) {
+      if (!mounted) return;
+      final image = await boundary.toImageBounds(
+        bounds,
+        pixelRatio: widget.pixelRatio,
+      );
+      try {
+        final data = await image.toByteData(format: ui.ImageByteFormat.png);
+        if (data == null) {
+          throw StateError('Could not encode screenshot tile');
+        }
+        _pngChunks.add(data.buffer.asUint8List());
+        _chunkWidths.add(image.width);
+        _chunkHeights.add(image.height);
+      } finally {
+        image.dispose();
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final chunk = _chunks[_chunkIndex];
     return PopScope(
       canPop: false,
       child: Material(
-        color: widget.backgroundColor,
+        color: widget.backgroundGradient.first,
         child: Stack(
           clipBehavior: Clip.none,
           children: [
@@ -214,11 +239,11 @@ class _LongScreenshotCaptureHostState
               top: 0,
               width: widget.logicalWidth,
               child: ExcludeSemantics(
-                child: RepaintBoundary(
+                child: _LongScreenshotBoundary(
                   key: _boundaryKey,
                   child: ColoredBox(
                     key: ValueKey<int>(_chunkIndex),
-                    color: widget.backgroundColor,
+                    color: Colors.transparent,
                     child: Padding(
                       padding: const EdgeInsets.symmetric(vertical: 8),
                       child: Column(
@@ -232,7 +257,7 @@ class _LongScreenshotCaptureHostState
             ),
             Positioned.fill(
               child: ColoredBox(
-                color: widget.backgroundColor,
+                color: widget.backgroundGradient.first,
                 child: SafeArea(
                   child: Center(
                     child: Semantics(
@@ -304,6 +329,25 @@ class _LongScreenshotDialogResult {
   });
 }
 
+class _LongScreenshotBoundary extends SingleChildRenderObjectWidget {
+  const _LongScreenshotBoundary({super.key, super.child});
+
+  @override
+  _LongScreenshotRenderBoundary createRenderObject(BuildContext context) =>
+      _LongScreenshotRenderBoundary();
+}
+
+class _LongScreenshotRenderBoundary extends RenderRepaintBoundary {
+  Future<ui.Image> toImageBounds(ui.Rect bounds, {required double pixelRatio}) {
+    assert(!debugNeedsPaint);
+    final offsetLayer = layer;
+    if (offsetLayer is! OffsetLayer) {
+      throw StateError('Long screenshot layer is unavailable');
+    }
+    return offsetLayer.toImage(bounds, pixelRatio: pixelRatio);
+  }
+}
+
 Map<String, Object> _stitchLongScreenshot(Map<String, Object> payload) {
   final chunks = (payload['chunks']! as List).cast<Uint8List>();
   final widths = (payload['widths']! as List).cast<int>();
@@ -329,6 +373,10 @@ Map<String, Object> _stitchLongScreenshot(Map<String, Object> payload) {
     height: outputHeight,
     numChannels: 4,
   );
+  final rawGradient = payload['backgroundGradient'];
+  if (rawGradient is List && rawGradient.isNotEmpty) {
+    _fillVerticalGradient(output, rawGradient.cast<int>());
+  }
 
   var y = 0;
   for (var i = 0; i < chunks.length; i++) {
@@ -354,6 +402,32 @@ Map<String, Object> _stitchLongScreenshot(Map<String, Object> payload) {
   };
 }
 
+void _fillVerticalGradient(img.Image target, List<int> argbColors) {
+  if (argbColors.isEmpty) return;
+  for (var y = 0; y < target.height; y++) {
+    final t = target.height <= 1 ? 0.0 : y / (target.height - 1);
+    final scaled = t * (argbColors.length - 1);
+    final index = scaled.floor().clamp(0, argbColors.length - 1);
+    final next = (index + 1).clamp(0, argbColors.length - 1);
+    final local = scaled - index;
+    final a = argbColors[index];
+    final b = argbColors[next];
+    int channel(int shift) {
+      final from = (a >> shift) & 0xff;
+      final to = (b >> shift) & 0xff;
+      return (from + (to - from) * local).round();
+    }
+
+    final alpha = channel(24);
+    final red = channel(16);
+    final green = channel(8);
+    final blue = channel(0);
+    for (var x = 0; x < target.width; x++) {
+      target.setPixelRgba(x, y, red, green, blue, alpha);
+    }
+  }
+}
+
 double _resolveLongScreenshotPixelRatio({
   required double devicePixelRatio,
   required int selectionCount,
@@ -371,6 +445,30 @@ double _resolveLongScreenshotPixelRatio({
   return devicePixelRatio.clamp(2.0, 3.0).toDouble();
 }
 
+List<ui.Rect> _splitLongScreenshotTileBounds({
+  required double logicalWidth,
+  required double logicalHeight,
+  required double pixelRatio,
+  required int maxRasterDimension,
+}) {
+  if (logicalWidth <= 0 || logicalHeight <= 0 || pixelRatio <= 0) {
+    throw ArgumentError('Long screenshot dimensions must be positive');
+  }
+  if (logicalWidth * pixelRatio > maxRasterDimension) {
+    throw StateError('Long screenshot width exceeds the safe raster size');
+  }
+
+  final maxLogicalTileHeight = maxRasterDimension / pixelRatio;
+  final tiles = <ui.Rect>[];
+  var top = 0.0;
+  while (top < logicalHeight) {
+    final height = (logicalHeight - top).clamp(0.0, maxLogicalTileHeight);
+    tiles.add(ui.Rect.fromLTWH(0, top, logicalWidth, height));
+    top += height;
+  }
+  return tiles;
+}
+
 @visibleForTesting
 Map<String, Object> stitchLongScreenshotChunksForTesting(
   Map<String, Object> payload,
@@ -386,3 +484,16 @@ double resolveLongScreenshotPixelRatioForTesting({
   selectionCount: selectionCount,
   requestedPixelRatio: requestedPixelRatio,
 );
+
+@visibleForTesting
+List<double> splitLongScreenshotTileHeightsForTesting({
+  required double logicalWidth,
+  required double logicalHeight,
+  required double pixelRatio,
+  int maxRasterDimension = ChatLongScreenshotService._maxRasterTileDimension,
+}) => _splitLongScreenshotTileBounds(
+  logicalWidth: logicalWidth,
+  logicalHeight: logicalHeight,
+  pixelRatio: pixelRatio,
+  maxRasterDimension: maxRasterDimension,
+).map((bounds) => bounds.height).toList(growable: false);

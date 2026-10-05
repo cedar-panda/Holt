@@ -7,12 +7,21 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../memory/database.dart';
 import '../models/message.dart';
+import '../models/context_mode.dart';
 import '../services/character_timeline_service.dart';
+import '../services/rp_character_timeline_service.dart';
+import '../services/rp_story_service.dart';
+import '../services/rp_story_state_service.dart';
+import '../services/rp_worldbook_service.dart';
+import '../services/rp_summary_prompt.dart';
 import '../services/settings_manager.dart';
 import '../services/token_estimator.dart';
+import '../services/token_tracker.dart';
+import '../services/api_adapter.dart';
 import '../services/local_ai_service.dart';
 import '../services/locale_strings.dart';
 import '../services/recall_text_matcher.dart';
+import '../services/user_persona_service.dart';
 
 /// 窗口摘要器 — 鏈式摘要 + 關鍵詞提取
 ///
@@ -29,6 +38,56 @@ class ContextCompressor {
   static const int summaryCapTokens = 3600;
   static const int keywordCapTokens = 1800;
   static const int latestSummaryBlocksForPrompt = 4;
+  static const int rpKeywordRecallLimit = 3;
+
+  @visibleForTesting
+  static int suggestedRpSummaryMaxCharsForSource(int sourceCharacters) {
+    if (sourceCharacters >= 1200000) return 10000;
+    if (sourceCharacters >= 700000) return 8000;
+    if (sourceCharacters >= 300000) return 6000;
+    if (sourceCharacters >= 100000) return 4500;
+    return RpSummaryPrompt.defaultMaxChars;
+  }
+
+  static Future<int> effectiveRpSummaryMaxChars({
+    required String characterId,
+    required String continuityId,
+  }) async {
+    if (!await MemorySettings.getRpSummaryAutoMaxCharsEnabled()) {
+      return MemorySettings.getRpSummaryMaxChars();
+    }
+    final sourceCharacters =
+        await DatabaseHelper.getRpStorylineSourceCharacterCount(
+          characterId: characterId,
+          continuityId: continuityId,
+        );
+    return suggestedRpSummaryMaxCharsForSource(sourceCharacters);
+  }
+
+  /// User rules are optional preferences. They may shape emphasis and wording,
+  /// but cannot replace the storage schema, source evidence, storyline scope,
+  /// revision semantics, or other data-integrity requirements above them.
+  static Future<String> summaryPromptForRequest({
+    required ContextMode contextMode,
+    required String characterId,
+    required String continuityId,
+  }) async {
+    final rpMaxChars = contextMode == ContextMode.rp
+        ? await effectiveRpSummaryMaxChars(
+            characterId: characterId,
+            continuityId: continuityId,
+          )
+        : RpSummaryPrompt.defaultMaxChars;
+    final base = compressionPromptForMode(contextMode, rpMaxChars: rpMaxChars);
+    final custom = await MemorySettings.getSummaryCustomRules(
+      contextMode: contextMode.storageValue,
+    );
+    if (custom.isEmpty) return base;
+    return '$base\n\n${L.pick(en: '''【User summary preferences】
+Apply the following preferences only where they do not conflict with the required JSON schema, source evidence, storyline isolation, narrative layers, revision/source-range rules, or factual accuracy. Those system requirements always take priority.''', zhTW: '''【使用者自定義摘要偏好】
+以下內容只調整摘要的關注重點與表達方式；若與必要 JSON schema、來源證據、故事線隔離、敘事層級、修訂／來源範圍規則或事實正確性衝突，必須以前述系統規則為準。''', zhCN: '''【用户自定义摘要偏好】
+以下内容只调整摘要的关注重点与表达方式；若与必要 JSON schema、来源证据、故事线隔离、叙事层级、修订／来源范围规则或事实正确性冲突，必须以前述系统规则为准。''')}\n$custom';
+  }
 
   // A character's summary chain is shared by all of that character's
   // conversations. Queue writes per character so two windows cannot both
@@ -54,7 +113,7 @@ summary：輸出「前情提要」與「本次摘要」兩部分。
 - 保留具體的名字、地點、時間、數字；重要的話保留原詞
 - 去掉寒暄、重複、過渡語
 - 用第三人稱，簡潔客觀
-- 輸出 180～450 tokens（中文約 180～450 字）
+- 摘要正文約 250～700 個中文字；內容完整優先，不為湊字數重複
 - summary 欄位只放摘要正文，不要前綴說明
 - 使用以下 Markdown 結構：
   ## 前情提要
@@ -65,7 +124,7 @@ summary：輸出「前情提要」與「本次摘要」兩部分。
 - 區塊標題使用「**1. 重要事件與決定**」格式；內容使用「* **主題：** 事實」格式
 - 區塊從「重要事件與決定、關係與情緒變化、持續狀態與偏好、承諾與待續事項」中選擇
 
-timeline：只從【新對話內容】提取屬於角色本人或雙方關係、對後續有持續回憶價值的候選。event 是已完成的角色事件或雙方共同事件；state 是目前仍持續的狀態，key 使用髮型、美甲、鬍子、住所、工作、寵物、健康、關係狀態、生理週期之一；狀態開始或結束本身使用 event。subject 使用 character；雙方共同事件或關係狀態使用 relationship。每項須能確定 YYYY-MM-DD，source_message_ids 全部來自新對話，evidence 是來源原文片段，value 保留其核心用詞。occurred_on 表示原文直接描述的事件或狀態日期；「第 N 天」照原文保留，由本地計算開始日。同一項合併，按 occurred_on 從早到晚排列。
+timeline：只從【新對話內容】提取屬於角色本人或雙方關係、對後續有持續回憶價值的候選。event 是已完成的角色事件或雙方共同事件；state 是目前仍持續的狀態，key 使用髮型、美甲、鬍子、住所、工作、寵物、健康、關係狀態、生理週期之一；狀態開始或結束本身使用 event。subject 使用 character；雙方共同事件或關係狀態使用 relationship。每項的 occurred_on 一律填寫 YYYY-MM-DD：原文有明確日期時使用該日期並標記 date_basis=explicit；原文是可依消息 local_time 換算的相對日期時，換算後標記 date_basis=relative；沒有劇情日期但符合記錄條件時，使用該消息的本地日期並標記 date_basis=message_time。source_message_ids 全部來自新對話，evidence 是來源原文片段，value 保留其核心用詞。「第 N 天」只保留在 value 與 evidence，不得填入 occurred_on；開始日由本地驗證器計算。同一項合併，按 occurred_on 從早到晚排列。
 新對話明確說出角色「生理期第 N 天／開始／結束／今天仍在生理期」時必須輸出 character 候選：第 N 天或當下仍在生理期使用 state、key=生理週期；開始或結束使用 event；evidence 逐字取自來源消息。
 時間線相關內容有關角色健康（含生理期），可能持續 2 天以上的不適，不論男女角色皆輸出到時間線，請甄別清楚是否為角色內容。
 
@@ -94,7 +153,7 @@ summary: Output two parts, Prior Context and This Update.
 - Format section titles as "**1. Important events and decisions**" and entries as "* **Topic:** fact"
 - Choose sections from important events and decisions, relationship and emotional changes, ongoing states and preferences, and promises and open threads
 
-timeline: Extract only lasting candidates belonging to the character or the shared relationship from 【New Conversation】. An event is a completed character event or shared event. A state is a condition that is still ongoing, whose key is hairstyle, nails, beard, residence, work, pet, health, relationship status, or menstrual cycle; use event for the start or end of a state itself. Use subject=character, or subject=relationship for shared events and relationship status. Every item must resolve to YYYY-MM-DD, cite only new source_message_ids, quote exact source text as evidence, and retain its core wording in value. occurred_on is the date directly described by the source; preserve "day N" wording so the app can derive its start date. Merge one item and order occurred_on oldest to newest.
+timeline: Extract only lasting candidates belonging to the character or the shared relationship from 【New Conversation】. An event is a completed character event or shared event. A state is a condition that is still ongoing, whose key is hairstyle, nails, beard, residence, work, pet, health, relationship status, or menstrual cycle; use event for the start or end of a state itself. Use subject=character, or subject=relationship for shared events and relationship status. occurred_on must always be YYYY-MM-DD: use an explicit source date with date_basis=explicit; resolve a relative date from the message local_time with date_basis=relative; when no story date is stated but the item qualifies, use the message local date with date_basis=message_time. Cite only new source_message_ids, quote exact source text as evidence, and retain its core wording in value. Preserve wording such as "day N" only in value and evidence, never in occurred_on; the local validator derives its start date. Merge one item and order occurred_on oldest to newest.
 When new conversation explicitly states that the character's period is on day N, started, ended, or is still active today, a character candidate is required. Day N or an active current period uses type=state and key=menstrual cycle; start/end uses type=event; evidence is an exact source substring.
 For timeline content about the character's health (including menstruation), record discomfort that may last two or more days for characters of any gender, while carefully verifying that it belongs to the character.
 
@@ -108,18 +167,35 @@ Output valid JSON only: {"summary":"text","timeline":[{"type":"event","subject":
   static String get currentCompressionPrompt =>
       L.locale == 'en' ? _compressPromptEn : _zhPrompt(_compressPromptZh);
 
-  /// RP 方案只替換時間線欄位的抓取規則；摘要正文與 prompt cache 位置不變。
-  static Future<String> compressionPromptForCurrentMode() async {
+  /// RP keeps the normal summary contract but replaces the entire daily
+  /// timeline section. Daily health/menstrual ownership rules never enter the
+  /// RP request.
+  static String compressionPromptForMode(
+    ContextMode mode, {
+    int rpMaxChars = RpSummaryPrompt.defaultMaxChars,
+  }) {
     final base = currentCompressionPrompt;
-    if (await MemorySettings.getTimelinePromptMode() != 'plot') return base;
-    final plotRule = L.pick(
-      en: 'RP timeline mode: treat the timeline as a fictional story chronology. Capture durable plot events, scene changes, character actions, relationship turns, promises, and unresolved threads that matter for continuing the role-play. Keep the existing date/source/evidence requirements. Do not replace the normal summary or invent events; only broaden the timeline candidates to narrative events.',
-      zhTW:
-          'RP 劇情時間線：將時間線視為虛構故事的編年記錄，抓取對後續 RP 有持續價值的劇情事件、場景變化、角色行動、關係轉折、承諾與未完線索。保留既有日期／來源／證據要求，不替換正常摘要，也不得捏造事件；只擴大時間線候選的敘事範圍。',
-      zhCN:
-          'RP 剧情时间线：将时间线视为虚构故事的编年记录，抓取对后续 RP 有持续价值的剧情事件、场景变化、角色行动、关系转折、承诺与未完线索。保留既有日期／来源／证据要求，不替换正常摘要，也不得捏造事件；只扩大时间线候选的叙事范围。',
-    );
-    return '$base\n\n$plotRule';
+    if (mode == ContextMode.daily) return base;
+    return RpSummaryPrompt.compose(base, rpMaxChars);
+  }
+
+  /// RP dossiers keep their own section vocabulary. Daily normalization would
+  /// rewrite them into Prior Context / This Update and lose the dossier shape.
+  static String normalizeRpSummaryFormat(String raw) {
+    var text = raw.trim().replaceAll('\r\n', '\n');
+    final fence = RegExp(
+      r'^```(?:markdown)?\s*([\s\S]*?)\s*```$',
+    ).firstMatch(text);
+    if (fence != null) text = fence.group(1)!.trim();
+    final lines = text.split('\n');
+    while (lines.isNotEmpty &&
+        RegExp(
+          r'^(?:這是我整理的|这是我整理的|Here is (?:the|my)|Story Dossier|劇情摘要|剧情摘要)',
+          caseSensitive: false,
+        ).hasMatch(lines.first.trim())) {
+      lines.removeAt(0);
+    }
+    return lines.join('\n').trim();
   }
 
   /// This rule scopes only the timeline field; the summary still covers both
@@ -135,9 +211,9 @@ Output valid JSON only: {"summary":"text","timeline":[{"type":"event","subject":
         '${date.month.toString().padLeft(2, '0')}-'
         '${date.day.toString().padLeft(2, '0')}';
     return L.pick(
-      en: 'MANDATORY timeline-only rule: Today is $todayText. For character health (including menstruation) or discomfort that may last two or more days, output timeline content only when it belongs to the character "$name". Never record the user\'s own health. If the subject cannot be confirmed as "$name", output no timeline item. Every candidate must include its own concrete occurred_on date (YYYY-MM-DD), resolved from source local_time and today\'s date. The summary field still covers both speakers normally.',
+      en: 'MANDATORY timeline-only rule: Today is $todayText. For character health or discomfort that may last two or more days, output timeline content only when it belongs to the character "$name". Never record the user\'s own health. If the subject cannot be confirmed as "$name", output no timeline item. Every candidate must include its own concrete occurred_on date (YYYY-MM-DD), resolved from source local_time and today\'s date. The summary field still covers both speakers normally.',
       zhTW:
-          '強制要求（只約束時間線欄位）：今天日期是 $todayText。時間線相關內容涉及角色健康（含生理期）或可能持續 2 天以上的不適時，請輸出到時間線；時間線只記錄與「$name」本人有關的內容，不得記錄 user／使用者本人的健康內容。若無法確認是「$name」本人，請不要輸出時間線項目。每個候選都必須根據來源 local_time 與今天日期填寫各自具體的 occurred_on（YYYY-MM-DD）。summary 摘要正文仍正常記錄雙方內容。',
+          '強制要求（只約束時間線欄位）：今天日期是 $todayText。時間線相關內容涉及角色健康或可能持續 2 天以上的不適時，請輸出到時間線；時間線只記錄與「$name」本人有關的內容，不得記錄 user／使用者本人的健康內容。若無法確認是「$name」本人，請不要輸出時間線項目。每個候選都必須根據來源 local_time 與今天日期填寫各自具體的 occurred_on（YYYY-MM-DD）。summary 摘要正文仍正常記錄雙方內容。',
     );
   }
 
@@ -267,6 +343,20 @@ Do not use the user's name, the character's name, nicknames, or pronouns as keyw
 Output only a comma-separated keyword list.
 ''';
 
+  static const String _rpKeywordPromptZh = '''
+從以下 RP 劇情摘要提取可用於日後召回原摘要的事件標籤。
+每個標籤使用「具體對象＋實際行動／結果／轉折」或能唯一定位事件的專有詞組，使後續對話即使只提到事件的一部分，也能找到正確摘要。優先選擇具體事件、地點與事件的組合、關鍵物品及其用途、身份變化、組織行動、承諾內容、衝突結果或未解線索。
+標籤本身必須具有事件意義；人名、稱謂或情緒只有和具體事件組合時才可使用。相似事件只保留辨識度最高的一項，不輸出近義重複標籤。
+輸出 3 至 5 個高辨識度標籤，每項 2 至 16 個中文字，以逗號分隔。只輸出標籤列表。
+''';
+
+  static const String _rpKeywordPromptEn = '''
+Extract event labels that can later recall this RP story summary.
+Build each label from a concrete subject plus an actual action, outcome, or turn, or use a specific phrase that uniquely locates the event. Prefer concrete events, a place paired with its event, an important item and its use, an identity change, an organization action, the content of a promise, the result of a conflict, or an unresolved clue.
+A label must carry event meaning. A name, title, or emotion may appear only when combined with a concrete event. Keep the most distinctive label for similar events and omit near-duplicates.
+Output 3-5 high-identity labels, each 2-16 words, comma-separated. Output labels only.
+''';
+
   static const String _revisePromptZh = '''
 你是窗口摘要修正器。根據使用者指出的問題，重寫這段窗口摘要。
 
@@ -301,6 +391,14 @@ Rules:
     required List<Message> messages,
     required String characterId,
     String? conversationId,
+    ContextMode contextMode = ContextMode.daily,
+    String continuityId = 'main',
+    int minimumSourceTokens = minCompressTokens,
+    int? sourceMessageStartIdOverride,
+    int? displayAnchorMessageIdOverride,
+    bool triggerWorldbook = true,
+    bool isRepair = false,
+    int? repairSummaryId,
   }) {
     final normalizedCharacterId = characterId.trim().isEmpty
         ? 'default'
@@ -310,15 +408,35 @@ Rules:
     if (normalizedConversationId.isNotEmpty) {
       final existing =
           _conversationCompressionFlights[normalizedConversationId];
-      if (existing != null) return existing;
+      if (existing != null) {
+        if (isRepair) {
+          return existing.then(
+            (_) => compress(
+              messages: messages,
+              characterId: characterId,
+              conversationId: conversationId,
+              contextMode: contextMode,
+              continuityId: continuityId,
+              minimumSourceTokens: minimumSourceTokens,
+              sourceMessageStartIdOverride: sourceMessageStartIdOverride,
+              displayAnchorMessageIdOverride: displayAnchorMessageIdOverride,
+              triggerWorldbook: triggerWorldbook,
+              isRepair: true,
+              repairSummaryId: repairSummaryId,
+            ),
+          );
+        }
+        return existing;
+      }
     }
 
+    final chainKey =
+        '$normalizedCharacterId\u0000${contextMode.storageValue}\u0000$continuityId';
     final previous =
-        _characterCompressionTails[normalizedCharacterId] ??
-        Future<void>.value();
+        _characterCompressionTails[chainKey] ?? Future<void>.value();
     final gate = Completer<void>();
     final tail = gate.future;
-    _characterCompressionTails[normalizedCharacterId] = tail;
+    _characterCompressionTails[chainKey] = tail;
 
     late final Future<int> operation;
     operation = previous
@@ -327,15 +445,20 @@ Rules:
             messages: messages,
             characterId: normalizedCharacterId,
             conversationId: normalizedConversationId,
+            contextMode: contextMode,
+            continuityId: continuityId,
+            minimumSourceTokens: minimumSourceTokens,
+            sourceMessageStartIdOverride: sourceMessageStartIdOverride,
+            displayAnchorMessageIdOverride: displayAnchorMessageIdOverride,
+            triggerWorldbook: triggerWorldbook,
+            isRepair: isRepair,
+            repairSummaryId: repairSummaryId,
           ),
         )
         .whenComplete(() {
           if (!gate.isCompleted) gate.complete();
-          if (identical(
-            _characterCompressionTails[normalizedCharacterId],
-            tail,
-          )) {
-            _characterCompressionTails.remove(normalizedCharacterId);
+          if (identical(_characterCompressionTails[chainKey], tail)) {
+            _characterCompressionTails.remove(chainKey);
           }
           if (normalizedConversationId.isNotEmpty &&
               identical(
@@ -356,18 +479,45 @@ Rules:
     required List<Message> messages,
     required String characterId,
     required String conversationId,
+    required ContextMode contextMode,
+    required String continuityId,
+    required int minimumSourceTokens,
+    required int? sourceMessageStartIdOverride,
+    required int? displayAnchorMessageIdOverride,
+    required bool triggerWorldbook,
+    required bool isRepair,
+    required int? repairSummaryId,
   }) async {
     if (messages.isEmpty) return 0;
+    if (!isRepair) {
+      final db = await DatabaseHelper.database;
+      final pending = await db.query(
+        'context_summary_repairs',
+        columns: const <String>['id'],
+        where:
+            'character_id = ? AND context_mode = ? AND continuity_id = ? '
+            "AND status != 'completed'",
+        whereArgs: <Object?>[
+          characterId,
+          contextMode.storageValue,
+          continuityId,
+        ],
+        limit: 1,
+      );
+      if (pending.isNotEmpty) return 0;
+    }
 
     final rawTokens = messages.fold<int>(
       0,
       (total, message) => total + TokenEstimator.estimate(message.text),
     );
-    if (rawTokens < minCompressTokens) return 0; // 太短不壓
+    if (rawTokens < minimumSourceTokens) return 0; // 太短不壓
 
     // 取前次摘要（最新一塊）
     final existingSummaries = await DatabaseHelper.getContextSummaries(
       characterId,
+      contextMode: contextMode,
+      continuityId: continuityId,
     );
     String? prevSummary;
     if (existingSummaries.isNotEmpty) {
@@ -375,72 +525,228 @@ Rules:
     }
 
     // 組裝輸入
-    final identity = await _loadSummaryIdentity(characterId);
+    final identity = await _loadSummaryIdentity(
+      characterId,
+      conversationId: conversationId,
+    );
     final identityPrompt = identity.format(includePersona: false);
     final rawText = messages.map(_formatSourceMessage).join('\n\n');
-    final promptParts = <String>[await compressionPromptForCurrentMode()];
+    final promptParts = <String>[
+      await summaryPromptForRequest(
+        contextMode: contextMode,
+        characterId: characterId,
+        continuityId: continuityId,
+      ),
+    ];
     if (identityPrompt.isNotEmpty) promptParts.add(identityPrompt);
-    promptParts.add(
-      characterOnlyTimelineRule(identity.characterName, today: DateTime.now()),
-    );
+    if (contextMode == ContextMode.daily) {
+      promptParts.add(
+        characterOnlyTimelineRule(
+          identity.characterName,
+          today: DateTime.now(),
+        ),
+      );
+    }
     final prompt = promptParts.join('\n\n');
+    final sourceIds =
+        messages
+            .map((message) => message.id)
+            .whereType<int>()
+            .toList(growable: false)
+          ..sort();
+    final sourceWindowId = conversationId.isEmpty
+        ? ''
+        : await DatabaseHelper.ensureConversationWindowSummaryId(
+            conversationId,
+          );
     final userContent = StringBuffer();
-    if (prevSummary != null && prevSummary.isNotEmpty) {
+    if (contextMode == ContextMode.rp) {
+      userContent.writeln(
+        await buildRpArchiveContext(
+          characterId: characterId,
+          continuityId: continuityId,
+          conversationId: conversationId,
+          sourceText: rawText,
+        ),
+      );
+      userContent.writeln();
+      userContent.writeln(
+        L.pick(
+          en: '【Existing Story Dossier】',
+          zhTW: '【既有劇情摘要】',
+          zhCN: '【既有剧情摘要】',
+        ),
+      );
+      userContent.writeln(prevSummary ?? '');
+      userContent.writeln();
+      userContent.writeln(
+        L.pick(
+          en: '【Summary Source Range】',
+          zhTW: '【摘要來源範圍】',
+          zhCN: '【摘要来源范围】',
+        ),
+      );
+      userContent.writeln(
+        jsonEncode(<String, Object?>{
+          'storyline_id': continuityId,
+          'source_window_id': sourceWindowId,
+          'source_conversation_id': conversationId,
+          'source_message_start_id': sourceIds.isEmpty ? null : sourceIds.first,
+          'source_message_end_id': sourceIds.isEmpty ? null : sourceIds.last,
+        }),
+      );
+      userContent.writeln();
+    } else if (prevSummary != null && prevSummary.isNotEmpty) {
       userContent.writeln(L.pick(en: '【Previous Summary】', zhTW: '【前次摘要】'));
       userContent.writeln(prevSummary);
       userContent.writeln();
     }
-    userContent.writeln(L.pick(en: '【New Conversation】', zhTW: '【新對話內容】'));
+    userContent.writeln(
+      contextMode == ContextMode.rp
+          ? L.pick(
+              en: '【New Dialogue to Archive】',
+              zhTW: '【本輪待歸檔對話】',
+              zhCN: '【本轮待归档对话】',
+            )
+          : L.pick(en: '【New Conversation】', zhTW: '【新對話內容】'),
+    );
     userContent.write(rawText);
 
     // 調用小模型
     final response = await _callModel(
+      characterId: characterId,
       systemPrompt: prompt,
       userMessage: userContent.toString(),
     );
     final decoded = decodeSummaryEnvelope(response);
-    final summaryText = normalizeSummaryFormat(decoded.summary);
+    if (contextMode == ContextMode.rp &&
+        decoded.storylineId.isNotEmpty &&
+        decoded.storylineId != continuityId) {
+      developer.log(
+        'RP summary storyline mismatch: expected=$continuityId '
+        'actual=${decoded.storylineId}',
+        name: 'ContextCompressor',
+      );
+      return 0;
+    }
+    final summaryText = contextMode == ContextMode.rp
+        ? normalizeRpSummaryFormat(decoded.summary)
+        : normalizeSummaryFormat(decoded.summary);
     if (summaryText.isEmpty) return 0;
-    final timelineCandidates = await recoverMissingMenstrualCandidates(
-      messages: messages,
-      candidates: decoded.timeline,
-    );
+    if (conversationId.isNotEmpty &&
+        !await DatabaseHelper.messageSnapshotsStillCurrent(messages)) {
+      developer.log(
+        'Discarded stale summary result because its source was edited or deleted',
+        name: 'ContextCompressor',
+      );
+      return 0;
+    }
+    final timelineCandidates = contextMode == ContextMode.daily
+        ? await recoverMissingMenstrualCandidates(
+            messages: messages,
+            candidates: decoded.timeline,
+            characterId: characterId,
+          )
+        : decoded.timeline;
 
     final summaryTokens = TokenEstimator.estimate(summaryText);
     final sourceConversationId = conversationId;
-    final sourceWindowId = sourceConversationId.isEmpty
-        ? ''
-        : await DatabaseHelper.ensureConversationWindowSummaryId(
-            sourceConversationId,
-          );
-
-    // 候選事件先經本地端來源、證據與日期驗證。即使模型的 timeline
-    // 欄位有問題，也只會丟棄候選，不會污染已生成的摘要。
-    await CharacterTimelineService.storeSummaryCandidates(
-      characterId: characterId,
-      candidates: timelineCandidates,
-      sourceMessages: messages,
-    );
 
     final cursorMessageId = messages
         .map((message) => message.id ?? 0)
         .fold<int>(0, (largest, id) => id > largest ? id : largest);
-    if (sourceConversationId.isNotEmpty && cursorMessageId > 0) {
-      await DatabaseHelper.insertContextSummaryAndAdvanceCursor(
-        characterId: characterId,
-        content: summaryText,
-        tokenCount: summaryTokens,
-        conversationId: sourceConversationId,
-        cursorMessageId: cursorMessageId,
-        sourceWindowId: sourceWindowId,
-      );
-    } else {
-      await DatabaseHelper.insertContextSummary(
+    final displayAnchorMessageId = sourceConversationId.isEmpty
+        ? null
+        : displayAnchorMessageIdOverride ??
+              await DatabaseHelper.getLatestMessageId(sourceConversationId);
+    final int summaryId;
+    if (isRepair && repairSummaryId != null) {
+      summaryId = await DatabaseHelper.insertContextSummary(
         characterId: characterId,
         content: summaryText,
         tokenCount: summaryTokens,
         sourceWindowId: sourceWindowId,
         sourceConversationId: sourceConversationId,
+        displayAnchorMessageId: displayAnchorMessageId ?? cursorMessageId,
+        sourceMessageStartId:
+            sourceMessageStartIdOverride ??
+            (sourceIds.isEmpty ? null : sourceIds.first),
+        sourceMessageEndId: sourceIds.isEmpty ? null : sourceIds.last,
+        replaceSummaryId: repairSummaryId,
+        replaceInvalidatedSummary: true,
+        contextMode: contextMode,
+        continuityId: continuityId,
+        expectedSourceMessages: messages,
+        allowPendingRepairs: true,
+      );
+    } else if (sourceConversationId.isNotEmpty && cursorMessageId > 0) {
+      summaryId = await DatabaseHelper.insertContextSummaryAndAdvanceCursor(
+        characterId: characterId,
+        content: summaryText,
+        tokenCount: summaryTokens,
+        conversationId: sourceConversationId,
+        cursorMessageId: cursorMessageId,
+        displayAnchorMessageId: displayAnchorMessageId ?? cursorMessageId,
+        sourceMessageStartId: sourceMessageStartIdOverride,
+        sourceWindowId: sourceWindowId,
+        contextMode: contextMode,
+        continuityId: continuityId,
+        expectedSourceMessages: messages,
+        allowPendingRepairs: isRepair,
+      );
+    } else {
+      summaryId = await DatabaseHelper.insertContextSummary(
+        characterId: characterId,
+        content: summaryText,
+        tokenCount: summaryTokens,
+        sourceWindowId: sourceWindowId,
+        sourceConversationId: sourceConversationId,
+        contextMode: contextMode,
+        continuityId: continuityId,
+        expectedSourceMessages: messages,
+      );
+    }
+    if (summaryId <= 0) return 0;
+
+    // RP projections are written only after their source summary exists.
+    // Each service rechecks that revision inside its own transaction.
+    if (contextMode == ContextMode.rp) {
+      await RpCharacterTimelineService.storeSummaryCandidates(
+        characterId: characterId,
+        continuityId: continuityId,
+        sourceConversationId: sourceConversationId,
+        candidates: timelineCandidates,
+        sourceMessages: messages,
+        sourceSummaryId: summaryId,
+      );
+    } else {
+      await CharacterTimelineService.storeSummaryCandidates(
+        characterId: characterId,
+        candidates: timelineCandidates,
+        sourceMessages: messages,
+      );
+    }
+
+    // Mutable RP state must point at the summary revision that proposed it.
+    // Persisting it only after the summary exists also prevents an orphaned
+    // state row when summary insertion or cursor advancement fails.
+    if (contextMode == ContextMode.rp) {
+      await RpStoryService.storeExtraction(
+        characterId: characterId,
+        continuityId: continuityId,
+        sourceConversationId: sourceConversationId,
+        characters: decoded.storyCharacters,
+        relationships: decoded.relationships,
+        sourceMessages: messages,
+        sourceSummaryId: summaryId,
+      );
+      await RpStoryStateService.storeExtraction(
+        characterId: characterId,
+        continuityId: continuityId,
+        sourceConversationId: sourceConversationId,
+        states: decoded.storyStates,
+        sourceMessages: messages,
+        sourceSummaryId: summaryId,
       );
     }
 
@@ -451,8 +757,19 @@ Rules:
       );
     }
 
-    // 檢查摘要層是否溢出 → 擠出舊塊 → 提取關鍵詞
-    await _enforceCapAndExtractKeywords(characterId);
+    await recycleSupersededSummaries(
+      characterId,
+      contextMode: contextMode,
+      continuityId: continuityId,
+    );
+    if (contextMode == ContextMode.rp && triggerWorldbook) {
+      unawaited(
+        RpWorldbookService.maybeProcessAfterSummary(
+          characterId: characterId,
+          continuityId: continuityId,
+        ),
+      );
+    }
 
     return summaryTokens;
   }
@@ -464,6 +781,8 @@ Rules:
     int triggerTokenLimit = triggerTokens,
     int minTokenThreshold = triggerTokens,
     int? thresholdTokenCount,
+    ContextMode contextMode = ContextMode.daily,
+    String continuityId = 'main',
   }) async {
     final cursor = await DatabaseHelper.getConversationSummaryCursor(
       conversationId,
@@ -484,6 +803,8 @@ Rules:
       messages: recentMsgs,
       characterId: characterId,
       conversationId: conversationId,
+      contextMode: contextMode,
+      continuityId: continuityId,
     );
   }
 
@@ -531,6 +852,8 @@ Rules:
     String? excludeWindowId,
     bool includeLatestSummaries = true,
     bool includeKeywordRecall = true,
+    ContextMode contextMode = ContextMode.daily,
+    String continuityId = 'main',
   }) async {
     final summaryParts = <String>[];
     if (includeLatestSummaries) {
@@ -538,18 +861,31 @@ Rules:
         characterId,
         excludeWindowId: excludeWindowId,
         limit: latestSummaryBlocksForPrompt,
+        contextMode: contextMode,
+        continuityId: continuityId,
       );
-      summaryParts.addAll(summaries.reversed.map(_formatSummaryBlock));
+      summaryParts.addAll(
+        summaries.reversed.map(
+          (row) => _formatSummaryBlock(row, contextMode: contextMode),
+        ),
+      );
     }
 
     String keywordSummary = '';
     if (includeKeywordRecall) {
-      final keywords = await DatabaseHelper.getContextKeywords(characterId);
+      final keywords = await DatabaseHelper.getContextKeywords(
+        characterId,
+        contextMode: contextMode,
+        continuityId: continuityId,
+      );
       keywordSummary =
           _recallKeywordSummarySegment(
             keywords,
             currentMessage: currentMessage,
             excludeWindowId: excludeWindowId,
+            maxRecalledSummaries: contextMode == ContextMode.rp
+                ? rpKeywordRecallLimit
+                : 1,
           ) ??
           '';
     }
@@ -560,16 +896,135 @@ Rules:
     };
   }
 
+  /// Keep recent summary blocks active until their lane reaches its retention
+  /// limit. Only then recycle the oldest unlocked blocks into labels. The
+  /// archived original stays available to its chat history shortcut.
+  static Future<void> recycleSupersededSummaries(
+    String characterId, {
+    required ContextMode contextMode,
+    required String continuityId,
+    @visibleForTesting Future<String> Function(String)? extractKeywords,
+  }) async {
+    var rows = await DatabaseHelper.getContextSummaries(
+      characterId,
+      contextMode: contextMode,
+      continuityId: continuityId,
+    );
+    bool overLimit() {
+      if (rows.length < 2) return false;
+      final total = rows.fold<int>(
+        0,
+        (sum, row) => sum + (row['token_count'] as int? ?? 0),
+      );
+      return contextMode == ContextMode.rp
+          ? rows.length > 4 || total > summaryCapTokens * 2
+          : total > summaryCapTokens;
+    }
+
+    final failedIds = <int>{};
+    while (overLimit()) {
+      Map<String, dynamic>? oldest;
+      for (final row in rows.take(rows.length - 1)) {
+        final id = row['id'] as int;
+        if ((row['locked'] as int? ?? 0) == 0 && !failedIds.contains(id)) {
+          oldest = row;
+          break;
+        }
+      }
+      if (oldest == null) break;
+      final id = oldest['id'] as int;
+      final source = (oldest['content'] as String? ?? '').trim();
+      if (source.isEmpty) {
+        failedIds.add(id);
+        continue;
+      }
+      try {
+        final keywords = extractKeywords == null
+            ? await _extractKeywordText(
+                characterId: characterId,
+                summaryContent: source,
+                contextMode: contextMode,
+              )
+            : await extractKeywords(source);
+        if (keywords.trim().isEmpty) {
+          failedIds.add(id);
+          continue;
+        }
+        final archived = await DatabaseHelper.archiveContextSummaryWithKeywords(
+          summaryId: id,
+          characterId: characterId,
+          contextMode: contextMode,
+          continuityId: continuityId,
+          keywords: keywords.trim(),
+          keywordTokenCount: TokenEstimator.estimate(keywords),
+        );
+        if (!archived) failedIds.add(id);
+      } catch (error) {
+        developer.log(
+          'Summary $id label extraction failed; keeping it active',
+          name: 'ContextCompressor',
+          error: error,
+        );
+        failedIds.add(id);
+      }
+      rows = await DatabaseHelper.getContextSummaries(
+        characterId,
+        contextMode: contextMode,
+        continuityId: continuityId,
+      );
+    }
+    await _enforceKeywordCap(
+      characterId,
+      contextMode: contextMode,
+      continuityId: continuityId,
+    );
+  }
+
   /// 獲取調試信息（測試入口用）
-  static Future<Map<String, dynamic>> getDebugInfo(String characterId) async {
-    final summaries = await DatabaseHelper.getContextSummaries(characterId);
-    final keywords = await DatabaseHelper.getContextKeywords(characterId);
+  static Future<Map<String, dynamic>> getDebugInfo(
+    String characterId, {
+    ContextMode contextMode = ContextMode.daily,
+    String continuityId = 'main',
+  }) async {
+    final summaries = await DatabaseHelper.getContextSummaries(
+      characterId,
+      contextMode: contextMode,
+      continuityId: continuityId,
+    );
+    final keywords = await DatabaseHelper.getContextKeywords(
+      characterId,
+      contextMode: contextMode,
+      continuityId: continuityId,
+    );
     final summaryTotal = await DatabaseHelper.getContextSummaryTokenTotal(
       characterId,
+      contextMode: contextMode,
+      continuityId: continuityId,
     );
     final keywordTotal = await DatabaseHelper.getContextKeywordTokenTotal(
       characterId,
+      contextMode: contextMode,
+      continuityId: continuityId,
     );
+    final rpStoryCharacterCount = contextMode == ContextMode.rp
+        ? (await RpStoryService.listCharacters(
+            characterId,
+            continuityId: continuityId,
+          )).length
+        : 0;
+    final rpStoryRelationshipCount = contextMode == ContextMode.rp
+        ? (await RpStoryService.listRelationships(
+            characterId,
+            continuityId: continuityId,
+          )).length
+        : 0;
+    final rpStoryStateCount = contextMode == ContextMode.rp
+        ? (await RpStoryStateService.listStates(
+            characterId,
+            continuityId: continuityId,
+            includeNonMain: true,
+          )).length
+        : 0;
 
     return {
       'summaryBlocks': summaries,
@@ -578,6 +1033,11 @@ Rules:
       'keywordTokenTotal': keywordTotal,
       'summaryCap': summaryCapTokens,
       'keywordCap': keywordCapTokens,
+      'contextMode': contextMode.storageValue,
+      'continuityId': continuityId,
+      'rpStoryCharacterCount': rpStoryCharacterCount,
+      'rpStoryRelationshipCount': rpStoryRelationshipCount,
+      'rpStoryStateCount': rpStoryStateCount,
     };
   }
 
@@ -587,12 +1047,14 @@ Rules:
     required String characterId,
     required String originalSummary,
     required String issue,
+    ContextMode contextMode = ContextMode.daily,
   }) async {
     final revised = await _reviseSummaryText(
       characterId: characterId,
       originalSummary: originalSummary,
       issue: issue,
       requireFullFormat: true,
+      contextMode: contextMode,
     );
     if (revised.isEmpty) return '';
 
@@ -650,6 +1112,7 @@ Rules:
 
     final isEn = L.locale == 'en';
     final keywords = await _callModel(
+      characterId: characterId,
       systemPrompt: isEn ? _keywordPromptEn : _zhPrompt(_keywordPromptZh),
       userMessage: revised,
     );
@@ -687,6 +1150,7 @@ Rules:
     );
     final isEn = L.locale == 'en';
     final keywords = await _callModel(
+      characterId: characterId,
       systemPrompt: isEn ? _keywordPromptEn : _zhPrompt(_keywordPromptZh),
       userMessage: revisedSegment,
     );
@@ -703,74 +1167,29 @@ Rules:
 
   // ═══ 內部方法 ═══
 
-  /// 強制摘要層上限 + 關鍵詞提取
-  static Future<void> _enforceCapAndExtractKeywords(String characterId) async {
-    var total = await DatabaseHelper.getContextSummaryTokenTotal(characterId);
-
-    while (total > summaryCapTokens) {
-      final db = await DatabaseHelper.database;
-      final candidates = await db.query(
-        'context_summaries',
-        where: 'character_id = ? AND (locked IS NULL OR locked = 0)',
-        whereArgs: [characterId],
-        orderBy: 'created_at ASC, id ASC',
-        limit: 1,
-      );
-      if (candidates.isEmpty) break;
-      final oldest = candidates.first;
-
-      final oldContent = oldest['content'] as String;
-      final keywordText = await _extractKeywordText(
-        characterId: characterId,
-        summaryContent: oldContent,
-      );
-      if (keywordText.isEmpty) {
-        developer.log(
-          'Keyword extraction failed; preserving summary ${oldest['id']} for a later retry',
-          name: 'ContextCompressor',
-        );
-        break;
-      }
-
-      final summaryId = oldest['id'] as int;
-      final moved = await db.transaction<bool>((txn) async {
-        final stillExists = await txn.query(
-          'context_summaries',
-          columns: ['id'],
-          where: 'id = ? AND character_id = ?',
-          whereArgs: [summaryId, characterId],
-          limit: 1,
-        );
-        if (stillExists.isEmpty) return false;
-
-        await txn.insert('context_keywords', {
-          'character_id': characterId,
-          'source_window_id': oldest['source_window_id'] as String? ?? '',
-          'source_conversation_id':
-              oldest['source_conversation_id'] as String? ?? '',
-          'keywords': keywordText,
-          'token_count': TokenEstimator.estimate(keywordText),
-          'source_summary_id': summaryId,
-          'source_summary_content': oldContent,
-          'created_at': DateTime.now().toIso8601String(),
-        });
-        await txn.delete(
-          'context_summaries',
-          where: 'id = ? AND character_id = ?',
-          whereArgs: [summaryId, characterId],
-        );
-        return true;
-      });
-      if (!moved) continue;
-
-      total = await DatabaseHelper.getContextSummaryTokenTotal(characterId);
-    }
-
-    // 強制關鍵詞層上限
-    var kwTotal = await DatabaseHelper.getContextKeywordTokenTotal(characterId);
+  /// Bound the active label index; archived source snapshots remain available
+  /// from their original chat markers even when an old label is evicted.
+  static Future<void> _enforceKeywordCap(
+    String characterId, {
+    required ContextMode contextMode,
+    required String continuityId,
+  }) async {
+    var kwTotal = await DatabaseHelper.getContextKeywordTokenTotal(
+      characterId,
+      contextMode: contextMode,
+      continuityId: continuityId,
+    );
     while (kwTotal > keywordCapTokens) {
-      await DatabaseHelper.deleteOldestContextKeyword(characterId);
-      kwTotal = await DatabaseHelper.getContextKeywordTokenTotal(characterId);
+      await DatabaseHelper.deleteOldestContextKeyword(
+        characterId,
+        contextMode: contextMode,
+        continuityId: continuityId,
+      );
+      kwTotal = await DatabaseHelper.getContextKeywordTokenTotal(
+        characterId,
+        contextMode: contextMode,
+        continuityId: continuityId,
+      );
     }
   }
 
@@ -779,17 +1198,22 @@ Rules:
   static Future<String> _extractKeywordText({
     required String characterId,
     required String summaryContent,
+    ContextMode contextMode = ContextMode.daily,
   }) async {
     final isEn = L.locale == 'en';
-    final prompt = isEn ? _keywordPromptEn : _zhPrompt(_keywordPromptZh);
+    final prompt = contextMode == ContextMode.rp
+        ? (isEn ? _rpKeywordPromptEn : _zhPrompt(_rpKeywordPromptZh))
+        : (isEn ? _keywordPromptEn : _zhPrompt(_keywordPromptZh));
 
     final keywordText = await _callModel(
+      characterId: characterId,
       systemPrompt: prompt,
       userMessage: summaryContent,
     );
     final filteredKeywordText = await _filterKeywordText(
       keywordText,
       characterId,
+      maxItems: contextMode == ContextMode.rp ? 5 : null,
     );
     return filteredKeywordText;
   }
@@ -798,6 +1222,7 @@ Rules:
     List<Map<String, dynamic>> keywordBlocks, {
     required String currentMessage,
     String? excludeWindowId,
+    int maxRecalledSummaries = 1,
   }) {
     if (currentMessage.trim().isEmpty) return null;
     final excluded = (excludeWindowId ?? '').trim();
@@ -816,27 +1241,51 @@ Rules:
       );
       if (match != null) matches.add((block: block, match: match));
     }
-    matches.sort(
-      (left, right) => right.match.score.compareTo(left.match.score),
-    );
+    matches.sort((left, right) {
+      final score = right.match.score.compareTo(left.match.score);
+      if (score != 0) return score;
+      return (right.block['created_at']?.toString() ?? '').compareTo(
+        left.block['created_at']?.toString() ?? '',
+      );
+    });
+    final recalled = <String>[];
+    final recalledSummaryIds = <Object?>{};
+    final recalledFingerprints = <String>{};
     for (final candidate in matches) {
       final block = candidate.block;
+      if (!recalledSummaryIds.add(block['source_summary_id'])) continue;
       final source = (block['source_summary_content'] as String? ?? '').trim();
       final segment = _pickMatchedSummarySegment(source, [
         candidate.match.keyword,
       ]);
       if (segment == null) continue;
-      return _formatKeywordRecallBlock(
-        segment,
-        sourceWindowId: (block['source_window_id'] as String? ?? '').trim(),
-        createdAt: block['created_at'] as String? ?? '',
+      final fingerprint = segment.content.toLowerCase().replaceAll(
+        RegExp(r'[\s\p{P}\p{S}]+', unicode: true),
+        '',
       );
+      if (fingerprint.isEmpty || !recalledFingerprints.add(fingerprint)) {
+        continue;
+      }
+      recalled.add(
+        _formatKeywordRecallBlock(
+          segment,
+          sourceWindowId: (block['source_window_id'] as String? ?? '').trim(),
+          createdAt: block['created_at'] as String? ?? '',
+        ),
+      );
+      if (recalled.length >= maxRecalledSummaries) break;
     }
-    return null;
+    return recalled.isEmpty ? null : recalled.join('\n\n');
   }
 
-  static String _formatSummaryBlock(Map<String, dynamic> block) {
-    final content = normalizeSummaryFormat(block['content'] as String? ?? '');
+  static String _formatSummaryBlock(
+    Map<String, dynamic> block, {
+    ContextMode contextMode = ContextMode.daily,
+  }) {
+    final raw = block['content'] as String? ?? '';
+    final content = contextMode == ContextMode.rp
+        ? normalizeRpSummaryFormat(raw)
+        : normalizeSummaryFormat(raw);
     if (content.isEmpty) return '';
     final windowId = (block['source_window_id'] as String? ?? '').trim();
     final date = _dateLabel(block['created_at'] as String? ?? '');
@@ -887,9 +1336,10 @@ Rules:
     final lines = source.split('\n');
     final segments = <_SummarySegment>[];
     final headingRe = RegExp(
-      r'^\s*(?:[#>*\-]+\s*)?(前情提要|本次摘要|前情摘要|最新摘要|Prior Context|This Update|Previous Summary|Latest Summary|Prior Summary|Recent Summary)\s*[:：]?\s*$',
+      r'^\s*(?:[#>*\-]+\s*)?(前情提要|本次摘要|前情摘要|最新摘要|Prior Context|This Update|Previous Summary|Latest Summary|Prior Summary|Recent Summary|——主線——|——支線——|——氛圍——|——觀察區——|——Main——|——Side Threads——|——Atmosphere——|——Observation——)\s*[:：]?\s*$',
       caseSensitive: false,
     );
+    final rpEntryRe = RegExp(r'^\s*\*\*\[([^\]]+)\]\s*([^*]+)\*\*\s*$');
 
     String currentTitle = '';
     final buffer = <String>[];
@@ -907,6 +1357,15 @@ Rules:
       if (match != null) {
         flush();
         currentTitle = match.group(1)?.trim() ?? '';
+        continue;
+      }
+      final entry = rpEntryRe.firstMatch(line);
+      if (entry != null) {
+        flush();
+        currentTitle =
+            '${entry.group(1)?.trim() ?? ''} · '
+            '${entry.group(2)?.trim() ?? ''}';
+        buffer.add(line);
       } else {
         buffer.add(line);
       }
@@ -928,8 +1387,9 @@ Rules:
 
   static Future<String> _filterKeywordText(
     String keywordText,
-    String characterId,
-  ) async {
+    String characterId, {
+    int? maxItems,
+  }) async {
     final forbidden = await _forbiddenKeywordTerms(characterId);
     final keywords = keywordText
         .split(RegExp(r'[,，、\n]'))
@@ -937,17 +1397,28 @@ Rules:
         .where((k) => k.isNotEmpty)
         .where((k) {
           final normalized = k.toLowerCase();
-          return !forbidden.any(
-            (term) => normalized == term || normalized.contains(term),
-          );
+          return !forbidden.contains(normalized);
         })
         .toList();
 
     final seen = <String>{};
     final deduped = <String>[];
     for (final keyword in keywords) {
-      final key = keyword.toLowerCase();
-      if (seen.add(key)) deduped.add(keyword);
+      final key = keyword.toLowerCase().replaceAll(
+        RegExp(r'[\s\p{P}\p{S}]+', unicode: true),
+        '',
+      );
+      if (key.isEmpty) continue;
+      final overlaps = seen.any(
+        (existing) =>
+            existing == key ||
+            (existing.length >= 4 && key.contains(existing)) ||
+            (key.length >= 4 && existing.contains(key)),
+      );
+      if (overlaps) continue;
+      seen.add(key);
+      deduped.add(keyword);
+      if (maxItems != null && deduped.length >= maxItems) break;
     }
     return deduped.join(', ');
   }
@@ -964,6 +1435,15 @@ Rules:
       char?['draw_anchor_user'] as String? ?? '',
       char?['draw_anchor_char'] as String? ?? '',
     };
+    try {
+      terms.addAll(
+        (await UserPersonaService.listPersonas()).map(
+          (persona) => persona.displayName,
+        ),
+      );
+    } catch (_) {
+      // Summary keyword filtering remains usable during early schema repair.
+    }
 
     return terms
         .map((t) => t.trim().toLowerCase())
@@ -976,11 +1456,22 @@ Rules:
     required String originalSummary,
     required String issue,
     required bool requireFullFormat,
+    ContextMode contextMode = ContextMode.daily,
   }) async {
     final isEn = L.locale == 'en';
     final identity = await _buildIdentityContext(characterId);
     final promptParts = <String>[
-      isEn ? _revisePromptEn : _zhPrompt(_revisePromptZh),
+      contextMode == ContextMode.rp
+          ? L.pick(
+              en: 'Revise only the supplied RP story dossier according to the issue. Preserve its Core, Side Story, Atmosphere, Observation, character-file, category, and story-time structure. Keep established facts unless the issue corrects them. Output only the revised dossier, with no preamble or code fence.',
+              zhTW:
+                  '只依問題修正提供的 RP 劇情卷宗。保留核心、支線、氛圍、觀察區、新角色檔案、類別與時間線位置結構；除非問題明確修正，不得刪改既有事實。只輸出修正後卷宗，不要前言或 code fence。',
+              zhCN:
+                  '只依问题修正提供的 RP 剧情卷宗。保留核心、支线、氛围、观察区、新角色档案、类别与时间线位置结构；除非问题明确修正，不得删改既有事实。只输出修正后卷宗，不要前言或 code fence。',
+            )
+          : isEn
+          ? _revisePromptEn
+          : _zhPrompt(_revisePromptZh),
     ];
     if (identity.isNotEmpty) promptParts.add(identity);
 
@@ -993,11 +1484,15 @@ Rules:
         '$issueHeader\n$issue\n\n$summaryHeader\n$originalSummary';
 
     final revised = await _callModel(
+      characterId: characterId,
       systemPrompt: promptParts.join('\n\n'),
       userMessage: userMessage,
     );
     final cleaned = _cleanRevisedSummaryText(revised);
-    return requireFullFormat ? normalizeSummaryFormat(cleaned) : cleaned;
+    if (!requireFullFormat) return cleaned;
+    return contextMode == ContextMode.rp
+        ? normalizeRpSummaryFormat(cleaned)
+        : normalizeSummaryFormat(cleaned);
   }
 
   static String _replaceRange(
@@ -1054,8 +1549,23 @@ Rules:
       if (rawTimeline is List) {
         for (final raw in rawTimeline) {
           if (raw is! Map) continue;
-          final type = raw['type']?.toString().trim() ?? '';
-          final subject = raw['subject']?.toString().trim() ?? '';
+          final rawEntityIds = raw['subject_entity_ids'];
+          final isRpTimelineShape =
+              raw.containsKey('narrative_layer') ||
+              raw.containsKey('subject_entity_ids') ||
+              raw.containsKey('event_key');
+          final explicitType = raw['type']?.toString().trim() ?? '';
+          final explicitSubject = raw['subject']?.toString().trim() ?? '';
+          final type = explicitType.isEmpty && isRpTimelineShape
+              ? 'event'
+              : explicitType;
+          final subject = explicitSubject.isEmpty
+              ? (isRpTimelineShape
+                    ? (rawEntityIds is List && rawEntityIds.length > 1
+                          ? 'relationship'
+                          : 'character')
+                    : '')
+              : explicitSubject;
           if (!const {'event', 'state'}.contains(type) ||
               !const {'character', 'relationship'}.contains(subject)) {
             continue;
@@ -1099,11 +1609,41 @@ Rules:
               key: type == 'state' ? (rawKey as String) : null,
               value: value,
               evidence: evidence,
+              eventKey: raw['event_key']?.toString().trim() ?? '',
+              narrativeLayer:
+                  raw['narrative_layer']?.toString().trim() ?? 'mainline',
+              subjectEntityIds: rawEntityIds is List
+                  ? rawEntityIds
+                        .map((value) => value?.toString().trim() ?? '')
+                        .where((value) => value.isNotEmpty)
+                        .toSet()
+                        .toList(growable: false)
+                  : const <String>[],
             ),
           );
         }
       }
-      return SummaryEnvelope(summary, timeline);
+      List<Map<String, Object?>> objectList(Object? raw) {
+        if (raw is! List) return const <Map<String, Object?>>[];
+        return raw
+            .whereType<Map>()
+            .map(
+              (row) => <String, Object?>{
+                for (final entry in row.entries)
+                  entry.key.toString(): entry.value,
+              },
+            )
+            .toList(growable: false);
+      }
+
+      return SummaryEnvelope(
+        summary,
+        timeline,
+        storylineId: decoded['storyline_id']?.toString().trim() ?? '',
+        storyCharacters: objectList(decoded['story_characters']),
+        relationships: objectList(decoded['relationships']),
+        storyStates: objectList(decoded['story_states']),
+      );
     }
 
     final summaryField = RegExp(
@@ -1172,6 +1712,7 @@ Rules:
   recoverMissingMenstrualCandidates({
     required List<Message> messages,
     required List<TimelineEventCandidate> candidates,
+    String characterId = 'default',
   }) async {
     final relevant = messages.where(_isCharacterMenstrualSource).toList();
     if (relevant.isEmpty ||
@@ -1185,6 +1726,7 @@ Rules:
 
     try {
       final response = await _callModel(
+        characterId: characterId,
         systemPrompt: L.pick(
           en: '''
 Extract menstrual timeline candidates explicitly stated in the supplied messages. Every message is tagged speaker:user or speaker:char. In a speaker:user message "I/my/me" is the user and "you/your" is the character; in a speaker:char message it is the reverse. Only extract statements about the character; drop anything the user says about themselves. Day N or a period explicitly still active today is type=state, subject=character, key=menstrual cycle. A stated start or end is type=event, subject=character. Use the message's local date to resolve occurred_on and quote an exact source substring as evidence.
@@ -1284,6 +1826,7 @@ Output valid JSON only: {"summary":"","timeline":[{"type":"state","subject":"cha
 
   /// 調用小模型（摘要綁定模型）
   static Future<String> _callModel({
+    String characterId = 'default',
     required String systemPrompt,
     required String userMessage,
   }) async {
@@ -1305,14 +1848,25 @@ Output valid JSON only: {"summary":"","timeline":[{"type":"state","subject":"cha
       if (model.isEmpty) {
         model = await ApiSettings.getModel();
       }
+      final provider = await ApiSettings.resolveSummaryModelProvider(model);
       final adapter = await ApiSettings.buildAdapterForSummaryModel(model);
-      return await adapter.sendMessage(
+      ApiUsage? usage;
+      final response = await adapter.sendMessage(
         messages: [
           {'role': 'user', 'content': userMessage},
         ],
         model: model,
         systemPrompt: systemPrompt,
+        onUsage: (value) => usage = value,
       );
+      await TokenTracker().recordRealUsage(
+        provider: provider,
+        model: model,
+        usage: usage ?? const ApiUsage(),
+        characterId: characterId,
+        requestKind: ApiRequestKind.summary,
+      );
+      return response;
     } catch (e) {
       developer.log('窗口摘要失敗', error: e, name: 'ContextCompressor');
       return '';
@@ -1320,11 +1874,28 @@ Output valid JSON only: {"summary":"","timeline":[{"type":"state","subject":"cha
   }
 
   static Future<_SummaryIdentity> _loadSummaryIdentity(
-    String characterId,
-  ) async {
-    final prefs = await SharedPreferences.getInstance();
-    var userName = (prefs.getString('user_profile_nickname') ?? '').trim();
-    if (userName.isEmpty) userName = (await UserSettings.getUserName()).trim();
+    String characterId, {
+    String? conversationId,
+  }) async {
+    var userName = '';
+    final scopedConversationId = (conversationId ?? '').trim();
+    if (scopedConversationId.isNotEmpty) {
+      final conversation = await DatabaseHelper.getConversation(
+        scopedConversationId,
+      );
+      if (conversation != null) {
+        userName = (await UserPersonaService.personaForConversation(
+          conversation,
+        )).displayName.trim();
+      }
+    }
+    if (userName.isEmpty) {
+      final prefs = await SharedPreferences.getInstance();
+      userName = (prefs.getString('user_profile_nickname') ?? '').trim();
+      if (userName.isEmpty) {
+        userName = (await UserSettings.getUserName()).trim();
+      }
+    }
 
     final char = await DatabaseHelper.getCharacter(characterId);
     var roleName = (char?['name'] as String? ?? '').trim();
@@ -1338,6 +1909,195 @@ Output valid JSON only: {"summary":"","timeline":[{"type":"state","subject":"cha
       characterName: roleName,
       persona: persona,
     );
+  }
+
+  /// Builds only the structured RP lane requested by the dossier model. It is
+  /// request-only data: no extra system-prompt slot and no worldbook content.
+  static Future<String> buildRpArchiveContext({
+    required String characterId,
+    required String continuityId,
+    required String conversationId,
+    required String sourceText,
+  }) async {
+    final storylines = await DatabaseHelper.getRpStorylines(
+      characterId,
+      includeArchived: true,
+    );
+    final storyline = storylines.cast<Map<String, Object?>>().firstWhere(
+      (row) => row['id']?.toString() == continuityId,
+      orElse: () => <String, Object?>{
+        'id': continuityId,
+        'name': '',
+        'status': 'active',
+      },
+    );
+    final allCharacters = await RpStoryService.listCharacters(
+      characterId,
+      continuityId: continuityId,
+    );
+    final lowerSource = sourceText.toLowerCase();
+    bool mentioned(Map<String, dynamic> row) {
+      final terms = <String>[
+        row['name']?.toString() ?? '',
+        ..._decodeJsonStrings(row['aliases_json']),
+      ];
+      return terms.any((term) {
+        final normalized = term.trim().toLowerCase();
+        return normalized.length >= 2 && lowerSource.contains(normalized);
+      });
+    }
+
+    final involved = allCharacters
+        .where((row) => mentioned(row) || row['tier'] == 'active')
+        .take(12)
+        .toList(growable: false);
+    final involvedKeys = involved
+        .map((row) => row['entity_key']?.toString() ?? '')
+        .where((key) => key.isNotEmpty)
+        .toSet();
+    final allRelationships = await RpStoryService.listRelationships(
+      characterId,
+      continuityId: continuityId,
+    );
+    final relationships = allRelationships
+        .where(
+          (row) =>
+              involvedKeys.contains(row['from_entity_key']) ||
+              involvedKeys.contains(row['to_entity_key']),
+        )
+        .take(16)
+        .toList(growable: false);
+    final states = await RpStoryStateService.listStates(
+      characterId,
+      continuityId: continuityId,
+      includeNonMain: true,
+    );
+    final characterCard = await DatabaseHelper.getCharacter(characterId);
+    final recalledWorldbook = await RpWorldbookService.recallPrompt(
+      characterId: characterId,
+      continuityId: continuityId,
+      query: sourceText,
+    );
+
+    Map<String, Object?> select(Map<String, Object?> row, List<String> keys) =>
+        <String, Object?>{
+          for (final key in keys)
+            if (row[key] != null) key: row[key],
+        };
+
+    final currentPersona = <String, Object?>{};
+    if (conversationId.isNotEmpty) {
+      final conversation = await DatabaseHelper.getConversation(conversationId);
+      if (conversation != null) {
+        final persona = await UserPersonaService.personaForConversation(
+          conversation,
+        );
+        currentPersona.addAll(<String, Object?>{
+          'display_name': persona.displayName,
+          'pronouns': persona.pronouns,
+          'bio': persona.bio,
+          'prompt_content': persona.promptContent,
+        });
+      }
+    }
+
+    final participatingProfiles = <Map<String, Object?>>[
+      if (characterCard != null)
+        <String, Object?>{
+          'profile_type': 'main_character_card',
+          ...select(characterCard, const <String>[
+            'id',
+            'name',
+            'gender',
+            'relationship',
+            'description',
+            'race',
+            'skill',
+            'age',
+            'height',
+            'self_notes',
+          ]),
+        },
+      if (currentPersona.isNotEmpty)
+        <String, Object?>{
+          'profile_type': 'current_user_persona',
+          ...currentPersona,
+        },
+      ...involved.map(
+        (row) => <String, Object?>{
+          'profile_type': 'story_character',
+          ...select(row, const <String>[
+            'entity_key',
+            'name',
+            'aliases_json',
+            'identities_json',
+            'gender',
+            'identity',
+            'relation_to_leads',
+            'personality',
+            'appearance',
+            'faction',
+            'core_motivation',
+            'current_stance',
+          ]),
+        },
+      ),
+    ];
+
+    final buffer = StringBuffer()
+      ..writeln('【當前故事線】')
+      ..writeln(jsonEncode(select(storyline, const ['id', 'name', 'status'])))
+      ..writeln()
+      ..writeln('【當前 User 身份】')
+      ..writeln(jsonEncode(currentPersona))
+      ..writeln()
+      ..writeln('【本輪參與劇情的具體人設】')
+      ..writeln(jsonEncode(participatingProfiles))
+      ..writeln()
+      ..writeln('【本輪關鍵詞召回的世界書】')
+      ..writeln(recalledWorldbook)
+      ..writeln()
+      ..writeln('【現有劇情狀態】')
+      ..writeln(jsonEncode(states.take(12).toList(growable: false)))
+      ..writeln()
+      ..writeln('【現有劇情人物】')
+      ..writeln(jsonEncode(involved))
+      ..writeln()
+      ..writeln('【現有人物關係】')
+      ..writeln(jsonEncode(relationships))
+      ..writeln()
+      ..writeln('【本輪涉及人物】')
+      ..write(
+        jsonEncode(
+          involved
+              .map(
+                (row) => select(row, const [
+                  'entity_key',
+                  'name',
+                  'aliases_json',
+                  'identities_json',
+                  'identity',
+                  'relation_to_leads',
+                ]),
+              )
+              .toList(growable: false),
+        ),
+      );
+    return buffer.toString();
+  }
+
+  static List<String> _decodeJsonStrings(Object? raw) {
+    if (raw is! String || raw.trim().isEmpty) return const <String>[];
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! List) return const <String>[];
+      return decoded
+          .map((value) => value?.toString().trim() ?? '')
+          .where((value) => value.isNotEmpty)
+          .toList(growable: false);
+    } catch (_) {
+      return const <String>[];
+    }
   }
 
   static Future<String> _buildIdentityContext(String characterId) async {
@@ -1407,9 +2167,20 @@ class _SummaryIdentity {
 
 class SummaryEnvelope {
   final String summary;
+  final String storylineId;
   final List<TimelineEventCandidate> timeline;
+  final List<Map<String, Object?>> storyCharacters;
+  final List<Map<String, Object?>> relationships;
+  final List<Map<String, Object?>> storyStates;
 
-  const SummaryEnvelope(this.summary, this.timeline);
+  const SummaryEnvelope(
+    this.summary,
+    this.timeline, {
+    this.storylineId = '',
+    this.storyCharacters = const <Map<String, Object?>>[],
+    this.relationships = const <Map<String, Object?>>[],
+    this.storyStates = const <Map<String, Object?>>[],
+  });
 }
 
 class _SummarySegment {

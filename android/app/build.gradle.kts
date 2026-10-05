@@ -108,6 +108,12 @@ android {
                 // Development-only Vulkan validation layer; never required by
                 // app runtime and otherwise adds ~15 MB to the package.
                 "lib/**/libVkLayer_khronos_validation.so",
+                // flutter_gemma also pulls in MediaPipe's standalone image
+                // generator. Holt uses the shared multimodal LLM classes but
+                // never calls this separate native image-generation engine.
+                "lib/**/libimagegenerator_gpu.so",
+                "lib/**/libmediapipe_tasks_vision_jni.so",
+                "lib/**/libmediapipe_tasks_vision_image_generator_jni.so",
             )
         }
     }
@@ -144,4 +150,25 @@ android {
 
 flutter {
     source = "../.."
+}
+
+// sherpa_onnx 1.13.5 declares its WebAssembly implementation as an ordinary
+// package asset, so Flutter copies it into Android even though this target uses
+// the arm64 native plugin. Prune only that unreachable web payload immediately
+// before Android merges Flutter assets (~15 MB uncompressed). Flutter web/PWA
+// builds do not execute this Gradle hook.
+tasks.matching {
+    it.name == "mergeDebugAssets" || it.name == "mergeReleaseAssets"
+}.configureEach {
+    doFirst {
+        val variant = name
+            .removePrefix("merge")
+            .removeSuffix("Assets")
+            .replaceFirstChar { it.lowercase() }
+        delete(
+            layout.buildDirectory.dir(
+                "intermediates/flutter/$variant/flutter_assets/packages/sherpa_onnx_web"
+            )
+        )
+    }
 }

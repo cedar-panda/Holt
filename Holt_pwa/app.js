@@ -19,6 +19,8 @@ export const state = {
   isStreaming: false,
   pendingImageBase64: null,
   pendingImageMime: null,
+  pendingStickerId: null,
+  pendingTransferAmount: null,
   editingCharId: null,
 };
 
@@ -78,6 +80,17 @@ export async function compactImageToDataUrl(file, maxSide = 256) {
   }
 }
 
+async function preparePersistentStorage() {
+  if (!navigator.storage) return;
+  try { await navigator.storage.persist?.(); } catch {}
+  try {
+    const { usage = 0, quota = 0 } = await navigator.storage.estimate?.() || {};
+    if (quota > 0 && usage / quota >= 0.85) {
+      toast("本機儲存空間已接近上限，建議匯出備份並清理圖片", 7000);
+    }
+  } catch {}
+}
+
 // ═══ Tab navigation ═══
 
 const tabPages = [$("#tabApi"), $("#tabUsage"), $("#tabHome"), $("#tabCharacters"), $("#tabProfile")];
@@ -111,47 +124,85 @@ navItems.forEach((btn) => {
 const onboarding = $("#onboarding");
 const nextOb = $("#nextOb");
 const skipOb = $("#skipOb");
+const replayOnboardingBtn = $("#replayOnboardingBtn");
+const ONBOARDING_VERSION = 1;
 let obStep = 0;
 
 async function checkOnboarding() {
-  const done = await getSetting("onboardingDone");
-  if (done) return;
+  const [done, version, savedStep] = await Promise.all([
+    getSetting("onboardingDone"), getSetting("onboardingVersion"), getSetting("onboardingStep"),
+  ]);
+  if (done && version == null) {
+    await setSetting("onboardingVersion", ONBOARDING_VERSION);
+    return;
+  }
+  if (Number(version) >= ONBOARDING_VERSION) return;
+  obStep = Math.max(0, Math.min($$(".ob-step").length - 1, Number(savedStep) || 0));
+  renderOnboardingStep();
   onboarding.removeAttribute("hidden");
 }
 
-nextOb.addEventListener("click", () => {
-  obStep++;
+function renderOnboardingStep() {
   const steps = $$(".ob-step");
   const dots = $$(".ob-dot");
-  if (obStep >= steps.length) { finishOnboarding(); return; }
   steps.forEach((s, i) => s.classList.toggle("is-active", i === obStep));
   dots.forEach((d, i) => d.classList.toggle("is-active", i === obStep));
-  if (obStep === steps.length - 1) nextOb.textContent = "開始";
+  nextOb.textContent = obStep === steps.length - 1 ? "開始" : "下一步";
+}
+
+nextOb.addEventListener("click", async () => {
+  obStep++;
+  if (obStep >= $$(".ob-step").length) { finishOnboarding(); return; }
+  renderOnboardingStep();
+  await setSetting("onboardingStep", obStep);
 });
 
 skipOb.addEventListener("click", finishOnboarding);
 
 function finishOnboarding() {
   onboarding.setAttribute("hidden", "");
-  setSetting("onboardingDone", true);
+  void Promise.all([
+    setSetting("onboardingDone", true),
+    setSetting("onboardingVersion", ONBOARDING_VERSION),
+    setSetting("onboardingStep", 0),
+  ]);
 }
+
+replayOnboardingBtn?.addEventListener("click", () => {
+  obStep = 0;
+  renderOnboardingStep();
+  onboarding.removeAttribute("hidden");
+});
 
 // ═══ Service Worker ═══
 
 if ("serviceWorker" in navigator) {
+  const hadServiceWorkerController = Boolean(navigator.serviceWorker.controller);
   navigator.serviceWorker.register("./service-worker.js").then((reg) => {
-    reg.update().catch(() => {});
-  }).catch(() => {});
+    reg.update().catch((error) => console.warn("Holt 更新檢查失敗", error));
+  }).catch((error) => {
+    console.warn("Holt 離線功能註冊失敗", error);
+    toast("離線功能暫時無法啟用", 5000);
+  });
   navigator.serviceWorker.addEventListener("controllerchange", () => {
-    window.location.reload();
+    toast(hadServiceWorkerController
+      ? "新版本已準備好，重新開啟 Holt 後套用"
+      : "離線功能已準備完成", 6000);
   });
 }
+
+window.addEventListener("holt:db-versionchange", () => {
+  toast("資料庫已由另一個 Holt 視窗更新，請重新載入", 7000);
+});
+window.addEventListener("offline", () => toast("目前離線；既有內容仍可查看", 5000));
+window.addEventListener("online", () => toast("網路已恢復"));
 
 // ═══ Init ═══
 
 (async function init() {
   try {
     await openDB();
+    await preparePersistentStorage();
     // Dynamic imports ensure all app.js exports are live before UI modules evaluate
     await Promise.all([
       import("./ui-home.js"),
@@ -163,8 +214,16 @@ if ("serviceWorker" in navigator) {
     const { initTheme } = await import("./ui-profile.js");
     await initTheme();
     switchTab(2);
-    checkOnboarding();
+    await checkOnboarding();
+  } catch (error) {
+    console.error("Holt 啟動失敗", error);
+    const fatal = $("#appFatal");
+    const message = $("#appFatalMessage");
+    if (message) message.textContent = error?.message || "未知錯誤";
+    fatal?.removeAttribute("hidden");
   } finally {
     window.dispatchEvent(new Event("holt:pwa-ready"));
   }
 })();
+
+$("#appFatalRetry")?.addEventListener("click", () => window.location.reload());

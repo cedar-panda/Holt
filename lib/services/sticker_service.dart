@@ -3,8 +3,10 @@ import 'dart:io';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import '../memory/database.dart';
+import 'api_adapter.dart';
 import 'settings_manager.dart';
 import 'locale_strings.dart';
+import 'token_tracker.dart';
 
 /// 表情包管理服務
 /// 上傳 → 三種描述 → AI 挑選 → 台詞注入 prompt
@@ -230,17 +232,39 @@ Output JSON only, with no other text or Markdown:
 
     // 優先用表情包專用模型（便宜的），沒設就用主模型
     var model = await UserSettings.getStickerVisionModel();
-    if (model.isEmpty) model = await ApiSettings.getModel();
+    final followsMainModel = model.isEmpty;
+    final configuredProvider = await UserSettings.getStickerVisionProvider();
+    if (followsMainModel) model = await ApiSettings.getModel();
+    final provider = followsMainModel
+        ? await ApiSettings.getApiProvider()
+        : configuredProvider.isNotEmpty
+        ? configuredProvider
+        : await ApiSettings.resolveStarredModelProvider(model);
 
     final dataUrl = 'data:$mediaType;base64,$base64Image';
 
     // 工具模型按星標保存的來源建 adapter，不能借目前主 provider 承載。
-    final adapter = await ApiSettings.buildAdapterForModel(model);
+    final adapter = followsMainModel
+        ? await ApiSettings.buildAdapter()
+        : configuredProvider.isEmpty
+        ? await ApiSettings.buildAdapterForModel(model)
+        : await ApiSettings.buildAdapter(
+            overrideProvider: configuredProvider,
+            overrideModel: model,
+          );
+    ApiUsage? usage;
     final response = await adapter.sendMessage(
       messages: [
         {'role': 'user', 'content': visionPrompt, 'image_data_url': dataUrl},
       ],
       model: model,
+      onUsage: (value) => usage = value,
+    );
+    await TokenTracker().recordRealUsage(
+      provider: provider,
+      model: model,
+      usage: usage ?? const ApiUsage(),
+      requestKind: ApiRequestKind.sticker,
     );
 
     return _parseVisionResponse(response);

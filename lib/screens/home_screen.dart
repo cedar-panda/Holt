@@ -20,24 +20,45 @@ import '../widgets/rain_painter.dart';
 import '../widgets/neural_field.dart';
 import '../memory/database.dart';
 import '../models/message.dart';
+import '../models/context_mode.dart';
+import '../models/background_preset.dart';
 import '../services/settings_manager.dart';
 import '../services/backup_service.dart';
 import '../services/device_file_saver.dart';
 import '../services/keep_alive_service.dart';
 import '../services/manual_summary_service.dart';
+import '../services/token_estimator.dart';
 import '../services/character_signature_service.dart';
+import '../services/anniversary_service.dart';
+import '../services/background_preset_service.dart';
+import '../services/background_foreground_service.dart';
+import '../services/user_persona_service.dart';
 import '../services/scratch_service.dart';
+import '../services/tool_feature_settings.dart';
+import '../services/guide_service.dart';
+import '../services/settings/guide_settings.dart';
 import '../widgets/orbit_loading_indicator.dart';
 import '../widgets/yanci_bottom_nav_bar.dart';
 import '../widgets/character_signature_panel.dart';
+import '../widgets/character_signature_history_sheet.dart';
+import '../widgets/context_mode_pill.dart';
+import '../widgets/user_persona_avatar_pair.dart';
+import '../widgets/user_persona_switcher.dart';
+import '../widgets/anniversary_panel.dart';
+import '../widgets/guide_entry.dart';
+import '../services/settings/context_mode_settings.dart';
 import '../utils/latest_request_gate.dart';
 import 'manual_summary_clean_screen.dart';
+import 'profile_screen.dart';
+import 'user_profile_screen.dart';
+import 'local_device_sync_screen.dart';
+import 'external_chat_import_screen.dart';
 
 part 'home_screen_profile.dart';
 
 enum _BackupExportMode { save, share }
 
-enum _BackupSheetAction { save, share, import, cleanup }
+enum _BackupSheetAction { sync, save, share, importExternal, import, cleanup }
 
 /// 主頁 — 角色輪盤 + 水晶球 + 底部導航
 class HomeScreen extends StatefulWidget {
@@ -49,9 +70,24 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen>
     with TickerProviderStateMixin, WidgetsBindingObserver {
+  static const double _homeCarouselOffsetY = 20.0;
   int _currentTab = 2; // 首頁居中
   List<Map<String, dynamic>> _characters = [];
   String _activeCharacterId = 'default';
+  BackgroundPreset? _boundBackgroundPreset;
+  BackgroundForegroundPalette? _homeForegroundPalette;
+  Map<String, BackgroundPreset?> _boundBackgroundPresets =
+      <String, BackgroundPreset?>{};
+  BackgroundTransitionDirection _backgroundTransitionDirection =
+      BackgroundTransitionDirection.rightToLeft;
+  int _backgroundTransitionRevision = 0;
+  int _backgroundForegroundGeneration = 0;
+  Timer? _backgroundPresetRefreshTimer;
+  final ValueNotifier<BackgroundSwipeTransition> _backgroundSwipeTransition =
+      ValueNotifier<BackgroundSwipeTransition>(
+        const BackgroundSwipeTransition(),
+      );
+  static const Duration _characterArrivalDuration = Duration(seconds: 1);
   String? _latestNote;
   List<String> _randomNotes = [];
   int _randomNoteIndex = 0;
@@ -61,6 +97,7 @@ class _HomeScreenState extends State<HomeScreen>
   int _currentCarouselPage = 0;
   Timer? _onlineDwellTimer;
   bool _onlineDwellReady = false;
+  bool _onlineDwellElapsed = false;
 
   // 心電圖動畫
   late AnimationController _ecgController;
@@ -73,6 +110,8 @@ class _HomeScreenState extends State<HomeScreen>
 
   // 用戶貝殼餘額
   int _userCoins = 0;
+  bool _shellEconomyEnabled = true;
+  bool _shopEnabled = true;
   StreamSubscription<int>? _userCoinsSub;
 
   static const Duration _autoBackupInterval = Duration(hours: 1);
@@ -83,6 +122,9 @@ class _HomeScreenState extends State<HomeScreen>
   bool _namePromptOpen = false;
   bool _isStartingChat = false;
   bool _reduceMotion = false;
+  bool _globalRpEnabled = false;
+  bool _guideAvailable = false;
+  bool _showGuideIntro = false;
   final LatestRequestGate _charactersGate = LatestRequestGate();
   final LatestRequestGate _noteGate = LatestRequestGate();
   final LatestRequestGate _coinsGate = LatestRequestGate();
@@ -93,6 +135,12 @@ class _HomeScreenState extends State<HomeScreen>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    ContextModeSettings.revision.addListener(_handleContextModeChanged);
+    ToolFeatureSettings.state.addListener(_handleToolFeaturesChanged);
+    BackgroundPresetService.revision.addListener(
+      _handleBackgroundPresetsChanged,
+    );
+    GuideSettings.revision.addListener(_handleGuideSettingsChanged);
     _ecgController = AnimationController(
       vsync: this,
       duration: const Duration(seconds: 4),
@@ -101,6 +149,7 @@ class _HomeScreenState extends State<HomeScreen>
     // 便箋/貝殼/保活等附屬資料——並行啟動時附屬項可能先用 default
     // 跑完把正確資料蓋掉，或失效 activeId 一直殘留在內部。
     unawaited(_reloadHomeAfterRestore());
+    unawaited(_refreshGuideAvailability());
     _checkFirstTimeUser();
 
     // 監聽心跳流
@@ -111,7 +160,7 @@ class _HomeScreenState extends State<HomeScreen>
 
     // 用戶貝殼變更即時同步。聊天頁轉帳 / 刮刮卡結算時會推送這裡。
     _userCoinsSub = ScratchService.userCoinsChanged.listen((coins) {
-      if (!mounted) return;
+      if (!mounted || !_shellEconomyEnabled) return;
       setState(() => _userCoins = coins);
     });
 
@@ -211,17 +260,72 @@ class _HomeScreenState extends State<HomeScreen>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    ContextModeSettings.revision.removeListener(_handleContextModeChanged);
+    ToolFeatureSettings.state.removeListener(_handleToolFeaturesChanged);
+    BackgroundPresetService.revision.removeListener(
+      _handleBackgroundPresetsChanged,
+    );
+    GuideSettings.revision.removeListener(_handleGuideSettingsChanged);
     _charactersGate.invalidate();
     _noteGate.invalidate();
     _coinsGate.invalidate();
     _keepAliveGate.invalidate();
     _autoBackupTimer?.cancel();
+    _backgroundPresetRefreshTimer?.cancel();
     _heartbeatSub?.cancel();
     _userCoinsSub?.cancel();
     _onlineDwellTimer?.cancel();
+    _carouselController?.removeListener(_handleCharacterCarouselMotion);
     _carouselController?.dispose();
+    _backgroundSwipeTransition.dispose();
     _ecgController.dispose();
     super.dispose();
+  }
+
+  void _handleContextModeChanged() {
+    if (!mounted) return;
+    unawaited(_loadCharacters(selectId: _activeCharacterId));
+    unawaited(_loadLatestNote(characterId: _activeCharacterId));
+    unawaited(_loadPersonaShelf(syncFromActiveCharacter: true));
+  }
+
+  void _handleBackgroundPresetsChanged() {
+    if (!mounted || _characters.isEmpty) return;
+    _backgroundPresetRefreshTimer?.cancel();
+    _backgroundPresetRefreshTimer = Timer(
+      const Duration(milliseconds: 90),
+      () => unawaited(_reloadBoundBackgroundPresets()),
+    );
+  }
+
+  void _handleGuideSettingsChanged() {
+    if (mounted) unawaited(_refreshGuideAvailability());
+  }
+
+  Future<void> _reloadBoundBackgroundPresets() async {
+    final ids = _characters
+        .map((character) => character['id'] as String)
+        .toList(growable: false);
+    final entries = await Future.wait<MapEntry<String, BackgroundPreset?>>(
+      ids.map((id) async {
+        return MapEntry(
+          id,
+          await BackgroundPresetService.boundPresetForCharacter(id),
+        );
+      }),
+    );
+    if (!mounted) return;
+    final presets = Map<String, BackgroundPreset?>.fromEntries(entries);
+    final current = presets[_activeCharacterId];
+    setState(() {
+      _boundBackgroundPresets = presets;
+      _boundBackgroundPreset = current;
+      _homeForegroundPalette = BackgroundForegroundService.cached(
+        current?.homePath ?? '',
+      );
+    });
+    _publishBackgroundSwipeTransition(page: _currentCarouselPage.toDouble());
+    unawaited(_loadHomeForegroundPalette(current));
   }
 
   @override
@@ -252,7 +356,24 @@ class _HomeScreenState extends State<HomeScreen>
     } else if (state == AppLifecycleState.resumed) {
       _syncHomeAnimations();
       _refreshLastBackupTime();
+      unawaited(_refreshGuideAvailability());
     }
+  }
+
+  Future<void> _refreshGuideAvailability() async {
+    final enabled = await GuideSettings.isEnabled();
+    final hasApi = enabled && await GuideService.hasAnyApiConfiguration();
+    final introSeen = hasApi && await GuideSettings.hasSeenIntro();
+    if (!mounted) return;
+    setState(() {
+      _guideAvailable = hasApi;
+      _showGuideIntro = hasApi && !introSeen;
+    });
+  }
+
+  Future<void> _openGuide() async {
+    await Navigator.of(context).pushNamed('/guide');
+    if (mounted) unawaited(_refreshGuideAvailability());
   }
 
   Future<void> _refreshLastBackupTime() async {
@@ -287,10 +408,15 @@ class _HomeScreenState extends State<HomeScreen>
   Future<void> _loadKeepAliveInfo({String? characterId}) async {
     final charId = characterId ?? _activeCharacterId;
     final generation = _keepAliveGate.begin();
-    final convId = await KeepAliveService.getActiveConvId(characterId: charId);
-    final title = await KeepAliveService.getActiveConvTitle(
-      characterId: charId,
-    );
+    var convId = await KeepAliveService.getActiveConvId(characterId: charId);
+    var title = await KeepAliveService.getActiveConvTitle(characterId: charId);
+    // Exiting a newly-created empty window disposes the chat before its async
+    // database cleanup has necessarily finished. Never surface that transient
+    // window as the home-screen quick entry.
+    if (convId != null && await DatabaseHelper.getMessageCount(convId) == 0) {
+      convId = null;
+      title = null;
+    }
     final hb = await KeepAliveService.getLastHeartbeat(characterId: charId);
     if (mounted &&
         charId == _activeCharacterId &&
@@ -305,10 +431,34 @@ class _HomeScreenState extends State<HomeScreen>
 
   Future<void> _loadUserCoins() async {
     final generation = _coinsGate.begin();
+    final features = await ToolFeatureSettings.load();
+    if (!features.shellEconomyEnabled) {
+      if (mounted && _coinsGate.isCurrent(generation)) {
+        setState(() {
+          _shellEconomyEnabled = false;
+          _userCoins = 0;
+        });
+      }
+      return;
+    }
     final coins = await ScratchService.getUserCoins();
     if (mounted && _coinsGate.isCurrent(generation)) {
-      setState(() => _userCoins = coins);
+      setState(() {
+        _shellEconomyEnabled = true;
+        _userCoins = coins;
+      });
     }
+  }
+
+  void _handleToolFeaturesChanged() {
+    final features = ToolFeatureSettings.state.value;
+    final enabled = features.shellEconomyEnabled;
+    if (!mounted) return;
+    setState(() {
+      _shellEconomyEnabled = enabled;
+      _shopEnabled = features.shopEnabled;
+    });
+    if (enabled) unawaited(_loadUserCoins());
   }
 
   Future<void> _refreshAfterChatReturn() async {
@@ -329,15 +479,125 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   String _userName = '';
-  String? _userAvatar;
+  List<UserPersona> _userPersonas = const <UserPersona>[];
+  UserPersona? _selectedUserPersona;
+  Map<String, dynamic>? _selectedPersonaCompanion;
+  String? _anniversaryCharacterId;
+  int _personaShelfGeneration = 0;
+  int _personaSelectionGeneration = 0;
+  String? _requestedPersonaId;
+  bool _userPersonaCreateSlotSelected = false;
+  List<AnniversaryEntry> _anniversaries = const <AnniversaryEntry>[];
+  AnniversaryDisplaySettings _anniversaryDisplaySettings =
+      const AnniversaryDisplaySettings();
+
+  List<AnniversaryEntry> _anniversariesAt(AnniversaryPlacement placement) {
+    return _anniversaries
+        .where((entry) => entry.placement == placement)
+        .toList(growable: false);
+  }
+
+  void _setUserPersonaCreateSlot(bool selected) {
+    if (!mounted || _userPersonaCreateSlotSelected == selected) return;
+    setState(() => _userPersonaCreateSlotSelected = selected);
+  }
+
+  Future<void> _loadPersonaShelf({bool syncFromActiveCharacter = false}) async {
+    final generation = ++_personaShelfGeneration;
+    final charId = _activeCharacterId;
+    final mode = await ContextModeSettings.effectiveMode(charId);
+    if (syncFromActiveCharacter) {
+      final boundId = await UserPersonaService.boundPersonaId(
+        characterId: charId,
+        contextMode: mode,
+      );
+      if (boundId != null) await UserPersonaService.selectPersona(boundId);
+    }
+    final basePersonas = await UserPersonaService.listPersonas();
+    final personas = await Future.wait(
+      basePersonas.map(
+        (persona) async =>
+            await UserPersonaService.personaForMode(persona.id, mode) ??
+            persona,
+      ),
+    );
+    final selectedBase = await UserPersonaService.selectedPersona();
+    final selected =
+        await UserPersonaService.personaForMode(selectedBase.id, mode) ??
+        selectedBase;
+    final companionId = await UserPersonaService.companionIdForPersona(
+      personaId: selected.id,
+      contextMode: mode,
+    );
+    final companion = companionId == null
+        ? null
+        : await DatabaseHelper.getCharacter(companionId);
+    // Anniversary controls describe the two avatars currently shown on the
+    // profile page. When the selected persona is bound to another character,
+    // keep using that visible pair even if the user just chatted with an
+    // unbound character.
+    final anniversaryCharacterId = companionId ?? charId;
+    final anniversaryResults = await Future.wait<Object>([
+      AnniversaryService.list(
+        userPersonaId: selected.id,
+        characterId: anniversaryCharacterId,
+      ),
+      AnniversaryService.settings(
+        userPersonaId: selected.id,
+        characterId: anniversaryCharacterId,
+      ),
+    ]);
+    if (!mounted ||
+        charId != _activeCharacterId ||
+        generation != _personaShelfGeneration) {
+      return;
+    }
+    setState(() {
+      _userPersonas = personas;
+      _selectedUserPersona = selected;
+      _selectedPersonaCompanion = companion;
+      _anniversaryCharacterId = anniversaryCharacterId;
+      _userPersonaCreateSlotSelected = false;
+      _anniversaries = anniversaryResults[0] as List<AnniversaryEntry>;
+      _anniversaryDisplaySettings =
+          anniversaryResults[1] as AnniversaryDisplaySettings;
+    });
+  }
+
+  Future<void> _selectUserPersona(UserPersona persona) async {
+    final generation = ++_personaSelectionGeneration;
+    _requestedPersonaId = persona.id;
+    await UserPersonaService.selectPersona(persona.id);
+    if (generation != _personaSelectionGeneration) {
+      final latestId = _requestedPersonaId;
+      if (latestId != null) await UserPersonaService.selectPersona(latestId);
+      return;
+    }
+    final mode = await ContextModeSettings.effectiveMode(_activeCharacterId);
+    if (generation != _personaSelectionGeneration) return;
+    final companionId = await UserPersonaService.companionIdForPersona(
+      personaId: persona.id,
+      contextMode: mode,
+    );
+    if (generation != _personaSelectionGeneration) return;
+    if (companionId != null && companionId != _activeCharacterId) {
+      await _selectCharacter(companionId, syncPersonaFromCharacter: false);
+    }
+    if (generation != _personaSelectionGeneration) return;
+    await _loadPersonaShelf();
+  }
 
   Future<void> _loadLatestNote({String? characterId}) async {
     final charId = characterId ?? _activeCharacterId;
     final generation = _noteGate.begin();
     final note = await DatabaseHelper.getLatestNote(characterId: charId);
     final randoms = await DatabaseHelper.getRandomNotes(charId, count: 10);
-    final name = await UserSettings.getUserName();
-    final avatar = await UserSettings.getUserAvatarPath();
+    final mode = await ContextModeSettings.effectiveMode(charId);
+    final resolvedPersona = await UserPersonaService.resolveForNewWindow(
+      characterId: charId,
+      contextMode: mode,
+    );
+    final name = resolvedPersona.persona.displayName;
     if (!mounted ||
         charId != _activeCharacterId ||
         !_noteGate.isCurrent(generation)) {
@@ -348,14 +608,34 @@ class _HomeScreenState extends State<HomeScreen>
       _randomNotes = randoms.map((r) => r['content'] as String).toList();
       _randomNoteIndex = 0;
       _userName = name;
-      _userAvatar = avatar.isNotEmpty ? avatar : null;
     });
   }
 
   Future<void> _loadCharacters({String? selectId}) async {
     final generation = _charactersGate.begin();
-    final chars = await DatabaseHelper.getCharacters();
+    final results = await Future.wait<Object>([
+      DatabaseHelper.getCharacters(),
+      ContextModeSettings.getGlobalRpEnabled(),
+      ToolFeatureSettings.load(),
+    ]);
+    final chars = results[0] as List<Map<String, dynamic>>;
+    final globalRp = results[1] as bool;
+    final toolFeatures = results[2] as ToolFeatureState;
     final activeId = selectId ?? await UserSettings.getActiveCharacterId();
+    final backgroundEntries =
+        await Future.wait<MapEntry<String, BackgroundPreset?>>(
+          chars.map((character) async {
+            final id = character['id'] as String;
+            return MapEntry(
+              id,
+              await BackgroundPresetService.boundPresetForCharacter(id),
+            );
+          }),
+        );
+    final boundBackgrounds = Map<String, BackgroundPreset?>.fromEntries(
+      backgroundEntries,
+    );
+    final boundBackground = boundBackgrounds[activeId];
 
     int activeIndex = 0;
     for (int i = 0; i < chars.length; i++) {
@@ -366,26 +646,52 @@ class _HomeScreenState extends State<HomeScreen>
     }
 
     if (!mounted || !_charactersGate.isCurrent(generation)) return;
+    _carouselController?.removeListener(_handleCharacterCarouselMotion);
     _carouselController?.dispose();
     _carouselController = PageController(
       viewportFraction: 0.72,
       initialPage: activeIndex,
-    );
+    )..addListener(_handleCharacterCarouselMotion);
     _currentCarouselPage = activeIndex;
 
     setState(() {
       _characters = chars;
       _activeCharacterId = activeId;
+      _boundBackgroundPreset = boundBackground;
+      _homeForegroundPalette = BackgroundForegroundService.cached(
+        boundBackground?.homePath ?? '',
+      );
+      _boundBackgroundPresets = boundBackgrounds;
+      _globalRpEnabled = globalRp;
+      _shellEconomyEnabled = toolFeatures.shellEconomyEnabled;
+      _shopEnabled = toolFeatures.shopEnabled;
     });
+    _publishBackgroundSwipeTransition(page: activeIndex.toDouble());
+    unawaited(_loadHomeForegroundPalette(boundBackground));
     _beginOnlineDwell(activeId);
     unawaited(_loadKeepAliveInfo(characterId: activeId));
 
     // TODO: 每日自動發放貝殼 — 遊戲上線後刪除
-    final charIds = chars.map((c) => c['id'] as String).toList();
-    ScratchService.checkDailyGrant(characterIds: charIds).then((_) {
-      if (mounted && _charactersGate.isCurrent(generation)) {
-        _loadUserCoins();
-      }
+    if (toolFeatures.shellEconomyEnabled) {
+      final charIds = chars.map((c) => c['id'] as String).toList();
+      ScratchService.checkDailyGrant(characterIds: charIds).then((_) {
+        if (mounted && _charactersGate.isCurrent(generation)) {
+          _loadUserCoins();
+        }
+      });
+    }
+  }
+
+  Future<void> _showSignatureHistoryFor(String characterId) async {
+    final selected = await showCharacterSignatureHistory(context, characterId);
+    if (!mounted || selected == null) return;
+    final index = _characters.indexWhere((row) => row['id'] == characterId);
+    if (index < 0) return;
+    setState(() {
+      _characters[index] = <String, dynamic>{
+        ..._characters[index],
+        'signature': selected,
+      };
     });
   }
 
@@ -404,21 +710,40 @@ class _HomeScreenState extends State<HomeScreen>
     await _loadCharacters(selectId: activeId);
     await Future.wait([
       _loadLatestNote(),
+      _loadPersonaShelf(syncFromActiveCharacter: true),
       _loadUserCoins(),
       _loadKeepAliveInfo(characterId: activeId),
       _refreshLastBackupTime(),
     ]);
   }
 
-  Future<void> _selectCharacter(String id) async {
+  Future<void> _selectCharacter(
+    String id, {
+    bool syncPersonaFromCharacter = true,
+  }) async {
     if (id == _activeCharacterId && _characters.isNotEmpty) return;
     final generation = ++_characterSelectionGeneration;
     _charactersGate.invalidate();
+    final previousIndex = _characters.indexWhere(
+      (character) => character['id'] == _activeCharacterId,
+    );
+    final nextIndex = _characters.indexWhere(
+      (character) => character['id'] == id,
+    );
+    final transitionDirection = previousIndex >= 0 && nextIndex < previousIndex
+        ? BackgroundTransitionDirection.leftToRight
+        : BackgroundTransitionDirection.rightToLeft;
 
     // UI selection must change before any persistence or database await.
     if (mounted) {
       setState(() {
         _activeCharacterId = id;
+        _boundBackgroundPreset = _boundBackgroundPresets[id];
+        _homeForegroundPalette = BackgroundForegroundService.cached(
+          _boundBackgroundPreset?.homePath ?? '',
+        );
+        _backgroundTransitionDirection = transitionDirection;
+        _backgroundTransitionRevision++;
         _onlineDwellReady = false;
         _latestNote = null;
         _randomNotes = const [];
@@ -427,13 +752,16 @@ class _HomeScreenState extends State<HomeScreen>
         _keepAliveConvTitle = null;
       });
     }
+    unawaited(_loadHomeForegroundPalette(_boundBackgroundPresets[id]));
     _beginOnlineDwell(id);
     _noteGate.invalidate();
     _keepAliveGate.invalidate();
 
     unawaited(_loadLatestNote(characterId: id));
+    unawaited(
+      _loadPersonaShelf(syncFromActiveCharacter: syncPersonaFromCharacter),
+    );
     unawaited(_loadKeepAliveInfo(characterId: id));
-
     await UserSettings.saveActiveCharacterId(id);
     if (generation != _characterSelectionGeneration) {
       // A slower, older write may have landed last. Reassert the current choice.
@@ -470,11 +798,74 @@ class _HomeScreenState extends State<HomeScreen>
   void _beginOnlineDwell(String characterId) {
     _onlineDwellTimer?.cancel();
     if (!mounted) return;
-    setState(() => _onlineDwellReady = false);
-    _onlineDwellTimer = Timer(const Duration(seconds: 1), () {
+    _onlineDwellElapsed = false;
+    if (_onlineDwellReady) setState(() => _onlineDwellReady = false);
+    _publishBackgroundSwipeTransition();
+    _onlineDwellTimer = Timer(_characterArrivalDuration, () {
       if (!mounted || _activeCharacterId != characterId) return;
-      setState(() => _onlineDwellReady = true);
+      _onlineDwellElapsed = true;
+      _refreshOnlineDwellReady();
     });
+  }
+
+  void _handleCharacterCarouselMotion() {
+    _publishBackgroundSwipeTransition();
+    _refreshOnlineDwellReady();
+  }
+
+  void _refreshOnlineDwellReady() {
+    if (!mounted) return;
+    final controller = _carouselController;
+    final activeIndex = _characters.indexWhere(
+      (character) => character['id'] == _activeCharacterId,
+    );
+    final page = controller != null && controller.hasClients
+        ? controller.page
+        : activeIndex.toDouble();
+    final settled =
+        activeIndex >= 0 && page != null && (page - activeIndex).abs() < 0.002;
+    final nextReady = _onlineDwellElapsed && settled;
+    if (nextReady == _onlineDwellReady) return;
+    setState(() => _onlineDwellReady = nextReady);
+    _publishBackgroundSwipeTransition(page: page);
+  }
+
+  void _publishBackgroundSwipeTransition({double? page}) {
+    if (_characters.isEmpty) {
+      _backgroundSwipeTransition.value = BackgroundSwipeTransition(
+        leftPreset: _boundBackgroundPreset,
+        rightPreset: _boundBackgroundPreset,
+        onlineReady: _onlineDwellReady,
+      );
+      return;
+    }
+    final controller = _carouselController;
+    final rawPage =
+        page ??
+        (controller != null && controller.hasClients
+            ? controller.page
+            : _currentCarouselPage.toDouble()) ??
+        _currentCarouselPage.toDouble();
+    final boundedPage = rawPage.clamp(0.0, _characters.length - 1.0);
+    final leftIndex = boundedPage.floor();
+    final rightIndex = boundedPage.ceil();
+    final leftId = _characters[leftIndex]['id'] as String;
+    final rightId = _characters[rightIndex]['id'] as String;
+    _backgroundSwipeTransition.value = BackgroundSwipeTransition(
+      leftPreset: _boundBackgroundPresets[leftId],
+      rightPreset: _boundBackgroundPresets[rightId],
+      progress: rightIndex == leftIndex ? 0 : boundedPage - leftIndex,
+      onlineReady: _onlineDwellReady,
+    );
+  }
+
+  Future<void> _loadHomeForegroundPalette(BackgroundPreset? preset) async {
+    final generation = ++_backgroundForegroundGeneration;
+    final path = preset?.homePath.trim() ?? '';
+    final palette = await BackgroundForegroundService.resolve(path);
+    if (!mounted || generation != _backgroundForegroundGeneration) return;
+    if ((_boundBackgroundPreset?.homePath.trim() ?? '') != path) return;
+    setState(() => _homeForegroundPalette = palette);
   }
 
   Future<void> _startNewChat() async {
@@ -497,11 +888,45 @@ class _HomeScreenState extends State<HomeScreen>
       }
 
       final convId = const Uuid().v4();
-      final conv = Conversation(id: convId, characterId: charId);
+      final mode = await ContextModeSettings.effectiveMode(charId);
+      if (!mounted) return;
+      var continuityId = 'main';
+      if (mode == ContextMode.rp) {
+        await DatabaseHelper.ensureDefaultRpStoryline(charId);
+        final storylines = await DatabaseHelper.getRpStorylines(charId);
+        if (storylines.isEmpty) return;
+        var selected = storylines.first;
+        for (final storyline in storylines) {
+          if (storyline['is_default'] == 1) {
+            selected = storyline;
+            break;
+          }
+        }
+        continuityId = selected['id']?.toString() ?? 'main';
+      }
+      final resolvedPersona = await UserPersonaService.resolveForNewWindow(
+        characterId: charId,
+        contextMode: mode,
+        continuityId: continuityId,
+      );
+      final conv = Conversation(
+        id: convId,
+        characterId: charId,
+        contextMode: mode,
+        continuityId: continuityId,
+        userPersonaId: resolvedPersona.persona.id,
+        userPersonaSnapshot: resolvedPersona.promptSnapshot,
+      );
       await DatabaseHelper.createConversation(conv);
 
       if (mounted) {
         await Navigator.of(context).pushNamed('/chat', arguments: convId);
+        if (await DatabaseHelper.getMessageCount(convId) == 0) {
+          if (KeepAliveService.instance.activeConversationId == convId) {
+            await KeepAliveService.instance.stop();
+          }
+          await DatabaseHelper.deleteConversation(convId);
+        }
         // 從聊天頁返回 → 刷新保活狀態 + 貝殼餘額
         await _refreshAfterChatReturn();
       }
@@ -528,6 +953,8 @@ class _HomeScreenState extends State<HomeScreen>
         : await ThemeSettings.getLastDarkPreset();
 
     if (!mounted) return;
+    await ThemeSettings.restoreThemeBubbleColors(nextPreset);
+    if (!mounted) return;
     YanciTheme.setPreset(nextPreset);
     setState(() {});
     themeNotifier.value++;
@@ -548,7 +975,20 @@ class _HomeScreenState extends State<HomeScreen>
     await ThemeSettings.saveThemePreset(nextPreset);
   }
 
-  void _refreshProfileTheme() => setState(() {});
+  Future<void> _refreshProfileTheme() async {
+    final preset = await BackgroundPresetService.boundPresetForCharacter(
+      _activeCharacterId,
+    );
+    if (!mounted) return;
+    setState(() {
+      _boundBackgroundPreset = preset;
+      _boundBackgroundPresets[_activeCharacterId] = preset;
+      _homeForegroundPalette = BackgroundForegroundService.cached(
+        preset?.homePath ?? '',
+      );
+    });
+    await _loadHomeForegroundPalette(preset);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -556,6 +996,11 @@ class _HomeScreenState extends State<HomeScreen>
       extendBody: true,
       body: GradientBackground(
         scope: YanciBackgroundScope.home,
+        presetOverride: _boundBackgroundPreset,
+        transitionDirection: _backgroundTransitionDirection,
+        transitionRevision: _backgroundTransitionRevision,
+        transitionDuration: _characterArrivalDuration,
+        swipeTransition: _backgroundSwipeTransition,
         child: Stack(
           children: [
             Positioned.fill(
@@ -583,6 +1028,7 @@ class _HomeScreenState extends State<HomeScreen>
       bottomNavigationBar: YanciBottomNavBar(
         activeIndex: _currentTab,
         reduceMotion: _reduceMotion,
+        backgroundPalette: _homeForegroundPalette,
         onTap: _handleNavTap,
       ),
     );
@@ -607,19 +1053,22 @@ class _HomeScreenState extends State<HomeScreen>
         // 扣除底部導航欄（extendBody: true 所以 h 包含被遮住的部分）
         const navBarH = 66.0;
         final visibleH = h - navBarH;
-        // 畫面均分三塊，輪盤中心落在上 1/3 線
-        // 輪盤內容含卡片下方的在線提示；與輪盤 widget 的 120 高度一致，
+        // 輪盤以畫面上 1/3 線為基準，再整組下移。
+        // 輪盤內容含四行簽名與卡片下方的在線提示；高度與輪盤 widget 一致，
         // 避免提示文字在 Positioned 內被擠出底部。
-        const carouselH = 120.0;
+        final carouselH = Theme.of(context).platform == TargetPlatform.iOS
+            ? 136.0
+            : 156.0;
         final carouselCenterY = visibleH / 3;
-        final carouselTop = max(0.0, carouselCenterY - carouselH / 2);
+        final baseCarouselTop = max(0.0, carouselCenterY - carouselH / 2);
+        final carouselTop = baseCarouselTop + _homeCarouselOffsetY;
         // 問候語在頂部（≈50 給貝殼/歷史行）與輪盤之間的正中心
         const topReserved = 50.0;
-        final canShowGreeting = carouselTop - 10 >= topReserved;
-        final greetingCenterY = (topReserved + carouselTop) / 2;
+        final canShowGreeting = baseCarouselTop - 10 >= topReserved;
+        final greetingCenterY = (topReserved + baseCarouselTop) / 2;
         // 小螢幕沒有足夠間距時直接隱藏問候語，不對無效區間 clamp。
         final greetingTop = canShowGreeting
-            ? (greetingCenterY - 20).clamp(topReserved, carouselTop - 10)
+            ? (greetingCenterY - 20).clamp(topReserved, baseCarouselTop - 10)
             : 0.0;
 
         return Stack(
@@ -653,6 +1102,17 @@ class _HomeScreenState extends State<HomeScreen>
                 key: ValueKey('home-live-state-$_activeCharacterId'),
                 child: Column(
                   children: [
+                    if (_anniversariesAt(
+                      AnniversaryPlacement.aboveHeartbeat,
+                    ).isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 4, bottom: 2),
+                        child: AnniversaryDayCounterGroup(
+                          entries: _anniversariesAt(
+                            AnniversaryPlacement.aboveHeartbeat,
+                          ),
+                        ),
+                      ),
                     if (_heartbeat != null) _buildHeartbeatValue(),
                     const SizedBox(height: 4),
                     Expanded(
@@ -678,26 +1138,30 @@ class _HomeScreenState extends State<HomeScreen>
               ),
             ),
             // ═══ 用戶貝殼餘額（左上角）═══
-            Positioned(
-              top: 12,
-              left: 20,
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 7),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Image.asset(
-                      'assets/images/shell_coin.png',
-                      width: 20,
-                      height: 20,
-                      filterQuality: FilterQuality.none,
-                    ),
-                    const SizedBox(width: 6),
-                    CoinAmountText(_userCoins),
-                  ],
+            if (_shellEconomyEnabled)
+              Positioned(
+                top: 12,
+                left: 20,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 4,
+                    vertical: 7,
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Image.asset(
+                        'assets/images/shell_coin.png',
+                        width: 20,
+                        height: 20,
+                        filterQuality: FilterQuality.none,
+                      ),
+                      const SizedBox(width: 6),
+                      CoinAmountText(_userCoins),
+                    ],
+                  ),
                 ),
               ),
-            ),
             // ═══ 歷史對話按鈕（右上角）═══
             Positioned(
               top: 12,
@@ -716,9 +1180,9 @@ class _HomeScreenState extends State<HomeScreen>
                         child: Icon(
                           Icons.history_rounded,
                           size: 22,
-                          color: YanciTheme.textSecondary.withValues(
-                            alpha: 0.6,
-                          ),
+                          color:
+                              _homeForegroundPalette?.primary ??
+                              YanciTheme.textSecondary.withValues(alpha: 0.6),
                         ),
                       ),
                     ),
@@ -726,6 +1190,25 @@ class _HomeScreenState extends State<HomeScreen>
                 ),
               ),
             ),
+            if (_guideAvailable)
+              Positioned(
+                top: 12,
+                right: 68,
+                width: 220,
+                child: GuideEntry(
+                  showIntro: _showGuideIntro,
+                  reduceMotion: _reduceMotion,
+                  color:
+                      _homeForegroundPalette?.primary ??
+                      YanciTheme.textSecondary.withValues(alpha: .68),
+                  onTap: () => unawaited(_openGuide()),
+                  onIntroCompleted: () {
+                    if (!_showGuideIntro) return;
+                    unawaited(GuideSettings.markIntroSeen());
+                    if (mounted) setState(() => _showGuideIntro = false);
+                  },
+                ),
+              ),
           ],
         );
       },
@@ -733,6 +1216,7 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   Widget _buildGreeting() {
+    final imagePrimary = _homeForegroundPalette?.primary;
     // 優先顯示 AI 便箋
     String? noteToShow;
     if (_latestNote != null && _latestNote!.isNotEmpty) {
@@ -755,7 +1239,9 @@ class _HomeScreenState extends State<HomeScreen>
               style: TextStyle(
                 fontSize: 20,
                 fontWeight: FontWeight.w300,
-                color: YanciTheme.textPrimary.withValues(alpha: 0.8),
+                color:
+                    imagePrimary ??
+                    YanciTheme.textPrimary.withValues(alpha: 0.8),
                 fontFamily: YanciTheme.fontFamily,
                 letterSpacing: 1.5,
                 height: 1.4,
@@ -797,7 +1283,8 @@ class _HomeScreenState extends State<HomeScreen>
             style: TextStyle(
               fontSize: 22,
               fontWeight: FontWeight.w300,
-              color: YanciTheme.textPrimary.withValues(alpha: 0.7),
+              color:
+                  imagePrimary ?? YanciTheme.textPrimary.withValues(alpha: 0.7),
               fontFamily: YanciTheme.fontFamily,
               letterSpacing: 1.5,
               height: 1.4,
@@ -814,6 +1301,7 @@ class _HomeScreenState extends State<HomeScreen>
   // ═══════════════════════════════════
 
   Widget _buildCharacterCarousel() {
+    final isIos = Theme.of(context).platform == TargetPlatform.iOS;
     if (_characters.isEmpty || _carouselController == null) {
       return SizedBox(
         height: 120,
@@ -863,7 +1351,7 @@ class _HomeScreenState extends State<HomeScreen>
     }
 
     return SizedBox(
-      height: 120,
+      height: isIos ? 136 : 156,
       child: Stack(
         children: [
           Center(
@@ -875,7 +1363,6 @@ class _HomeScreenState extends State<HomeScreen>
                 onPageChanged: (index) {
                   _currentCarouselPage = index;
                   final id = _characters[index]['id'] as String;
-                  _beginOnlineDwell(id);
                   unawaited(_selectCharacter(id));
                 },
                 itemBuilder: (context, index) {
@@ -918,17 +1405,31 @@ class _HomeScreenState extends State<HomeScreen>
                           isCenter &&
                           id == _activeCharacterId &&
                           _onlineDwellReady;
+                      final isRp =
+                          _globalRpEnabled ||
+                          ContextModeSettings.preferredModeFromCharacter(
+                                character,
+                              ) ==
+                              ContextMode.rp;
 
                       return Center(
                         child: Semantics(
                           button: true,
                           selected: isCenter,
-                          label: isOnline
+                          label: isRp
+                              ? '$name，RP'
+                              : isOnline
                               ? '$name，${L.pick(en: 'Online', zhTW: '對方已上線', zhCN: '对方已上线')}'
                               : name,
                           child: GestureDetector(
                             behavior: HitTestBehavior.opaque,
-                            onTap: () => _selectCharacter(id),
+                            onTap: () {
+                              if (index == _currentCarouselPage) {
+                                unawaited(_selectCharacter(id));
+                                return;
+                              }
+                              moveCarouselTo(index);
+                            },
                             child: Transform.scale(
                               scale: scale,
                               child: Opacity(
@@ -937,7 +1438,7 @@ class _HomeScreenState extends State<HomeScreen>
                                   mainAxisSize: MainAxisSize.min,
                                   children: [
                                     Container(
-                                      height: 92,
+                                      height: isIos ? 108 : 128,
                                       padding: const EdgeInsets.fromLTRB(
                                         10,
                                         9,
@@ -948,13 +1449,17 @@ class _HomeScreenState extends State<HomeScreen>
                                         color: Colors.transparent,
                                         borderRadius: BorderRadius.circular(18),
                                         border: Border.all(
-                                          color: YanciTheme.accent.withValues(
-                                            alpha: isCenter
-                                                ? (YanciTheme.isDark
-                                                      ? 0.20
-                                                      : 0.16)
-                                                : 0.10,
-                                          ),
+                                          color:
+                                              (_homeForegroundPalette
+                                                          ?.secondary ??
+                                                      YanciTheme.accent)
+                                                  .withValues(
+                                                    alpha: isCenter
+                                                        ? (YanciTheme.isDark
+                                                              ? 0.20
+                                                              : 0.16)
+                                                        : 0.10,
+                                                  ),
                                           width: 0.6,
                                         ),
                                       ),
@@ -1025,40 +1530,45 @@ class _HomeScreenState extends State<HomeScreen>
                                                           fontWeight:
                                                               FontWeight.w400,
                                                           color: isCenter
-                                                              ? YanciTheme
-                                                                    .accent
-                                                              : YanciTheme
-                                                                    .textPrimary
-                                                                    .withValues(
-                                                                      alpha:
-                                                                          0.64,
-                                                                    ),
+                                                              ? (_homeForegroundPalette
+                                                                        ?.primary ??
+                                                                    YanciTheme
+                                                                        .accent)
+                                                              : (_homeForegroundPalette
+                                                                        ?.secondary ??
+                                                                    YanciTheme
+                                                                        .textPrimary
+                                                                        .withValues(
+                                                                          alpha:
+                                                                              0.64,
+                                                                        )),
                                                           fontFamily: YanciTheme
                                                               .fontFamily,
                                                         ),
                                                       ),
                                                     ),
-                                                    if (isOnline) ...[
+                                                    if (isRp || isOnline) ...[
                                                       const SizedBox(width: 6),
                                                       Container(
                                                         width: 7,
                                                         height: 7,
-                                                        decoration:
-                                                            const BoxDecoration(
-                                                              color: Color(
-                                                                0xFF65C98A,
-                                                              ),
-                                                              shape: BoxShape
-                                                                  .circle,
-                                                              boxShadow: [
-                                                                BoxShadow(
-                                                                  color: Color(
-                                                                    0x5965C98A,
-                                                                  ),
-                                                                  blurRadius: 5,
+                                                        decoration: BoxDecoration(
+                                                          color: isRp
+                                                              ? contextRpColor
+                                                              : Color(
+                                                                  0xFF65C98A,
                                                                 ),
-                                                              ],
+                                                          shape:
+                                                              BoxShape.circle,
+                                                          boxShadow: [
+                                                            BoxShadow(
+                                                              color: Color(
+                                                                0x5965C98A,
+                                                              ),
+                                                              blurRadius: 5,
                                                             ),
+                                                          ],
+                                                        ),
                                                       ),
                                                     ],
                                                   ],
@@ -1071,6 +1581,17 @@ class _HomeScreenState extends State<HomeScreen>
                                                       ),
                                                   child: CharacterSignaturePanel(
                                                     compact: true,
+                                                    foregroundColor:
+                                                        _homeForegroundPalette
+                                                            ?.secondary,
+                                                    ruleColor:
+                                                        _homeForegroundPalette
+                                                            ?.subtle,
+                                                    onShowHistory: () =>
+                                                        _showSignatureHistoryFor(
+                                                          character['id']
+                                                              as String,
+                                                        ),
                                                     signature:
                                                         character['signature']
                                                             as String?,
@@ -1082,19 +1603,23 @@ class _HomeScreenState extends State<HomeScreen>
                                         ],
                                       ),
                                     ),
-                                    if (isOnline)
+                                    if (isRp || isOnline)
                                       Padding(
                                         padding: const EdgeInsets.only(top: 2),
                                         child: Text(
-                                          L.pick(
-                                            en: 'Online',
-                                            zhTW: '對方已上線',
-                                            zhCN: '对方已上线',
-                                          ),
+                                          isRp
+                                              ? 'RP'
+                                              : L.pick(
+                                                  en: 'Online',
+                                                  zhTW: '對方已上線',
+                                                  zhCN: '对方已上线',
+                                                ),
                                           style: TextStyle(
                                             fontSize: 9,
                                             height: 1.0,
-                                            color: const Color(0xFF65C98A),
+                                            color: isRp
+                                                ? contextRpColor
+                                                : const Color(0xFF65C98A),
                                             fontFamily: YanciTheme.fontFamily,
                                           ),
                                         ),
@@ -1203,6 +1728,9 @@ class _HomeScreenState extends State<HomeScreen>
 
   Widget _buildActiveConvEntry() {
     final title = _keepAliveConvTitle ?? '';
+    final imagePrimary = _homeForegroundPalette?.primary;
+    final imageSecondary = _homeForegroundPalette?.secondary;
+    final imageSubtle = _homeForegroundPalette?.subtle;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 4),
       child: Row(
@@ -1261,7 +1789,9 @@ class _HomeScreenState extends State<HomeScreen>
                             : title,
                         style: YanciTheme.bodyText.copyWith(
                           fontSize: 12,
-                          color: YanciTheme.textPrimary.withValues(alpha: 0.7),
+                          color:
+                              imagePrimary ??
+                              YanciTheme.textPrimary.withValues(alpha: 0.7),
                         ),
                         overflow: TextOverflow.ellipsis,
                         maxLines: 1,
@@ -1271,7 +1801,9 @@ class _HomeScreenState extends State<HomeScreen>
                     Icon(
                       Icons.chevron_right,
                       size: 14,
-                      color: YanciTheme.textSecondary.withValues(alpha: 0.5),
+                      color:
+                          imageSecondary ??
+                          YanciTheme.textSecondary.withValues(alpha: 0.5),
                     ),
                   ],
                 ),
@@ -1290,7 +1822,9 @@ class _HomeScreenState extends State<HomeScreen>
                   child: Icon(
                     Icons.edit_rounded,
                     size: 19,
-                    color: YanciTheme.accent.withValues(alpha: 0.65),
+                    color:
+                        imageSubtle ??
+                        YanciTheme.accent.withValues(alpha: 0.65),
                   ),
                 ),
               ),
@@ -1406,6 +1940,13 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   Future<void> _confirmManualSummaryAll(String convId) async {
+    final messages = await DatabaseHelper.getMessages(convId);
+    final estimatedTokens = messages.fold<int>(
+      0,
+      (total, message) => total + TokenEstimator.estimate(message.text),
+    );
+    if (!mounted) return;
+
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -1417,8 +1958,15 @@ class _HomeScreenState extends State<HomeScreen>
         ),
         content: Text(
           L.pick(
-            en: 'Summarizes every message in this window without changing chat content or automatic summaries.',
-            zhTW: '會摘要目前窗口內全部消息，不會改動聊天內容，也不影響自動摘要。',
+            en:
+                'This window contains approximately $estimatedTokens message tokens. '
+                'Summarize every message without changing chat content or automatic summaries.',
+            zhTW:
+                '目前窗口約有 $estimatedTokens tokens。會摘要全部消息，'
+                '不會改動聊天內容，也不影響自動摘要。',
+            zhCN:
+                '当前窗口约有 $estimatedTokens tokens。将摘要全部消息，'
+                '不会改动聊天内容，也不影响自动摘要。',
           ),
           style: TextStyle(color: YanciTheme.textSecondary),
         ),
@@ -1435,60 +1983,47 @@ class _HomeScreenState extends State<HomeScreen>
       ),
     );
     if (!mounted || confirmed != true) return;
-    await _runManualSummaryAll(convId);
+    await _runManualSummaryAll(convId, messages: messages);
   }
 
-  Future<void> _runManualSummaryAll(String convId) async {
+  Future<void> _runManualSummaryAll(
+    String convId, {
+    List<Message>? messages,
+  }) async {
     final conv = await DatabaseHelper.getConversation(convId);
     final characterId = conv?.characterId ?? _activeCharacterId;
     final title = conv?.title ?? _keepAliveConvTitle ?? '';
-    final messages = await DatabaseHelper.getMessages(convId);
+    final sourceMessages = messages ?? await DatabaseHelper.getMessages(convId);
     if (!mounted) return;
-    if (messages.isEmpty) {
+    if (sourceMessages.isEmpty) {
       _showSnack(
         L.pick(en: 'There is no chat content to summarize', zhTW: '沒有可摘要的聊天內容'),
       );
       return;
     }
 
-    var loadingOpen = true;
-    showDialog<void>(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) => Center(
-        child: Container(
-          padding: const EdgeInsets.all(18),
-          decoration: BoxDecoration(
-            color: YanciTheme.surfacePanel,
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: const SizedBox(
-            width: 28,
-            height: 28,
-            child: CircularProgressIndicator(strokeWidth: 2.4),
-          ),
-        ),
-      ),
+    showThemedPillNotice(
+      context,
+      L.pick(en: 'Creating summary…', zhTW: '正在整理摘要……', zhCN: '正在整理摘要……'),
     );
 
     try {
       await ManualSummaryService.summarizeMessages(
         conversationId: convId,
         characterId: characterId,
-        messages: messages,
+        messages: sourceMessages,
       );
       if (!mounted) return;
-      if (loadingOpen) {
-        loadingOpen = false;
-        Navigator.of(context, rootNavigator: true).pop();
-      }
-      _showSnack(L.pick(en: 'Manual summary completed.', zhTW: '手動摘要已完成。'));
+      showThemedPillNotice(
+        context,
+        L.pick(
+          en: 'Manual summary completed.',
+          zhTW: '手動摘要已完成',
+          zhCN: '手动摘要已完成',
+        ),
+      );
     } on ManualSummaryPolicyFailure catch (e) {
       if (!mounted) return;
-      if (loadingOpen) {
-        loadingOpen = false;
-        Navigator.of(context, rootNavigator: true).pop();
-      }
       _showManualSummaryFailureSnack(
         convId: convId,
         characterId: characterId,
@@ -1497,11 +2032,11 @@ class _HomeScreenState extends State<HomeScreen>
       );
     } catch (e) {
       if (!mounted) return;
-      if (loadingOpen) {
-        loadingOpen = false;
-        Navigator.of(context, rootNavigator: true).pop();
-      }
-      _showSnack('${L.pick(en: 'Summary failed', zhTW: '摘要失敗')}：$e');
+      showThemedPillNotice(
+        context,
+        '${L.pick(en: 'Summary failed', zhTW: '摘要失敗', zhCN: '摘要失败')}：$e',
+        tone: ThemedNoticeTone.error,
+      );
     }
   }
 
@@ -1831,15 +2366,16 @@ class _HomeScreenState extends State<HomeScreen>
     final allConversations = await DatabaseHelper.getConversations(
       characterId: charId,
     );
+    var historyFilter = await ContextModeSettings.historyFilter(charId);
     if (!mounted) return;
 
     final topPad = MediaQuery.of(context).padding.top;
     final bottomPad = MediaQuery.of(context).padding.bottom;
     final safeH = MediaQuery.of(context).size.height - topPad - bottomPad;
-    // 與 _buildHomePage 一致：可見區域 = safeH - navBar(66)，輪盤中心在 1/3
+    // 與 _buildHomePage 一致：歷史浮層隨輪盤下移，保留原有間距。
     final visibleH = safeH - 66.0;
     final carouselBottom =
-        topPad + visibleH / 3 + 28 + 12; // center + half + gap
+        topPad + visibleH / 3 + 28 + 12 + _homeCarouselOffsetY;
     final topInset = carouselBottom;
     // 底部：菜單欄高度(66) + 底部 padding + 菜單上方間距
     final bottomInset = 66.0 + (bottomPad > 0 ? bottomPad : 16.0) + 12.0;
@@ -1855,7 +2391,11 @@ class _HomeScreenState extends State<HomeScreen>
         return FadeTransition(opacity: curve, child: child);
       },
       pageBuilder: (dialogCtx, _, _) {
-        var conversations = List<Conversation>.from(allConversations);
+        var searchResults = List<Conversation>.from(allConversations);
+        var conversations = ContextModeSettings.filterConversations(
+          searchResults,
+          historyFilter,
+        );
         final searchCtrl = TextEditingController();
         // 搜尋世代號：每字一查是 async 的，慢的舊查詢後到會把
         // 新結果覆蓋回去——只採納最新一代的結果
@@ -1863,6 +2403,9 @@ class _HomeScreenState extends State<HomeScreen>
 
         return StatefulBuilder(
           builder: (ctx, setDialogState) {
+            final historySurface = YanciTheme.isDark
+                ? const Color(0xF5201D24)
+                : Colors.white.withValues(alpha: 0.97);
             return Padding(
               padding: EdgeInsets.only(
                 top: topInset,
@@ -1874,9 +2417,7 @@ class _HomeScreenState extends State<HomeScreen>
                 color: Colors.transparent,
                 child: Container(
                   decoration: BoxDecoration(
-                    color: YanciTheme.isDark
-                        ? const Color(0xF5201D24)
-                        : Colors.white.withValues(alpha: 0.97),
+                    color: historySurface,
                     borderRadius: BorderRadius.circular(20),
                     border: Border.all(
                       color: YanciTheme.isDark
@@ -1926,7 +2467,28 @@ class _HomeScreenState extends State<HomeScreen>
                                 ),
                               ),
                               const Spacer(),
-                              const SizedBox(width: 36),
+                              HistoryModePill(
+                                value: historyFilter.name,
+                                backgroundColor: historySurface,
+                                onChanged: (raw) {
+                                  final next = ConversationHistoryFilter.values
+                                      .firstWhere((value) => value.name == raw);
+                                  setDialogState(() {
+                                    historyFilter = next;
+                                    conversations =
+                                        ContextModeSettings.filterConversations(
+                                          searchResults,
+                                          next,
+                                        );
+                                  });
+                                  unawaited(
+                                    ContextModeSettings.setHistoryFilter(
+                                      charId,
+                                      next,
+                                    ),
+                                  );
+                                },
+                              ),
                             ],
                           ),
                         ),
@@ -1979,9 +2541,14 @@ class _HomeScreenState extends State<HomeScreen>
                                       );
                                 // 已有更新的輸入 → 這批結果過期，丟棄
                                 if (gen != searchGeneration) return;
-                                setDialogState(
-                                  () => conversations = List.from(results),
-                                );
+                                setDialogState(() {
+                                  searchResults = List.from(results);
+                                  conversations =
+                                      ContextModeSettings.filterConversations(
+                                        searchResults,
+                                        historyFilter,
+                                      );
+                                });
                               },
                             ),
                           ),
@@ -2051,16 +2618,30 @@ class _HomeScreenState extends State<HomeScreen>
                                             crossAxisAlignment:
                                                 CrossAxisAlignment.start,
                                             children: [
-                                              Text(
-                                                conv.title ??
-                                                    L.pick(
-                                                      en: 'New chat',
-                                                      zhTW: '新對話',
+                                              Row(
+                                                children: [
+                                                  ContextModeLabel(
+                                                    mode: conv.contextMode,
+                                                    compact: true,
+                                                  ),
+                                                  const SizedBox(width: 6),
+                                                  Expanded(
+                                                    child: Text(
+                                                      conv.title ??
+                                                          L.pick(
+                                                            en: 'New chat',
+                                                            zhTW: '新對話',
+                                                          ),
+                                                      maxLines: 1,
+                                                      overflow:
+                                                          TextOverflow.ellipsis,
+                                                      style: YanciTheme.bodyText
+                                                          .copyWith(
+                                                            fontSize: 14,
+                                                          ),
                                                     ),
-                                                maxLines: 1,
-                                                overflow: TextOverflow.ellipsis,
-                                                style: YanciTheme.bodyText
-                                                    .copyWith(fontSize: 14),
+                                                  ),
+                                                ],
                                               ),
                                               const SizedBox(height: 2),
                                               Text(
@@ -2103,11 +2684,16 @@ class _HomeScreenState extends State<HomeScreen>
                                                 await DatabaseHelper.getConversations(
                                                   characterId: charId,
                                                 );
-                                            setDialogState(
-                                              () => conversations = List.from(
+                                            setDialogState(() {
+                                              searchResults = List.from(
                                                 updated,
-                                              ),
-                                            );
+                                              );
+                                              conversations =
+                                                  ContextModeSettings.filterConversations(
+                                                    searchResults,
+                                                    historyFilter,
+                                                  );
+                                            });
                                           },
                                         ),
                                         _historyAction(
@@ -2186,11 +2772,16 @@ class _HomeScreenState extends State<HomeScreen>
                                                   await DatabaseHelper.getConversations(
                                                     characterId: charId,
                                                   );
-                                              setDialogState(
-                                                () => conversations = List.from(
+                                              setDialogState(() {
+                                                searchResults = List.from(
                                                   updated,
-                                                ),
-                                              );
+                                                );
+                                                conversations =
+                                                    ContextModeSettings.filterConversations(
+                                                      searchResults,
+                                                      historyFilter,
+                                                    );
+                                              });
                                             }
                                           },
                                         ),
@@ -2308,7 +2899,8 @@ class _HomeScreenState extends State<HomeScreen>
   Future<void> _handleNavTap(int index) async {
     HapticFeedback.selectionClick();
     if (index == 0) {
-      Navigator.of(context).pushNamed('/api_settings');
+      await Navigator.of(context).pushNamed('/api_settings');
+      if (mounted) unawaited(_refreshGuideAvailability());
       return;
     }
     if (index == 1) {
@@ -2316,8 +2908,10 @@ class _HomeScreenState extends State<HomeScreen>
       return;
     }
     if (index == 3) {
+      await UserSettings.saveActiveCharacterId(_activeCharacterId);
+      if (!mounted) return;
       await Navigator.of(context).pushNamed('/character_list');
-      if (mounted) _loadCharacters(selectId: _activeCharacterId);
+      if (mounted) _loadCharacters();
       return;
     }
     setState(() => _currentTab = index);
@@ -2496,6 +3090,8 @@ class _MiniYanciPainter extends CustomPainter {
 }
 */
 
+// 原「開關」入口圖示；造型更像用量環，保留給側欄用量摘要卡使用。
+// ignore: unused_element
 class _SegmentedUsageIcon extends StatelessWidget {
   const _SegmentedUsageIcon({
     required this.size,

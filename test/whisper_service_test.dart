@@ -92,7 +92,25 @@ void main() {
 
       expect(instruction, contains('靠近一點說'));
       expect(instruction, contains('<whisper>'));
-      expect(instruction, contains('${WhisperService.maxLength}'));
+      expect(instruction, contains('${WhisperService.maxLines}'));
+      expect(instruction, contains('${WhisperService.maxCjkLength}'));
+      expect(instruction, contains('${WhisperService.maxLatinLength}'));
     },
   );
+
+  test('CJK whisper keeps two lines within 24 graphemes total', () {
+    expect(
+      WhisperService.sanitize('一二三四五六七八九十一二三四\n五六七八九十一二三四五六七八\n不應保留'),
+      '一二三四五六七八九十一二三四\n五六七八九十一二三四',
+    );
+  });
+
+  test('English whisper allows up to 56 graphemes across two lines', () {
+    expect(
+      WhisperService.sanitize(
+        'abcdefghijklmnopqrstuvwxyz\nABCDEFGHIJKLMNOPQRSTUVWXYZ123456789',
+      ),
+      'abcdefghijklmnopqrstuvwxyz\nABCDEFGHIJKLMNOPQRSTUVWXYZ1234',
+    );
+  });
 }

@@ -704,6 +704,14 @@ class BioClockService {
   /// 本輪處理日誌
   static final List<String> lastActionLog = <String>[];
 
+  /// Returns this turn's UI log exactly once, then clears it. Calling this
+  /// while the ability is disabled also discards any stale previous-turn log.
+  static List<String> consumeLastActionLog() {
+    final result = List<String>.unmodifiable(lastActionLog);
+    lastActionLog.clear();
+    return result;
+  }
+
   /// 處理回覆中的 clock 標籤。返回剝離後的文本。
   static Future<String> processReply(
     String text, {

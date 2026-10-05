@@ -2,6 +2,7 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import '../theme/app_theme.dart';
+import 'gradient_background.dart';
 import '../services/locale_strings.dart';
 
 import '../services/scratch_service.dart';
@@ -13,6 +14,7 @@ enum SendButtonStyle { leaf, paw }
 class InputBar extends StatefulWidget {
   final Function(String) onSend;
   final Function(String)? onImagePicked;
+  final Function(List<String>)? onImagesPicked;
   final VoidCallback? onStickerTap;
 
   /// 刮刮卡禮物：回傳 scratcher = 'user'（我刮）或 'char'（TA刮）
@@ -24,8 +26,15 @@ class InputBar extends StatefulWidget {
   /// 背包（查看/送出物品）
   final VoidCallback? onBackpackTap;
 
+  /// RP 劇情檔案快捷入口。日常窗口不提供此入口。
+  final VoidCallback? onStoryArchiveTap;
+
   /// 轉帳：回傳金額
   final Function(int amount)? onTransfer;
+  final bool showTransfer;
+  final bool showScratch;
+  final bool showShop;
+  final bool showBackpack;
 
   /// 掛起的禮物名（非空時輸入框上方顯示 chip，隨下一條消息送出）
   final String? pendingGiftName;
@@ -53,11 +62,17 @@ class InputBar extends StatefulWidget {
     super.key,
     required this.onSend,
     this.onImagePicked,
+    this.onImagesPicked,
     this.onStickerTap,
     this.onScratchGift,
     this.onShopGift,
     this.onBackpackTap,
+    this.onStoryArchiveTap,
     this.onTransfer,
+    this.showTransfer = true,
+    this.showScratch = true,
+    this.showShop = true,
+    this.showBackpack = true,
     this.pendingGiftName,
     this.onCancelGift,
     this.showMarriageCert = false,
@@ -85,6 +100,12 @@ class _InputBarState extends State<InputBar> with TickerProviderStateMixin {
   final ImagePicker _picker = ImagePicker();
   bool _drawerOpen = false;
 
+  // ═══ 輸入容器圓角：單行完全藥丸 → 多行大圓角矩形 ═══
+  static const double _pillRadius = 36;
+  static const double _multilineRadius = 24;
+  final GlobalKey _surfaceKey = GlobalKey();
+  double _surfaceRadius = _pillRadius;
+
   // ═══ 葉子動效 ═══
   late AnimationController _swayCtrl; // 待機搖擺
   late AnimationController _sendCtrl; // 發送飛出
@@ -104,6 +125,8 @@ class _InputBarState extends State<InputBar> with TickerProviderStateMixin {
       _controller = TextEditingController();
       _ownsController = true;
     }
+    _controller.addListener(_scheduleRadiusSync);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _syncSurfaceRadius());
     // 待機搖擺：持續循環
     _swayCtrl = AnimationController(
       vsync: this,
@@ -219,6 +242,7 @@ class _InputBarState extends State<InputBar> with TickerProviderStateMixin {
 
   @override
   void dispose() {
+    _controller.removeListener(_scheduleRadiusSync);
     if (_ownsController) _controller.dispose();
     _focusNode.dispose();
     _swayCtrl.dispose();
@@ -244,9 +268,33 @@ class _InputBarState extends State<InputBar> with TickerProviderStateMixin {
   @override
   Widget build(BuildContext context) {
     final bottomPad = MediaQuery.of(context).padding.bottom;
+    final chatScope = ChatBackgroundPresetScope.of(context);
+    final palette = chatScope?.palette;
+    final inputBarBg = chatScope == null
+        ? YanciTheme.chatBackgroundInputBarBg
+        : palette?.inputBarBg ?? YanciTheme.glassInputBg;
+    final inputBarBorder = chatScope == null
+        ? YanciTheme.chatBackgroundInputBarBorder
+        : palette?.inputBarBorder ?? YanciTheme.glassBorder;
+    final manualText = chatScope?.preset?.chatBubbleTextColor;
+    final themeText = YanciTheme.bubbleColorOverride(
+      YanciTheme.presetId,
+      ThemeBubbleColorRole.textOnBubble,
+    );
+    final inputBarText = chatScope == null
+        ? YanciTheme.chatBackgroundInputBarText
+        : manualText == null
+        ? themeText ?? palette?.inputBarText ?? YanciTheme.textOnBubble
+        : Color(manualText);
+    final reduceMotion = MediaQuery.disableAnimationsOf(context);
+    final composerBottomPadding = bottomPad > 24
+        ? bottomPad - 8
+        : bottomPad > 0
+        ? 16.0
+        : 4.0;
 
     return Padding(
-      padding: EdgeInsets.fromLTRB(12, 8, 12, bottomPad > 0 ? bottomPad : 10),
+      padding: EdgeInsets.fromLTRB(12, 8, 12, composerBottomPadding),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -380,228 +428,387 @@ class _InputBarState extends State<InputBar> with TickerProviderStateMixin {
             children: [
               // ═══ 統一輸入容器（＋ + 輸入框 + 發送鍵）═══
               Expanded(
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(26),
-                  child: BackdropFilter(
-                    filter: ImageFilter.blur(sigmaX: 15, sigmaY: 15),
-                    child: Container(
-                      padding: const EdgeInsets.fromLTRB(6, 4, 6, 4),
-                      decoration: BoxDecoration(
-                        color: YanciTheme.glassInputBg,
-                        borderRadius: BorderRadius.circular(26),
-                        border: Border.all(
-                          color: YanciTheme.glassBorder,
-                          width: 0.5,
-                        ),
-                      ),
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.end,
-                        children: [
-                          // ＋ 按鈕：在輸入框下方展開雙層玻璃工具盒。
-                          Padding(
-                            padding: const EdgeInsets.only(bottom: 1),
-                            child: Semantics(
-                              button: true,
-                              expanded: _drawerOpen,
-                              label: L.pick(
-                                en: 'Open add actions',
-                                zhTW: '打開添加工具',
-                                zhCN: '打开添加工具',
-                              ),
-                              child: IconButton(
-                                tooltip: L.pick(
-                                  en: 'Add content',
-                                  zhTW: '添加內容',
-                                  zhCN: '添加内容',
-                                ),
-                                onPressed: _toggleActionPanel,
-                                padding: EdgeInsets.zero,
-                                constraints: const BoxConstraints(
-                                  minWidth: 48,
-                                  minHeight: 48,
-                                ),
-                                icon: AnimatedRotation(
-                                  turns: _drawerOpen ? 0.125 : 0,
-                                  duration: const Duration(milliseconds: 220),
-                                  child: Icon(
-                                    Icons.add_rounded,
-                                    size: 23,
-                                    color: YanciTheme.textSecondary.withValues(
-                                      alpha: _drawerOpen ? 0.78 : 0.55,
-                                    ),
-                                  ),
-                                ),
+                child: TweenAnimationBuilder<double>(
+                  tween: Tween<double>(end: _surfaceRadius),
+                  duration: reduceMotion
+                      ? Duration.zero
+                      : const Duration(milliseconds: 260),
+                  curve: Curves.easeOutCubic,
+                  builder: (context, radius, _) {
+                    return ClipRRect(
+                      borderRadius: BorderRadius.circular(radius),
+                      child: BackdropFilter(
+                        filter: ImageFilter.blur(sigmaX: 15, sigmaY: 15),
+                        child: AnimatedSize(
+                          duration: reduceMotion
+                              ? Duration.zero
+                              : const Duration(milliseconds: 200),
+                          curve: Curves.easeOutCubic,
+                          alignment: Alignment.bottomCenter,
+                          child: Container(
+                            key: _surfaceKey,
+                            constraints: const BoxConstraints(minHeight: 72),
+                            padding: const EdgeInsets.fromLTRB(6, 4, 6, 4),
+                            decoration: BoxDecoration(
+                              color: inputBarBg,
+                              borderRadius: BorderRadius.circular(radius),
+                              border: Border.all(
+                                color: inputBarBorder,
+                                width: 0.5,
                               ),
                             ),
-                          ),
-                          const SizedBox(width: 8),
-                          // 輸入框
-                          Expanded(
-                            child: TextField(
-                              controller: _controller,
-                              focusNode: _focusNode,
-                              maxLines: 4,
-                              minLines: 1,
-                              style: YanciTheme.bodyText,
-                              decoration: InputDecoration(
-                                hintText:
-                                    widget.hintText ?? L.get('input_hint'),
-                                hintStyle: YanciTheme.bodyText.copyWith(
-                                  color: YanciTheme.textSecondary.withValues(
-                                    alpha: 0.4,
-                                  ),
-                                ),
-                                border: InputBorder.none,
-                                isDense: true,
-                                contentPadding: const EdgeInsets.symmetric(
-                                  vertical: 8,
-                                ),
-                              ),
-                              textInputAction: TextInputAction.newline,
-                            ),
-                          ),
-                          const SizedBox(width: 6),
-                          // 發送鍵 / 停止鍵
-                          if (widget.isGeneratingImage ||
-                              widget.isGeneratingResponse)
-                            GestureDetector(
-                              key: const ValueKey('input_bar_stop_button'),
-                              onTap: widget.onStopGeneration,
-                              child: Container(
-                                width: 45,
-                                height: 45,
-                                margin: const EdgeInsets.only(bottom: 1),
-                                decoration: BoxDecoration(
-                                  shape: BoxShape.circle,
-                                  border: Border.all(
-                                    color: YanciTheme.accent.withValues(
-                                      alpha: 0.7,
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.end,
+                              children: [
+                                // ＋ 按鈕：在輸入框下方展開雙層玻璃工具盒。
+                                Align(
+                                  alignment: Alignment.bottomCenter,
+                                  child: Semantics(
+                                    button: true,
+                                    expanded: _drawerOpen,
+                                    label: L.pick(
+                                      en: 'Open add actions',
+                                      zhTW: '打開添加工具',
+                                      zhCN: '打开添加工具',
                                     ),
-                                    width: 1.5,
-                                  ),
-                                ),
-                                child: Center(
-                                  child: Container(
-                                    width: 14,
-                                    height: 14,
-                                    decoration: BoxDecoration(
-                                      borderRadius: BorderRadius.circular(2),
-                                      border: Border.all(
-                                        color: YanciTheme.accent.withValues(
-                                          alpha: 0.7,
+                                    child: SizedBox(
+                                      width: 64,
+                                      height: 64,
+                                      child: IconButton(
+                                        key: const ValueKey(
+                                          'input_bar_add_button',
                                         ),
-                                        width: 1.5,
+                                        tooltip: L.pick(
+                                          en: 'Add content',
+                                          zhTW: '添加內容',
+                                          zhCN: '添加内容',
+                                        ),
+                                        onPressed: _toggleActionPanel,
+                                        padding: EdgeInsets.zero,
+                                        icon: AnimatedRotation(
+                                          turns: _drawerOpen ? 0.125 : 0,
+                                          duration: const Duration(
+                                            milliseconds: 220,
+                                          ),
+                                          child: Icon(
+                                            Icons.add_rounded,
+                                            size: 23,
+                                            color: YanciTheme.textSecondary
+                                                .withValues(
+                                                  alpha: _drawerOpen
+                                                      ? 0.78
+                                                      : 0.55,
+                                                ),
+                                          ),
+                                        ),
                                       ),
                                     ),
                                   ),
                                 ),
-                              ),
-                            )
-                          else
-                            AnimatedBuilder(
-                              animation: Listenable.merge([
-                                _controller,
-                                _swayCtrl,
-                                _sendCtrl,
-                              ]),
-                              builder: (_, _) {
-                                final hasText = _controller.text
-                                    .trim()
-                                    .isNotEmpty;
-                                return GestureDetector(
-                                  key: const ValueKey('input_bar_send_button'),
-                                  onTap:
-                                      (hasText || widget.hasPendingContent) &&
-                                          !widget.isSendBlocked
-                                      ? _handleSend
-                                      : null,
-                                  child: Builder(
-                                    builder: (_) {
-                                      final isSending = _sendCtrl.isAnimating;
-                                      final showBtn =
-                                          (hasText ||
-                                              widget.hasPendingContent) &&
-                                          !widget.isSendBlocked;
-                                      return AnimatedOpacity(
-                                        opacity: showBtn ? 1.0 : 0.4,
-                                        duration: const Duration(
-                                          milliseconds: 200,
-                                        ),
-                                        child: Transform.translate(
-                                          offset: isSending
-                                              ? _sendOffset.value
-                                              : Offset.zero,
-                                          child: Opacity(
-                                            opacity: isSending
-                                                ? _sendOpacity.value
-                                                : 1.0,
-                                            child: Transform.rotate(
-                                              angle: isSending
-                                                  ? _sendRotation.value
-                                                  : _swayAnim.value,
-                                              child: Transform.scale(
-                                                scale: isSending
-                                                    ? _sendScale.value
-                                                    : 1.0,
-                                                child: Container(
-                                                  width: 45,
-                                                  height: 45,
-                                                  margin: const EdgeInsets.only(
-                                                    bottom: 1,
+                                const SizedBox(width: 8),
+                                // 輸入框
+                                Expanded(
+                                  child: AnimatedBuilder(
+                                    animation: _controller,
+                                    builder: (context, _) {
+                                      final whisper =
+                                          widget.hintText?.trim() ?? '';
+                                      final hasWhisper = whisper.isNotEmpty;
+                                      final hasText =
+                                          _controller.text.isNotEmpty;
+                                      if (!hasWhisper) {
+                                        return ConstrainedBox(
+                                          constraints: const BoxConstraints(
+                                            minHeight: 64,
+                                          ),
+                                          child: TextField(
+                                            key: const ValueKey(
+                                              'input_bar_text_field',
+                                            ),
+                                            controller: _controller,
+                                            focusNode: _focusNode,
+                                            minLines: 1,
+                                            maxLines: 4,
+                                            textAlignVertical:
+                                                TextAlignVertical.center,
+                                            style: YanciTheme.bodyText.copyWith(
+                                              color: inputBarText,
+                                            ),
+                                            decoration: InputDecoration(
+                                              hintText: L.get('input_hint'),
+                                              hintMaxLines: 2,
+                                              hintStyle: YanciTheme.bodyText
+                                                  .copyWith(
+                                                    color: inputBarText
+                                                        .withValues(alpha: 0.4),
                                                   ),
-                                                  decoration: BoxDecoration(
-                                                    color: YanciTheme.accent
-                                                        .withValues(
-                                                          alpha: showBtn
-                                                              ? 0.85
-                                                              : 0.3,
-                                                        ),
-                                                    shape: BoxShape.circle,
-                                                    boxShadow: showBtn
-                                                        ? [
-                                                            BoxShadow(
-                                                              color: YanciTheme
-                                                                  .accent
-                                                                  .withValues(
-                                                                    alpha: 0.2,
-                                                                  ),
-                                                              blurRadius: 8,
-                                                              offset:
-                                                                  const Offset(
-                                                                    0,
-                                                                    2,
-                                                                  ),
+                                              border: InputBorder.none,
+                                              isDense: true,
+                                              contentPadding:
+                                                  const EdgeInsets.symmetric(
+                                                    vertical: 8,
+                                                  ),
+                                            ),
+                                            textInputAction:
+                                                TextInputAction.newline,
+                                          ),
+                                        );
+                                      }
+                                      return AnimatedSize(
+                                        duration: reduceMotion
+                                            ? Duration.zero
+                                            : const Duration(milliseconds: 140),
+                                        curve: Curves.easeOutCubic,
+                                        alignment: Alignment.bottomCenter,
+                                        child: ConstrainedBox(
+                                          constraints: const BoxConstraints(
+                                            minHeight: 64,
+                                          ),
+                                          child: Stack(
+                                            alignment: Alignment.centerLeft,
+                                            children: [
+                                              if (hasWhisper)
+                                                Positioned.fill(
+                                                  child: IgnorePointer(
+                                                    child: AnimatedOpacity(
+                                                      key: const ValueKey(
+                                                        'composer-whisper',
+                                                      ),
+                                                      opacity: hasText ? 0 : 1,
+                                                      duration: reduceMotion
+                                                          ? Duration.zero
+                                                          : const Duration(
+                                                              milliseconds: 110,
                                                             ),
-                                                          ]
-                                                        : null,
-                                                  ),
-                                                  child: Center(
-                                                    child: Image.asset(
-                                                      widget.sendStyle ==
-                                                              SendButtonStyle
-                                                                  .leaf
-                                                          ? 'assets/images/send_leaf.png'
-                                                          : 'assets/images/send_paw.png',
-                                                      width: 32,
-                                                      height: 32,
-                                                      fit: BoxFit.contain,
+                                                      child: Align(
+                                                        alignment: Alignment
+                                                            .centerLeft,
+                                                        child: Text(
+                                                          whisper,
+                                                          maxLines: 2,
+                                                          overflow: TextOverflow
+                                                              .ellipsis,
+                                                          style: YanciTheme
+                                                              .bodyText
+                                                              .copyWith(
+                                                                color: inputBarText
+                                                                    .withValues(
+                                                                      alpha:
+                                                                          0.4,
+                                                                    ),
+                                                                height: 1.5,
+                                                              ),
+                                                        ),
+                                                      ),
                                                     ),
+                                                  ),
+                                                ),
+                                              TextField(
+                                                key: const ValueKey(
+                                                  'input_bar_text_field',
+                                                ),
+                                                controller: _controller,
+                                                focusNode: _focusNode,
+                                                minLines: 1,
+                                                maxLines: 4,
+                                                textAlignVertical:
+                                                    TextAlignVertical.center,
+                                                style: YanciTheme.bodyText
+                                                    .copyWith(
+                                                      color: inputBarText,
+                                                    ),
+                                                decoration: InputDecoration(
+                                                  hintText: null,
+                                                  hintMaxLines: 2,
+                                                  hintStyle: YanciTheme.bodyText
+                                                      .copyWith(
+                                                        color: inputBarText
+                                                            .withValues(
+                                                              alpha: 0.4,
+                                                            ),
+                                                      ),
+                                                  border: InputBorder.none,
+                                                  isDense: true,
+                                                  contentPadding:
+                                                      const EdgeInsets.symmetric(
+                                                        vertical: 8,
+                                                      ),
+                                                ),
+                                                textInputAction:
+                                                    TextInputAction.newline,
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      );
+                                    },
+                                  ),
+                                ),
+                                const SizedBox(width: 6),
+                                // 發送鍵 / 停止鍵
+                                if (widget.isGeneratingImage ||
+                                    widget.isGeneratingResponse)
+                                  Align(
+                                    alignment: Alignment.bottomCenter,
+                                    child: SizedBox(
+                                      width: 64,
+                                      height: 64,
+                                      child: Center(
+                                        child: GestureDetector(
+                                          key: const ValueKey(
+                                            'input_bar_stop_button',
+                                          ),
+                                          onTap: widget.onStopGeneration,
+                                          child: Container(
+                                            width: 52,
+                                            height: 52,
+                                            decoration: BoxDecoration(
+                                              shape: BoxShape.circle,
+                                              border: Border.all(
+                                                color: YanciTheme.accent
+                                                    .withValues(alpha: 0.7),
+                                                width: 1.5,
+                                              ),
+                                            ),
+                                            child: Center(
+                                              child: Container(
+                                                width: 14,
+                                                height: 14,
+                                                decoration: BoxDecoration(
+                                                  borderRadius:
+                                                      BorderRadius.circular(2),
+                                                  border: Border.all(
+                                                    color: YanciTheme.accent
+                                                        .withValues(alpha: 0.7),
+                                                    width: 1.5,
                                                   ),
                                                 ),
                                               ),
                                             ),
                                           ),
                                         ),
-                                      );
-                                    },
+                                      ),
+                                    ),
+                                  )
+                                else
+                                  Align(
+                                    alignment: Alignment.bottomCenter,
+                                    child: AnimatedBuilder(
+                                      animation: Listenable.merge([
+                                        _controller,
+                                        _swayCtrl,
+                                        _sendCtrl,
+                                      ]),
+                                      builder: (_, _) {
+                                        final hasText = _controller.text
+                                            .trim()
+                                            .isNotEmpty;
+                                        final isSending = _sendCtrl.isAnimating;
+                                        final showBtn =
+                                            (hasText ||
+                                                widget.hasPendingContent) &&
+                                            !widget.isSendBlocked;
+                                        return GestureDetector(
+                                          key: const ValueKey(
+                                            'input_bar_send_button',
+                                          ),
+                                          onTap:
+                                              (hasText ||
+                                                      widget
+                                                          .hasPendingContent) &&
+                                                  !widget.isSendBlocked
+                                              ? _handleSend
+                                              : null,
+                                          child: SizedBox(
+                                            width: 64,
+                                            height: 64,
+                                            child: Center(
+                                              child: AnimatedOpacity(
+                                                opacity: showBtn ? 1.0 : 0.4,
+                                                duration: const Duration(
+                                                  milliseconds: 200,
+                                                ),
+                                                child: Transform.translate(
+                                                  offset: isSending
+                                                      ? _sendOffset.value
+                                                      : Offset.zero,
+                                                  child: Opacity(
+                                                    opacity: isSending
+                                                        ? _sendOpacity.value
+                                                        : 1.0,
+                                                    child: Transform.rotate(
+                                                      angle: isSending
+                                                          ? _sendRotation.value
+                                                          : _swayAnim.value,
+                                                      child: Transform.scale(
+                                                        scale: isSending
+                                                            ? _sendScale.value
+                                                            : 1.0,
+                                                        child: Container(
+                                                          width: 52,
+                                                          height: 52,
+                                                          decoration: BoxDecoration(
+                                                            color: YanciTheme
+                                                                .accent
+                                                                .withValues(
+                                                                  alpha: showBtn
+                                                                      ? 0.85
+                                                                      : 0.3,
+                                                                ),
+                                                            shape:
+                                                                BoxShape.circle,
+                                                            boxShadow: showBtn
+                                                                ? [
+                                                                    BoxShadow(
+                                                                      color: YanciTheme
+                                                                          .accent
+                                                                          .withValues(
+                                                                            alpha:
+                                                                                0.2,
+                                                                          ),
+                                                                      blurRadius:
+                                                                          8,
+                                                                      offset:
+                                                                          const Offset(
+                                                                            0,
+                                                                            2,
+                                                                          ),
+                                                                    ),
+                                                                  ]
+                                                                : null,
+                                                          ),
+                                                          child: Center(
+                                                            child: Image.asset(
+                                                              widget.sendStyle ==
+                                                                      SendButtonStyle
+                                                                          .leaf
+                                                                  ? 'assets/images/send_leaf.png'
+                                                                  : 'assets/images/send_paw.png',
+                                                              width: 32,
+                                                              height: 32,
+                                                              fit: BoxFit
+                                                                  .contain,
+                                                            ),
+                                                          ),
+                                                        ),
+                                                      ),
+                                                    ),
+                                                  ),
+                                                ),
+                                              ),
+                                            ),
+                                          ),
+                                        );
+                                      },
+                                    ),
                                   ),
-                                );
-                              },
+                              ],
                             ),
-                        ],
+                          ),
+                        ),
                       ),
-                    ),
-                  ),
+                    );
+                  },
                 ),
               ),
             ],
@@ -625,15 +832,32 @@ class _InputBarState extends State<InputBar> with TickerProviderStateMixin {
     );
   }
 
+  void _scheduleRadiusSync() {
+    WidgetsBinding.instance.addPostFrameCallback((_) => _syncSurfaceRadius());
+  }
+
+  /// 依容器目標高度連續決定圓角：72（單行）= 藥丸，約 112+ = 大圓角。
+  void _syncSurfaceRadius() {
+    if (!mounted) return;
+    final box = _surfaceKey.currentContext?.findRenderObject();
+    if (box is! RenderBox || !box.hasSize) return;
+    final t = ((box.size.height - 72) / 40).clamp(0.0, 1.0);
+    final next = _pillRadius + (_multilineRadius - _pillRadius) * t;
+    if ((next - _surfaceRadius).abs() < 0.5) return;
+    setState(() => _surfaceRadius = next);
+  }
+
   void _toggleActionPanel() {
     _focusNode.unfocus();
     setState(() => _drawerOpen = !_drawerOpen);
   }
 
   Widget _buildActionPanel() {
-    final panelColor = YanciTheme.isDark
-        ? const Color(0xD91B1820)
-        : const Color(0xD9FFFFFF);
+    final chatScope = ChatBackgroundPresetScope.of(context);
+    final inherited = chatScope?.palette?.inputBarBg;
+    final panelColor =
+        inherited ??
+        (YanciTheme.isDark ? const Color(0xD91B1820) : const Color(0xD9FFFFFF));
 
     return Semantics(
       container: true,
@@ -646,10 +870,6 @@ class _InputBarState extends State<InputBar> with TickerProviderStateMixin {
             decoration: BoxDecoration(
               color: panelColor,
               borderRadius: BorderRadius.circular(24),
-              border: Border.all(
-                color: YanciTheme.glassBorder.withValues(alpha: 0.9),
-                width: 0.8,
-              ),
               boxShadow: [
                 BoxShadow(
                   color: Colors.black.withValues(
@@ -665,10 +885,27 @@ class _InputBarState extends State<InputBar> with TickerProviderStateMixin {
               child: LayoutBuilder(
                 builder: (context, constraints) {
                   final width = (constraints.maxWidth - 27) / 4;
+                  final wideWidth = (constraints.maxWidth - 9) / 2;
                   return Wrap(
                     spacing: 9,
                     runSpacing: 9,
                     children: [
+                      if (widget.onStoryArchiveTap != null)
+                        SizedBox(
+                          width: wideWidth,
+                          child: _drawerAction(
+                            iconData: Icons.menu_book_outlined,
+                            label: L.pick(
+                              en: 'Story archive',
+                              zhTW: '劇情檔案',
+                              zhCN: '剧情档案',
+                            ),
+                            onTap: () => _runPanelAction(
+                              () => widget.onStoryArchiveTap?.call(),
+                            ),
+                            wide: true,
+                          ),
+                        ),
                       SizedBox(
                         width: width,
                         child: _drawerAction(
@@ -691,49 +928,63 @@ class _InputBarState extends State<InputBar> with TickerProviderStateMixin {
                           ),
                         ),
                       ),
-                      SizedBox(
-                        width: width,
-                        child: _drawerAction(
-                          assetPath: 'assets/images/shell_coin.png',
-                          label: L.pick(en: 'Transfer', zhTW: '轉帳', zhCN: '转账'),
-                          onTap: () => _runPanelAction(_showTransferDialog),
-                        ),
-                      ),
-                      SizedBox(
-                        width: width,
-                        child: _drawerAction(
-                          iconData: Icons.local_activity_outlined,
-                          label: L.pick(
-                            en: 'Scratch card',
-                            zhTW: '刮刮卡',
-                            zhCN: '刮刮卡',
-                          ),
-                          onTap: () => _runPanelAction(_showScratchGiftPicker),
-                        ),
-                      ),
-                      SizedBox(
-                        width: width,
-                        child: _drawerAction(
-                          iconData: Icons.storefront_outlined,
-                          label: L.pick(
-                            en: 'Gift shop',
-                            zhTW: '禮物商店',
-                            zhCN: '礼物商店',
-                          ),
-                          onTap: () =>
-                              _runPanelAction(() => widget.onShopGift?.call()),
-                        ),
-                      ),
-                      SizedBox(
-                        width: width,
-                        child: _drawerAction(
-                          iconData: Icons.backpack_outlined,
-                          label: L.pick(en: 'Backpack', zhTW: '背包', zhCN: '背包'),
-                          onTap: () => _runPanelAction(
-                            () => widget.onBackpackTap?.call(),
+                      if (widget.showTransfer)
+                        SizedBox(
+                          width: width,
+                          child: _drawerAction(
+                            assetPath: 'assets/images/shell_coin.png',
+                            label: L.pick(
+                              en: 'Transfer',
+                              zhTW: '轉帳',
+                              zhCN: '转账',
+                            ),
+                            onTap: () => _runPanelAction(_showTransferDialog),
                           ),
                         ),
-                      ),
+                      if (widget.showScratch)
+                        SizedBox(
+                          width: width,
+                          child: _drawerAction(
+                            iconData: Icons.local_activity_outlined,
+                            label: L.pick(
+                              en: 'Scratch card',
+                              zhTW: '刮刮卡',
+                              zhCN: '刮刮卡',
+                            ),
+                            onTap: () =>
+                                _runPanelAction(_showScratchGiftPicker),
+                          ),
+                        ),
+                      if (widget.showShop)
+                        SizedBox(
+                          width: width,
+                          child: _drawerAction(
+                            iconData: Icons.storefront_outlined,
+                            label: L.pick(
+                              en: 'Gift shop',
+                              zhTW: '禮物商店',
+                              zhCN: '礼物商店',
+                            ),
+                            onTap: () => _runPanelAction(
+                              () => widget.onShopGift?.call(),
+                            ),
+                          ),
+                        ),
+                      if (widget.showBackpack)
+                        SizedBox(
+                          width: width,
+                          child: _drawerAction(
+                            iconData: Icons.backpack_outlined,
+                            label: L.pick(
+                              en: 'Backpack',
+                              zhTW: '背包',
+                              zhCN: '背包',
+                            ),
+                            onTap: () => _runPanelAction(
+                              () => widget.onBackpackTap?.call(),
+                            ),
+                          ),
+                        ),
                       if (widget.showMarriageCert)
                         SizedBox(
                           width: width,
@@ -765,6 +1016,7 @@ class _InputBarState extends State<InputBar> with TickerProviderStateMixin {
     String? assetPath,
     required String label,
     required VoidCallback onTap,
+    bool wide = false,
   }) {
     return Semantics(
       button: true,
@@ -776,16 +1028,16 @@ class _InputBarState extends State<InputBar> with TickerProviderStateMixin {
           borderRadius: BorderRadius.circular(17),
           child: Container(
             constraints: const BoxConstraints(minHeight: 66),
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 9),
+            padding: EdgeInsets.symmetric(
+              horizontal: wide ? 14 : 8,
+              vertical: 9,
+            ),
             decoration: BoxDecoration(
               color: YanciTheme.glassWhite.withValues(alpha: 0.18),
               borderRadius: BorderRadius.circular(17),
-              border: Border.all(
-                color: YanciTheme.glassBorder.withValues(alpha: 0.72),
-                width: 0.6,
-              ),
             ),
-            child: Column(
+            child: Flex(
+              direction: wide ? Axis.horizontal : Axis.vertical,
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 SizedBox(
@@ -800,19 +1052,34 @@ class _InputBarState extends State<InputBar> with TickerProviderStateMixin {
                           filterQuality: FilterQuality.none,
                         ),
                 ),
-                const SizedBox(height: 5),
-                Text(
-                  label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    color: YanciTheme.textPrimary,
-                    fontFamily: YanciTheme.fontFamily,
-                    fontSize: 11.5,
-                    fontWeight: FontWeight.w500,
+                SizedBox(width: wide ? 9 : 0, height: wide ? 0 : 5),
+                if (wide)
+                  Flexible(
+                    child: Text(
+                      label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: YanciTheme.textPrimary,
+                        fontFamily: YanciTheme.fontFamily,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  )
+                else
+                  Text(
+                    label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: YanciTheme.textPrimary,
+                      fontFamily: YanciTheme.fontFamily,
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w500,
+                    ),
                   ),
-                ),
               ],
             ),
           ),
@@ -829,13 +1096,18 @@ class _InputBarState extends State<InputBar> with TickerProviderStateMixin {
   }
 
   Future<void> _pickImageFromGallery() async {
-    final file = await _picker.pickImage(
-      source: ImageSource.gallery,
+    final files = await _picker.pickMultiImage(
       maxWidth: 800,
       maxHeight: 800,
       imageQuality: 70,
     );
-    if (file != null) widget.onImagePicked?.call(file.path);
+    if (files.isEmpty) return;
+    final paths = files.map((file) => file.path).toSet().take(10).toList();
+    if (widget.onImagesPicked != null) {
+      widget.onImagesPicked!(paths);
+    } else if (paths.isNotEmpty) {
+      widget.onImagePicked?.call(paths.first);
+    }
   }
 
   void _showScratchGiftPicker() {

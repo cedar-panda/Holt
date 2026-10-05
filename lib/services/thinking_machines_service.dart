@@ -355,15 +355,17 @@ class ThinkingMachinesService implements ApiAdapter {
       }
 
       final normalizedRole = role == 'assistant' ? 'assistant' : 'user';
-      final imageDataUrl = message['image_data_url'];
-      if (normalizedRole == 'user' && imageDataUrl?.isNotEmpty == true) {
+      final imageDataUrls = ApiMessageMedia.imageDataUrls(message);
+      if (normalizedRole == 'user' && imageDataUrls.isNotEmpty) {
         apiMessages.add(<String, dynamic>{
           'role': 'user',
           'content': <Map<String, dynamic>>[
-            _imageBlock(imageDataUrl!),
+            for (final imageDataUrl in imageDataUrls) _imageBlock(imageDataUrl),
             <String, dynamic>{
               'type': 'text',
-              'text': content.isEmpty ? '（用戶發送了一張圖片）' : content,
+              'text': content.isEmpty
+                  ? '（用戶發送了${imageDataUrls.length}張圖片）'
+                  : content,
             },
           ],
         });
@@ -417,7 +419,7 @@ class ThinkingMachinesService implements ApiAdapter {
         provider: 'thinking_machines',
         model: model.trim().isEmpty ? defaultModel : model.trim(),
         cacheChannel: structuredPrompt.cacheChannel,
-        sessionId: CacheSession.conversationId,
+        sessionId: structuredPrompt.cacheSessionId,
         transport: runtimeTransport,
         sourceMessages: messages,
         requestMessages: apiMessages,

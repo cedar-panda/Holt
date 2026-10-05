@@ -1,10 +1,11 @@
 import 'package:flutter/material.dart';
+import '../models/context_mode.dart';
 import '../theme/app_theme.dart';
 import '../memory/database.dart';
 import '../services/settings_manager.dart';
+import '../services/settings/context_mode_settings.dart';
 import '../services/locale_strings.dart';
 import '../services/static_token_estimator.dart';
-import '../services/shop_service.dart';
 
 class AbilityModulesScreen extends StatefulWidget {
   final Map<String, dynamic> character;
@@ -17,15 +18,9 @@ class AbilityModulesScreen extends StatefulWidget {
 
 class _AbilityModulesScreenState extends State<AbilityModulesScreen> {
   bool _isSpiderWebEnabled = false;
+  bool _rpUsesClassicMemory = false;
   int _legacyBudget = 1000;
   bool _legacyMemoryWrite = false;
-  bool _shopEnabled = true;
-
-  final Map<String, bool> _abilityStates = {
-    'emotion': true,
-    'bioclock': true,
-    'imagegen': true,
-  };
 
   @override
   void initState() {
@@ -36,19 +31,17 @@ class _AbilityModulesScreenState extends State<AbilityModulesScreen> {
   }
 
   Future<void> _loadSettings() async {
+    final characterId = widget.character['id'] as String;
+    _rpUsesClassicMemory =
+        await ContextModeSettings.effectiveMode(characterId) == ContextMode.rp;
     _legacyBudget = await MemorySettings.getMemBudgetTotal();
     _legacyBudget = ((_legacyBudget / 100).round() * 100).clamp(300, 4000);
     _legacyMemoryWrite = await MemorySettings.getMemoryWriteEnabled();
-    _shopEnabled = await ShopService.isEnabled();
-
-    for (final key in _abilityStates.keys) {
-      _abilityStates[key] = await MemorySettings.isAbilityEnabled(key);
-    }
-
     if (mounted) setState(() {});
   }
 
   Future<void> _toggleSpiderWeb(bool value) async {
+    if (_rpUsesClassicMemory) return;
     setState(() {
       _isSpiderWebEnabled = value;
     });
@@ -57,22 +50,6 @@ class _AbilityModulesScreenState extends State<AbilityModulesScreen> {
       'is_spider_web_enabled': value ? 1 : 0,
     });
     // 靜態 token 估值提示（僅 cache 開啟時彈）
-    if (mounted) StaticTokenEstimator.showAfterToggle(context);
-  }
-
-  Future<void> _toggleShop(bool value) async {
-    setState(() {
-      _shopEnabled = value;
-    });
-    await ShopService.setEnabled(value);
-    if (mounted) StaticTokenEstimator.showAfterToggle(context);
-  }
-
-  Future<void> _toggleAbility(String key, bool value) async {
-    setState(() {
-      _abilityStates[key] = value;
-    });
-    await MemorySettings.setAbilityEnabled(key, value);
     if (mounted) StaticTokenEstimator.showAfterToggle(context);
   }
 
@@ -139,6 +116,8 @@ class _AbilityModulesScreenState extends State<AbilityModulesScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final classicSelected = _rpUsesClassicMemory || !_isSpiderWebEnabled;
+    final spiderSelected = !_rpUsesClassicMemory && _isSpiderWebEnabled;
     final charName =
         widget.character['name'] as String? ??
         L.pick(en: 'Character', zhTW: '角色');
@@ -227,7 +206,7 @@ class _AbilityModulesScreenState extends State<AbilityModulesScreen> {
                           duration: const Duration(milliseconds: 200),
                           padding: const EdgeInsets.symmetric(vertical: 12),
                           decoration: BoxDecoration(
-                            color: !_isSpiderWebEnabled
+                            color: classicSelected
                                 ? YanciTheme.accent
                                 : Colors.transparent,
                             borderRadius: BorderRadius.circular(14),
@@ -236,7 +215,7 @@ class _AbilityModulesScreenState extends State<AbilityModulesScreen> {
                             child: Text(
                               L.pick(en: 'Legacy Memory', zhTW: '經典記憶'),
                               style: TextStyle(
-                                color: !_isSpiderWebEnabled
+                                color: classicSelected
                                     ? Colors.white
                                     : YanciTheme.textSecondary,
                                 fontWeight: FontWeight.bold,
@@ -248,12 +227,14 @@ class _AbilityModulesScreenState extends State<AbilityModulesScreen> {
                     ),
                     Expanded(
                       child: GestureDetector(
-                        onTap: () => _toggleSpiderWeb(true),
+                        onTap: _rpUsesClassicMemory
+                            ? null
+                            : () => _toggleSpiderWeb(true),
                         child: AnimatedContainer(
                           duration: const Duration(milliseconds: 200),
                           padding: const EdgeInsets.symmetric(vertical: 12),
                           decoration: BoxDecoration(
-                            color: _isSpiderWebEnabled
+                            color: spiderSelected
                                 ? YanciTheme.accent
                                 : Colors.transparent,
                             borderRadius: BorderRadius.circular(14),
@@ -265,9 +246,11 @@ class _AbilityModulesScreenState extends State<AbilityModulesScreen> {
                                 Icon(
                                   Icons.hub_outlined,
                                   size: 16,
-                                  color: _isSpiderWebEnabled
+                                  color: spiderSelected
                                       ? Colors.white
-                                      : YanciTheme.accent,
+                                      : YanciTheme.accent.withValues(
+                                          alpha: _rpUsesClassicMemory ? .35 : 1,
+                                        ),
                                 ),
                                 const SizedBox(width: 6),
                                 Text(
@@ -276,9 +259,13 @@ class _AbilityModulesScreenState extends State<AbilityModulesScreen> {
                                     zhTW: '蛛網記憶 (推薦)',
                                   ),
                                   style: TextStyle(
-                                    color: _isSpiderWebEnabled
+                                    color: spiderSelected
                                         ? Colors.white
-                                        : YanciTheme.accent,
+                                        : YanciTheme.accent.withValues(
+                                            alpha: _rpUsesClassicMemory
+                                                ? .35
+                                                : 1,
+                                          ),
                                     fontWeight: FontWeight.bold,
                                   ),
                                 ),
@@ -291,12 +278,41 @@ class _AbilityModulesScreenState extends State<AbilityModulesScreen> {
                   ],
                 ),
               ),
+              if (_rpUsesClassicMemory) ...[
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Icon(
+                      Icons.theater_comedy_outlined,
+                      size: 15,
+                      color: YanciTheme.accent,
+                    ),
+                    const SizedBox(width: 7),
+                    Expanded(
+                      child: Text(
+                        L.pick(
+                          en: 'RP mode uses classic memory. Your daily memory choice is preserved.',
+                          zhTW: 'RP 模式自動使用經典記憶；日常模式的記憶選擇會保留。',
+                          zhCN: 'RP 模式自动使用经典记忆；日常模式的记忆选择会保留。',
+                        ),
+                        style: TextStyle(
+                          color: YanciTheme.textSecondary.withValues(
+                            alpha: .72,
+                          ),
+                          fontSize: 11,
+                          height: 1.35,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
               const SizedBox(height: 32),
 
               // dynamic content based on toggle
               AnimatedSwitcher(
                 duration: const Duration(milliseconds: 300),
-                child: _isSpiderWebEnabled
+                child: spiderSelected
                     ? _buildSpiderWebSection()
                     : _buildLegacySection(),
               ),
@@ -326,8 +342,9 @@ class _AbilityModulesScreenState extends State<AbilityModulesScreen> {
               Expanded(
                 child: Text(
                   L.pick(
-                    en: 'Spider Web memory is active. Ancillary modules remain independently configurable.',
-                    zhTW: '已啟動蛛網記憶。情緒與生物鐘仍可在開關內獨立控制。',
+                    en: 'Spider Web memory is active. Feature modules can be configured on the Switches page.',
+                    zhTW: '已啟動蛛網記憶。其他功能模組可在「開關」主頁調整。',
+                    zhCN: '已启用蛛网记忆。其他功能模块可在“开关”主页调整。',
                   ),
                   style: TextStyle(
                     color: YanciTheme.accent,
@@ -338,48 +355,6 @@ class _AbilityModulesScreenState extends State<AbilityModulesScreen> {
               ),
             ],
           ),
-        ),
-        const SizedBox(height: 24),
-
-        // Removed Spider Web Injection Budget Slider as requested, merging control into Classic Memory
-        Text(
-          L.pick(en: 'Ancillary Modules', zhTW: '附屬能力模組'),
-          style: TextStyle(
-            color: YanciTheme.textSecondary,
-            fontSize: 14,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-        const SizedBox(height: 16),
-        _buildModuleTile(
-          icon: Icons.scatter_plot_rounded,
-          title: L.pick(en: 'Emotion', zhTW: '情緒座標'),
-          subtitle: L.pick(
-            en: 'Inject emotion rules and current emotion state',
-            zhTW: '獨立控制情緒規則與當前情緒狀態注入',
-          ),
-          value: _abilityStates['emotion'] ?? true,
-          onChanged: (v) => _toggleAbility('emotion', v),
-          locked: false,
-        ),
-        _buildModuleTile(
-          icon: Icons.brush_rounded,
-          title: L.pick(en: 'Draw', zhTW: '畫畫'),
-          subtitle: L.pick(en: 'Enable image generation', zhTW: '允許生成圖片'),
-          value: _abilityStates['imagegen'] ?? true,
-          onChanged: (v) => _toggleAbility('imagegen', v),
-          locked: false,
-        ),
-        _buildModuleTile(
-          icon: Icons.storefront_rounded,
-          title: L.pick(en: 'Shell Shop', zhTW: '貝殼商店'),
-          subtitle: L.pick(
-            en: 'Allow shop, backpack, buying and gifting tools',
-            zhTW: '允許商店、背包、購買與贈禮工具',
-          ),
-          value: _shopEnabled,
-          onChanged: _toggleShop,
-          locked: false,
         ),
       ],
     );
@@ -408,8 +383,9 @@ class _AbilityModulesScreenState extends State<AbilityModulesScreen> {
               Expanded(
                 child: Text(
                   L.pick(
-                    en: 'Legacy memory is active. You can toggle individual modules manually.',
-                    zhTW: '傳統記憶模式。各項認知能力模組互相獨立，可個別配置。',
+                    en: 'Legacy memory is active. Feature modules can be configured on the Switches page.',
+                    zhTW: '已啟動經典記憶。其他功能模組可在「開關」主頁調整。',
+                    zhCN: '已启用经典记忆。其他功能模块可在“开关”主页调整。',
                   ),
                   style: TextStyle(
                     color: YanciTheme.accent,
@@ -469,7 +445,7 @@ class _AbilityModulesScreenState extends State<AbilityModulesScreen> {
         const SizedBox(height: 24),
 
         Text(
-          L.pick(en: 'Ancillary Modules', zhTW: '附屬能力模組'),
+          L.pick(en: 'Memory writing', zhTW: '記憶寫入', zhCN: '记忆写入'),
           style: TextStyle(
             color: YanciTheme.textSecondary,
             fontSize: 14,
@@ -486,33 +462,6 @@ class _AbilityModulesScreenState extends State<AbilityModulesScreen> {
           ),
           value: _legacyMemoryWrite,
           onChanged: _toggleLegacyMemoryWrite,
-          locked: false,
-        ),
-        _buildModuleTile(
-          icon: Icons.scatter_plot_rounded,
-          title: L.pick(en: 'Emotion', zhTW: '情緒座標'),
-          subtitle: L.pick(en: 'Track emotional state', zhTW: '追蹤雙方情緒變化'),
-          value: _abilityStates['emotion'] ?? true,
-          onChanged: (v) => _toggleAbility('emotion', v),
-          locked: false,
-        ),
-        _buildModuleTile(
-          icon: Icons.brush_rounded,
-          title: L.pick(en: 'Draw', zhTW: '畫畫'),
-          subtitle: L.pick(en: 'Enable image generation', zhTW: '允許生成圖片'),
-          value: _abilityStates['imagegen'] ?? true,
-          onChanged: (v) => _toggleAbility('imagegen', v),
-          locked: false,
-        ),
-        _buildModuleTile(
-          icon: Icons.storefront_rounded,
-          title: L.pick(en: 'Shell Shop', zhTW: '貝殼商店'),
-          subtitle: L.pick(
-            en: 'Allow shop, backpack, buying and gifting tools',
-            zhTW: '允許商店、背包、購買與贈禮工具',
-          ),
-          value: _shopEnabled,
-          onChanged: _toggleShop,
           locked: false,
         ),
       ],

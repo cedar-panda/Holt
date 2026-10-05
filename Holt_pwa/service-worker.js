@@ -1,10 +1,13 @@
-const CACHE_NAME = "holt-pwa-shell-v84";
+const CACHE_NAME = "holt-pwa-shell-v90";
 const APP_SHELL = [
   "./",
   "./index.html",
-  "./styles.css?v=84",
+  "./home.html",
+  "./settings.html",
+  "./styles.css?v=90",
   "./splash.js?v=4",
-  "./app.js?v=84",
+  "./shell-ready.js?v=1",
+  "./app.js?v=90",
   "./avatar-cropper.js",
   "./ui-home.js",
   "./ui-usage.js",
@@ -16,8 +19,16 @@ const APP_SHELL = [
   "./db.js",
   "./api.js",
   "./prompt-cache.js",
+  "./prompt-builder.js",
+  "./companion-features.js",
+  "./image-generation.js",
+  "./web-search.js",
+  "./favorite-models-dialog.js",
   "./manifest.webmanifest",
+  "./privacy.html",
   "./assets/images/holt_logo.png",
+  "./assets/images/app_icon.png",
+  "./assets/images/send_leaf_optimized.png",
 ];
 
 self.addEventListener("install", (event) => {

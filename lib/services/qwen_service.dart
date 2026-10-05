@@ -225,7 +225,7 @@ class QwenService implements ApiAdapter {
         provider: 'qwen',
         model: model,
         cacheChannel: structuredPrompt.cacheChannel,
-        sessionId: CacheSession.conversationId,
+        sessionId: structuredPrompt.cacheSessionId,
         transport: attached ? 'system_before_latest_user' : '',
         sourceMessages: messages,
         requestMessages: allMessages,
@@ -239,12 +239,28 @@ class QwenService implements ApiAdapter {
 
   Map<String, int>? _extractUsage(Map<String, dynamic> data) {
     final usage = data['usage'];
-    if (usage == null) return null;
+    if (usage is! Map) return null;
+    final promptDetails = usage['prompt_tokens_details'];
     final stats = <String, int>{
-      'prompt_tokens': usage['prompt_tokens'] ?? 0,
-      'completion_tokens': usage['completion_tokens'] ?? 0,
+      'prompt_tokens': _intValue(
+        usage['prompt_tokens'] ?? usage['input_tokens'],
+      ),
+      'completion_tokens': _intValue(
+        usage['completion_tokens'] ?? usage['output_tokens'],
+      ),
+      // Model Studio implicit cache reports Chat Completions hits here.
+      // Keep Anthropic-compatible aliases as a fallback for relayed models.
+      'cache_read': promptDetails is Map
+          ? _intValue(promptDetails['cached_tokens'])
+          : _intValue(
+              usage['cache_read_input_tokens'] ??
+                  usage['input_tokens_details']?['cached_tokens'],
+            ),
+      'cache_creation': _intValue(usage['cache_creation_input_tokens']),
     };
     lastCacheStats = Map<String, int>.from(stats);
     return stats;
   }
+
+  static int _intValue(dynamic value) => value is num ? value.toInt() : 0;
 }

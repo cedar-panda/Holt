@@ -11,8 +11,8 @@ import 'locale_strings.dart';
 ///
 /// 計數以「角色 + 日期」為 key，跨日自然歸零，不需手動清。
 class XPostSettings {
-  /// X API 目前先關閉入口與模型提示；功能碼保留，日後改 true 即可恢復。
-  static const bool featureEnabled = false;
+  /// X API 功能總旗標。角色仍需在自己的人設卡內完成連接並個別啟用。
+  static const bool featureEnabled = true;
   static const bool showEntry = featureEnabled;
 
   static const int maxDailyLimit = 20;

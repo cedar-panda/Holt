@@ -6,7 +6,9 @@ import { $, $$, toast, switchTab, registerTabHandler } from "./app.js";
 import {
   getSetting, setSetting,
   listCharacters, listConversations, getMessagesByConversation,
-  saveCharacter, saveConversation, saveMessage,
+  listStickers, listAllTimelineEntries, listAllUsageLogs,
+  listAllFeatureRecords,
+  replacePwaData, clearAllPwaData,
 } from "./db.js";
 import { applyFontPreference, getFontOptions } from "./font-loader.js";
 import { encryptHoltBackup, isEncryptedBackup, makePortableZip, readBackupDump } from "./backup-bundle.js";
@@ -24,6 +26,7 @@ const profileFont = $("#profileFont");
 const profileFontHint = $("#profileFontHint");
 const exportDataBtn = $("#exportDataBtn");
 const importDataBtn = $("#importDataBtn");
+const clearLocalDataBtn = $("#clearLocalDataBtn");
 const profileThemeToggle = $("#profileThemeToggle");
 const profileUsageBtn = $("#profileUsageBtn");
 const profileIdentity = $("#profileIdentity");
@@ -395,7 +398,10 @@ async function renderProfile() {
   profileFont.value = getFontOptions()[fontChoice] ? fontChoice : "system";
 
   if (avatar) {
-    profileAvatar.innerHTML = `<img src="${avatar}" alt="">`;
+    const image = document.createElement("img");
+    image.src = String(avatar);
+    image.alt = "";
+    profileAvatar.replaceChildren(image);
   } else {
     profileAvatar.innerHTML = `<svg class="line-icon profile-avatar-default" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3.2"/><path d="M5.5 20a6.5 6.5 0 0 1 13 0"/></svg>`;
   }
@@ -413,7 +419,11 @@ profileAvatarPicker.addEventListener("change", async () => {
     const dataUrl = await openAvatarCropper(file, { title: "裁剪使用者頭像" });
     if (!dataUrl) return;
     await setSetting("userAvatar", dataUrl);
-    profileAvatar.innerHTML = `<img src="${dataUrl}" alt="" decoding="async">`;
+    const image = document.createElement("img");
+    image.src = dataUrl;
+    image.alt = "";
+    image.decoding = "async";
+    profileAvatar.replaceChildren(image);
   } catch (err) {
     toast("頭像處理失敗：" + err.message);
   } finally {
@@ -443,9 +453,15 @@ profileFont.addEventListener("change", async () => {
 // ═══ Backup ═══
 
 const PROFILE_BACKUP_SETTINGS = [
-  "provider", "model", "customEndpoint", "userName", "userPronoun", "userBio",
+  "provider", "model", "model_openrouter", "model_grok", "model_gemini", "model_custom",
+  "customEndpoint", "userName", "userPronoun", "userBio",
   "userAvatar", "fontChoice", "themePreset", "bubbleOpacity", "bubbleRadius",
-  "onboardingDone", "promptCachingEnabled",
+  "onboardingDone", "onboardingVersion", "onboardingStep", "promptCachingEnabled", "thinkingChain",
+  "starredModels", "starredModelProviders", "webSearchEnabled", "webSearchMode", "webSearchMaxResults",
+  "webSearchModel_openrouter", "webSearchModel_grok", "webSearchModel_gemini", "webSearchModel_custom",
+  "imageGenerationProvider", "imageGenerationModel_openrouter", "imageGenerationModel_grok",
+  "imageGenerationModel_gemini", "imageGenerationModel_custom", "activeCharacterId",
+  "companionSettings",
 ];
 
 function askBackupPassword({ confirmation = false } = {}) {
@@ -476,13 +492,20 @@ async function collectPwaBackup() {
   }
   const settings = {};
   for (const key of PROFILE_BACKUP_SETTINGS) settings[key] = await getSetting(key);
+  const [stickers, timeline, featureRecords, usageLogs] = await Promise.all([
+    listStickers(), listAllTimelineEntries(), listAllFeatureRecords(), listAllUsageLogs(),
+  ]);
   return {
     type: "holt_pwa_backup",
-    version: 2,
+    version: 4,
     exportedAt: new Date().toISOString(),
     characters: chars,
     conversations: allConvs,
     messages: allMsgs,
+    stickers,
+    timeline,
+    featureRecords,
+    usageLogs,
     settings,
   };
 }
@@ -508,31 +531,80 @@ function normalizeImportedDump(dump) {
       role: Number(row.is_user) ? "user" : "assistant", content: row.text || "",
       createdAt: row.created_at || new Date(0).toISOString(),
     }));
-    return { type: "holt_pwa_backup", version: 2, characters, conversations, messages, settings: {} };
+    return { type: "holt_pwa_backup", version: 3, characters, conversations, messages, settings: {} };
   }
   throw new Error("不是可辨識的 Holt 備份檔");
 }
 
-async function applyImportedDump(rawDump) {
+function validatedImportDump(rawDump) {
   const dump = normalizeImportedDump(rawDump);
-  for (const c of (dump.characters || [])) await saveCharacter(c);
-  for (const c of (dump.conversations || [])) await saveConversation(c);
-  for (const m of (dump.messages || [])) await saveMessage(m);
-  if (dump.settings) {
-    const supportedProviders = new Set(["openrouter", "grok", "gemini", "custom"]);
-    const importedProvider = String(dump.settings.provider || "");
-    const hasSupportedProvider = supportedProviders.has(importedProvider);
-    for (const key of PROFILE_BACKUP_SETTINGS) {
-      let value = dump.settings[key];
-      if (key === "provider" && !hasSupportedProvider) {
-        value = "openrouter";
-      }
-      if (key === "model" && !hasSupportedProvider) {
-        value = "";
-      }
-      if (value != null) await setSetting(key, value);
+  const takeArray = (key, max) => {
+    const value = dump[key] ?? [];
+    if (!Array.isArray(value)) throw new Error(`${key} 格式不正確`);
+    if (value.length > max) throw new Error(`${key} 筆數超過安全上限`);
+    if (value.some((item) => !item || typeof item !== "object" || Array.isArray(item))) {
+      throw new Error(`${key} 含有無效資料`);
     }
+    return value;
+  };
+  const characters = takeArray("characters", 5000);
+  const conversations = takeArray("conversations", 50000);
+  const messages = takeArray("messages", 500000);
+  const stickers = takeArray("stickers", 10000);
+  const timeline = takeArray("timeline", 100000);
+  const featureRecords = takeArray("featureRecords", 200000);
+  const usageLogs = takeArray("usageLogs", 500000);
+  const requireUniqueIds = (rows, label) => {
+    const ids = rows.map((row) => String(row.id || ""));
+    if (ids.some((id) => !id) || new Set(ids).size !== ids.length) {
+      throw new Error(`${label} 含有缺少或重複的 ID`);
+    }
+  };
+  requireUniqueIds(characters, "角色");
+  requireUniqueIds(conversations, "對話");
+  requireUniqueIds(messages, "訊息");
+  requireUniqueIds(stickers, "表情包");
+  requireUniqueIds(timeline, "時間線");
+  requireUniqueIds(featureRecords, "陪伴功能資料");
+  const characterIds = new Set(characters.map((row) => String(row.id || "")));
+  const conversationIds = new Set(conversations.map((row) => String(row.id || "")));
+  if (characterIds.has("") || conversationIds.has("")) throw new Error("備份含有缺少 ID 的角色或對話");
+  if (characterIds.size !== characters.length || conversationIds.size !== conversations.length) {
+    throw new Error("備份含有重複的角色或對話 ID");
   }
+  if (conversations.some((row) => !characterIds.has(String(row.characterId || "")))) {
+    throw new Error("備份含有找不到角色的對話");
+  }
+  if (messages.some((row) => !row.id || !conversationIds.has(String(row.conversationId || "")))) {
+    throw new Error("備份含有找不到對話的訊息");
+  }
+  if (timeline.some((row) => !row.id || !characterIds.has(String(row.characterId || "")))) {
+    throw new Error("備份含有找不到角色的時間線資料");
+  }
+  if (featureRecords.some((row) => !row.id || (!characterIds.has(String(row.characterId || "")) && row.characterId !== "default"))) {
+    throw new Error("備份含有找不到角色的陪伴功能資料");
+  }
+  const rawSettings = dump.settings && typeof dump.settings === "object" && !Array.isArray(dump.settings)
+    ? dump.settings
+    : {};
+  const settings = {};
+  for (const key of PROFILE_BACKUP_SETTINGS) {
+    if (rawSettings[key] !== undefined) settings[key] = rawSettings[key];
+  }
+  const supportedProviders = new Set(["openrouter", "grok", "gemini", "custom"]);
+  if (settings.provider && !supportedProviders.has(String(settings.provider))) {
+    settings.provider = "openrouter";
+    settings.model = "";
+  }
+  if (settings.activeCharacterId && !characterIds.has(String(settings.activeCharacterId))) {
+    settings.activeCharacterId = characters[0]?.id || "";
+  }
+  return { characters, conversations, messages, stickers, timeline, featureRecords, usageLogs, settings };
+}
+
+async function applyImportedDump(rawDump) {
+  const dump = validatedImportDump(rawDump);
+  await replacePwaData({ ...dump, settingKeys: PROFILE_BACKUP_SETTINGS });
 }
 
 // Data export
@@ -563,7 +635,7 @@ importDataBtn.addEventListener("click", () => {
   input.onchange = async () => {
     const file = input.files[0];
     if (!file) return;
-    if (!confirm("匯入會覆蓋現有數據，確定？")) return;
+    if (!confirm("匯入會完整取代目前的角色、對話、時間線、用量與非金鑰設定；API Key 會保留。確定？")) return;
     try {
       const bytes = new Uint8Array(await file.arrayBuffer());
       const password = isEncryptedBackup(bytes) ? askBackupPassword() : "";
@@ -576,6 +648,17 @@ importDataBtn.addEventListener("click", () => {
     } catch (err) { toast("匯入失敗：" + err.message); }
   };
   input.click();
+});
+
+clearLocalDataBtn?.addEventListener("click", async () => {
+  if (!confirm("這會刪除本裝置上的角色、對話、圖片、設定與 API Key，且無法復原。確定繼續？")) return;
+  if (!confirm("最後確認：是否已先匯出備份？")) return;
+  try {
+    await clearAllPwaData();
+    window.location.reload();
+  } catch (error) {
+    toast("清除失敗：" + error.message);
+  }
 });
 
 // ═══ Theme init (called from app.js) ═══

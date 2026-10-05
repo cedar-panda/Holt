@@ -1596,7 +1596,7 @@ class LocalModelService implements ApiAdapter {
           provider: 'local',
           model: model,
           cacheChannel: structuredPrompt.cacheChannel,
-          sessionId: CacheSession.conversationId,
+          sessionId: structuredPrompt.cacheSessionId,
           transport: 'local_system_instruction',
           sourceMessages: messages,
           requestMessages: <Map<String, dynamic>>[

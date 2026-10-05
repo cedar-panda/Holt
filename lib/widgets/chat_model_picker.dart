@@ -3,17 +3,24 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import '../services/locale_strings.dart';
+import '../services/background_foreground_service.dart';
 import '../theme/app_theme.dart';
 
 class ChatModelPickerEntry {
   final String id;
   final String label;
+  final String provider;
+  final String providerLabel;
   final bool isLocal;
+  final bool isProviderConfigured;
 
   const ChatModelPickerEntry({
     required this.id,
     required this.label,
+    required this.provider,
+    required this.providerLabel,
     required this.isLocal,
+    required this.isProviderConfigured,
   });
 }
 
@@ -215,19 +222,25 @@ class ChatModelPickerRouteTransition extends StatelessWidget {
 class ChatModelPickerPanel extends StatefulWidget {
   final List<ChatModelPickerEntry> entries;
   final String currentModelId;
+  final String currentProvider;
   final bool initialThinking;
   final Color accentColor;
+  final BackgroundForegroundPalette? backgroundPalette;
   final Future<void> Function(bool value) onThinkingChanged;
-  final Future<void> Function(String modelId) onModelSelected;
+  final Future<void> Function(ChatModelPickerEntry entry) onModelSelected;
+  final ValueChanged<ChatModelPickerEntry> onUnavailableProviderSelected;
 
   const ChatModelPickerPanel({
     super.key,
     required this.entries,
     required this.currentModelId,
+    required this.currentProvider,
     required this.initialThinking,
     required this.accentColor,
+    this.backgroundPalette,
     required this.onThinkingChanged,
     required this.onModelSelected,
+    required this.onUnavailableProviderSelected,
   });
 
   @override
@@ -237,6 +250,26 @@ class ChatModelPickerPanel extends StatefulWidget {
 class _ChatModelPickerPanelState extends State<ChatModelPickerPanel> {
   late bool _thinking;
   bool _savingThinking = false;
+
+  Color get _panelColor {
+    final dominant = widget.backgroundPalette?.dominant;
+    if (dominant == null) {
+      return YanciTheme.isDark
+          ? const Color(0xF0252228)
+          : Colors.white.withValues(alpha: 0.97);
+    }
+    final dark = dominant.computeLuminance() < 0.4;
+    return Color.lerp(
+      dark ? const Color(0xFF252228) : Colors.white,
+      dominant,
+      0.12,
+    )!;
+  }
+
+  BackgroundForegroundPalette? get _panelForeground =>
+      widget.backgroundPalette == null
+      ? null
+      : BackgroundForegroundService.forColor(_panelColor);
 
   @override
   void initState() {
@@ -269,10 +302,9 @@ class _ChatModelPickerPanelState extends State<ChatModelPickerPanel> {
         .where((entry) => entry.isLocal)
         .toList(growable: false);
     final desiredListHeight =
-        widget.entries.length * 54.0 + (localEntries.isEmpty ? 0 : 38);
-    final panelColor = YanciTheme.isDark
-        ? const Color(0xF0252228)
-        : Colors.white.withValues(alpha: 0.97);
+        widget.entries.length * 70.0 + (localEntries.isEmpty ? 0 : 38);
+    final panelColor = _panelColor;
+    final textColor = _panelForeground;
 
     return Container(
       key: const ValueKey('chat-model-picker-panel'),
@@ -280,7 +312,9 @@ class _ChatModelPickerPanelState extends State<ChatModelPickerPanel> {
         color: panelColor,
         borderRadius: BorderRadius.circular(YanciTheme.radiusLg),
         border: Border.all(
-          color: YanciTheme.textSecondary.withValues(alpha: 0.1),
+          color:
+              textColor?.secondary.withValues(alpha: 0.16) ??
+              YanciTheme.textSecondary.withValues(alpha: 0.1),
         ),
         boxShadow: [
           BoxShadow(
@@ -299,11 +333,14 @@ class _ChatModelPickerPanelState extends State<ChatModelPickerPanel> {
               value: _thinking,
               enabled: !_savingThinking,
               accentColor: widget.accentColor,
+              foregroundColor: textColor?.primary,
               onChanged: _setThinking,
             ),
             const SizedBox(height: 4),
             Divider(
-              color: YanciTheme.textSecondary.withValues(alpha: 0.16),
+              color:
+                  textColor?.secondary.withValues(alpha: 0.16) ??
+                  YanciTheme.textSecondary.withValues(alpha: 0.16),
               height: 1,
             ),
             const SizedBox(height: 12),
@@ -330,9 +367,11 @@ class _ChatModelPickerPanelState extends State<ChatModelPickerPanel> {
                             L.pick(en: 'Local', zhTW: '本地'),
                             style: YanciTheme.bodySmall.copyWith(
                               fontSize: 11,
-                              color: YanciTheme.textSecondary.withValues(
-                                alpha: 0.72,
-                              ),
+                              color:
+                                  textColor?.secondary ??
+                                  YanciTheme.textSecondary.withValues(
+                                    alpha: 0.72,
+                                  ),
                             ),
                           ),
                         ),
@@ -350,18 +389,24 @@ class _ChatModelPickerPanelState extends State<ChatModelPickerPanel> {
   }
 
   Widget _buildModelRow(ChatModelPickerEntry entry) {
-    final isActive = entry.id == widget.currentModelId;
+    final isActive =
+        entry.id == widget.currentModelId &&
+        entry.provider == widget.currentProvider;
     final reduceMotion = MediaQuery.disableAnimationsOf(context);
-    final panelColor = YanciTheme.isDark
-        ? const Color(0xFF252228)
-        : Colors.white;
+    final panelColor = _panelColor;
+    final textColor = _panelForeground;
     // 10% 主題色混入面板底色：比舊的 12% accent 選中底更輕。
     final selectedFill = Color.lerp(panelColor, widget.accentColor, 0.10)!;
 
     return Semantics(
       button: true,
       selected: isActive,
-      label: entry.label,
+      label: [
+        entry.label,
+        entry.providerLabel,
+        if (!entry.isProviderConfigured)
+          L.pick(en: 'Not configured', zhTW: '尚未設定', zhCN: '尚未设置'),
+      ].join(', '),
       child: ExcludeSemantics(
         child: Padding(
           padding: const EdgeInsets.only(bottom: 6),
@@ -370,18 +415,22 @@ class _ChatModelPickerPanelState extends State<ChatModelPickerPanel> {
             borderRadius: BorderRadius.circular(999),
             clipBehavior: Clip.antiAlias,
             child: InkWell(
-              key: ValueKey<String>('chat-model-row-${entry.id}'),
-              onTap: () => widget.onModelSelected(entry.id),
+              key: ValueKey<String>(
+                'chat-model-row-${entry.provider}-${entry.id}',
+              ),
+              onTap: () => entry.isProviderConfigured
+                  ? widget.onModelSelected(entry)
+                  : widget.onUnavailableProviderSelected(entry),
               child: AnimatedContainer(
                 duration: reduceMotion
                     ? Duration.zero
                     : const Duration(milliseconds: 180),
                 curve: Curves.easeOutCubic,
-                constraints: const BoxConstraints(minHeight: 48),
+                constraints: const BoxConstraints(minHeight: 62),
                 width: double.infinity,
                 padding: const EdgeInsets.symmetric(
                   horizontal: 14,
-                  vertical: 10,
+                  vertical: 9,
                 ),
                 decoration: BoxDecoration(
                   color: isActive ? selectedFill : Colors.transparent,
@@ -390,12 +439,46 @@ class _ChatModelPickerPanelState extends State<ChatModelPickerPanel> {
                 child: Row(
                   children: [
                     Expanded(
-                      child: _MarqueeLabel(
-                        text: entry.label,
-                        style: YanciTheme.bodyText.copyWith(
-                          fontSize: 13,
-                          color: YanciTheme.textPrimary,
-                        ),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          _MarqueeLabel(
+                            text: entry.label,
+                            style: YanciTheme.bodyText.copyWith(
+                              fontSize: 13,
+                              color: entry.isProviderConfigured
+                                  ? (textColor?.primary ??
+                                        YanciTheme.textPrimary)
+                                  : (textColor?.secondary ??
+                                        YanciTheme.textSecondary),
+                            ),
+                          ),
+                          const SizedBox(height: 5),
+                          Wrap(
+                            spacing: 6,
+                            runSpacing: 4,
+                            crossAxisAlignment: WrapCrossAlignment.center,
+                            children: [
+                              _ModelProviderLabel(
+                                key: ValueKey<String>(
+                                  'chat-model-source-${entry.provider}-${entry.id}',
+                                ),
+                                label: entry.providerLabel,
+                                color: textColor?.secondary,
+                              ),
+                              if (!entry.isProviderConfigured)
+                                _ModelProviderStatus(
+                                  label: L.pick(
+                                    en: 'Not configured',
+                                    zhTW: '尚未設定',
+                                    zhCN: '尚未设置',
+                                  ),
+                                  color: textColor?.secondary,
+                                ),
+                            ],
+                          ),
+                        ],
                       ),
                     ),
                     if (isActive) ...[
@@ -416,16 +499,89 @@ class _ChatModelPickerPanelState extends State<ChatModelPickerPanel> {
   }
 }
 
+class _ModelProviderLabel extends StatelessWidget {
+  final String label;
+  final Color? color;
+
+  const _ModelProviderLabel({super.key, required this.label, this.color});
+
+  @override
+  Widget build(BuildContext context) {
+    final foreground =
+        color ?? YanciTheme.textSecondary.withValues(alpha: 0.78);
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          '—',
+          style: YanciTheme.bodySmall.copyWith(
+            fontSize: 10.5,
+            height: 1.1,
+            fontWeight: FontWeight.w500,
+            color: foreground,
+          ),
+        ),
+        const SizedBox(width: 5),
+        Text(
+          label,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: YanciTheme.bodySmall.copyWith(
+            fontSize: 10.5,
+            height: 1.1,
+            fontWeight: FontWeight.w500,
+            letterSpacing: 0.1,
+            color: foreground,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _ModelProviderStatus extends StatelessWidget {
+  final String label;
+  final Color? color;
+
+  const _ModelProviderStatus({required this.label, this.color});
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(
+          Icons.key_off_outlined,
+          size: 12,
+          color: color ?? YanciTheme.textSecondary.withValues(alpha: 0.82),
+        ),
+        const SizedBox(width: 3),
+        Text(
+          label,
+          style: YanciTheme.bodySmall.copyWith(
+            fontSize: 10.5,
+            height: 1.1,
+            fontWeight: FontWeight.w600,
+            color: color ?? YanciTheme.textSecondary.withValues(alpha: 0.88),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 class _ThinkingRippleToggle extends StatefulWidget {
   final bool value;
   final bool enabled;
   final Color accentColor;
+  final Color? foregroundColor;
   final ValueChanged<bool> onChanged;
 
   const _ThinkingRippleToggle({
     required this.value,
     required this.enabled,
     required this.accentColor,
+    this.foregroundColor,
     required this.onChanged,
   });
 
@@ -508,7 +664,7 @@ class _ThinkingRippleToggleState extends State<_ThinkingRippleToggle>
                       style: YanciTheme.bodyText.copyWith(
                         fontSize: 14,
                         fontWeight: FontWeight.w600,
-                        color: YanciTheme.textPrimary,
+                        color: widget.foregroundColor ?? YanciTheme.textPrimary,
                       ),
                     ),
                   ),

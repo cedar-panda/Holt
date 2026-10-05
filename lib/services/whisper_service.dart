@@ -1,3 +1,5 @@
+import 'package:characters/characters.dart';
+
 import '../memory/database.dart';
 import '../utils/text_safety.dart';
 import 'locale_strings.dart';
@@ -53,7 +55,14 @@ class WhisperProcessResult {
 
 /// Per-character composer whisper (the sentence shown while the user types).
 class WhisperService {
-  static const int maxLength = 18;
+  static const int maxLines = 2;
+  static const int maxCjkLength = 24;
+  static const int maxLatinLength = 56;
+  // Compatibility alias for settings/tests that still display one limit.
+  static const int maxLength = maxCjkLength;
+  static final RegExp _cjkPattern = RegExp(
+    r'[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uac00-\ud7af]',
+  );
   static final RegExp _tagPattern = RegExp(
     r'<whisper\b[^>]*>([\s\S]*?)</whisper>',
     caseSensitive: false,
@@ -64,12 +73,29 @@ class WhisperService {
   );
 
   static String sanitize(String value) {
-    final oneLine = value
+    final normalized = value
         .replaceAll(RegExp(r'<[^>]*>'), '')
-        .replaceAll(RegExp(r'[\r\n\t]+'), ' ')
-        .replaceAll(RegExp(r'\s{2,}'), ' ')
-        .trim();
-    return truncateGraphemes(oneLine, maxLength);
+        .replaceAll('\r\n', '\n')
+        .replaceAll('\r', '\n')
+        .replaceAll('\t', ' ');
+    final compactLines = normalized
+        .split('\n')
+        .map((line) => line.replaceAll(RegExp(r' {2,}'), ' ').trim())
+        .where((line) => line.isNotEmpty)
+        .take(maxLines)
+        .toList(growable: false);
+    final compact = compactLines.join('\n');
+    final limit = _cjkPattern.hasMatch(compact) ? maxCjkLength : maxLatinLength;
+    var remaining = limit;
+    final boundedLines = <String>[];
+    for (final line in compactLines) {
+      if (remaining <= 0) break;
+      final bounded = truncateGraphemes(line, remaining);
+      if (bounded.isEmpty) continue;
+      boundedLines.add(bounded);
+      remaining -= bounded.characters.length;
+    }
+    return boundedLines.join('\n');
   }
 
   /// Request-only nudge. The tag syntax remains in the stable tool prompt;
@@ -80,15 +106,15 @@ class WhisperService {
       en:
           '### Composer Whisper\n'
           'Current line: “${state.displayText}”\n'
-          'Independently consider whether a different short line fits the current mood or moment. If it does, append one <whisper>short line</whisper> tag (maximum $maxLength characters). Otherwise leave it unchanged. This changes only the empty composer placeholder and must never overwrite text they already typed.',
+          'Independently consider whether a different short note fits the current mood or moment. If it does, append one <whisper>note</whisper> tag (at most $maxLines lines; CJK text up to $maxCjkLength characters total, English text up to $maxLatinLength characters total). Otherwise leave it unchanged. This changes only the empty composer placeholder and must never overwrite text they already typed.',
       zhTW:
           '### 輸入框悄悄話\n'
           '目前顯示：「${state.displayText}」\n'
-          '請自主判斷此刻的氣氛或關係是否適合換一句短話。適合時在回覆末尾附上一組 <whisper>短話</whisper>（最多 $maxLength 字）；不適合就維持原樣。它只會改變空輸入框的提示，不得覆寫對方已輸入的文字。',
+          '請自主判斷此刻的氣氛或關係是否適合換一則短話。適合時在回覆末尾附上一組 <whisper>短話</whisper>（最多 $maxLines 行；中日韓文字合計不超過 $maxCjkLength 字，英文合計不超過 $maxLatinLength 字）；不適合就維持原樣。它只會改變空輸入框的提示，不得覆寫對方已輸入的文字。',
       zhCN:
           '### 输入框悄悄话\n'
           '当前显示：“${state.displayText}”\n'
-          '请自主判断此刻的气氛或关系是否适合换一句短话。适合时在回复末尾附上一组 <whisper>短话</whisper>（最多 $maxLength 字）；不适合就维持原样。它只会改变空输入框的提示，不得覆盖对方已输入的文字。',
+          '请自主判断此刻的气氛或关系是否适合换一则短话。适合时在回复末尾附上一组 <whisper>短话</whisper>（最多 $maxLines 行；中日韩文字合计不超过 $maxCjkLength 字，英文合计不超过 $maxLatinLength 字）；不适合就维持原样。它只会改变空输入框的提示，不得覆盖对方已输入的文字。',
     );
   }
 

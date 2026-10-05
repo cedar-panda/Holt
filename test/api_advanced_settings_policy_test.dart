@@ -17,6 +17,47 @@ void main() {
 
   tearDown(() => secureStorage.uninstall());
 
+  test(
+    'window summary trigger keeps the exact configured token count',
+    () async {
+      SharedPreferences.setMockInitialValues(<String, Object>{});
+
+      await MemorySettings.saveWindowSummaryTriggerTokens(4321);
+
+      expect(await MemorySettings.getWindowSummaryTriggerTokens(), 4321);
+      expect(await MemorySettings.getContextWindowSummaryTriggerTokens(), 4321);
+    },
+  );
+
+  testWidgets('cache summary exposes its token trigger control', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues(<String, Object>{
+      'enable_prompt_caching': true,
+      'cache_window_summary_enabled': true,
+      'context_window_summary_trigger_tokens': 4321,
+    });
+    await L.setLocale('zh_TW');
+
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: SingleChildScrollView(
+            child: ApiAdvancedSettings(cacheOnly: true),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('專用窗口摘要'), findsOneWidget);
+    expect(find.text('累積至'), findsOneWidget);
+    expect(
+      tester.widget<TextField>(find.byType(TextField).first).controller!.text,
+      '4321',
+    );
+  });
+
   testWidgets('active Inkling with a key cannot re-enable prompt cache', (
     tester,
   ) async {

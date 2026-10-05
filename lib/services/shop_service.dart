@@ -8,6 +8,7 @@ import '../memory/database.dart';
 import 'package:uuid/uuid.dart';
 import 'locale_strings.dart';
 import 'scratch_service.dart';
+import 'tool_feature_settings.dart';
 
 class ShopItem {
   final String id;
@@ -247,17 +248,11 @@ class ShopService {
       '$_pendingGiftPrefix$scopeId';
 
   // ═══ 商店功能開關（默認開；關=不注入工具說明，標籤照樣不觸發）═══
-  static const String _kEnabled = 'shop_enabled';
+  static Future<bool> isEnabled() async =>
+      (await ToolFeatureSettings.load()).shopEnabled;
 
-  static Future<bool> isEnabled() async {
-    final p = await SharedPreferences.getInstance();
-    return p.getBool(_kEnabled) ?? true;
-  }
-
-  static Future<void> setEnabled(bool v) async {
-    final p = await SharedPreferences.getInstance();
-    await p.setBool(_kEnabled, v);
-  }
+  static Future<void> setEnabled(bool v) =>
+      ToolFeatureSettings.setShopEnabled(v);
 
   // ═══ 背包注入（開窗首條，跟隨歷史進緩存前綴）═══
   /// 水位：上次全量注入時背包最大行 id；無新增則只注 starred
@@ -1114,8 +1109,18 @@ class ShopService {
     String? conversationId,
   }) async {
     var processed = text;
-    final db = await DatabaseHelper.database;
     final buyRegex = RegExp(r'<buy\b([^>]*)/?>', caseSensitive: false);
+    final starRegex = RegExp(
+      r'<pack_star>([^<]*)</pack_star>',
+      caseSensitive: false,
+    );
+    if (!await isEnabled()) {
+      return processed
+          .replaceAll(buyRegex, '')
+          .replaceAll(starRegex, '')
+          .trim();
+    }
+    final db = await DatabaseHelper.database;
     final matches = buyRegex.allMatches(processed).toList();
 
     for (final match in matches) {
@@ -1170,10 +1175,6 @@ class ShopService {
     }
 
     // ═══ <pack_star>編號,編號</pack_star>：覆蓋式標記重要物品 ═══
-    final starRegex = RegExp(
-      r'<pack_star>([^<]*)</pack_star>',
-      caseSensitive: false,
-    );
     final starMatch = starRegex.allMatches(processed).toList();
     if (starMatch.isNotEmpty) {
       final ids = starMatch.last

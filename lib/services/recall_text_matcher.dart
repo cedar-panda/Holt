@@ -11,6 +11,42 @@ class RecallKeywordMatch {
 /// Provider-independent text matching used by both long-term memories and
 /// compressed-summary keyword recall.
 class RecallTextMatcher {
+  /// Bounded terms for relevance ranking. CJK does not have whitespace word
+  /// boundaries, so include short 2-4 character windows; longer windows score
+  /// higher at the caller and reduce dependence on model-authored triggers.
+  static List<String> relevanceTerms(String query, {int maxTerms = 48}) {
+    if (maxTerms <= 0) return const <String>[];
+    final normalized = _normalize(query);
+    final seen = <String>{};
+    final terms = <String>[];
+
+    void add(String value) {
+      final term = value.trim();
+      if (term.length < 2 || !seen.add(term) || terms.length >= maxTerms) {
+        return;
+      }
+      terms.add(term);
+    }
+
+    for (final match in RegExp(r'[a-z0-9]{2,}').allMatches(normalized)) {
+      add(match.group(0)!);
+    }
+    for (final match in RegExp(
+      r'[\u3400-\u9fff\u3040-\u30ff\uac00-\ud7af]{2,}',
+    ).allMatches(normalized)) {
+      final chunk = match.group(0)!;
+      if (chunk.length <= 8) add(chunk);
+      for (final size in const <int>[4, 3, 2]) {
+        if (chunk.length < size) continue;
+        for (var start = 0; start + size <= chunk.length; start++) {
+          add(chunk.substring(start, start + size));
+          if (terms.length >= maxTerms) return terms;
+        }
+      }
+    }
+    return terms;
+  }
+
   static RecallKeywordMatch? bestKeywordMatch(
     String query,
     String keywordText,

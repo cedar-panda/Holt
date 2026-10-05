@@ -302,8 +302,7 @@ class _ShopBottomSheetState extends State<ShopBottomSheet>
                                   Text(
                                     L.pick(
                                       en: 'Invite ${widget.inviteCharName} to browse together',
-                                      zhTW:
-                                          '邀請 ${widget.inviteCharName} 一起逛',
+                                      zhTW: '邀請 ${widget.inviteCharName} 一起逛',
                                     ),
                                     style: TextStyle(
                                       fontSize: 11.5,

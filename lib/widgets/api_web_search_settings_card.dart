@@ -22,8 +22,7 @@ class ApiWebSearchViewState {
   final String geminiModelOverride;
   final String xaiModelOverride;
   final String currentProvider;
-  final Set<String> starredModels;
-  final Map<String, String> starredModelProviders;
+  final List<StarredModelEntry> starredModelEntries;
   final bool obscureProviderKeys;
   final bool enabledToggleActive;
   final Color borderColor;
@@ -45,8 +44,7 @@ class ApiWebSearchViewState {
     required this.geminiModelOverride,
     required this.xaiModelOverride,
     required this.currentProvider,
-    required this.starredModels,
-    required this.starredModelProviders,
+    required this.starredModelEntries,
     required this.obscureProviderKeys,
     required this.enabledToggleActive,
     required this.borderColor,
@@ -81,7 +79,7 @@ class ApiWebSearchViewActions {
   });
 }
 
-class ApiWebSearchSettingsCard extends StatelessWidget {
+class ApiWebSearchSettingsCard extends StatefulWidget {
   final ApiWebSearchViewState viewState;
   final ApiWebSearchViewActions actions;
 
@@ -90,6 +88,17 @@ class ApiWebSearchSettingsCard extends StatelessWidget {
     required this.viewState,
     required this.actions,
   });
+
+  @override
+  State<ApiWebSearchSettingsCard> createState() =>
+      _ApiWebSearchSettingsCardState();
+}
+
+class _ApiWebSearchSettingsCardState extends State<ApiWebSearchSettingsCard> {
+  bool _expanded = false;
+
+  ApiWebSearchViewState get viewState => widget.viewState;
+  ApiWebSearchViewActions get actions => widget.actions;
 
   TextEditingController get openRouterKeyController =>
       viewState.openRouterKeyController;
@@ -111,9 +120,8 @@ class ApiWebSearchSettingsCard extends StatelessWidget {
   String get geminiModelOverride => viewState.geminiModelOverride;
   String get xaiModelOverride => viewState.xaiModelOverride;
   String get currentProvider => viewState.currentProvider;
-  Set<String> get starredModels => viewState.starredModels;
-  Map<String, String> get starredModelProviders =>
-      viewState.starredModelProviders;
+  List<StarredModelEntry> get starredModelEntries =>
+      viewState.starredModelEntries;
   bool get obscureProviderKeys => viewState.obscureProviderKeys;
   bool get enabledToggleActive => viewState.enabledToggleActive;
   Color get borderColor => viewState.borderColor;
@@ -139,9 +147,9 @@ class ApiWebSearchSettingsCard extends StatelessWidget {
     WebSearchMode.openRouter => 'OpenRouter',
     WebSearchMode.xai => 'Grok / xAI',
     WebSearchMode.relay => L.pick(
-      en: 'Search relay',
-      zhTW: '搜尋中轉站',
-      zhCN: '搜索中转站',
+      en: 'API relay',
+      zhTW: 'API 中轉站',
+      zhCN: 'API 中转站',
     ),
     // Retained only to migrate old stored values; it is no longer shown.
     WebSearchMode.dual => L.pick(en: 'Auto', zhTW: '自動選擇', zhCN: '自动选择'),
@@ -156,7 +164,7 @@ class ApiWebSearchSettingsCard extends StatelessWidget {
       decoration: BoxDecoration(
         color: Colors.transparent,
         borderRadius: BorderRadius.circular(YanciTheme.radiusMd),
-        border: Border.all(color: borderColor, width: 0.75),
+        border: Border.all(color: borderColor, width: 1),
       ),
       child: child,
     );
@@ -198,6 +206,7 @@ class ApiWebSearchSettingsCard extends StatelessWidget {
       'gemini' => WebSearchMode.gemini,
       'openrouter' => WebSearchMode.openRouter,
       'xai' => WebSearchMode.xai,
+      'openai_compatible' => WebSearchMode.relay,
       _ => null,
     };
     if (current != null && ready[current] == true) return current;
@@ -230,15 +239,12 @@ class ApiWebSearchSettingsCard extends StatelessWidget {
     String? emptySelectionLabel,
   }) {
     final candidates = <String>[];
-    for (final modelId in starredModels) {
-      final provider = starredModelProviders[modelId] ?? '';
-      if (provider == filterProvider &&
-          !modelId.toLowerCase().contains(':batch')) {
-        candidates.add(modelId);
+    for (final entry in starredModelEntries) {
+      if (entry.provider == filterProvider &&
+          !entry.modelId.toLowerCase().contains(':batch')) {
+        candidates.add(entry.modelId);
       }
     }
-    candidates.sort();
-
     final effectiveModel = currentOverride.isNotEmpty
         ? currentOverride
         : fallbackModel;
@@ -429,9 +435,9 @@ class ApiWebSearchSettingsCard extends StatelessWidget {
         children: <Widget>[
           Text(
             L.pick(
-              en: 'Search relay (OpenAI-compatible)',
-              zhTW: '搜尋中轉站（OpenAI 相容）',
-              zhCN: '搜索中转站（OpenAI 兼容）',
+              en: 'API relay (OpenAI-compatible)',
+              zhTW: 'API 中轉站（OpenAI 相容）',
+              zhCN: 'API 中转站（OpenAI 兼容）',
             ),
             style: YanciTheme.bodySmall.copyWith(
               color: YanciTheme.textSecondary,
@@ -490,9 +496,9 @@ class ApiWebSearchSettingsCard extends StatelessWidget {
           const SizedBox(height: 6),
           _buildSearchModelPicker(
             providerLabel: L.pick(
-              en: 'Search relay',
-              zhTW: '搜尋中轉站',
-              zhCN: '搜索中转站',
+              en: 'API relay',
+              zhTW: 'API 中轉站',
+              zhCN: 'API 中转站',
             ),
             filterProvider: 'openai_compatible',
             currentOverride: relayModelController.text.trim(),
@@ -539,29 +545,87 @@ class ApiWebSearchSettingsCard extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Material(
-                color: Colors.transparent,
-                child: SwitchListTile.adaptive(
-                  contentPadding: EdgeInsets.zero,
-                  title: Text(
-                    L.pick(
-                      en: 'Native web search',
-                      zhTW: '原生網路搜尋',
-                      zhCN: '原生网络搜索',
-                    ),
-                    style: YanciTheme.bodyText.copyWith(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                      color: YanciTheme.textPrimary,
+              Row(
+                children: [
+                  Expanded(
+                    child: Semantics(
+                      button: true,
+                      expanded: enabled && _expanded,
+                      label: L.pick(
+                        en: 'Native web search settings',
+                        zhTW: '原生網路搜尋設定',
+                        zhCN: '原生网络搜索设置',
+                      ),
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(
+                          YanciTheme.radiusSm,
+                        ),
+                        onTap: enabled
+                            ? () => setState(() => _expanded = !_expanded)
+                            : null,
+                        child: ConstrainedBox(
+                          constraints: const BoxConstraints(minHeight: 44),
+                          child: Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  L.pick(
+                                    en: 'Native web search',
+                                    zhTW: '原生網路搜尋',
+                                    zhCN: '原生网络搜索',
+                                  ),
+                                  style: YanciTheme.bodyText.copyWith(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w600,
+                                    color: YanciTheme.textPrimary,
+                                  ),
+                                ),
+                              ),
+                              AnimatedRotation(
+                                turns: enabled && _expanded ? 0.5 : 0,
+                                duration:
+                                    MediaQuery.disableAnimationsOf(context)
+                                    ? Duration.zero
+                                    : const Duration(milliseconds: 180),
+                                curve: Curves.easeOutCubic,
+                                child: Icon(
+                                  Icons.keyboard_arrow_down_rounded,
+                                  size: 20,
+                                  color: YanciTheme.textSecondary.withValues(
+                                    alpha: enabled ? 0.72 : 0.28,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
                     ),
                   ),
-                  value: enabled,
-                  activeThumbColor: YanciTheme.accent,
-                  activeTrackColor: YanciTheme.accent.withValues(alpha: 0.3),
-                  onChanged: enabledToggleActive ? onEnabledChanged : null,
-                ),
+                  const SizedBox(width: 8),
+                  SizedBox(
+                    width: 48,
+                    height: 44,
+                    child: FittedBox(
+                      fit: BoxFit.contain,
+                      child: Switch.adaptive(
+                        value: enabled,
+                        activeThumbColor: YanciTheme.accent,
+                        activeTrackColor: YanciTheme.accent.withValues(
+                          alpha: 0.3,
+                        ),
+                        onChanged: enabledToggleActive
+                            ? (value) {
+                                if (value) setState(() => _expanded = true);
+                                onEnabledChanged(value);
+                              }
+                            : null,
+                      ),
+                    ),
+                  ),
+                ],
               ),
-              if (enabled) ...[
+              if (enabled && _expanded) ...[
                 Divider(
                   color: YanciTheme.textSecondary.withValues(alpha: 0.12),
                   height: 1,
@@ -585,7 +649,7 @@ class ApiWebSearchSettingsCard extends StatelessWidget {
                     decoration: BoxDecoration(
                       color: Colors.transparent,
                       borderRadius: BorderRadius.circular(YanciTheme.radiusSm),
-                      border: Border.all(color: borderColor, width: 0.75),
+                      border: Border.all(color: borderColor, width: 1),
                     ),
                     padding: const EdgeInsets.symmetric(horizontal: 12),
                     child: DropdownButton<WebSearchMode>(

@@ -63,4 +63,24 @@ abstract final class ProviderModelCatalog {
       UnsupportedError('Provider does not expose model discovery: $provider'),
     ),
   };
+
+  /// Embedding discovery is intentionally separate from chat models. Only
+  /// entries whose id/name contains "embedding" are exposed to the picker.
+  static Future<List<ModelInfo>> fetchEmbeddingModels({
+    required String provider,
+    required String apiKey,
+    String baseUrl = '',
+  }) async {
+    final discovered = switch (provider) {
+      'openrouter' => await OpenRouterService.fetchEmbeddingModels(apiKey),
+      'gemini' => await GeminiService.fetchEmbeddingModels(apiKey),
+      _ => await fetch(provider: provider, apiKey: apiKey, baseUrl: baseUrl),
+    };
+    return discovered
+        .where((model) {
+          final searchable = '${model.id} ${model.name}'.toLowerCase();
+          return searchable.contains('embedding');
+        })
+        .toList(growable: false);
+  }
 }

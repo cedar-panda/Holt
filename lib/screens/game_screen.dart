@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flame/game.dart';
 import 'package:flutter/material.dart';
 
@@ -85,7 +87,9 @@ class _GameScreenState extends State<GameScreen> with WidgetsBindingObserver {
   // ═══ 右上角齒輪：NPC AI 設定 ═══
   Future<void> _openNpcSettings() async {
     _game.pauseEngine();
-    final entries = await LocalModelService.downloadedModelEntries();
+    final entries = Platform.isIOS
+        ? <Map<String, String>>[]
+        : await LocalModelService.downloadedModelEntries();
     if (!mounted) return;
     var selected = await GameNpcSettings.getNpcModelId();
     if (!mounted) return;
@@ -160,8 +164,12 @@ class _GameScreenState extends State<GameScreen> with WidgetsBindingObserver {
                     padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
                     child: Text(
                       L.pick(
-                        en: 'Follow your chat model, or pin a local one',
-                        zhTW: '可跟隨聊天模型，或固定用某個本地小模型',
+                        en: Platform.isIOS
+                            ? 'Follow your chat model'
+                            : 'Follow your chat model, or pin a local one',
+                        zhTW: Platform.isIOS
+                            ? '跟隨聊天模型'
+                            : '可跟隨聊天模型，或固定用某個本地小模型',
                       ),
                       style: const TextStyle(
                         color: Color(0xFF948DA1),
@@ -185,10 +193,12 @@ class _GameScreenState extends State<GameScreen> with WidgetsBindingObserver {
                     ),
                     subtitle: L.pick(
                       en: 'Always in sync with your API settings',
-                      zhTW: '與 API 設定同步，雲端/本地都行，永不搶內存',
+                      zhTW: Platform.isIOS
+                          ? '與 API 設定同步'
+                          : '與 API 設定同步，雲端/本地都行，永不搶內存',
                     ),
                   ),
-                  if (entries.isEmpty)
+                  if (!Platform.isIOS && entries.isEmpty)
                     Padding(
                       padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
                       child: Text(
@@ -202,12 +212,12 @@ class _GameScreenState extends State<GameScreen> with WidgetsBindingObserver {
                         ),
                       ),
                     )
-                  else
+                  else if (!Platform.isIOS)
                     ...entries.map(
                       (e) => option(id: e['id'] ?? '', label: e['name'] ?? ''),
                     ),
-                  const SizedBox(height: 4),
-                  Center(
+                  if (!Platform.isIOS) const SizedBox(height: 4),
+                  if (!Platform.isIOS) Center(
                     child: TextButton.icon(
                       onPressed: () {
                         Navigator.of(ctx).pop();

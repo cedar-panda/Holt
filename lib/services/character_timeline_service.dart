@@ -25,6 +25,13 @@ class TimelineEventCandidate {
   final String value;
   final String evidence;
 
+  /// RP-only metadata. Daily extraction leaves these fields at their defaults.
+  /// Keeping them on the decoded candidate prevents the RP JSON contract from
+  /// being flattened before the dedicated RP timeline validator sees it.
+  final String eventKey;
+  final String narrativeLayer;
+  final List<String> subjectEntityIds;
+
   const TimelineEventCandidate({
     required this.type,
     required this.subject,
@@ -34,6 +41,9 @@ class TimelineEventCandidate {
     this.key,
     required this.value,
     required this.evidence,
+    this.eventKey = '',
+    this.narrativeLayer = 'mainline',
+    this.subjectEntityIds = const <String>[],
   });
 }
 
@@ -1610,9 +1620,13 @@ class CharacterTimelineService {
       }
     }
 
-    // 剝離標籤
-    return reply.replaceAll(pattern, '').trim();
+    return stripLifeFix(reply);
   }
+
+  /// RP 不擁有日常生活狀態，但仍需把模型意外輸出的協議標籤從正文剝離，
+  /// 避免跨模式寫入 `character_timeline` 或把內部標籤顯示給使用者。
+  static String stripLifeFix(String reply) =>
+      reply.replaceAll(RegExp(r'<life_fix>(.*?)\|(.*?)</life_fix>'), '').trim();
 
   // ─────────────────────────────────────────────
   // F. 自動清理

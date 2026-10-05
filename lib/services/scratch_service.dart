@@ -4,6 +4,7 @@ import 'dart:math';
 
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
+import 'tool_feature_settings.dart';
 
 /// 刮刮樂服務 — 獎池、幣值管理、刮刮樂數據持久化。
 ///
@@ -209,6 +210,7 @@ class ScratchService {
 
   static Future<void> checkDailyGrant({required List<String> characterIds}) {
     return _serialized(() async {
+      if (!(await ToolFeatureSettings.load()).shellEconomyEnabled) return;
       final prefs = await SharedPreferences.getInstance();
       final today = DateTime.now().toIso8601String().substring(0, 10);
       final entities = <String>[userAccountId, ...characterIds.toSet()];

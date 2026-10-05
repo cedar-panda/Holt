@@ -3,6 +3,8 @@ import '../theme/app_theme.dart';
 import '../services/context_compressor.dart';
 import '../services/locale_strings.dart';
 import '../widgets/gradient_background.dart';
+import '../models/context_mode.dart';
+import '../widgets/context_mode_pill.dart';
 
 /// 上下文壓縮 debug 頁（開發用，user 不可見）
 class ContextDebugScreen extends StatefulWidget {
@@ -17,6 +19,7 @@ class _ContextDebugScreenState extends State<ContextDebugScreen> {
   Map<String, dynamic>? _info;
   bool _loading = true;
   bool _editing = false;
+  ContextMode _mode = ContextMode.daily;
 
   @override
   void initState() {
@@ -25,7 +28,10 @@ class _ContextDebugScreenState extends State<ContextDebugScreen> {
   }
 
   Future<void> _load() async {
-    final info = await ContextCompressor.getDebugInfo(widget.characterId);
+    final info = await ContextCompressor.getDebugInfo(
+      widget.characterId,
+      contextMode: _mode,
+    );
     if (mounted) {
       setState(() {
         _info = info;
@@ -55,6 +61,17 @@ class _ContextDebugScreenState extends State<ContextDebugScreen> {
                       onPressed: () => Navigator.pop(context),
                     ),
                     const Spacer(),
+                    ContextModePill(
+                      mode: _mode,
+                      onChanged: (mode) {
+                        setState(() {
+                          _mode = mode;
+                          _loading = true;
+                        });
+                        _load();
+                      },
+                    ),
+                    const SizedBox(width: 8),
                     Text(
                       'Context Debug',
                       style: YanciTheme.bodyText.copyWith(

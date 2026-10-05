@@ -274,7 +274,7 @@ class DeepSeekService implements ApiAdapter {
         provider: 'deepseek',
         model: model,
         cacheChannel: structuredPrompt.cacheChannel,
-        sessionId: CacheSession.conversationId,
+        sessionId: structuredPrompt.cacheSessionId,
         transport: attached ? 'system_before_latest_user' : '',
         sourceMessages: messages,
         requestMessages: allMessages,

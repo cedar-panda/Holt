@@ -32,28 +32,39 @@ void main() {
                     ChatModelPickerEntry(
                       id: 'cloud-popular',
                       label: 'Popular Cloud',
+                      provider: 'openrouter',
+                      providerLabel: 'OpenRouter',
                       isLocal: false,
+                      isProviderConfigured: true,
                     ),
                     ChatModelPickerEntry(
                       id: 'cloud-other',
                       label: 'Other Cloud',
+                      provider: 'gemini',
+                      providerLabel: 'Gemini',
                       isLocal: false,
+                      isProviderConfigured: true,
                     ),
                     ChatModelPickerEntry(
                       id: 'local:qwen',
                       label: 'Qwen Local',
+                      provider: 'local',
+                      providerLabel: '裝置本地',
                       isLocal: true,
+                      isProviderConfigured: true,
                     ),
                   ],
                   currentModelId: 'cloud-popular',
+                  currentProvider: 'openrouter',
                   initialThinking: false,
                   accentColor: customAccent,
                   onThinkingChanged: (value) async {
                     thinkingValue = value;
                   },
-                  onModelSelected: (modelId) async {
-                    selectedModel = modelId;
+                  onModelSelected: (entry) async {
+                    selectedModel = entry.id;
                   },
+                  onUnavailableProviderSelected: (_) {},
                 ),
               ),
             ),
@@ -63,6 +74,10 @@ void main() {
 
       expect(find.text('Thinking'), findsOneWidget);
       expect(find.text('本地'), findsOneWidget);
+      expect(find.text('OpenRouter'), findsOneWidget);
+      expect(find.text('Gemini'), findsOneWidget);
+      expect(find.text('裝置本地'), findsOneWidget);
+      expect(find.textContaining('來源'), findsNothing);
       expect(find.byIcon(Icons.star_rounded), findsNothing);
       expect(find.byIcon(Icons.check_rounded), findsNothing);
       expect(
@@ -84,20 +99,22 @@ void main() {
       );
 
       final cloudTop = tester.getTopLeft(
-        find.byKey(const ValueKey('chat-model-row-cloud-popular')),
+        find.byKey(const ValueKey('chat-model-row-openrouter-cloud-popular')),
       );
       final localHeaderTop = tester.getTopLeft(
         find.byKey(const ValueKey('chat-model-local-header')),
       );
       final localTop = tester.getTopLeft(
-        find.byKey(const ValueKey('chat-model-row-local:qwen')),
+        find.byKey(const ValueKey('chat-model-row-local-local:qwen')),
       );
       expect(cloudTop.dy, lessThan(localHeaderTop.dy));
       expect(localHeaderTop.dy, lessThan(localTop.dy));
 
       final selectedContainer = tester.widget<AnimatedContainer>(
         find.descendant(
-          of: find.byKey(const ValueKey('chat-model-row-cloud-popular')),
+          of: find.byKey(
+            const ValueKey('chat-model-row-openrouter-cloud-popular'),
+          ),
           matching: find.byType(AnimatedContainer),
         ),
       );
@@ -113,7 +130,7 @@ void main() {
       expect(thinkingValue, isTrue);
 
       await tester.tap(
-        find.byKey(const ValueKey('chat-model-row-cloud-other')),
+        find.byKey(const ValueKey('chat-model-row-gemini-cloud-other')),
       );
       await tester.pump();
       expect(selectedModel, 'cloud-other');
@@ -137,14 +154,19 @@ void main() {
                   ChatModelPickerEntry(
                     id: 'cloud',
                     label: 'Cloud',
+                    provider: 'gemini',
+                    providerLabel: 'Gemini',
                     isLocal: false,
+                    isProviderConfigured: true,
                   ),
                 ],
                 currentModelId: 'cloud',
+                currentProvider: 'gemini',
                 initialThinking: true,
                 accentColor: const Color(0xFF906CB4),
                 onThinkingChanged: (_) async {},
                 onModelSelected: (_) async {},
+                onUnavailableProviderSelected: (_) {},
               ),
             ),
           ),
@@ -157,6 +179,124 @@ void main() {
     expect(tester.binding.hasScheduledFrame, isFalse);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('unconfigured source remains visible and does not select', (
+    tester,
+  ) async {
+    ChatModelPickerEntry? unavailableEntry;
+    ChatModelPickerEntry? selectedEntry;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SizedBox(
+            width: 300,
+            height: 220,
+            child: ChatModelPickerPanel(
+              entries: const [
+                ChatModelPickerEntry(
+                  id: 'grok-unconfigured',
+                  label: 'Grok Unconfigured',
+                  provider: 'xai',
+                  providerLabel: 'xAI',
+                  isLocal: false,
+                  isProviderConfigured: false,
+                ),
+              ],
+              currentModelId: 'another-model',
+              currentProvider: 'openrouter',
+              initialThinking: false,
+              accentColor: const Color(0xFF906CB4),
+              onThinkingChanged: (_) async {},
+              onModelSelected: (entry) async => selectedEntry = entry,
+              onUnavailableProviderSelected: (entry) {
+                unavailableEntry = entry;
+              },
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('xAI'), findsOneWidget);
+    expect(find.textContaining('來源'), findsNothing);
+    expect(find.text('尚未設定'), findsOneWidget);
+    expect(find.byIcon(Icons.key_off_outlined), findsOneWidget);
+
+    await tester.tap(
+      find.byKey(const ValueKey('chat-model-row-xai-grok-unconfigured')),
+    );
+    await tester.pump();
+
+    expect(unavailableEntry?.provider, 'xai');
+    expect(selectedEntry, isNull);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+    'same model id from two providers stays independently selectable',
+    (tester) async {
+      ChatModelPickerEntry? selectedEntry;
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: 320,
+              height: 250,
+              child: ChatModelPickerPanel(
+                entries: const [
+                  ChatModelPickerEntry(
+                    id: 'shared/model',
+                    label: 'Shared Model',
+                    provider: 'openrouter',
+                    providerLabel: 'OpenRouter',
+                    isLocal: false,
+                    isProviderConfigured: true,
+                  ),
+                  ChatModelPickerEntry(
+                    id: 'shared/model',
+                    label: 'Shared Model',
+                    provider: 'openai_compatible',
+                    providerLabel: '自訂中轉站',
+                    isLocal: false,
+                    isProviderConfigured: true,
+                  ),
+                ],
+                currentModelId: 'shared/model',
+                currentProvider: 'openrouter',
+                initialThinking: false,
+                accentColor: const Color(0xFF906CB4),
+                onThinkingChanged: (_) async {},
+                onModelSelected: (entry) async => selectedEntry = entry,
+                onUnavailableProviderSelected: (_) {},
+              ),
+            ),
+          ),
+        ),
+      );
+
+      expect(find.text('Shared Model'), findsNWidgets(2));
+      expect(find.text('OpenRouter'), findsOneWidget);
+      expect(find.text('自訂中轉站'), findsOneWidget);
+      expect(find.textContaining('來源'), findsNothing);
+      expect(
+        find.byKey(const ValueKey('chat-model-active-dot')),
+        findsOneWidget,
+      );
+
+      await tester.tap(
+        find.byKey(
+          const ValueKey('chat-model-row-openai_compatible-shared/model'),
+        ),
+      );
+      await tester.pump();
+
+      expect(selectedEntry?.provider, 'openai_compatible');
+      expect(selectedEntry?.id, 'shared/model');
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets('route transition unfolds once without overshoot or fading', (
     tester,

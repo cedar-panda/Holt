@@ -2,12 +2,15 @@ import 'dart:convert';
 
 import '../memory/database.dart';
 import '../models/memory.dart';
+import '../models/memory_action_proposal.dart';
 import 'api_adapter.dart';
 import 'settings/api_settings.dart';
 import 'settings/memory_settings.dart';
 import 'locale_strings.dart';
 import 'token_tracker.dart';
 import 'memory_guard_service.dart';
+import 'memory_debug_log.dart';
+import 'memory_vector_recall_service.dart';
 import 'token_estimator.dart';
 
 typedef MemoryCurationBatchProgress =
@@ -16,7 +19,12 @@ typedef MemoryCurationBatchProgress =
 class MemoryCurationResult {
   final int proposedRelations;
   final int createdLinks;
+  final int updatedLinks;
+  final int unchangedLinks;
+  final int protectedLinks;
   final int duplicateProposals;
+  final int mergedGroups;
+  final List<MemoryRelationProposal> relations;
 
   /// Optional one-sentence dream summary extracted from the model response.
   /// Only populated when a dream-specific systemPromptOverride is used.
@@ -25,7 +33,12 @@ class MemoryCurationResult {
   const MemoryCurationResult({
     required this.proposedRelations,
     required this.createdLinks,
+    this.updatedLinks = 0,
+    this.unchangedLinks = 0,
+    this.protectedLinks = 0,
     this.duplicateProposals = 0,
+    this.mergedGroups = 0,
+    this.relations = const <MemoryRelationProposal>[],
     this.dreamSummary,
   });
 }
@@ -54,7 +67,15 @@ Rules:
 - A memory may connect to multiple other memories. Return every qualifying pair; never limit a memory to one relation.
 - For duplicate_candidate, merge is required. Its content must be one coherent long-term memory that preserves all compatible facts, not two source texts joined together.
 - A merge content may contain at most one bracketed record date such as [7/24], placed at the beginning. If the sources share that date, write it only once.
-- Never invent a fact or an id. Only return a reviewable merge preview; never claim that a memory was changed or deleted.
+- The merged memory must contain only the memory itself. Never append process notes such as "duplicate memories merged".
+- Never invent a fact or an id. Return only merge data; never claim that a memory was changed or deleted.
+- Relevant summaries are evidence for checking continuity and source truth. Never create a relation from a summary alone.
+- Vector candidates are similarity hints only. Independently decide whether they are actually related, duplicated, updated, or unrelated.
+- existing_links contains already stored relations touching this batch. existing_link_memories contains each endpoint once. Use both to avoid redundant or transitive edges and to preserve established context.
+- Never return an unchanged confirmed relation from existing_links. Suggested relations may be independently reassessed; return one only when the supplied evidence supports it.
+- user_rejected_pairs are explicit user decisions. Never propose those pairs again.
+- Do not create a generic related edge merely because two memories share a broad category. The new edge must add information that is not already represented by the supplied existing links.
+- When scope.context_mode is rp, return only duplicate_candidate items for memory consolidation. RP memories do not use graph relations.
 - If there is no strong relation, return {"relations":[]}.
 ''';
 
@@ -66,6 +87,9 @@ Rules:
     String? modelOverride,
     String? providerOverride,
     String? systemPromptOverride,
+    List<MemoryVectorPairCandidate> vectorCandidates =
+        const <MemoryVectorPairCandidate>[],
+    bool applyImmediately = false,
   }) async {
     final unique = <int, Memory>{
       for (final memory in memories)
@@ -83,89 +107,569 @@ Rules:
         : await ApiSettings.resolveSummaryModelProvider(model);
     final adapter =
         adapterOverride ?? await ApiSettings.buildAdapterForSummaryModel(model);
-    final batches = buildAnalysisBatches(unique.values);
+    final scopedGroups = <String, List<Memory>>{};
+    for (final memory in unique.values) {
+      final key = <String>[
+        memory.characterId,
+        memory.contextMode.storageValue,
+        memory.continuityId,
+        memory.mode,
+      ].join('\u0000');
+      scopedGroups.putIfAbsent(key, () => <Memory>[]).add(memory);
+    }
+    final batches = <List<Memory>>[
+      for (final group in scopedGroups.values)
+        ...buildAnalysisBatches(
+          _orderByVectorClusters(group, vectorCandidates),
+        ),
+    ];
     if (batches.isEmpty) {
       return const MemoryCurationResult(proposedRelations: 0, createdLinks: 0);
     }
 
     var proposed = 0;
     var created = 0;
+    var updated = 0;
+    var unchanged = 0;
+    var protected = 0;
     var duplicateProposals = 0;
+    var mergedGroups = 0;
+    final relationReports = <MemoryRelationProposal>[];
     String? dreamSummary;
     for (var batchIndex = 0; batchIndex < batches.length; batchIndex++) {
       final batch = batches[batchIndex];
+      final scope = batch.first;
+      final summaries = await _summaryEvidence(scope, batch);
+      final existingLinkEvidence = await _existingLinkEvidence(scope, batch);
+      final allowedIds = batch.map((memory) => memory.id!).toSet();
+      final batchVectorCandidates = vectorCandidates
+          .where(
+            (candidate) =>
+                allowedIds.contains(candidate.firstId) &&
+                allowedIds.contains(candidate.secondId),
+          )
+          .toList(growable: false);
       ApiUsage? usage;
-      final response = await adapter.sendMessage(
-        messages: [
-          {
-            'role': 'user',
-            'content': jsonEncode({
-              'output_language': _outputLanguage,
-              'batch': {'index': batchIndex + 1, 'total': batches.length},
-              'memories': [for (final memory in batch) _memoryPayload(memory)],
-            }),
-          },
-        ],
-        model: model,
-        systemPrompt: systemPromptOverride ?? _systemPrompt,
-        onUsage: (value) => usage = value,
-      );
-      if (usage != null) {
-        await TokenTracker().recordRealUsage(
+      late String response;
+      try {
+        response = await adapter.sendMessage(
+          messages: [
+            {
+              'role': 'user',
+              'content': jsonEncode({
+                'output_language': _outputLanguage,
+                'batch': {'index': batchIndex + 1, 'total': batches.length},
+                'scope': <String, Object?>{
+                  'context_mode': scope.contextMode.storageValue,
+                  'continuity_id': scope.continuityId,
+                  'memory_mode': scope.mode,
+                },
+                'relevant_summaries': summaries,
+                'existing_links': existingLinkEvidence['existing_links'],
+                'existing_link_memories':
+                    existingLinkEvidence['existing_link_memories'],
+                'user_rejected_pairs':
+                    existingLinkEvidence['user_rejected_pairs'],
+                'vector_candidates': [
+                  for (final candidate in batchVectorCandidates)
+                    candidate.toPayload(),
+                ],
+                'memories': [
+                  for (final memory in batch) _memoryPayload(memory),
+                ],
+              }),
+            },
+          ],
+          model: model,
+          systemPrompt: systemPromptOverride ?? _systemPrompt,
+          onUsage: (value) => usage = value,
+        );
+      } catch (error) {
+        MemoryDebugLog.record(
+          stage: 'curation_summary_error',
+          contextMode: scope.contextMode.storageValue,
+          continuityId: scope.continuityId,
           provider: provider,
           model: model,
-          usage: usage!,
-          characterId: characterId,
+          inputCount: batch.length,
+          resultIds: allowedIds,
+          details: <String, Object?>{
+            'summary_count': summaries.length,
+            'existing_link_count':
+                (existingLinkEvidence['existing_links'] as List).length,
+            'rejected_pair_count':
+                (existingLinkEvidence['user_rejected_pairs'] as List).length,
+            'vector_pairs': batchVectorCandidates.length,
+          },
+          error: error,
         );
+        rethrow;
       }
-
-      final relations = decodeRelations(
-        response,
-        allowedIds: batch.map((memory) => memory.id!).toSet(),
+      await TokenTracker().recordRealUsage(
+        provider: provider,
+        model: model,
+        usage: usage ?? const ApiUsage(),
+        characterId: characterId,
+        requestKind: ApiRequestKind.memory,
       );
+
+      final decodedRelations = decodeRelations(
+        response,
+        allowedIds: allowedIds,
+      );
+      final relations = scope.contextMode.storageValue == 'rp'
+          ? decodedRelations
+                .where((relation) => relation.type == 'duplicate_candidate')
+                .toList(growable: false)
+          : decodedRelations;
+      relationReports.addAll(relations);
       dreamSummary ??= extractDreamSummary(response);
       proposed += relations.length;
-      for (final relation in relations) {
-        final inserted = await DatabaseHelper.upsertSpiderWebRelation(
-          characterId,
-          relation.mainId,
-          relation.relatedId,
-          relationType: relation.type,
-          strength: relation.score,
-          status: 'suggested',
-          source: 'model',
-          reason: relation.reason,
+      if (applyImmediately) {
+        final applied = await _applyReviewedRelations(
+          characterId: characterId,
+          memories: batch,
+          relations: relations,
         );
-        if (inserted) created++;
-        if (relation.type == 'duplicate_candidate') {
-          final first = unique[relation.mainId];
-          final second = unique[relation.relatedId];
-          if (first != null && second != null) {
-            final proposalId =
-                await MemoryGuardService.proposeExistingDuplicate(
-                  characterId: characterId,
-                  mode: first.mode,
-                  first: first,
-                  second: second,
-                  score: relation.score,
-                  reasons: <String>[
-                    'model_relation:${(relation.score * 100).round()}',
-                    if (relation.reason.isNotEmpty) relation.reason,
-                  ],
-                  mergeResult: relation.mergeResult,
+        created += applied.confirmedLinks;
+        updated += applied.updatedLinks;
+        unchanged += applied.unchangedLinks;
+        protected += applied.protectedLinks;
+        duplicateProposals += applied.protectedProposals;
+        mergedGroups += applied.mergedGroups;
+      } else {
+        for (final relation in relations) {
+          if (scope.contextMode.storageValue != 'rp') {
+            final writeResult =
+                await DatabaseHelper.upsertSpiderWebRelationDetailed(
+                  characterId,
+                  relation.mainId,
+                  relation.relatedId,
+                  relationType: relation.type,
+                  strength: relation.score,
+                  status: 'suggested',
+                  source: 'model',
+                  reason: relation.reason,
                 );
-            if (proposalId != null) duplicateProposals++;
+            switch (writeResult) {
+              case SpiderWebRelationWriteResult.inserted:
+                created++;
+              case SpiderWebRelationWriteResult.updated:
+                updated++;
+              case SpiderWebRelationWriteResult.unchanged:
+                unchanged++;
+              case SpiderWebRelationWriteResult.protected:
+                protected++;
+              case SpiderWebRelationWriteResult.invalid:
+                break;
+            }
+          }
+          if (relation.type == 'duplicate_candidate') {
+            final first = unique[relation.mainId];
+            final second = unique[relation.relatedId];
+            if (first != null && second != null) {
+              final proposalId =
+                  await MemoryGuardService.proposeExistingDuplicate(
+                    characterId: characterId,
+                    mode: first.mode,
+                    first: first,
+                    second: second,
+                    score: relation.score,
+                    reasons: <String>[
+                      'model_relation:${(relation.score * 100).round()}',
+                      if (relation.reason.isNotEmpty) relation.reason,
+                    ],
+                    mergeResult: relation.mergeResult,
+                  );
+              if (proposalId != null) duplicateProposals++;
+            }
           }
         }
       }
+      MemoryDebugLog.record(
+        stage: scope.contextMode.storageValue == 'rp'
+            ? 'rp_merge_review'
+            : 'daily_link_review',
+        contextMode: scope.contextMode.storageValue,
+        continuityId: scope.continuityId,
+        provider: provider,
+        model: model,
+        inputCount: batch.length,
+        resultIds: relations
+            .expand((relation) => <int>[relation.mainId, relation.relatedId])
+            .toSet(),
+        details: <String, Object?>{
+          'summary_count': summaries.length,
+          'existing_link_count':
+              (existingLinkEvidence['existing_links'] as List).length,
+          'rejected_pair_count':
+              (existingLinkEvidence['user_rejected_pairs'] as List).length,
+          'vector_pairs': batchVectorCandidates.length,
+          'relations': relations.length,
+          'created_links': created,
+          'updated_links': updated,
+          'unchanged_links': unchanged,
+          'protected_links': protected,
+          'duplicates': relations
+              .where((relation) => relation.type == 'duplicate_candidate')
+              .length,
+        },
+      );
       onBatchProgress?.call(batchIndex + 1, batches.length);
     }
     return MemoryCurationResult(
       proposedRelations: proposed,
       createdLinks: created,
+      updatedLinks: updated,
+      unchangedLinks: unchanged,
+      protectedLinks: protected,
       duplicateProposals: duplicateProposals,
+      mergedGroups: mergedGroups,
+      relations: List<MemoryRelationProposal>.unmodifiable(relationReports),
       dreamSummary: dreamSummary,
     );
+  }
+
+  static Future<
+    ({
+      int confirmedLinks,
+      int updatedLinks,
+      int unchangedLinks,
+      int protectedLinks,
+      int mergedGroups,
+      int protectedProposals,
+    })
+  >
+  _applyReviewedRelations({
+    required String characterId,
+    required List<Memory> memories,
+    required List<MemoryRelationProposal> relations,
+  }) async {
+    final byId = <int, Memory>{
+      for (final memory in memories)
+        if (memory.id != null) memory.id!: memory,
+    };
+    var confirmedLinks = 0;
+    var updatedLinks = 0;
+    var unchangedLinks = 0;
+    var protectedLinks = 0;
+    for (final relation in relations.where(
+      (relation) => relation.type != 'duplicate_candidate',
+    )) {
+      final writeResult = await DatabaseHelper.upsertSpiderWebRelationDetailed(
+        characterId,
+        relation.mainId,
+        relation.relatedId,
+        relationType: relation.type,
+        strength: relation.score,
+        status: 'confirmed',
+        source: 'user_curation',
+        reason: relation.reason,
+      );
+      switch (writeResult) {
+        case SpiderWebRelationWriteResult.inserted:
+          confirmedLinks++;
+        case SpiderWebRelationWriteResult.updated:
+          updatedLinks++;
+        case SpiderWebRelationWriteResult.unchanged:
+          unchangedLinks++;
+        case SpiderWebRelationWriteResult.protected:
+          protectedLinks++;
+        case SpiderWebRelationWriteResult.invalid:
+          break;
+      }
+    }
+
+    final duplicateRelations = relations
+        .where((relation) => relation.type == 'duplicate_candidate')
+        .toList(growable: false);
+    final components = <Set<int>>[];
+    for (final relation in duplicateRelations) {
+      final pair = <int>{relation.mainId, relation.relatedId};
+      final overlapping = components
+          .where((component) => component.any(pair.contains))
+          .toList(growable: false);
+      if (overlapping.isEmpty) {
+        components.add(pair);
+        continue;
+      }
+      final merged = <int>{...pair};
+      for (final component in overlapping) {
+        merged.addAll(component);
+        components.remove(component);
+      }
+      components.add(merged);
+    }
+
+    var mergedGroups = 0;
+    var protectedProposals = 0;
+    for (final component in components) {
+      final group = component
+          .map((id) => byId[id])
+          .whereType<Memory>()
+          .toList(growable: false);
+      if (group.length < 2) continue;
+      final groupRelations =
+          duplicateRelations
+              .where(
+                (relation) =>
+                    component.contains(relation.mainId) &&
+                    component.contains(relation.relatedId),
+              )
+              .toList(growable: false)
+            ..sort((left, right) => right.score.compareTo(left.score));
+      final best = groupRelations.first;
+      final proposalId = await MemoryGuardService.proposeExistingDuplicateGroup(
+        characterId: characterId,
+        mode: group.first.mode,
+        memories: group,
+        score: best.score,
+        reasons: <String>[
+          for (final relation in groupRelations) ...[
+            'model_relation:${(relation.score * 100).round()}',
+            if (relation.reason.isNotEmpty) relation.reason,
+          ],
+        ],
+        mergeResult: best.mergeResult,
+      );
+      if (proposalId == null) continue;
+      if (group.any((memory) => memory.isPermanent)) {
+        protectedProposals++;
+        continue;
+      }
+      final status = await MemoryGuardService.execute(
+        proposalId,
+        characterId,
+        mergeResultOverride: best.mergeResult,
+      );
+      if (status == MemoryActionProposal.statusCompleted) {
+        mergedGroups++;
+      } else {
+        protectedProposals++;
+      }
+    }
+    return (
+      confirmedLinks: confirmedLinks,
+      updatedLinks: updatedLinks,
+      unchangedLinks: unchangedLinks,
+      protectedLinks: protectedLinks,
+      mergedGroups: mergedGroups,
+      protectedProposals: protectedProposals,
+    );
+  }
+
+  static List<Memory> _orderByVectorClusters(
+    List<Memory> memories,
+    List<MemoryVectorPairCandidate> candidates,
+  ) {
+    final byId = <int, Memory>{
+      for (final memory in memories)
+        if (memory.id != null) memory.id!: memory,
+    };
+    final adjacency = <int, Set<int>>{};
+    for (final candidate in candidates) {
+      if (!byId.containsKey(candidate.firstId) ||
+          !byId.containsKey(candidate.secondId)) {
+        continue;
+      }
+      adjacency
+          .putIfAbsent(candidate.firstId, () => <int>{})
+          .add(candidate.secondId);
+      adjacency
+          .putIfAbsent(candidate.secondId, () => <int>{})
+          .add(candidate.firstId);
+    }
+    final ordered = <Memory>[];
+    final visited = <int>{};
+    for (final start in adjacency.keys) {
+      if (!visited.add(start)) continue;
+      final queue = <int>[start];
+      while (queue.isNotEmpty) {
+        final id = queue.removeAt(0);
+        final memory = byId[id];
+        if (memory != null) ordered.add(memory);
+        for (final next in adjacency[id] ?? const <int>{}) {
+          if (visited.add(next)) queue.add(next);
+        }
+      }
+    }
+    for (final memory in memories) {
+      if (memory.id == null || visited.add(memory.id!)) ordered.add(memory);
+    }
+    return ordered;
+  }
+
+  static Future<List<Map<String, Object?>>> _summaryEvidence(
+    Memory scope,
+    List<Memory> batch,
+  ) async {
+    late List<Map<String, dynamic>> rows;
+    try {
+      rows = await DatabaseHelper.getRelevantContextSummaries(
+        scope.characterId,
+        contextMode: scope.contextMode,
+        continuityId: scope.continuityId,
+        sourceConversationIds: batch
+            .map((memory) => memory.sourceConversationId ?? '')
+            .where((id) => id.isNotEmpty),
+        limit: 3,
+      );
+    } catch (error) {
+      MemoryDebugLog.record(
+        stage: 'curation_summary_lookup_fallback',
+        contextMode: scope.contextMode.storageValue,
+        continuityId: scope.continuityId,
+        inputCount: batch.length,
+        error: error,
+      );
+      return const <Map<String, Object?>>[];
+    }
+    const budget = 2200;
+    var used = 0;
+    final result = <Map<String, Object?>>[];
+    for (final row in rows) {
+      final content = row['content']?.toString().trim() ?? '';
+      if (content.isEmpty) continue;
+      final tokens = TokenEstimator.estimate(content);
+      if (result.isNotEmpty && used + tokens > budget) break;
+      result.add(<String, Object?>{
+        'id': row['id'],
+        'source_conversation_id': row['source_conversation_id'] ?? '',
+        'content': content,
+      });
+      used += tokens;
+    }
+    return result;
+  }
+
+  /// Sends the model the already stored graph around the current batch rather
+  /// than the character's entire graph. Both endpoint texts are included so
+  /// the model can see whether a proposed edge is duplicate, transitive, or a
+  /// genuine update. Endpoint content is de-duplicated to keep dense clusters
+  /// from repeating the same prose for every edge. Rejected pairs are sent
+  /// separately as user decisions.
+  static Future<Map<String, List<Map<String, Object?>>>> _existingLinkEvidence(
+    Memory scope,
+    List<Memory> batch,
+  ) async {
+    final ids = batch.map((memory) => memory.id).whereType<int>().toList();
+    if (ids.isEmpty) {
+      return const <String, List<Map<String, Object?>>>{
+        'existing_links': <Map<String, Object?>>[],
+        'existing_link_memories': <Map<String, Object?>>[],
+        'user_rejected_pairs': <Map<String, Object?>>[],
+      };
+    }
+    try {
+      final db = await DatabaseHelper.database;
+      final placeholders = List<String>.filled(ids.length, '?').join(',');
+      final rows = await db.rawQuery(
+        '''
+        SELECT link.id, link.memory_id_1, link.memory_id_2,
+               link.relation_type, link.strength, link.status,
+               link.source, link.reason,
+               first_memory.mode AS first_mode,
+               first_memory.category AS first_category,
+               first_memory.content AS first_content,
+               first_memory.triggers AS first_triggers,
+               second_memory.mode AS second_mode,
+               second_memory.category AS second_category,
+               second_memory.content AS second_content,
+               second_memory.triggers AS second_triggers
+        FROM spider_web_links AS link
+        INNER JOIN memories AS first_memory
+          ON first_memory.id = link.memory_id_1
+         AND first_memory.character_id = link.character_id
+        INNER JOIN memories AS second_memory
+          ON second_memory.id = link.memory_id_2
+         AND second_memory.character_id = link.character_id
+        WHERE link.character_id = ?
+          AND (link.memory_id_1 IN ($placeholders)
+               OR link.memory_id_2 IN ($placeholders))
+          AND first_memory.context_mode = ?
+          AND second_memory.context_mode = ?
+          AND first_memory.continuity_id = ?
+          AND second_memory.continuity_id = ?
+          AND first_memory.mode = ?
+          AND second_memory.mode = ?
+        ORDER BY CASE link.status
+                   WHEN 'confirmed' THEN 0
+                   WHEN 'suggested' THEN 1
+                   ELSE 2
+                 END,
+                 link.strength DESC,
+                 link.id ASC
+        ''',
+        <Object?>[
+          scope.characterId,
+          ...ids,
+          ...ids,
+          scope.contextMode.storageValue,
+          scope.contextMode.storageValue,
+          scope.continuityId,
+          scope.continuityId,
+          scope.mode,
+          scope.mode,
+        ],
+      );
+      final existing = <Map<String, Object?>>[];
+      final linkedMemories = <int, Map<String, Object?>>{};
+      final rejected = <Map<String, Object?>>[];
+      for (final row in rows) {
+        final firstId = row['memory_id_1'];
+        final secondId = row['memory_id_2'];
+        if (firstId is! int || secondId is! int) continue;
+        if (row['status'] == 'rejected') {
+          rejected.add(<String, Object?>{
+            'memory_id_1': firstId,
+            'memory_id_2': secondId,
+            'relation_type': row['relation_type'] ?? 'related',
+          });
+          continue;
+        }
+        existing.add(<String, Object?>{
+          'memory_id_1': firstId,
+          'memory_id_2': secondId,
+          'relation_type': row['relation_type'] ?? 'related',
+          'strength': row['strength'] ?? 0,
+          'status': row['status'] ?? 'confirmed',
+          'source': row['source'] ?? 'legacy',
+          'reason': row['reason'] ?? '',
+        });
+        linkedMemories[firstId] = <String, Object?>{
+          'id': firstId,
+          'mode': row['first_mode'] ?? '',
+          'category': row['first_category'] ?? '',
+          'content': row['first_content'] ?? '',
+          'triggers': row['first_triggers'] ?? '',
+        };
+        linkedMemories[secondId] = <String, Object?>{
+          'id': secondId,
+          'mode': row['second_mode'] ?? '',
+          'category': row['second_category'] ?? '',
+          'content': row['second_content'] ?? '',
+          'triggers': row['second_triggers'] ?? '',
+        };
+      }
+      return <String, List<Map<String, Object?>>>{
+        'existing_links': existing,
+        'existing_link_memories': linkedMemories.values.toList(growable: false),
+        'user_rejected_pairs': rejected,
+      };
+    } catch (error) {
+      MemoryDebugLog.record(
+        stage: 'curation_existing_links_fallback',
+        contextMode: scope.contextMode.storageValue,
+        continuityId: scope.continuityId,
+        inputCount: batch.length,
+        error: error,
+      );
+      return const <String, List<Map<String, Object?>>>{
+        'existing_links': <Map<String, Object?>>[],
+        'existing_link_memories': <Map<String, Object?>>[],
+        'user_rejected_pairs': <Map<String, Object?>>[],
+      };
+    }
   }
 
   /// Splits an unlimited manual selection into context-safe model requests.

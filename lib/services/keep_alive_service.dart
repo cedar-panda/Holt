@@ -8,11 +8,14 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:workmanager/workmanager.dart';
 
 import '../memory/database.dart';
+import '../models/chat_session_identity.dart';
 import '../services/api_adapter.dart';
+import '../services/gemini_service.dart';
 import '../services/keep_alive_foreground.dart';
 import '../services/locale_strings.dart';
 import '../services/settings_manager.dart';
 import '../services/token_estimator.dart';
+import '../services/token_tracker.dart';
 
 /// 角色心跳事件。
 class KeepAliveHeartbeat {
@@ -25,6 +28,7 @@ class KeepAliveHeartbeat {
 /// claimVisibleWindow 覆蓋前暫存的原保活窗口。
 /// 用途：偷看別的對話但沒發消息就退出時，原窗口的保活能原樣恢復。
 class _PausedWindow {
+  final ChatSessionIdentity sessionIdentity;
   final String conversationId;
   final String characterId;
   final DateTime? startTime;
@@ -36,6 +40,7 @@ class _PausedWindow {
   final String? provider;
 
   const _PausedWindow({
+    required this.sessionIdentity,
     required this.conversationId,
     required this.characterId,
     required this.startTime,
@@ -57,6 +62,7 @@ class KeepAliveService {
   Timer? _timer;
   String? _conversationId;
   String? _characterId;
+  ChatSessionIdentity? _sessionIdentity;
   DateTime? _startTime;
   bool _active = false;
   String? _leaseToken;
@@ -101,6 +107,10 @@ class KeepAliveService {
   static const String _keyLegacyHeartbeat = 'keepalive_heartbeat';
   static const String _keyActiveConvId = 'keepalive_conv_id';
   static const String _keyActiveCharId = 'keepalive_char_id';
+  static const String _keyActiveContextMode = 'keepalive_context_mode';
+  static const String _keyActiveContinuityId = 'keepalive_continuity_id';
+  static const String _keyActiveUserPersonaId = 'keepalive_user_persona_id';
+  static const String _keyActiveWorldbookSetId = 'keepalive_worldbook_set_id';
   static const String _keyActiveConvTitle = 'keepalive_conv_title';
   static const String _keyStartTime = 'keepalive_start_time';
   static const String _keyCachedMessages = 'keepalive_cached_messages';
@@ -139,8 +149,7 @@ class KeepAliveService {
 
   /// 啟動關窗保活。由 chat_screen.dispose 傳入最後一次完整請求上下文。
   Future<void> start({
-    required String conversationId,
-    required String characterId,
+    required ChatSessionIdentity sessionIdentity,
     List<Map<String, String>>? messages,
     StructuredPrompt? structuredPrompt,
     ApiAdapter? adapter,
@@ -153,8 +162,7 @@ class KeepAliveService {
     // 錨點必須保留在上次真正打 API 的時刻，否則第一針會虛後移，
     // 落點超過 1h TTL 時緩存已死，ping 變成全量重寫。
     await rememberActiveWindow(
-      conversationId: conversationId,
-      characterId: characterId,
+      sessionIdentity: sessionIdentity,
       messages: messages,
       structuredPrompt: structuredPrompt,
       adapter: adapter,
@@ -229,12 +237,17 @@ class KeepAliveService {
     // 並以 reload 後的錨點重新計算窗口；否則獨立 isolate 可能拿著舊的
     // lastRequestAt 通過檢查，與另一條保活腿重複發送。
     await prefs.reload();
-    if (!_leaseMatches(
+    final sessionIdentity = await _validatedPersistedIdentity(
       prefs,
-      conversationId: convId,
-      characterId: charId,
-      leaseToken: leaseToken,
-    )) {
+      expectedConversationId: convId,
+    );
+    if (sessionIdentity == null ||
+        !_leaseMatches(
+          prefs,
+          sessionIdentity: sessionIdentity,
+          leaseToken: leaseToken,
+        )) {
+      await prefs.remove(_keyLeaseToken);
       return;
     }
     final refreshedStartTime = DateTime.tryParse(
@@ -258,6 +271,7 @@ class KeepAliveService {
     final svc = instance;
     svc._conversationId = convId;
     svc._characterId = charId;
+    svc._sessionIdentity = sessionIdentity;
     svc._startTime = refreshedStartTime;
     svc._lastRequestAt = lastRequestAt;
     svc._leaseToken = leaseToken;
@@ -269,6 +283,7 @@ class KeepAliveService {
     final controlPrompt = prefs.getString(_keyCachedControlPrompt) ?? '';
     if (staticPrompt != null || controlPrompt.isNotEmpty) {
       svc._cachedStructuredPrompt = StructuredPrompt(
+        sessionIdentity: sessionIdentity,
         staticPart: staticPrompt ?? '',
         profilePart: profilePrompt,
         windowPart: windowPrompt ?? '',
@@ -285,8 +300,7 @@ class KeepAliveService {
   /// 記住最後真正發過消息的窗口。這是首頁「正在聊」入口的來源；
   /// 即使沒有 1 小時 TTL 保活，也要持久化。
   Future<void> rememberActiveWindow({
-    required String conversationId,
-    required String characterId,
+    required ChatSessionIdentity sessionIdentity,
     List<Map<String, String>>? messages,
     StructuredPrompt? structuredPrompt,
     ApiAdapter? adapter,
@@ -296,6 +310,9 @@ class KeepAliveService {
   }) async {
     // 有真消息落地 = 保活歸屬換人，claim 暫存的舊窗口作廢
     _pausedWindow = null;
+
+    final conversationId = sessionIdentity.conversationId;
+    final characterId = sessionIdentity.characterId;
 
     final sameConv = _conversationId == conversationId;
     if (refreshAnchor ||
@@ -310,6 +327,7 @@ class KeepAliveService {
     }
     _conversationId = conversationId;
     _characterId = characterId;
+    _sessionIdentity = sessionIdentity;
     _cachedMessages = _copyMessages(messages);
     _cachedStructuredPrompt = structuredPrompt;
     _cachedAdapter = adapter;
@@ -326,15 +344,20 @@ class KeepAliveService {
   /// 打開另一個窗口時，舊窗口的 timer/background ping 必須停下；新的窗口要等
   /// 下一條真消息產生完整 StructuredPrompt 後，才會重新啟動續期 tick。
   Future<void> claimVisibleWindow({
-    required String conversationId,
-    required String characterId,
+    required ChatSessionIdentity sessionIdentity,
     List<Map<String, String>>? messages,
   }) async {
-    if (_conversationId == conversationId) {
+    final conversationId = sessionIdentity.conversationId;
+    final characterId = sessionIdentity.characterId;
+    final sameConversation = _conversationId == conversationId;
+    final sameIdentity =
+        _sessionIdentity?.cacheNamespace == sessionIdentity.cacheNamespace;
+    if (sameConversation && sameIdentity) {
       if (_characterId != null &&
           _cachedStructuredPrompt != null &&
           _lastRequestAt != null) {
         _pausedWindow = _PausedWindow(
+          sessionIdentity: _sessionIdentity!,
           conversationId: _conversationId!,
           characterId: _characterId!,
           startTime: _startTime,
@@ -349,15 +372,18 @@ class KeepAliveService {
       await pauseActiveWindow();
       return;
     }
+    if (sameConversation) await stop();
 
     // 覆蓋前把還有完整保活上下文的原窗口暫存起來——
     // 沒有這一步，「點開別的對話看一眼」就會無聲殺死保活（prefs 裡的
     // cached prompt / 錨點會被下面的 _persistActiveWindow 一起清掉）。
     if (_conversationId != null &&
         _characterId != null &&
+        _sessionIdentity != null &&
         _cachedStructuredPrompt != null &&
         _lastRequestAt != null) {
       _pausedWindow = _PausedWindow(
+        sessionIdentity: _sessionIdentity!,
         conversationId: _conversationId!,
         characterId: _characterId!,
         startTime: _startTime,
@@ -373,6 +399,7 @@ class KeepAliveService {
     await _cancelRenewalOnly();
     _conversationId = conversationId;
     _characterId = characterId;
+    _sessionIdentity = sessionIdentity;
     _startTime = DateTime.now();
     _lastRequestAt = null;
     _cachedMessages = _copyMessages(messages);
@@ -397,6 +424,7 @@ class KeepAliveService {
     _pausedWindow = null;
     _conversationId = null;
     _characterId = null;
+    _sessionIdentity = null;
     _startTime = null;
     _lastRequestAt = null;
     _cachedMessages = null;
@@ -411,6 +439,10 @@ class KeepAliveService {
     await prefs.remove(_keyLeaseToken);
     await prefs.remove(_keyActiveConvId);
     await prefs.remove(_keyActiveCharId);
+    await prefs.remove(_keyActiveContextMode);
+    await prefs.remove(_keyActiveContinuityId);
+    await prefs.remove(_keyActiveUserPersonaId);
+    await prefs.remove(_keyActiveWorldbookSetId);
     await prefs.remove(_keyStartTime);
     await prefs.remove(_keyActiveConvTitle);
     await prefs.remove(_keyCachedMessages);
@@ -457,6 +489,7 @@ class KeepAliveService {
 
     _conversationId = paused.conversationId;
     _characterId = paused.characterId;
+    _sessionIdentity = paused.sessionIdentity;
     _startTime = paused.startTime;
     _lastRequestAt = paused.lastRequestAt;
     _cachedMessages = paused.messages;
@@ -481,11 +514,21 @@ class KeepAliveService {
 
     if (convId == null || charId == null || startStr == null) return;
 
+    final sessionIdentity = await _validatedPersistedIdentity(
+      prefs,
+      expectedConversationId: convId,
+    );
+    if (sessionIdentity == null || sessionIdentity.characterId != charId) {
+      await stop();
+      return;
+    }
+
     final startTime = DateTime.tryParse(startStr);
     if (startTime == null) return;
 
     _conversationId = convId;
     _characterId = charId;
+    _sessionIdentity = sessionIdentity;
     _startTime = startTime;
     _cachedMessages = _decodeMessages(prefs.getString(_keyCachedMessages));
     final staticPrompt = prefs.getString(_keyCachedStaticPrompt);
@@ -494,6 +537,7 @@ class KeepAliveService {
     final controlPrompt = prefs.getString(_keyCachedControlPrompt) ?? '';
     if (staticPrompt != null || controlPrompt.isNotEmpty) {
       _cachedStructuredPrompt = StructuredPrompt(
+        sessionIdentity: sessionIdentity,
         staticPart: staticPrompt ?? '',
         profilePart: profilePrompt,
         windowPart: windowPrompt ?? '',
@@ -573,8 +617,14 @@ class KeepAliveService {
   Future<void> _reloadPersistedAnchors() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.reload();
+    final sessionIdentity = _sessionIdentity;
     if (prefs.getString(_keyActiveConvId) != _conversationId ||
-        prefs.getString(_keyActiveCharId) != _characterId) {
+        prefs.getString(_keyActiveCharId) != _characterId ||
+        sessionIdentity == null ||
+        !sessionIdentity.matchesCacheMetadata(
+          _persistedIdentityMetadata(prefs),
+        )) {
+      _cancelTimerOnly();
       return;
     }
     _startTime = _newerTimestamp(
@@ -604,15 +654,35 @@ class KeepAliveService {
     _characterId = characterId;
     _startTime = startTime;
     _lastRequestAt = lastRequestAt;
-    await _reloadPersistedAnchors();
+    // Legacy anchor tests intentionally exercise timestamp arbitration only;
+    // production restore/ping paths always require a full session identity.
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.reload();
+    if (prefs.getString(_keyActiveConvId) != conversationId ||
+        prefs.getString(_keyActiveCharId) != characterId) {
+      return (_startTime, _lastRequestAt);
+    }
+    _startTime = _newerTimestamp(
+      _startTime,
+      DateTime.tryParse(prefs.getString(_keyStartTime) ?? ''),
+    );
+    _lastRequestAt = _newerTimestamp(
+      _lastRequestAt,
+      DateTime.tryParse(prefs.getString(_keyLastRequestAt) ?? ''),
+    );
     return (_startTime, _lastRequestAt);
   }
 
   Future<void> _ping() async {
     final convId = _conversationId;
     final charId = _characterId;
+    final sessionIdentity = _sessionIdentity;
     final leaseToken = _leaseToken;
-    if (!_active || convId == null || charId == null || leaseToken == null) {
+    if (!_active ||
+        convId == null ||
+        charId == null ||
+        sessionIdentity == null ||
+        leaseToken == null) {
       return;
     }
 
@@ -638,16 +708,22 @@ class KeepAliveService {
 
       final structuredPrompt = _cachedStructuredPrompt;
       if (structuredPrompt == null) return;
-      if (!_hasCacheableStaticPrompt(
-        structuredPrompt,
-        provider: provider,
-        model: model,
-      )) {
+      if (structuredPrompt.sessionIdentity?.cacheNamespace !=
+          sessionIdentity.cacheNamespace) {
+        _cancelTimerOnly();
         return;
       }
 
       final baseMessages = _copyMessages(_cachedMessages);
       if (baseMessages == null || baseMessages.isEmpty) return;
+      if (!_hasCacheableStaticPrompt(
+        structuredPrompt,
+        provider: provider,
+        model: model,
+        messages: baseMessages,
+      )) {
+        return;
+      }
 
       final messages = <Map<String, String>>[
         ...baseMessages,
@@ -680,14 +756,16 @@ class KeepAliveService {
       );
       if (!pingClaimed) return;
 
-      CacheSession.conversationId = convId;
+      CacheSession.bind(sessionIdentity);
       _activePingAdapter = adapter;
       late String response;
+      ApiUsage? usage;
       try {
         response = await adapter.sendMessage(
           messages: messages,
           model: model,
           structuredPrompt: StructuredPrompt(
+            sessionIdentity: sessionIdentity,
             staticPart: structuredPrompt.staticPart,
             profilePart: structuredPrompt.profilePart,
             windowPart: structuredPrompt.windowPart,
@@ -695,6 +773,7 @@ class KeepAliveService {
             liveStatePart: '',
             cacheChannel: structuredPrompt.cacheChannel,
           ),
+          onUsage: (value) => usage = value,
         );
       } finally {
         if (identical(_activePingAdapter, adapter)) _activePingAdapter = null;
@@ -707,6 +786,14 @@ class KeepAliveService {
       )) {
         return;
       }
+
+      await TokenTracker().recordRealUsage(
+        provider: provider,
+        model: model,
+        usage: usage ?? const ApiUsage(),
+        characterId: charId,
+        requestKind: ApiRequestKind.keepAlive,
+      );
 
       // ping 成功 = 緩存 TTL 續期，先把跨 isolate 的 cooldown 寫入 guard，
       // 再更新 SharedPreferences 錨點。即使另一個 isolate 手上的 prefs 快照
@@ -809,17 +896,24 @@ class KeepAliveService {
 
     final convId = _conversationId;
     final charId = _characterId;
+    final sessionIdentity = _sessionIdentity;
     final startTime = _startTime;
     final lastRequestAt = _lastRequestAt;
     final structuredPrompt = _cachedStructuredPrompt;
     final messages = _copyMessages(_cachedMessages);
     if (convId == null ||
         charId == null ||
+        sessionIdentity == null ||
         startTime == null ||
         lastRequestAt == null ||
         structuredPrompt == null ||
         messages == null ||
         messages.isEmpty) {
+      await _cancelRenewalOnly();
+      return;
+    }
+    if (structuredPrompt.sessionIdentity?.cacheNamespace !=
+        sessionIdentity.cacheNamespace) {
       await _cancelRenewalOnly();
       return;
     }
@@ -848,6 +942,7 @@ class KeepAliveService {
       structuredPrompt,
       provider: provider,
       model: model,
+      messages: messages,
     )) {
       await _cancelRenewalOnly();
       return;
@@ -862,12 +957,33 @@ class KeepAliveService {
   Future<void> _persistActiveWindow() async {
     final convId = _conversationId;
     final charId = _characterId;
+    final sessionIdentity = _sessionIdentity;
     final startTime = _startTime;
-    if (convId == null || charId == null || startTime == null) return;
+    if (convId == null ||
+        charId == null ||
+        sessionIdentity == null ||
+        startTime == null) {
+      return;
+    }
+
+    final conversation = await DatabaseHelper.getConversation(convId);
+    final storedIdentity = ChatSessionIdentity.fromConversation(
+      expectedConversationId: convId,
+      conversation: conversation,
+    );
+    if (storedIdentity.cacheNamespace != sessionIdentity.cacheNamespace) {
+      throw StateError('Keep-alive window identity changed for $convId');
+    }
+    final promptIdentity = _cachedStructuredPrompt?.sessionIdentity;
+    if (_cachedStructuredPrompt != null &&
+        promptIdentity?.cacheNamespace != sessionIdentity.cacheNamespace) {
+      throw StateError('Keep-alive prompt identity mismatch for $convId');
+    }
 
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_keyActiveConvId, convId);
     await prefs.setString(_keyActiveCharId, charId);
+    await _persistIdentityMetadata(prefs, sessionIdentity);
     await prefs.setString(_keyStartTime, startTime.toIso8601String());
     final leaseToken = _leaseToken;
     if (leaseToken != null) {
@@ -883,9 +999,8 @@ class KeepAliveService {
       await prefs.remove(_keyLastRequestAt);
     }
 
-    final conv = await DatabaseHelper.getConversation(convId);
-    if (conv?.title != null && conv!.title!.isNotEmpty) {
-      await prefs.setString(_keyActiveConvTitle, conv.title!);
+    if (conversation?.title != null && conversation!.title!.isNotEmpty) {
+      await prefs.setString(_keyActiveConvTitle, conversation.title!);
     } else {
       await prefs.remove(_keyActiveConvTitle);
     }
@@ -946,10 +1061,61 @@ class KeepAliveService {
     }
   }
 
+  static Map<String, String?> _persistedIdentityMetadata(
+    SharedPreferences prefs,
+  ) => <String, String?>{
+    'conversation_id': prefs.getString(_keyActiveConvId),
+    'character_id': prefs.getString(_keyActiveCharId),
+    'context_mode': prefs.getString(_keyActiveContextMode),
+    'continuity_id': prefs.getString(_keyActiveContinuityId),
+    'user_persona_id': prefs.getString(_keyActiveUserPersonaId),
+    'worldbook_set_id': prefs.getString(_keyActiveWorldbookSetId),
+  };
+
+  static Future<void> _persistIdentityMetadata(
+    SharedPreferences prefs,
+    ChatSessionIdentity identity,
+  ) async {
+    await prefs.setString(
+      _keyActiveContextMode,
+      identity.contextMode.storageValue,
+    );
+    await prefs.setString(_keyActiveContinuityId, identity.continuityId);
+    await prefs.setString(
+      _keyActiveUserPersonaId,
+      identity.userPersonaId ?? '',
+    );
+    await prefs.setString(
+      _keyActiveWorldbookSetId,
+      identity.worldbookSetId ?? '',
+    );
+  }
+
+  static Future<ChatSessionIdentity?> _validatedPersistedIdentity(
+    SharedPreferences prefs, {
+    required String expectedConversationId,
+  }) async {
+    try {
+      final conversation = await DatabaseHelper.getConversation(
+        expectedConversationId,
+      );
+      final identity = ChatSessionIdentity.fromConversation(
+        expectedConversationId: expectedConversationId,
+        conversation: conversation,
+      );
+      return identity.matchesCacheMetadata(_persistedIdentityMetadata(prefs))
+          ? identity
+          : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
   Future<void> _renewLease() async {
     final convId = _conversationId;
     final charId = _characterId;
-    if (convId == null || charId == null) return;
+    final sessionIdentity = _sessionIdentity;
+    if (convId == null || charId == null || sessionIdentity == null) return;
     final prefs = await SharedPreferences.getInstance();
     await prefs.reload();
     final persistedGeneration = prefs.getInt(_keyLeaseGeneration) ?? 0;
@@ -959,7 +1125,9 @@ class KeepAliveService {
             : persistedGeneration) +
         1;
     _leaseToken = '$convId:$_leaseGeneration';
-    // token 先落地，讓任何持有上一代快照的 isolate 立即失效。
+    // Identity metadata lands before the new token. A worker that wakes in
+    // between fails closed instead of pairing a fresh lease with stale mode.
+    await _persistIdentityMetadata(prefs, sessionIdentity);
     await prefs.setInt(_keyLeaseGeneration, _leaseGeneration);
     await prefs.setString(_keyLeaseToken, _leaseToken!);
     await DatabaseHelper.resetKeepAlivePingGuard(
@@ -975,25 +1143,34 @@ class KeepAliveService {
     required String characterId,
     required String leaseToken,
   }) async {
+    final sessionIdentity = _sessionIdentity;
+    if (sessionIdentity == null ||
+        sessionIdentity.conversationId != conversationId ||
+        sessionIdentity.characterId != characterId) {
+      return false;
+    }
     final prefs = await SharedPreferences.getInstance();
     await prefs.reload();
     return _leaseMatches(
       prefs,
-      conversationId: conversationId,
-      characterId: characterId,
+      sessionIdentity: sessionIdentity,
       leaseToken: leaseToken,
     );
   }
 
   static bool _leaseMatches(
     SharedPreferences prefs, {
-    required String conversationId,
-    required String characterId,
+    required ChatSessionIdentity sessionIdentity,
     required String leaseToken,
   }) {
+    final conversationId = sessionIdentity.conversationId;
+    final characterId = sessionIdentity.characterId;
     return leaseToken.startsWith('$conversationId:') &&
         prefs.getString(_keyActiveConvId) == conversationId &&
         prefs.getString(_keyActiveCharId) == characterId &&
+        sessionIdentity.matchesCacheMetadata(
+          _persistedIdentityMetadata(prefs),
+        ) &&
         prefs.getString(_keyLeaseToken) == leaseToken;
   }
 
@@ -1003,10 +1180,12 @@ class KeepAliveService {
     required String characterId,
     required String leaseToken,
   }) {
-    return _ownsPersistedLease(
-      conversationId: conversationId,
-      characterId: characterId,
-      leaseToken: leaseToken,
+    return SharedPreferences.getInstance().then(
+      (prefs) =>
+          leaseToken.startsWith('$conversationId:') &&
+          prefs.getString(_keyActiveConvId) == conversationId &&
+          prefs.getString(_keyActiveCharId) == characterId &&
+          prefs.getString(_keyLeaseToken) == leaseToken,
     );
   }
 
@@ -1041,18 +1220,19 @@ class KeepAliveService {
     StructuredPrompt prompt, {
     required String provider,
     required String model,
+    required List<Map<String, String>> messages,
   }) {
     final cacheableContext = prompt.cacheableParts.join('\n\n').trim();
     if (cacheableContext.isEmpty) return false;
 
-    // Gemini explicit cachedContents 只緩存 systemInstruction/staticPart；
-    // 門檻不到時 GeminiService 會降級普通請求，所以保活也不該發。
+    // Gemini explicit cachedContents 同時緩存穩定 system 前綴與舊對話
+    // 快照；門檻不到時 GeminiService 會降級普通請求，所以保活也不該發。
     if (provider.toLowerCase() == 'gemini') {
-      final threshold = TokenEstimator.cacheThresholdForModel(
-        provider: provider,
+      return GeminiService.hasCacheableExplicitPrefix(
+        prompt: prompt,
+        messages: messages,
         model: model,
       );
-      return TokenEstimator.estimate(cacheableContext) >= threshold;
     }
 
     return true;
@@ -1103,6 +1283,17 @@ class KeepAliveService {
     if (characterId != null &&
         prefs.getString(_keyActiveCharId) != characterId) {
       return null;
+    }
+    final conversationId = prefs.getString(_keyActiveConvId);
+    if (conversationId != null && conversationId.isNotEmpty) {
+      final conversation = await DatabaseHelper.getConversation(conversationId);
+      final currentTitle = conversation?.title?.trim() ?? '';
+      if (currentTitle.isNotEmpty) {
+        if (prefs.getString(_keyActiveConvTitle) != currentTitle) {
+          await prefs.setString(_keyActiveConvTitle, currentTitle);
+        }
+        return currentTitle;
+      }
     }
     return prefs.getString(_keyActiveConvTitle);
   }

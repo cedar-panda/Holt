@@ -5,7 +5,6 @@ import 'package:flutter/services.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:gal/gal.dart';
-import 'neural_generation_box.dart';
 import '../theme/app_theme.dart';
 import '../services/sticker_service.dart';
 import '../services/locale_strings.dart';
@@ -15,6 +14,7 @@ import '../services/memory_guard_service.dart';
 import '../memory/database.dart';
 import '../models/memory_action_proposal.dart';
 import '../models/web_search_trace.dart';
+import '../models/background_preset.dart';
 import '../services/scratch_service.dart';
 import '../services/transfer_service.dart';
 import '../services/marriage_service.dart';
@@ -29,6 +29,9 @@ import 'chat_avatar.dart';
 import 'web_search_thinking_node.dart';
 import 'thinking_detail_sheet.dart';
 import 'thinking_context_widgets.dart';
+import 'themed_notice.dart';
+import 'gradient_background.dart';
+import 'image_card_stack.dart';
 
 /// 聊天氣泡 — 思考鏈 + markdown + 表情包圖片 + 長按菜單
 class ChatBubble extends StatefulWidget {
@@ -39,6 +42,7 @@ class ChatBubble extends StatefulWidget {
   final VoidCallback? onEdit;
   final String? messageId;
   final String? imagePath;
+  final List<String> imagePaths;
   final String? conversationId;
   final String? conversationTitle;
   final String? characterId;
@@ -95,6 +99,7 @@ class ChatBubble extends StatefulWidget {
     this.onEdit,
     this.messageId,
     this.imagePath,
+    this.imagePaths = const <String>[],
     this.conversationId,
     this.conversationTitle,
     this.characterId,
@@ -136,6 +141,8 @@ class _ChatBubbleState extends State<ChatBubble>
     with SingleTickerProviderStateMixin {
   static String? _checkedChatBackgroundPath;
   static bool _checkedChatBackgroundExists = false;
+  BackgroundPreset? _scopedBackgroundPreset;
+  ChatBackgroundPresetScope? _chatBackgroundScope;
 
   bool _thinkingExpanded = false;
   bool _memLogExpanded = false;
@@ -449,27 +456,18 @@ class _ChatBubbleState extends State<ChatBubble>
       await Gal.putImage(imagePath);
 
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(L.pick(en: 'Saved to Gallery', zhTW: '已保存到相冊')),
-          backgroundColor: YanciTheme.accent,
-          behavior: SnackBarBehavior.floating,
-          duration: const Duration(milliseconds: 1500),
-          margin: const EdgeInsets.only(bottom: 80, left: 16, right: 16),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-        ),
+      showThemedPillNotice(
+        context,
+        L.pick(en: 'Saved to Gallery', zhTW: '已保存到相冊'),
+        duration: const Duration(milliseconds: 1500),
       );
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(L.pick(en: 'Save failed: $e', zhTW: '保存失敗：$e')),
-          backgroundColor: Colors.redAccent,
-          behavior: SnackBarBehavior.floating,
-          duration: const Duration(milliseconds: 2000),
-          margin: const EdgeInsets.only(bottom: 80, left: 16, right: 16),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-        ),
+      showThemedPillNotice(
+        context,
+        L.pick(en: 'Save failed: $e', zhTW: '保存失敗：$e'),
+        tone: ThemedNoticeTone.error,
+        duration: const Duration(milliseconds: 2000),
       );
     }
   }
@@ -583,17 +581,10 @@ class _ChatBubbleState extends State<ChatBubble>
           ),
         );
         if (!ctx.mounted) return;
-        ScaffoldMessenger.of(ctx).showSnackBar(
-          SnackBar(
-            content: Text(L.get('chat_copied')),
-            backgroundColor: YanciTheme.accent,
-            behavior: SnackBarBehavior.floating,
-            duration: const Duration(milliseconds: 800),
-            margin: const EdgeInsets.only(bottom: 80, left: 16, right: 16),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(8),
-            ),
-          ),
+        showThemedPillNotice(
+          ctx,
+          L.get('chat_copied'),
+          duration: const Duration(milliseconds: 800),
         );
       } else if (v == 'edit') {
         widget.onEdit?.call();
@@ -604,7 +595,11 @@ class _ChatBubbleState extends State<ChatBubble>
   @override
   Widget build(BuildContext context) {
     final sw = MediaQuery.of(context).size.width;
-    final hasCustomChatBackground = _hasCustomChatBackground();
+    _chatBackgroundScope = ChatBackgroundPresetScope.of(context);
+    _scopedBackgroundPreset = _chatBackgroundScope?.preset;
+    final hasCustomChatBackground = _chatBackgroundScope == null
+        ? _hasCustomChatBackground()
+        : _chatBackgroundScope!.palette != null;
     final r = widget.isUser
         ? YanciTheme.bubbleRadiusUser
         : YanciTheme.radiusBubble;
@@ -639,10 +634,13 @@ class _ChatBubbleState extends State<ChatBubble>
           .replaceAll(RegExp(r'<emo_resolve>[\s\S]*?(</emo_resolve>|$)'), '')
           .trim();
     }
-    final hasBubbleContent =
-        widget.imagePath != null ||
-        displayText.isNotEmpty ||
-        widget.isStreaming;
+    final imagePaths = widget.imagePaths.isNotEmpty
+        ? widget.imagePaths
+        : (widget.imagePath == null
+              ? const <String>[]
+              : <String>[widget.imagePath!]);
+    final hasImageContent = imagePaths.isNotEmpty;
+    final hasBubbleContent = displayText.isNotEmpty || widget.isStreaming;
 
     final contextLog = _contextLogParts();
     final visibleMemoryLog = contextLog.memoryLog;
@@ -670,6 +668,7 @@ class _ChatBubbleState extends State<ChatBubble>
 
     final hasAnyContent =
         hasBubbleContent ||
+        hasImageContent ||
         hasContextTree ||
         shouldShowScratch ||
         shouldShowTransfer ||
@@ -686,13 +685,18 @@ class _ChatBubbleState extends State<ChatBubble>
         final origin = widget.isUser
             ? Alignment.bottomRight
             : Alignment.bottomLeft;
+        final aiFlatMode = !widget.isUser && YanciTheme.aiBubbleFlat;
         return Padding(
           padding: EdgeInsets.only(
             left: widget.isUser
                 ? sw * (widget.showAvatar ? 0.15 : 0.2)
+                : aiFlatMode
+                ? sw * 0.02
                 : YanciTheme.spacingMd,
             right: widget.isUser
                 ? YanciTheme.spacingMd
+                : aiFlatMode
+                ? sw * 0.05
                 : sw * (widget.showAvatar ? 0.15 : 0.2),
             top: YanciTheme.spacingSm,
             bottom: YanciTheme.spacingSm,
@@ -709,7 +713,7 @@ class _ChatBubbleState extends State<ChatBubble>
                   _buildSelectionMark(),
                   const SizedBox(width: 8),
                 ],
-                if (widget.showAvatar && !widget.isUser) ...[
+                if (widget.showAvatar && !widget.isUser && !aiFlatMode) ...[
                   Opacity(opacity: _avatarOpacity.value, child: _buildAvatar()),
                   const SizedBox(width: 8),
                 ],
@@ -720,6 +724,13 @@ class _ChatBubbleState extends State<ChatBubble>
                         : CrossAxisAlignment.start,
                     mainAxisSize: MainAxisSize.min,
                     children: [
+                      if (aiFlatMode && widget.showAvatar) ...[
+                        Opacity(
+                          opacity: _avatarOpacity.value,
+                          child: _buildAvatar(),
+                        ),
+                        const SizedBox(height: 8),
+                      ],
                       Opacity(
                         opacity: _bubbleOpacity.value,
                         child: Transform(
@@ -742,6 +753,16 @@ class _ChatBubbleState extends State<ChatBubble>
                                     emotionLog: visibleEmotionLog,
                                     emotionCoordinate: visibleEmotionCoordinate,
                                   ),
+                                if (hasImageContent)
+                                  ImageCardStack(
+                                    paths: imagePaths,
+                                    onTap: (path) => path == 'generating'
+                                        ? null
+                                        : _openFullScreenImage(context, path),
+                                    onLongPress: (path) => path == 'generating'
+                                        ? null
+                                        : _showImageMenu(context, path),
+                                  ),
                                 if (hasBubbleContent)
                                   Builder(
                                     builder: (context) {
@@ -751,15 +772,12 @@ class _ChatBubbleState extends State<ChatBubble>
                                       final imageBackgroundBubbleColor =
                                           hasCustomChatBackground
                                           ? (widget.isUser
-                                                ? YanciTheme
-                                                      .chatBackgroundUserBubbleColor
-                                                : YanciTheme
-                                                      .chatBackgroundAiBubbleColor)
+                                                ? _chatBackgroundUserBubbleColor()
+                                                : _chatBackgroundAiBubbleColor())
                                           : null;
                                       final imageBackgroundBubbleOpacity =
                                           hasCustomChatBackground
-                                          ? YanciTheme
-                                                .chatBackgroundBubbleOpacity
+                                          ? _chatBackgroundBubbleOpacity()
                                           : 1.0;
                                       final bubbleRadius = overlayAsset != null
                                           ? BorderRadius.circular(r)
@@ -777,64 +795,67 @@ class _ChatBubbleState extends State<ChatBubble>
                                         key: const ValueKey(
                                           'chat-bubble-surface',
                                         ),
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: YanciTheme.spacingMd,
-                                          vertical: 12,
+                                        padding: EdgeInsets.symmetric(
+                                          horizontal: aiFlatMode
+                                              ? 2.0
+                                              : YanciTheme.spacingMd,
+                                          vertical: aiFlatMode ? 6.0 : 12,
                                         ),
-                                        decoration: BoxDecoration(
-                                          color:
-                                              imageBackgroundBubbleColor ??
-                                              (widget.isUser ||
-                                                      YanciTheme
-                                                              .aiBubbleGradient ==
-                                                          null
-                                                  ? (widget.isUser
-                                                        ? YanciTheme.userBubble
-                                                        : YanciTheme.aiBubble)
-                                                  : null),
-                                          gradient:
-                                              imageBackgroundBubbleColor ==
-                                                      null &&
-                                                  !widget.isUser
-                                              ? YanciTheme.aiBubbleGradient
-                                              : null,
-                                          borderRadius: bubbleRadius,
-                                          border: overlayAsset == null
-                                              ? Border.all(
-                                                  color:
-                                                      (widget.isUser
+                                        decoration: aiFlatMode
+                                            ? null
+                                            : BoxDecoration(
+                                                color:
+                                                    imageBackgroundBubbleColor ??
+                                                    (widget.isUser ||
+                                                            YanciTheme
+                                                                    .aiBubbleGradient ==
+                                                                null
+                                                        ? (widget.isUser
                                                               ? YanciTheme
-                                                                    .userBubbleBorder
+                                                                    .userBubble
                                                               : YanciTheme
-                                                                    .aiBubbleBorder)
-                                                          .withValues(
-                                                            alpha:
-                                                                (widget.isUser
+                                                                    .aiBubble)
+                                                        : null),
+                                                gradient:
+                                                    imageBackgroundBubbleColor ==
+                                                            null &&
+                                                        !widget.isUser
+                                                    ? YanciTheme
+                                                          .aiBubbleGradient
+                                                    : null,
+                                                borderRadius: bubbleRadius,
+                                                border: overlayAsset == null
+                                                    ? Border.all(
+                                                        color:
+                                                            (widget.isUser
                                                                     ? YanciTheme
                                                                           .userBubbleBorder
-                                                                          .a
                                                                     : YanciTheme
-                                                                          .aiBubbleBorder
-                                                                          .a) *
+                                                                          .aiBubbleBorder)
+                                                                .withValues(
+                                                                  alpha:
+                                                                      (widget.isUser
+                                                                          ? YanciTheme.userBubbleBorder.a
+                                                                          : YanciTheme.aiBubbleBorder.a) *
+                                                                      imageBackgroundBubbleOpacity,
+                                                                ),
+                                                        width: 0.5,
+                                                      )
+                                                    : null,
+                                                boxShadow: [
+                                                  BoxShadow(
+                                                    color: Colors.black.withValues(
+                                                      alpha: YanciTheme.isDark
+                                                          ? 0.20 *
+                                                                imageBackgroundBubbleOpacity
+                                                          : 0.05 *
                                                                 imageBackgroundBubbleOpacity,
-                                                          ),
-                                                  width: 0.5,
-                                                )
-                                              : null,
-                                          boxShadow: [
-                                            BoxShadow(
-                                              color: Colors.black.withValues(
-                                                alpha: YanciTheme.isDark
-                                                    ? 0.20 *
-                                                          imageBackgroundBubbleOpacity
-                                                    : 0.05 *
-                                                          imageBackgroundBubbleOpacity,
+                                                    ),
+                                                    blurRadius: 10,
+                                                    offset: const Offset(0, 3),
+                                                  ),
+                                                ],
                                               ),
-                                              blurRadius: 10,
-                                              offset: const Offset(0, 3),
-                                            ),
-                                          ],
-                                        ),
                                         child: Opacity(
                                           opacity: _contentOpacity.value,
                                           child: Column(
@@ -843,77 +864,6 @@ class _ChatBubbleState extends State<ChatBubble>
                                                 ? CrossAxisAlignment.end
                                                 : CrossAxisAlignment.start,
                                             children: [
-                                              if (widget.imagePath != null)
-                                                GestureDetector(
-                                                  onTap: () =>
-                                                      widget.imagePath ==
-                                                          'generating'
-                                                      ? null
-                                                      : _openFullScreenImage(
-                                                          context,
-                                                          widget.imagePath!,
-                                                        ),
-                                                  onLongPress: () =>
-                                                      widget.imagePath ==
-                                                          'generating'
-                                                      ? null
-                                                      : _showImageMenu(
-                                                          context,
-                                                          widget.imagePath!,
-                                                        ),
-                                                  child: Padding(
-                                                    padding: EdgeInsets.only(
-                                                      bottom:
-                                                          displayText.isNotEmpty
-                                                          ? 8
-                                                          : 0,
-                                                    ),
-                                                    child: ClipRRect(
-                                                      borderRadius:
-                                                          BorderRadius.circular(
-                                                            12,
-                                                          ),
-                                                      child: ConstrainedBox(
-                                                        constraints:
-                                                            const BoxConstraints(
-                                                              maxWidth: 200,
-                                                              maxHeight: 200,
-                                                            ),
-                                                        child:
-                                                            widget.imagePath ==
-                                                                'generating'
-                                                            ? const NeuralGenerationBox()
-                                                            : Image.file(
-                                                                File(
-                                                                  widget
-                                                                      .imagePath!,
-                                                                ),
-                                                                fit: BoxFit
-                                                                    .contain,
-                                                                filterQuality:
-                                                                    FilterQuality
-                                                                        .high,
-                                                                errorBuilder: (_, _, _) => Container(
-                                                                  width: 80,
-                                                                  height: 80,
-                                                                  color: YanciTheme
-                                                                      .glassInputBg,
-                                                                  child: Icon(
-                                                                    Icons
-                                                                        .broken_image,
-                                                                    color: YanciTheme
-                                                                        .textSecondary
-                                                                        .withValues(
-                                                                          alpha:
-                                                                              0.3,
-                                                                        ),
-                                                                  ),
-                                                                ),
-                                                              ),
-                                                      ),
-                                                    ),
-                                                  ),
-                                                ),
                                               if (displayText.isNotEmpty)
                                                 Row(
                                                   mainAxisSize:
@@ -928,9 +878,9 @@ class _ChatBubbleState extends State<ChatBubble>
                                                             widget.characterId,
                                                         color:
                                                             hasCustomChatBackground
-                                                            ? YanciTheme
-                                                                  .chatBackgroundBubbleTextColor
-                                                            : null,
+                                                            ? _chatBackgroundBubbleTextColor()
+                                                            : YanciTheme
+                                                                  .textOnBubble,
                                                         selectable:
                                                             !widget.isUser,
                                                       ),
@@ -995,7 +945,7 @@ class _ChatBubbleState extends State<ChatBubble>
                                       );
                                     },
                                   ),
-                                if (hasBubbleContent &&
+                                if ((hasBubbleContent || hasImageContent) &&
                                     widget.timestamp != null &&
                                     !widget.isStreaming)
                                   Opacity(
@@ -1018,8 +968,12 @@ class _ChatBubbleState extends State<ChatBubble>
                                             _formatTime(widget.timestamp!),
                                             style: TextStyle(
                                               fontSize: 10,
-                                              color: YanciTheme.textSecondary
-                                                  .withValues(alpha: 0.4),
+                                              color:
+                                                  _chatBackgroundScope
+                                                      ?.foreground
+                                                      ?.secondary ??
+                                                  YanciTheme.textSecondary
+                                                      .withValues(alpha: 0.4),
                                             ),
                                           ),
                                           if (!widget.isUser &&
@@ -1033,32 +987,11 @@ class _ChatBubbleState extends State<ChatBubble>
                                                     text: displayText,
                                                   ),
                                                 );
-                                                ScaffoldMessenger.of(
+                                                showThemedPillNotice(
                                                   context,
-                                                ).showSnackBar(
-                                                  SnackBar(
-                                                    content: Text(
-                                                      L.get('chat_copied'),
-                                                    ),
-                                                    backgroundColor:
-                                                        YanciTheme.accent,
-                                                    behavior: SnackBarBehavior
-                                                        .floating,
-                                                    duration: const Duration(
-                                                      milliseconds: 800,
-                                                    ),
-                                                    margin:
-                                                        const EdgeInsets.only(
-                                                          bottom: 80,
-                                                          left: 16,
-                                                          right: 16,
-                                                        ),
-                                                    shape: RoundedRectangleBorder(
-                                                      borderRadius:
-                                                          BorderRadius.circular(
-                                                            8,
-                                                          ),
-                                                    ),
+                                                  L.get('chat_copied'),
+                                                  duration: const Duration(
+                                                    milliseconds: 800,
                                                   ),
                                                 );
                                               },
@@ -1083,6 +1016,10 @@ class _ChatBubbleState extends State<ChatBubble>
                                                 ),
                                                 child: TtsPlayButton(
                                                   messageId: widget.messageId,
+                                                  idleColor:
+                                                      _chatBackgroundScope
+                                                          ?.foreground
+                                                          ?.secondary,
                                                   onTap: () =>
                                                       _speakText(widget.text),
                                                   size: 18,
@@ -1261,16 +1198,116 @@ class _ChatBubbleState extends State<ChatBubble>
     );
   }
 
-  Color _thinkingTreeLabelColor() =>
-      YanciTheme.chatBackgroundThinkingTextOverride ??
-      Color.lerp(YanciTheme.textSecondary, YanciTheme.textPrimary, 0.12)!;
+  double _chatBackgroundBubbleOpacity() {
+    if (_chatBackgroundScope != null) {
+      return _scopedBackgroundPreset?.chatBubbleOpacity ??
+          _chatBackgroundScope?.palette?.bubbleOpacity ??
+          YanciTheme.bubbleOpacity;
+    }
+    final preset = _scopedBackgroundPreset;
+    if (preset == null) return YanciTheme.chatBackgroundBubbleOpacity;
+    return preset.chatBubbleOpacity ?? YanciTheme.chatBackgroundBubbleOpacity;
+  }
 
-  Color _thinkingTreeBodyColor() =>
-      YanciTheme.chatBackgroundThinkingTextOverride ??
-      Color.lerp(YanciTheme.textSecondary, YanciTheme.textPrimary, 0.34)!;
+  Color _chatBackgroundAiBubbleColor() {
+    if (_chatBackgroundScope != null) {
+      final base = _scopedBackgroundPreset?.chatAiBubbleColor == null
+          ? YanciTheme.bubbleColorOverride(
+                  YanciTheme.presetId,
+                  ThemeBubbleColorRole.aiBubble,
+                ) ??
+                _chatBackgroundScope?.palette?.aiBubble ??
+                YanciTheme.aiBubble
+          : Color(_scopedBackgroundPreset!.chatAiBubbleColor!);
+      return base.withValues(alpha: _chatBackgroundBubbleOpacity());
+    }
+    final preset = _scopedBackgroundPreset;
+    if (preset == null) {
+      return YanciTheme.chatBackgroundAiBubbleColor;
+    }
+    return (preset.chatAiBubbleColor == null
+            ? YanciTheme.chatBackgroundAiBubbleColor.withValues(alpha: 1)
+            : Color(preset.chatAiBubbleColor!))
+        .withValues(alpha: _chatBackgroundBubbleOpacity());
+  }
 
-  bool _hasCustomChatBackground() {
-    final path = YanciTheme.chatBackgroundImagePath;
+  Color _chatBackgroundUserBubbleColor() {
+    if (_chatBackgroundScope != null) {
+      final base = _scopedBackgroundPreset?.chatUserBubbleColor == null
+          ? YanciTheme.bubbleColorOverride(
+                  YanciTheme.presetId,
+                  ThemeBubbleColorRole.userBubble,
+                ) ??
+                _chatBackgroundScope?.palette?.userBubble ??
+                YanciTheme.userBubble
+          : Color(_scopedBackgroundPreset!.chatUserBubbleColor!);
+      return base.withValues(alpha: _chatBackgroundBubbleOpacity());
+    }
+    final preset = _scopedBackgroundPreset;
+    if (preset == null) {
+      return YanciTheme.chatBackgroundUserBubbleColor;
+    }
+    return (preset.chatUserBubbleColor == null
+            ? YanciTheme.chatBackgroundUserBubbleColor.withValues(alpha: 1)
+            : Color(preset.chatUserBubbleColor!))
+        .withValues(alpha: _chatBackgroundBubbleOpacity());
+  }
+
+  Color _chatBackgroundBubbleTextColor() {
+    if (_chatBackgroundScope != null) {
+      final manual = _scopedBackgroundPreset?.chatBubbleTextColor;
+      return manual == null
+          ? YanciTheme.bubbleColorOverride(
+                  YanciTheme.presetId,
+                  ThemeBubbleColorRole.textOnBubble,
+                ) ??
+                _chatBackgroundScope?.palette?.bubbleText ??
+                YanciTheme.textOnBubble
+          : Color(manual);
+    }
+    final preset = _scopedBackgroundPreset;
+    if (preset == null) return YanciTheme.chatBackgroundBubbleTextColor;
+    return preset.chatBubbleTextColor == null
+        ? YanciTheme.chatBackgroundBubbleTextColor
+        : Color(preset.chatBubbleTextColor!);
+  }
+
+  Color _chatBackgroundThinkingTextColor() {
+    if (_chatBackgroundScope != null) {
+      final manual = _scopedBackgroundPreset?.chatThinkingTextColor;
+      return manual == null
+          ? _chatBackgroundScope?.palette?.thinkingText ??
+                Color.lerp(
+                  YanciTheme.textSecondary,
+                  YanciTheme.textPrimary,
+                  0.34,
+                )!
+          : Color(manual);
+    }
+    final preset = _scopedBackgroundPreset;
+    if (preset == null) return YanciTheme.chatBackgroundThinkingTextColor;
+    return preset.chatThinkingTextColor == null
+        ? YanciTheme.chatBackgroundThinkingTextColor
+        : Color(preset.chatThinkingTextColor!);
+  }
+
+  Color _thinkingTreeLabelColor() {
+    final scopedColor = _scopedBackgroundPreset?.chatThinkingTextColor;
+    if (scopedColor != null) return Color(scopedColor);
+    if (_chatBackgroundScope != null) {
+      return _chatBackgroundScope?.palette?.thinkingText ??
+          Color.lerp(YanciTheme.textSecondary, YanciTheme.textPrimary, 0.12)!;
+    }
+    if (YanciTheme.chatBackgroundThinkingTextOverride != null) {
+      return YanciTheme.chatBackgroundThinkingTextColor;
+    }
+    return Color.lerp(YanciTheme.textSecondary, YanciTheme.textPrimary, 0.12)!;
+  }
+
+  Color _thinkingTreeBodyColor() => _chatBackgroundThinkingTextColor();
+
+  bool _hasCustomChatBackground([String? overridePath]) {
+    final path = overridePath ?? YanciTheme.chatBackgroundImagePath;
     if (path == _checkedChatBackgroundPath) {
       return _checkedChatBackgroundExists;
     }
@@ -1389,9 +1426,15 @@ class _ChatBubbleState extends State<ChatBubble>
       await callback(proposal, decision);
     } catch (error) {
       if (mounted) {
-        ScaffoldMessenger.of(
+        showThemedPillNotice(
           context,
-        ).showSnackBar(SnackBar(content: Text('記憶處理失敗：$error')));
+          L.pick(
+            en: 'Memory update failed: $error',
+            zhTW: '記憶處理失敗：$error',
+            zhCN: '记忆处理失败：$error',
+          ),
+          tone: ThemedNoticeTone.error,
+        );
       }
     } finally {
       if (mounted) {
@@ -1653,6 +1696,12 @@ class _ChatBubbleState extends State<ChatBubble>
     final coord = emoLine
         .replaceFirst('情緒座標:', '')
         .replaceFirst('情緒座標：', '')
+        .replaceFirst('情绪坐标:', '')
+        .replaceFirst('情绪坐标：', '')
+        .replaceFirst(
+          RegExp(r'^Emotion coordinates\s*:\s*', caseSensitive: false),
+          '',
+        )
         .trim();
     if (validLines.isEmpty && coord.isEmpty) return const SizedBox.shrink();
 
@@ -2008,6 +2057,12 @@ class _ChatBubbleState extends State<ChatBubble>
     final coord = emoLine
         .replaceFirst('情緒座標:', '')
         .replaceFirst('情緒座標：', '')
+        .replaceFirst('情绪坐标:', '')
+        .replaceFirst('情绪坐标：', '')
+        .replaceFirst(
+          RegExp(r'^Emotion coordinates\s*:\s*', caseSensitive: false),
+          '',
+        )
         .trim();
     final bodyColor = _thinkingTreeBodyColor();
 
@@ -2160,7 +2215,10 @@ class _ChatBubbleState extends State<ChatBubble>
   }
 
   Widget _buildCopyIcon({Color? color}) {
-    final c = color ?? YanciTheme.textSecondary.withValues(alpha: 0.4);
+    final c =
+        color ??
+        _chatBackgroundScope?.foreground?.secondary ??
+        YanciTheme.textSecondary.withValues(alpha: 0.4);
     return _buildActionIconSlot(
       key: const ValueKey('bubble-action-copy'),
       child: BubbleActionGlyph(
@@ -2172,7 +2230,10 @@ class _ChatBubbleState extends State<ChatBubble>
   }
 
   Widget _buildBookmarkIcon({Color? color}) {
-    final c = color ?? YanciTheme.textSecondary.withValues(alpha: 0.4);
+    final c =
+        color ??
+        _chatBackgroundScope?.foreground?.secondary ??
+        YanciTheme.textSecondary.withValues(alpha: 0.4);
     return _buildActionIconSlot(
       key: const ValueKey('bubble-action-bookmark'),
       child: BubbleActionGlyph(

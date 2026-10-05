@@ -348,6 +348,7 @@ class _InitialSetupScreenState extends State<InitialSetupScreen> {
         darkPresetId: darkPreset.id,
         activePresetId: activePreset.id,
       );
+      await ThemeSettings.restoreThemeBubbleColors(activePreset.id);
       YanciTheme.setPreset(activePreset.id);
       themeNotifier.value++;
       await _completeAndOpenHome(skipAllGuidance: false);
@@ -357,6 +358,7 @@ class _InitialSetupScreenState extends State<InitialSetupScreen> {
         darkPresetId: rollbackDarkId,
         activePresetId: previousId,
       );
+      await ThemeSettings.restoreThemeBubbleColors(previousId);
       YanciTheme.setPreset(previousId);
       themeNotifier.value++;
       if (!mounted) return;

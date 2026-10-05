@@ -22,6 +22,7 @@
 library;
 
 export 'settings/api_settings.dart';
+export 'settings/character_signature_settings.dart';
 export 'settings/web_search_settings.dart';
 export 'settings/memory_settings.dart';
 export 'settings/tts_settings.dart';

@@ -1,14 +1,20 @@
+import 'dart:async';
 import 'dart:ui';
 import 'package:flutter/material.dart';
+import '../models/context_mode.dart';
 import '../theme/app_theme.dart';
 import '../services/locale_strings.dart';
 import '../services/settings_manager.dart';
+import '../services/settings/context_mode_settings.dart';
+import '../services/settings/guide_settings.dart';
 import '../memory/database.dart';
 import 'ability_modules_screen.dart';
 import '../services/static_token_estimator.dart';
+import '../services/tool_feature_settings.dart';
 import '../widgets/gradient_background.dart';
 import '../widgets/yanci_sprite_overlay.dart';
 import '../widgets/help_switch_tile.dart';
+import '../widgets/context_mode_pill.dart';
 
 class CostContextScreen extends StatefulWidget {
   const CostContextScreen({super.key});
@@ -18,6 +24,252 @@ class CostContextScreen extends StatefulWidget {
 }
 
 class _CostContextScreenState extends State<CostContextScreen> {
+  bool _globalRpEnabled = false;
+  bool _signatureEnabled = true;
+  bool _emotionEnabled = true;
+  bool _guideEnabled = true;
+  ToolFeatureState _toolFeatures = const ToolFeatureState();
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_loadSettings());
+  }
+
+  Future<void> _loadSettings() async {
+    final results = await Future.wait<Object>(<Future<Object>>[
+      ContextModeSettings.getGlobalRpEnabled(),
+      CharacterSignatureSettings.isEnabled(),
+      MemorySettings.isAbilityEnabled('emotion'),
+      ToolFeatureSettings.load(),
+      GuideSettings.isEnabled(),
+    ]);
+    if (!mounted) return;
+    setState(() {
+      _globalRpEnabled = results[0] as bool;
+      _signatureEnabled = results[1] as bool;
+      _emotionEnabled = results[2] as bool;
+      _toolFeatures = results[3] as ToolFeatureState;
+      _guideEnabled = results[4] as bool;
+    });
+  }
+
+  Future<void> _toggleSignature(bool value) async {
+    setState(() => _signatureEnabled = value);
+    await CharacterSignatureSettings.setEnabled(value);
+  }
+
+  Future<void> _toggleEmotion(bool value) async {
+    setState(() => _emotionEnabled = value);
+    await MemorySettings.setAbilityEnabled('emotion', value);
+    if (mounted) StaticTokenEstimator.showAfterToggle(context);
+  }
+
+  Future<void> _toggleToolFeature(
+    ToolFeatureState next,
+    Future<void> Function() persist,
+  ) async {
+    setState(() => _toolFeatures = next);
+    await persist();
+    if (mounted) StaticTokenEstimator.showAfterToggle(context);
+  }
+
+  Widget _featureSwitch({
+    required String title,
+    required String description,
+    required bool value,
+    required ValueChanged<bool> onChanged,
+  }) {
+    return HelpSwitchTile(
+      title: title,
+      description: description,
+      value: value,
+      onChanged: onChanged,
+    );
+  }
+
+  Widget _buildFeatureModules() {
+    final rows = <Widget>[
+      _featureSwitch(
+        title: L.pick(en: 'Guide', zhTW: '嚮導', zhCN: '向导'),
+        description: L.pick(
+          en: 'Show the Guide on Home when an API is configured. Opening it is local; sending a message may use API credit.',
+          zhTW: '已設定 API 時在首頁顯示嚮導。打開頁面不消耗額度，送出訊息才可能使用 API。',
+          zhCN: '已设置 API 时在首页显示向导。打开页面不消耗额度，送出消息才可能使用 API。',
+        ),
+        value: _guideEnabled,
+        onChanged: (value) {
+          setState(() => _guideEnabled = value);
+          unawaited(GuideSettings.setEnabled(value));
+        },
+      ),
+      _featureSwitch(
+        title: L.pick(
+          en: 'Character signature',
+          zhTW: '角色個性簽名',
+          zhCN: '角色个性签名',
+        ),
+        description: L.pick(
+          en: 'Generate one opening and one closing signature per window.',
+          zhTW: '每個窗口最多生成開頭與結束各一條，關閉後不再消費。',
+          zhCN: '每个窗口最多生成开头与结束各一条，关闭后不再消费。',
+        ),
+        value: _signatureEnabled,
+        onChanged: (value) => unawaited(_toggleSignature(value)),
+      ),
+      _featureSwitch(
+        title: L.pick(en: 'Emotion coordinates', zhTW: '情緒座標', zhCN: '情绪坐标'),
+        description: L.pick(
+          en: 'Inject emotion rules and the current emotional state.',
+          zhTW: '注入情緒規則與當前情緒狀態。',
+          zhCN: '注入情绪规则与当前情绪状态。',
+        ),
+        value: _emotionEnabled,
+        onChanged: (value) => unawaited(_toggleEmotion(value)),
+      ),
+      _featureSwitch(
+        title: L.pick(en: 'Draw', zhTW: '畫畫', zhCN: '画画'),
+        description: L.pick(
+          en: 'Allow the model to generate images.',
+          zhTW: '允許模型生成圖片。',
+          zhCN: '允许模型生成图片。',
+        ),
+        value: _toolFeatures.imageGenerationEnabled,
+        onChanged: (value) => unawaited(
+          _toggleToolFeature(
+            _toolFeatures.copyWith(imageGenerationEnabled: value),
+            () => ToolFeatureSettings.setImageGenerationEnabled(value),
+          ),
+        ),
+      ),
+      _featureSwitch(
+        title: L.pick(
+          en: 'Shell Economy Interactions',
+          zhTW: '貝殼虛擬幣互動',
+          zhCN: '贝壳虚拟币互动',
+        ),
+        description: L.pick(
+          en: 'Show shell balance and allow shop, backpack, scratch-card and transfer interactions.',
+          zhTW: '顯示貝殼餘額，並開啟商店、背包、刮刮卡與轉帳互動。',
+          zhCN: '显示贝壳余额，并开启商店、背包、刮刮卡与转账互动。',
+        ),
+        value: _toolFeatures.shellEconomyEnabled,
+        onChanged: (value) => unawaited(
+          _toggleToolFeature(
+            _toolFeatures.copyWith(shellEconomyEnabled: value),
+            () => ToolFeatureSettings.setShellEconomyEnabled(value),
+          ),
+        ),
+      ),
+      _featureSwitch(
+        title: L.pick(en: 'Diary', zhTW: '日記', zhCN: '日记'),
+        description: L.pick(
+          en: 'Allow one optional character diary entry per day in Daily mode.',
+          zhTW: '允許角色在日常模式下每天選擇寫一份日記。',
+          zhCN: '允许角色在日常模式下每天选择写一份日记。',
+        ),
+        value: _toolFeatures.diaryEnabled,
+        onChanged: (value) => unawaited(
+          _toggleToolFeature(
+            _toolFeatures.copyWith(diaryEnabled: value),
+            () => ToolFeatureSettings.setDiaryEnabled(value),
+          ),
+        ),
+      ),
+      _featureSwitch(
+        title: L.pick(en: 'Tool prompts', zhTW: '工具系統提示詞', zhCN: '工具系统提示词'),
+        description: L.pick(
+          en: 'Turn off app tool instructions while keeping profiles, memories, summaries and RP context.',
+          zhTW: '關閉 App 工具指令；角色卡、記憶、摘要與 RP 內容照常注入。',
+          zhCN: '关闭 App 工具指令；角色卡、记忆、摘要与 RP 内容照常注入。',
+        ),
+        value: _toolFeatures.toolPromptsEnabled,
+        onChanged: (value) => unawaited(
+          _toggleToolFeature(
+            _toolFeatures.copyWith(toolPromptsEnabled: value),
+            () => ToolFeatureSettings.setToolPromptsEnabled(value),
+          ),
+        ),
+      ),
+    ];
+
+    return _buildGlassCard(
+      child: Theme(
+        data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+        child: ExpansionTile(
+          initiallyExpanded: false,
+          maintainState: true,
+          tilePadding: EdgeInsets.zero,
+          childrenPadding: EdgeInsets.zero,
+          title: Text(
+            L.pick(en: 'Feature modules', zhTW: '功能模組', zhCN: '功能模块'),
+            style: YanciTheme.bodyText.copyWith(fontSize: 14),
+          ),
+          subtitle: Text(
+            L.pick(
+              en: 'Enable tools and prompts as needed to reduce unnecessary Token usage.',
+              zhTW: '按需開啟工具與提示詞，減少不必要的 Token 消耗。',
+              zhCN: '按需开启工具与提示词，减少不必要的 Token 消耗。',
+            ),
+            style: YanciTheme.bodySmall.copyWith(
+              color: YanciTheme.textSecondary.withValues(alpha: 0.72),
+            ),
+          ),
+          iconColor: YanciTheme.accent,
+          collapsedIconColor: YanciTheme.textSecondary,
+          children: <Widget>[
+            const SizedBox(height: 4),
+            for (var index = 0; index < rows.length; index++) ...<Widget>[
+              if (index > 0) _softDivider(),
+              rows[index],
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _setGlobalRp(bool enabled) async {
+    await ContextModeSettings.setGlobalRpEnabled(enabled);
+    if (!mounted) return;
+    setState(() => _globalRpEnabled = enabled);
+
+    final activeCharacterId = await UserSettings.getActiveCharacterId();
+    final mode = enabled || activeCharacterId.isEmpty
+        ? ContextMode.rp
+        : await ContextModeSettings.effectiveMode(activeCharacterId);
+    final differs =
+        activeCharacterId.isNotEmpty &&
+        await ContextModeSettings.latestWindowDiffers(activeCharacterId, mode);
+    if (!mounted) return;
+
+    final base = enabled
+        ? L.pick(
+            en: 'RP mode is on. This changes every character to RP state.',
+            zhTW: '已打開RP模式，請注意這會使角色都更改為RP狀態',
+            zhCN: '已打开RP模式，请注意这会使角色都更改为RP状态',
+          )
+        : L.pick(
+            en: 'RP mode is off. Back to daily mode.',
+            zhTW: '已關閉RP模式，回歸日常狀態',
+            zhCN: '已关闭RP模式，回归日常状态',
+          );
+    final next = !differs
+        ? ''
+        : enabled
+        ? L.pick(
+            en: ' Open a new window to begin RP.',
+            zhTW: ' 請開啟新窗口進行RP',
+            zhCN: ' 请开启新窗口进行RP',
+          )
+        : L.pick(
+            en: ' Open a new window to return to your daily life.',
+            zhTW: ' 請開啟新窗口開始你們的日常',
+            zhCN: ' 请开启新窗口开始你们的日常',
+          );
+    showContextModeNotice(context, '$base$next');
+  }
+
   Widget _buildNavigationTile({
     required IconData icon,
     required String title,
@@ -156,7 +408,11 @@ class _CostContextScreenState extends State<CostContextScreen> {
                     children: [
                       Center(
                         child: Text(
-                          L.pick(en: 'Switches', zhTW: '開關'),
+                          L.pick(
+                            en: 'Preferences',
+                            zhTW: '偏好設定',
+                            zhCN: '偏好设置',
+                          ),
                           textAlign: TextAlign.center,
                           style: YanciTheme.headingMedium,
                         ),
@@ -235,6 +491,15 @@ class _CostContextScreenState extends State<CostContextScreen> {
                     const SizedBox(height: 28),
                     _buildSectionTitle(
                       L.pick(
+                        en: 'Features & Token Usage',
+                        zhTW: '功能與 Token 消耗',
+                        zhCN: '功能与 Token 消耗',
+                      ),
+                    ),
+                    _buildFeatureModules(),
+                    const SizedBox(height: 28),
+                    _buildSectionTitle(
+                      L.pick(
                         en: 'Memory & Role',
                         zhTW: '記憶與角色功能',
                         zhCN: '记忆与角色功能',
@@ -243,6 +508,25 @@ class _CostContextScreenState extends State<CostContextScreen> {
                     _buildGlassCard(
                       child: Column(
                         children: [
+                          KeyedSubtree(
+                            key: const Key('global_rp_mode_switch'),
+                            child: HelpSwitchTile(
+                              title: L.pick(
+                                en: 'Global RP mode',
+                                zhTW: '全域 RP 模式',
+                                zhCN: '全局 RP 模式',
+                              ),
+                              description: L.pick(
+                                en: 'Only new windows change. Existing windows keep their original mode.',
+                                zhTW: '只影響新窗口；既有窗口保持建立時的模式。',
+                                zhCN: '只影响新窗口；已有窗口保持创建时的模式。',
+                              ),
+                              value: _globalRpEnabled,
+                              onChanged: (value) =>
+                                  unawaited(_setGlobalRp(value)),
+                            ),
+                          ),
+                          _softDivider(),
                           _buildNavigationTile(
                             icon: Icons.hub_outlined,
                             title: L.pick(
@@ -360,22 +644,31 @@ class _CostContextScreenState extends State<CostContextScreen> {
                               },
                             ),
                           ),
-                          _softDivider(),
+                          // 桌面像素精靈：已隱藏。僅在舊用戶仍開啟時顯示，讓他們能關閉；關閉後即消失。
                           ValueListenableBuilder<bool>(
                             valueListenable: SpriteOverlaySettings.enabled,
-                            builder: (ctx, on, _) => HelpSwitchTile(
-                              title: L.pick(
-                                en: 'Pixel Companion',
-                                zhTW: '桌面像素精靈',
-                              ),
-                              description: L.pick(
-                                en: 'Shows a tiny animated companion overlay.',
-                                zhTW: '在畫面邊緣顯示一隻會動的像素小精靈。',
-                              ),
-                              value: on,
-                              onChanged: (v) =>
-                                  SpriteOverlaySettings.setEnabled(v),
-                            ),
+                            builder: (ctx, on, _) {
+                              if (!on) return const SizedBox.shrink();
+                              return Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  _softDivider(),
+                                  HelpSwitchTile(
+                                    title: L.pick(
+                                      en: 'Pixel Companion',
+                                      zhTW: '桌面像素精靈',
+                                    ),
+                                    description: L.pick(
+                                      en: 'Shows a tiny animated companion overlay.',
+                                      zhTW: '在畫面邊緣顯示一隻會動的像素小精靈。',
+                                    ),
+                                    value: on,
+                                    onChanged: (v) =>
+                                        SpriteOverlaySettings.setEnabled(v),
+                                  ),
+                                ],
+                              );
+                            },
                           ),
                         ],
                       ),

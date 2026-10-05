@@ -57,6 +57,22 @@ void main() {
     expect(MemorySummaryTab.formatForReading(source), source);
   });
 
+  test('summary reader hides redundant canonical headings only in the UI', () {
+    const source =
+        '## 前情提要\n'
+        '顧淵與江離已成婚。\n\n'
+        '## 本次摘要\n'
+        '**[關係] 共謀復仇**\n'
+        '兩人決定合作追查舊案。';
+
+    final formatted = MemorySummaryTab.formatForReading(source);
+
+    expect(formatted, isNot(contains('前情提要')));
+    expect(formatted, isNot(contains('本次摘要')));
+    expect(formatted, contains('顧淵與江離已成婚'));
+    expect(formatted, contains('**[關係] 共謀復仇**'));
+  });
+
   test('automatic summary prompt requests the comfortable markdown format', () {
     final zh = ContextCompressor.compressionPromptForTesting();
     final en = ContextCompressor.compressionPromptForTesting(english: true);
@@ -65,10 +81,14 @@ void main() {
     expect(zh, contains('* **主題：** 事實'));
     expect(zh, contains('## 前情提要'));
     expect(zh, contains('## 本次摘要'));
+    expect(zh, contains('約 250～700 個中文字'));
+    expect(zh, isNot(contains('中文約 180～450 字')));
+    expect(zh, contains('「第 N 天」只保留在 value 與 evidence'));
     expect(en, contains('**1. Important events and decisions**'));
     expect(en, contains('* **Topic:** fact'));
     expect(en, contains('## Prior Context'));
     expect(en, contains('## This Update'));
+    expect(en, contains('"day N" only in value and evidence'));
   });
 
   test('every summary response is finalized into one canonical structure', () {

@@ -6,17 +6,23 @@ import 'package:flutter/services.dart';
 import 'package:uuid/uuid.dart';
 import '../theme/app_theme.dart';
 import '../services/locale_strings.dart';
-import '../services/x_post_settings.dart';
 import '../widgets/gradient_background.dart';
 import '../memory/database.dart';
 import '../services/marriage_service.dart';
 import '../services/settings_manager.dart';
 import 'saved_messages_screen.dart';
 import '../widgets/character_timeline_panel.dart';
+import '../widgets/character_diary_entry.dart';
 import '../widgets/character_self_notes_panel.dart';
 import '../widgets/character_signature_panel.dart';
+import '../widgets/character_signature_history_sheet.dart';
 import '../widgets/emotion_panel.dart';
-import '../widgets/x_post_panel.dart';
+import '../widgets/rp_story_relationship_entry.dart';
+import '../widgets/rp_storyline_entry.dart';
+import '../widgets/rp_worldbook_entry.dart';
+import '../models/context_mode.dart';
+import '../services/settings/context_mode_settings.dart';
+import '../services/tool_feature_settings.dart';
 import '../utils/latest_request_gate.dart';
 
 /// 角色管理 — 橫向卡片輪盤 + 關聯資源入口
@@ -36,56 +42,26 @@ class _CharacterListScreenState extends State<CharacterListScreen> {
   bool _isImporting = false;
   bool _timelineEnabled = true;
   bool _selfNotesEnabled = true;
-  bool _onlineDwellReady = false;
-  Timer? _onlineDwellTimer;
+  bool _globalRpEnabled = false;
+  bool _diaryEnabled = true;
   final LatestRequestGate _loadGate = LatestRequestGate();
 
   @override
   void initState() {
     super.initState();
     _pageCtrl = PageController(viewportFraction: 0.82);
+    ContextModeSettings.revision.addListener(_load);
+    ToolFeatureSettings.state.addListener(_syncToolFeatures);
     _load();
   }
 
   @override
   void dispose() {
     _loadGate.invalidate();
-    _onlineDwellTimer?.cancel();
+    ContextModeSettings.revision.removeListener(_load);
+    ToolFeatureSettings.state.removeListener(_syncToolFeatures);
     _pageCtrl.dispose();
     super.dispose();
-  }
-
-  void _beginOnlineDwell(int index) {
-    _onlineDwellTimer?.cancel();
-    if (_onlineDwellReady) {
-      setState(() => _onlineDwellReady = false);
-    }
-    _onlineDwellTimer = Timer(const Duration(seconds: 1), () {
-      if (!mounted || index != _currentPage) return;
-      setState(() => _onlineDwellReady = true);
-      final character = _characters[index];
-      if (character['id'] != _activeId) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            L.pick(en: 'They are online', zhTW: '對方已上線', zhCN: '对方已上线'),
-            style: TextStyle(
-              color: YanciTheme.accent.computeLuminance() > 0.45
-                  ? const Color(0xFF2A2A2A)
-                  : Colors.white,
-            ),
-          ),
-          backgroundColor: YanciTheme.isDark
-              ? YanciTheme.accent.withValues(alpha: 0.88)
-              : YanciTheme.accent,
-          behavior: SnackBarBehavior.floating,
-          duration: const Duration(seconds: 2),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(YanciTheme.radiusSm),
-          ),
-        ),
-      );
-    });
   }
 
   Future<void> _load() async {
@@ -94,6 +70,8 @@ class _CharacterListScreenState extends State<CharacterListScreen> {
     final activeId = await UserSettings.getActiveCharacterId();
     final timelineEnabled = await MemorySettings.getTimelineEnabled();
     final selfNotesEnabled = await MemorySettings.getSelfNotesEnabled();
+    final globalRpEnabled = await ContextModeSettings.getGlobalRpEnabled();
+    final toolFeatures = await ToolFeatureSettings.load();
     final activeIndex = chars.indexWhere((c) => c['id'] == activeId);
     if (!mounted || !_loadGate.isCurrent(generation)) return;
     setState(() {
@@ -103,6 +81,8 @@ class _CharacterListScreenState extends State<CharacterListScreen> {
       _currentPage = activeIndex >= 0 ? activeIndex : 0;
       _timelineEnabled = timelineEnabled;
       _selfNotesEnabled = selfNotesEnabled;
+      _globalRpEnabled = globalRpEnabled;
+      _diaryEnabled = toolFeatures.diaryEnabled;
     });
     // 等一幀再跳，確保 PageController 已掛載
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -111,14 +91,42 @@ class _CharacterListScreenState extends State<CharacterListScreen> {
           _pageCtrl.hasClients &&
           activeIndex >= 0) {
         _pageCtrl.jumpToPage(activeIndex);
-        _beginOnlineDwell(activeIndex);
       }
+    });
+  }
+
+  void _syncToolFeatures() {
+    if (!mounted) return;
+    final enabled = ToolFeatureSettings.state.value.diaryEnabled;
+    if (_diaryEnabled == enabled) return;
+    setState(() => _diaryEnabled = enabled);
+  }
+
+  Future<void> _showSignatureHistoryFor(String characterId) async {
+    final selected = await showCharacterSignatureHistory(context, characterId);
+    if (!mounted || selected == null) return;
+    final index = _characters.indexWhere((row) => row['id'] == characterId);
+    if (index < 0) return;
+    setState(() {
+      _characters[index] = <String, dynamic>{
+        ..._characters[index],
+        'signature': selected,
+      };
     });
   }
 
   String get _currentCharId {
     if (_characters.isEmpty) return 'default';
     return _characters[_currentPage]['id'] as String? ?? 'default';
+  }
+
+  bool get _currentCharacterIsRp {
+    if (_characters.isEmpty || _currentPage >= _characters.length) return false;
+    if (_globalRpEnabled) return true;
+    return ContextMode.fromStorage(
+          _characters[_currentPage]['preferred_context_mode'],
+        ) ==
+        ContextMode.rp;
   }
 
   @override
@@ -209,14 +217,17 @@ class _CharacterListScreenState extends State<CharacterListScreen> {
                               ),
                             )
                           : SizedBox(
-                              height: 360,
+                              height:
+                                  Theme.of(context).platform ==
+                                      TargetPlatform.iOS
+                                  ? 258
+                                  : 360,
                               child: PageView.builder(
                                 controller: _pageCtrl,
                                 itemCount: _characters.length,
                                 onPageChanged: (i) {
                                   HapticFeedback.selectionClick();
                                   setState(() => _currentPage = i);
-                                  _beginOnlineDwell(i);
                                 },
                                 itemBuilder: (ctx, i) =>
                                     _buildCard(_characters[i], i),
@@ -259,6 +270,28 @@ class _CharacterListScreenState extends State<CharacterListScreen> {
                       if (_characters.isNotEmpty && _timelineEnabled)
                         CharacterTimelinePanel(
                           key: ValueKey('timeline-$_currentCharId'),
+                          characterId: _currentCharId,
+                        ),
+                      if (_characters.isNotEmpty &&
+                          !_currentCharacterIsRp &&
+                          _diaryEnabled)
+                        CharacterDiaryEntryPlaceholder(
+                          key: ValueKey('daily-diary-$_currentCharId'),
+                          characterId: _currentCharId,
+                        ),
+                      if (_characters.isNotEmpty && _currentCharacterIsRp)
+                        RpStorylineEntry(
+                          key: ValueKey('rp-storylines-$_currentCharId'),
+                          characterId: _currentCharId,
+                        ),
+                      if (_characters.isNotEmpty && _currentCharacterIsRp)
+                        RpStoryRelationshipEntry(
+                          key: ValueKey('rp-story-relations-$_currentCharId'),
+                          characterId: _currentCharId,
+                        ),
+                      if (_characters.isNotEmpty && _currentCharacterIsRp)
+                        RpWorldbookEntry(
+                          key: ValueKey('rp-worldbook-$_currentCharId'),
                           characterId: _currentCharId,
                         ),
                       if (_characters.isNotEmpty && _selfNotesEnabled) ...[
@@ -462,6 +495,7 @@ class _CharacterListScreenState extends State<CharacterListScreen> {
                             CharacterSignaturePanel(
                               key: ValueKey('character-signature-card-$id'),
                               compact: true,
+                              onShowHistory: () => _showSignatureHistoryFor(id),
                               signature: c['signature'] as String?,
                             ),
                           ],
@@ -469,12 +503,7 @@ class _CharacterListScreenState extends State<CharacterListScreen> {
                       ),
                     ),
                     const SizedBox(width: 8),
-                    if (isActive && isCurrent && _onlineDwellReady)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 18),
-                        child: _OnlineStatusPill(animate: true),
-                      )
-                    else if (!isActive)
+                    if (!isActive)
                       Semantics(
                         button: true,
                         label: L.get('char_use'),
@@ -487,9 +516,7 @@ class _CharacterListScreenState extends State<CharacterListScreen> {
                             if (!mounted) return;
                             setState(() {
                               _activeId = id;
-                              _onlineDwellReady = false;
                             });
-                            if (isCurrent) _beginOnlineDwell(index);
                           },
                           child: Container(
                             key: const ValueKey('character-card-talk-button'),
@@ -514,37 +541,19 @@ class _CharacterListScreenState extends State<CharacterListScreen> {
                   ],
                 ),
               ),
-              const SizedBox(height: 64),
+              SizedBox(
+                height: Theme.of(context).platform == TargetPlatform.iOS
+                    ? 12
+                    : 64,
+              ),
               const Spacer(),
               Transform.translate(
-                offset: const Offset(0, 6),
+                offset: Offset.zero,
                 child: _buildResourceTabs(
                   charId: id,
                   charName: name,
                   embedded: true,
                 ),
-              ),
-              const SizedBox(height: 4),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  const Spacer(),
-                  if (XPostSettings.showEntry)
-                    IconButton(
-                      icon: Icon(
-                        Icons.alternate_email_rounded,
-                        size: 16,
-                        color: YanciTheme.accent.withValues(alpha: 0.7),
-                      ),
-                      tooltip: 'X',
-                      onPressed: () => showXPostPanel(context, id),
-                      padding: EdgeInsets.zero,
-                      constraints: const BoxConstraints(
-                        minWidth: 32,
-                        minHeight: 32,
-                      ),
-                    ),
-                ],
               ),
             ],
           ),
@@ -594,26 +603,46 @@ class _CharacterListScreenState extends State<CharacterListScreen> {
             label: tab.label,
             child: GestureDetector(
               onTap: tab.onTap,
-              child: Container(
-                width: embedded ? 44 : 48,
-                height: embedded ? 44 : 48,
-                decoration: BoxDecoration(
-                  color: YanciTheme.isDark
-                      ? Colors.white.withValues(alpha: 0.06)
-                      : Colors.white.withValues(alpha: 0.6),
-                  borderRadius: BorderRadius.circular(14),
-                  border: Border.all(
-                    color: YanciTheme.isDark
-                        ? Colors.white.withValues(alpha: 0.08)
-                        : Colors.white.withValues(alpha: 0.7),
-                    width: 0.5,
+              behavior: HitTestBehavior.opaque,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: embedded ? 44 : 48,
+                    height: embedded ? 44 : 48,
+                    decoration: BoxDecoration(
+                      color: YanciTheme.isDark
+                          ? Colors.white.withValues(alpha: 0.06)
+                          : Colors.white.withValues(alpha: 0.6),
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(
+                        color: YanciTheme.isDark
+                            ? Colors.white.withValues(alpha: 0.08)
+                            : Colors.white.withValues(alpha: 0.7),
+                        width: 0.5,
+                      ),
+                    ),
+                    child: Icon(
+                      tab.icon,
+                      size: tab.icon == Icons.star_outline_rounded ? 20 : 22,
+                      color: YanciTheme.accent.withValues(alpha: 0.7),
+                    ),
                   ),
-                ),
-                child: Icon(
-                  tab.icon,
-                  size: tab.icon == Icons.star_outline_rounded ? 20 : 22,
-                  color: YanciTheme.accent.withValues(alpha: 0.7),
-                ),
+                  const SizedBox(height: 4),
+                  // 極淡小字標籤：平常不搶眼，需要時找得到。
+                  ExcludeSemantics(
+                    child: Text(
+                      tab.label,
+                      maxLines: 1,
+                      style: TextStyle(
+                        fontSize: 10,
+                        height: 1.0,
+                        letterSpacing: 1,
+                        color: YanciTheme.accent.withValues(alpha: 0.45),
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
           );
@@ -741,131 +770,4 @@ class _ResourceTab {
   final String label;
   final VoidCallback onTap;
   _ResourceTab(this.icon, this.label, this.onTap);
-}
-
-class _OnlineStatusPill extends StatefulWidget {
-  final bool animate;
-
-  const _OnlineStatusPill({required this.animate});
-
-  @override
-  State<_OnlineStatusPill> createState() => _OnlineStatusPillState();
-}
-
-class _OnlineStatusPillState extends State<_OnlineStatusPill>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _breathController;
-
-  @override
-  void initState() {
-    super.initState();
-    _breathController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 1300),
-      value: 0.45,
-    );
-  }
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    _syncAnimation();
-  }
-
-  @override
-  void didUpdateWidget(covariant _OnlineStatusPill oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.animate != widget.animate) _syncAnimation();
-  }
-
-  void _syncAnimation() {
-    final reduceMotion = MediaQuery.disableAnimationsOf(context);
-    if (widget.animate && !reduceMotion) {
-      if (!_breathController.isAnimating) {
-        _breathController.repeat(reverse: true);
-      }
-      return;
-    }
-    _breathController
-      ..stop()
-      ..value = 0.45;
-  }
-
-  @override
-  void dispose() {
-    _breathController.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final onlineColor = YanciTheme.isDark
-        ? YanciTheme.accentLight
-        : YanciTheme.accent;
-
-    return Semantics(
-      container: true,
-      label: L.get('char_online'),
-      child: ExcludeSemantics(
-        child: Container(
-          key: const ValueKey('character-card-online-status'),
-          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              RepaintBoundary(
-                child: AnimatedBuilder(
-                  animation: _breathController,
-                  builder: (context, child) {
-                    final breath = Curves.easeInOutSine.transform(
-                      _breathController.value,
-                    );
-                    return SizedBox(
-                      width: 16,
-                      height: 16,
-                      child: Stack(
-                        alignment: Alignment.center,
-                        children: [
-                          Transform.scale(
-                            scale: 0.9 + (breath * 0.65),
-                            child: Opacity(
-                              opacity: 0.22 * (1 - breath),
-                              child: Container(
-                                width: 14,
-                                height: 14,
-                                decoration: BoxDecoration(
-                                  shape: BoxShape.circle,
-                                  color: onlineColor,
-                                ),
-                              ),
-                            ),
-                          ),
-                          Transform.scale(
-                            scale: 0.92 + (breath * 0.08),
-                            child: Container(
-                              width: 8,
-                              height: 8,
-                              decoration: BoxDecoration(
-                                shape: BoxShape.circle,
-                                color: onlineColor,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    );
-                  },
-                ),
-              ),
-              const SizedBox(width: 4),
-              Text(
-                L.get('char_online'),
-                style: TextStyle(fontSize: 10, color: YanciTheme.textSecondary),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
 }

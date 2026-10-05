@@ -41,10 +41,8 @@ class OpenRouterService implements ApiAdapter {
     _cacheChannelCheckpoints.clear();
   }
 
-  static String get _sessionId {
-    final raw = CacheSession.conversationId.isEmpty
-        ? 'default'
-        : CacheSession.conversationId;
+  static String _sessionIdFor(String rawSessionId) {
+    final raw = rawSessionId.isEmpty ? 'default' : rawSessionId;
     final normalized = raw.replaceAll(RegExp(r'[^a-zA-Z0-9._:-]'), '_');
     final id = 'yanci_$normalized';
     return id.length <= 256 ? id : id.substring(0, 256);
@@ -102,6 +100,46 @@ class OpenRouterService implements ApiAdapter {
           .where((m) => m.id.isNotEmpty)
           .toList();
 
+      models.sort((a, b) => a.name.compareTo(b.name));
+      return models;
+    } finally {
+      ownedClient?.close();
+    }
+  }
+
+  static Future<List<ModelInfo>> fetchEmbeddingModels(
+    String apiKey, {
+    http.Client? client,
+  }) async {
+    final ownedClient = client == null ? http.Client() : null;
+    final activeClient = client ?? ownedClient!;
+    try {
+      final response = await activeClient
+          .get(
+            Uri.parse('https://openrouter.ai/api/v1/embeddings/models'),
+            headers: {'Authorization': 'Bearer $apiKey'},
+          )
+          .timeout(const Duration(seconds: 20));
+      if (response.statusCode != 200) {
+        throw Exception(
+          '無法獲取 OpenRouter Embedding 模型列表：${response.statusCode}',
+        );
+      }
+      final decoded = jsonDecode(response.body);
+      final rawModels = decoded is Map ? decoded['data'] : null;
+      if (rawModels is! List) return const <ModelInfo>[];
+      final models = rawModels
+          .whereType<Map>()
+          .map((raw) {
+            final id = '${raw['id'] ?? ''}'.trim();
+            final name = '${raw['name'] ?? id}'.trim();
+            return ModelInfo(id: id, name: name.isEmpty ? id : name);
+          })
+          .where((model) {
+            final searchable = '${model.id} ${model.name}'.toLowerCase();
+            return model.id.isNotEmpty && searchable.contains('embedding');
+          })
+          .toList();
       models.sort((a, b) => a.name.compareTo(b.name));
       return models;
     } finally {
@@ -528,18 +566,21 @@ class OpenRouterService implements ApiAdapter {
         final m = messages[i];
         final role = m['role'] ?? 'user';
         final content = m['content'] ?? '';
-        final imageUrl = m['image_data_url'];
+        final imageUrls = ApiMessageMedia.imageDataUrls(m);
 
         // 多模態消息（圖+文）
-        if (imageUrl != null && role == 'user') {
+        if (imageUrls.isNotEmpty && role == 'user') {
           final contentBlocks = <Map<String, dynamic>>[
-            {
-              'type': 'image_url',
-              'image_url': {'url': imageUrl},
-            },
+            for (final imageUrl in imageUrls)
+              {
+                'type': 'image_url',
+                'image_url': {'url': imageUrl},
+              },
             {
               'type': 'text',
-              'text': content.isNotEmpty ? content : '（用戶發送了一張圖片）',
+              'text': content.isNotEmpty
+                  ? content
+                  : '（用戶發送了${imageUrls.length}張圖片）',
             },
           ];
           allMessages.add({'role': role, 'content': contentBlocks});
@@ -562,10 +603,14 @@ class OpenRouterService implements ApiAdapter {
 
     // ═══ 滾動 breakpoint（共用助手，1h TTL）═══
     final cacheChannel = structuredPrompt?.cacheChannel ?? 'text';
+    final cacheSessionId =
+        structuredPrompt?.cacheSessionId ?? CacheSession.conversationId;
+    final providerSessionId = _sessionIdFor(cacheSessionId);
     final historyStartIndex = _firstHistoryIndex(allMessages);
     final checkpointKey = _cacheChannelCheckpointKey(
       model: model,
       channel: cacheChannel,
+      sessionId: providerSessionId,
     );
     final resumeSourceIndices = enableCache
         ? _resumeSourceIndices(checkpointKey, messages)
@@ -663,7 +708,8 @@ class OpenRouterService implements ApiAdapter {
           : (enableCache ? 'anthropic_explicit_breakpoint' : 'none'),
       'session_id': enableGrokCache
           ? grokPrepared?.affinityId
-          : (enableCache ? _sessionId : null),
+          : (enableCache ? providerSessionId : null),
+      'context_mode': structuredPrompt?.cacheContextMode ?? '',
       'cache_channel': cacheChannel,
       'channel_resume_indices': resumeSourceIndices,
       'cache_control': cacheControl,
@@ -751,7 +797,7 @@ class OpenRouterService implements ApiAdapter {
       //    「Sticky routing is not used when you specify a manual provider order」，
       //    provider.order 會把 sticky routing 整個蓋掉，導致 cache 永遠命不中。
       if (enableGrokCache) 'session_id': grokPrepared!.affinityId,
-      if (!enableGrokCache && enableCache) 'session_id': _sessionId,
+      if (!enableGrokCache && enableCache) 'session_id': providerSessionId,
       // 不送 top-level automatic cache_control。它會把自動斷點推到最後一個
       // cacheable block，越過上面刻意設在「最新 user 前」的 rolling
       // breakpoint；1h 寫入又是高倍率，會造成每輪大額重寫。
@@ -764,7 +810,7 @@ class OpenRouterService implements ApiAdapter {
         cacheChannel: cacheChannel,
         sessionId: enableGrokCache
             ? grokPrepared!.affinityId
-            : (enableCache ? _sessionId : CacheSession.conversationId),
+            : (enableCache ? providerSessionId : cacheSessionId),
         transport: runtimeTransport,
         sourceMessages: messages,
         requestMessages: allMessages,
@@ -791,8 +837,9 @@ class OpenRouterService implements ApiAdapter {
   String _cacheChannelCheckpointKey({
     required String model,
     required String channel,
+    required String sessionId,
   }) {
-    return '${apiKey.hashCode}|$_sessionId|'
+    return '${apiKey.hashCode}|$sessionId|'
         '${model.trim().toLowerCase()}|${channel.trim()}';
   }
 
@@ -967,6 +1014,7 @@ class OpenRouterService implements ApiAdapter {
       'segs': requestDiagnostics['static_segs'] ?? const <String>[],
       'session_id': requestDiagnostics['session_id'],
       'cache_channel': requestDiagnostics['cache_channel'],
+      'context_mode': requestDiagnostics['context_mode'],
       'channel_resume_indices':
           requestDiagnostics['channel_resume_indices'] ?? const <int>[],
       'model': requestDiagnostics['model'],
@@ -1058,13 +1106,13 @@ class _CacheChannelCheckpoint {
   final int sourceIndex;
   final String role;
   final String content;
-  final String imageDataUrl;
+  final String imageDataUrls;
 
   const _CacheChannelCheckpoint({
     required this.sourceIndex,
     required this.role,
     required this.content,
-    required this.imageDataUrl,
+    required this.imageDataUrls,
   });
 
   factory _CacheChannelCheckpoint.fromMessage(
@@ -1075,20 +1123,22 @@ class _CacheChannelCheckpoint {
       sourceIndex: sourceIndex,
       role: message['role'] ?? 'user',
       content: message['content'] ?? '',
-      imageDataUrl: message['image_data_url'] ?? '',
+      imageDataUrls:
+          message['image_data_urls'] ?? message['image_data_url'] ?? '',
     );
   }
 
   bool matches(Map<String, String> message) {
     return role == (message['role'] ?? 'user') &&
         content == (message['content'] ?? '') &&
-        imageDataUrl == (message['image_data_url'] ?? '');
+        imageDataUrls ==
+            (message['image_data_urls'] ?? message['image_data_url'] ?? '');
   }
 
   bool sameIdentity(_CacheChannelCheckpoint other) {
     return sourceIndex == other.sourceIndex &&
         role == other.role &&
         content == other.content &&
-        imageDataUrl == other.imageDataUrl;
+        imageDataUrls == other.imageDataUrls;
   }
 }

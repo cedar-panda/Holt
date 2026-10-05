@@ -267,7 +267,7 @@ class BedrockService implements ApiAdapter {
         provider: 'bedrock',
         model: modelId,
         cacheChannel: structuredPrompt.cacheChannel,
-        sessionId: CacheSession.conversationId,
+        sessionId: structuredPrompt.cacheSessionId,
         transport: runtimeTransport,
         sourceMessages: messages,
         requestMessages: allMessages,

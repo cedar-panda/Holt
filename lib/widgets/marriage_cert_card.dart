@@ -55,7 +55,9 @@ class MarriageCertCard extends StatelessWidget {
         border: Border.all(color: paperEdge, width: 1),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: YanciTheme.isDark ? 0.3 : 0.08),
+            color: Colors.black.withValues(
+              alpha: YanciTheme.isDark ? 0.3 : 0.08,
+            ),
             blurRadius: 6,
             offset: const Offset(0, 2),
           ),
@@ -77,11 +79,7 @@ class MarriageCertCard extends StatelessWidget {
             Text('❦', style: TextStyle(fontSize: 13, color: gold)),
             const SizedBox(height: 4),
             Text(
-              L.pick(
-                en: 'Certificate of Marriage',
-                zhTW: '結婚證書',
-                zhCN: '结婚证书',
-              ),
+              L.pick(en: 'Certificate of Marriage', zhTW: '結婚證書', zhCN: '结婚证书'),
               style: TextStyle(
                 fontSize: expanded ? 15 : 13.5,
                 fontWeight: FontWeight.w700,
@@ -125,11 +123,7 @@ class MarriageCertCard extends StatelessWidget {
             ] else ...[
               Text(
                 onSignTap != null
-                    ? L.pick(
-                        en: 'Tap to sign',
-                        zhTW: '輕點簽署',
-                        zhCN: '轻点签署',
-                      )
+                    ? L.pick(en: 'Tap to sign', zhTW: '輕點簽署', zhCN: '轻点签署')
                     : L.pick(
                         en: 'Awaiting signature…',
                         zhTW: '待簽署⋯⋯',
@@ -137,9 +131,7 @@ class MarriageCertCard extends StatelessWidget {
                       ),
                 style: TextStyle(
                   fontSize: 10.5,
-                  color: onSignTap != null
-                      ? gold
-                      : ink.withValues(alpha: 0.65),
+                  color: onSignTap != null ? gold : ink.withValues(alpha: 0.65),
                   fontStyle: FontStyle.italic,
                   fontWeight: onSignTap != null
                       ? FontWeight.w600

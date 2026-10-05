@@ -1,6 +1,164 @@
 part of 'chat_screen.dart';
 
 extension _ChatActionMethods on _ChatScreenState {
+  Future<void> _openRpStoryArchive() async {
+    final identity = _sessionIdentity;
+    if (identity == null ||
+        identity.contextMode != ContextMode.rp ||
+        !mounted) {
+      return;
+    }
+    final rows = await DatabaseHelper.getRpStorylines(_activeCharacterId);
+    if (!mounted) return;
+    final storylineIndex = rows.indexWhere(
+      (row) => row['id']?.toString() == identity.continuityId,
+    );
+    final storylineName = storylineIndex < 0
+        ? L.pick(en: 'Current storyline', zhTW: '當前故事線', zhCN: '当前故事线')
+        : rpStorylineDisplayName(rows[storylineIndex], storylineIndex + 1);
+    final palette = ChatBackgroundPresetScope.of(context)?.palette;
+    final panelColor = palette?.inputBarBg ?? YanciTheme.surfacePanel;
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      showDragHandle: false,
+      builder: (sheetContext) => SafeArea(
+        top: false,
+        child: ClipRRect(
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+            child: ColoredBox(
+              color: panelColor,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(18, 10, 18, 18),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      width: 34,
+                      height: 3,
+                      margin: const EdgeInsets.only(bottom: 12),
+                      decoration: BoxDecoration(
+                        color: YanciTheme.textSecondary.withValues(alpha: 0.24),
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                    _rpArchiveChoice(
+                      sheetContext,
+                      value: 'worldbook',
+                      icon: Icons.public_rounded,
+                      title: L.pick(en: 'Worldbook', zhTW: '世界書', zhCN: '世界书'),
+                      subtitle: L.pick(
+                        en: 'Search, read, and edit recalled setting entries',
+                        zhTW: '搜尋、閱讀與修改召回設定',
+                        zhCN: '搜索、阅读与修改召回设定',
+                      ),
+                    ),
+                    _rpArchiveChoice(
+                      sheetContext,
+                      value: 'relationships',
+                      icon: Icons.hub_outlined,
+                      title: L.pick(
+                        en: 'Relationships',
+                        zhTW: '人物關係',
+                        zhCN: '人物关系',
+                      ),
+                      subtitle: L.pick(
+                        en: 'Characters, pairwise relations, and live states',
+                        zhTW: '人物、逐對關係與當前劇情狀態',
+                        zhCN: '人物、逐对关系与当前剧情状态',
+                      ),
+                    ),
+                    _rpArchiveChoice(
+                      sheetContext,
+                      value: 'storyline',
+                      icon: Icons.alt_route_rounded,
+                      title: L.pick(
+                        en: 'Current storyline',
+                        zhTW: '當前故事線',
+                        zhCN: '当前故事线',
+                      ),
+                      subtitle: storylineName,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    if (!mounted || choice == null) return;
+    final route = switch (choice) {
+      'worldbook' => MaterialPageRoute<void>(
+        builder: (_) => RpWorldbookScreen(
+          characterId: _activeCharacterId,
+          continuityId: identity.continuityId,
+        ),
+      ),
+      'relationships' => MaterialPageRoute<void>(
+        builder: (_) => RpStoryRelationshipScreen(
+          characterId: _activeCharacterId,
+          continuityId: identity.continuityId,
+        ),
+      ),
+      _ => MaterialPageRoute<void>(
+        builder: (_) => RpStorylineScreen(characterId: _activeCharacterId),
+      ),
+    };
+    await Navigator.of(context).push(route);
+  }
+
+  Widget _rpArchiveChoice(
+    BuildContext sheetContext, {
+    required String value,
+    required IconData icon,
+    required String title,
+    required String subtitle,
+  }) => Semantics(
+    button: true,
+    label: title,
+    child: InkWell(
+      borderRadius: BorderRadius.circular(16),
+      onTap: () => Navigator.pop(sheetContext, value),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(minHeight: 62),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          child: Row(
+            children: [
+              Icon(icon, size: 22, color: YanciTheme.accent),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(title, style: YanciTheme.bodyText),
+                    const SizedBox(height: 2),
+                    Text(
+                      subtitle,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: YanciTheme.bodySmall.copyWith(
+                        color: YanciTheme.textSecondary.withValues(alpha: 0.72),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Icon(
+                Icons.chevron_right_rounded,
+                size: 18,
+                color: YanciTheme.textSecondary.withValues(alpha: 0.4),
+              ),
+            ],
+          ),
+        ),
+      ),
+    ),
+  );
+
   Future<void> _refreshMarriageState() async {
     final unlocked = await MarriageService.isUnlocked(_activeCharacterId);
     final married = await MarriageService.isMarried(_activeCharacterId);
@@ -8,7 +166,7 @@ extension _ChatActionMethods on _ChatScreenState {
         ? await MarriageService.marriageDate(_activeCharacterId)
         : null;
     if (_userNameCache.isEmpty) {
-      final nick = await UserSettings.getUserName();
+      final nick = _userPersonaName;
       _userNameCache = nick.isNotEmpty ? nick : '對方';
     }
     if (!mounted) return;
@@ -24,6 +182,8 @@ extension _ChatActionMethods on _ChatScreenState {
   }
 
   Future<void> _openChatShop() async {
+    if (!(await ToolFeatureSettings.load()).shopEnabled) return;
+    if (!mounted) return;
     // 先選對象：給自己買（普通模式）or 送TA（掛起隨消息）
     final target = await showDialog<String>(
       context: context,
@@ -260,7 +420,8 @@ extension _ChatActionMethods on _ChatScreenState {
     );
   }
 
-  void _openChatBackpack() {
+  Future<void> _openChatBackpack() async {
+    if (!(await ToolFeatureSettings.load()).shopEnabled || !mounted) return;
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -284,7 +445,7 @@ extension _ChatActionMethods on _ChatScreenState {
   /// 發送時消費掛起禮物：入角色背包 + 返回消息尾標記
   Future<String> _consumePendingGift() async {
     if (_pendingGift == null) return '';
-    final nick = await UserSettings.getUserName();
+    final nick = _userPersonaName;
     final giver = nick.isNotEmpty ? nick : '對方';
     final delivered = await ShopService.deliverPendingGift(
       widget.conversationId,
@@ -329,17 +490,14 @@ extension _ChatActionMethods on _ChatScreenState {
   }
 
   Future<void> _onTransferToChar(int amount) async {
+    if (!(await ToolFeatureSettings.load()).transferEnabled) return;
     if (amount <= 0) return;
     final userCoins = await ScratchService.getUserCoins();
     if (userCoins < amount) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(L.pick(en: 'Not enough coins', zhTW: '貝殼不夠了')),
-            backgroundColor: YanciTheme.accent,
-            behavior: SnackBarBehavior.floating,
-            duration: const Duration(seconds: 2),
-          ),
+        _showChatNotice(
+          L.pick(en: 'Not enough coins', zhTW: '貝殼不夠了'),
+          duration: const Duration(seconds: 2),
         );
       }
       return;
@@ -362,13 +520,9 @@ extension _ChatActionMethods on _ChatScreenState {
     final ok = await ScratchService.spendUser(ScratchService.ticketCost);
     if (!ok) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(L.pick(en: 'Not enough coins', zhTW: '貝殼不夠了')),
-            backgroundColor: YanciTheme.accent,
-            behavior: SnackBarBehavior.floating,
-            duration: const Duration(seconds: 2),
-          ),
+        _showChatNotice(
+          L.pick(en: 'Not enough coins', zhTW: '貝殼不夠了'),
+          duration: const Duration(seconds: 2),
         );
       }
       return null;
@@ -399,17 +553,14 @@ extension _ChatActionMethods on _ChatScreenState {
   /// user 自己刮：立即建立本地刮卡；
   /// char 刮：像轉帳一樣掛到待發，送出時本地揭曉並讓 AI 回應。
   Future<void> _onScratchGift(String scratcher) async {
+    if (!(await ToolFeatureSettings.load()).scratchEnabled) return;
     if (scratcher == 'char') {
       final userCoins = await ScratchService.getUserCoins();
       if (userCoins < ScratchService.ticketCost) {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(L.pick(en: 'Not enough coins', zhTW: '貝殼不夠了')),
-              backgroundColor: YanciTheme.accent,
-              behavior: SnackBarBehavior.floating,
-              duration: const Duration(seconds: 2),
-            ),
+          _showChatNotice(
+            L.pick(en: 'Not enough coins', zhTW: '貝殼不夠了'),
+            duration: const Duration(seconds: 2),
           );
         }
         return;
@@ -623,6 +774,9 @@ extension _ChatActionMethods on _ChatScreenState {
 
   Future<void> _runManualSummaryForMessages(List<Message> messages) async {
     _refreshChatState(() => _manualSummaryRunning = true);
+    _showChatNotice(
+      L.pick(en: 'Creating summary…', zhTW: '正在整理摘要……', zhCN: '正在整理摘要……'),
+    );
     final conv = await DatabaseHelper.getConversation(widget.conversationId);
     final characterId = conv?.characterId ?? _activeCharacterId;
     try {
@@ -636,13 +790,11 @@ extension _ChatActionMethods on _ChatScreenState {
         _manualSummarySelecting = false;
         _manualSummarySelectedIds.clear();
       });
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            L.pick(en: 'Manual summary completed.', zhTW: '手動摘要已完成。'),
-          ),
-          behavior: SnackBarBehavior.floating,
-          backgroundColor: YanciTheme.accent,
+      _showChatNotice(
+        L.pick(
+          en: 'Manual summary completed.',
+          zhTW: '手動摘要已完成。',
+          zhCN: '手动摘要已完成。',
         ),
       );
     } on ManualSummaryPolicyFailure catch (e) {
@@ -653,12 +805,9 @@ extension _ChatActionMethods on _ChatScreenState {
       );
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('${L.pick(en: 'Summary failed', zhTW: '摘要失敗')}：$e'),
-          behavior: SnackBarBehavior.floating,
-          backgroundColor: YanciTheme.accent,
-        ),
+      _showChatNotice(
+        '${L.pick(en: 'Summary failed', zhTW: '摘要失敗', zhCN: '摘要失败')}：$e',
+        tone: ThemedNoticeTone.error,
       );
     } finally {
       if (mounted) _refreshChatState(() => _manualSummaryRunning = false);
@@ -669,26 +818,16 @@ extension _ChatActionMethods on _ChatScreenState {
     required String excerpt,
     required String characterId,
   }) {
-    final messenger = ScaffoldMessenger.of(context);
-    messenger.hideCurrentSnackBar();
-    messenger.showSnackBar(
-      SnackBar(
-        content: Text(
-          L.pick(
-            en: 'Summary failed. Please edit it manually.',
-            zhTW: '摘要失敗，請手動摘要。',
-          ),
-        ),
-        behavior: SnackBarBehavior.floating,
-        backgroundColor: YanciTheme.accent,
-        action: SnackBarAction(
-          label: L.pick(en: 'Edit', zhTW: '編輯'),
-          textColor: Colors.white,
-          onPressed: () => _openManualSummaryCleanPage(
-            excerpt: excerpt,
-            characterId: characterId,
-          ),
-        ),
+    _showChatNotice(
+      L.pick(
+        en: 'Summary failed. Please edit it manually.',
+        zhTW: '摘要失敗，請手動摘要。',
+      ),
+      tone: ThemedNoticeTone.error,
+      actionLabel: L.pick(en: 'Edit', zhTW: '編輯'),
+      onAction: () => _openManualSummaryCleanPage(
+        excerpt: excerpt,
+        characterId: characterId,
       ),
     );
   }
@@ -721,14 +860,21 @@ extension _ChatActionMethods on _ChatScreenState {
     if (start < 0 || start >= _messages.length) return;
 
     final toDelete = _messages.sublist(start);
+    final deletedIds = toDelete.map((m) => m.id).whereType<int>().toList();
+    await DatabaseHelper.deleteChatDiagnosticsForMessages(deletedIds);
+    _chatDiagnostics.removeWhere(
+      (event) =>
+          deletedIds.contains(event.sourceMessageId) ||
+          deletedIds.contains(event.anchorMessageId),
+    );
     for (final m in toDelete) {
       if (m.id != null) {
         final key = 'msg_${m.id}';
         _scratchDataMap.remove(key);
         _transferDataMap.remove(key);
-        await DatabaseHelper.deleteMessageById(m.id!);
+        await DatabaseHelper.deleteMessageById(m.id!, reason: 'reroll');
       } else {
-        await DatabaseHelper.deleteMessageByFingerprint(m);
+        await DatabaseHelper.deleteMessageByFingerprint(m, reason: 'reroll');
       }
     }
     _cacheHitIndices.clear();
@@ -825,7 +971,7 @@ extension _ChatActionMethods on _ChatScreenState {
               );
               // 回到原窗：緩存會話歸屬還原（分支窗接管過 CacheSession）
               if (mounted) {
-                CacheSession.conversationId = widget.conversationId;
+                CacheSession.bind(_requiredSessionIdentity);
               }
             },
             child: Text(
@@ -888,9 +1034,11 @@ extension _ChatActionMethods on _ChatScreenState {
                   text: newText,
                   isUser: msg.isUser,
                   imagePath: msg.imagePath,
+                  imagePaths: msg.imagePaths,
                   splitMode: msg.splitMode,
                   cacheHit: msg.cacheHit,
                   status: msg.status,
+                  revision: msg.revision + 1,
                   memoryLog: msg.memoryLog,
                   webSearchTrace: msg.webSearchTrace,
                   createdAt: msg.createdAt,
@@ -952,7 +1100,9 @@ extension _ChatActionMethods on _ChatScreenState {
     bool incoming = false,
     String openingLine = '',
   }) async {
-    if (!_isChatReady) return;
+    if (!_isChatReady || _sessionIdentity?.contextMode != ContextMode.daily) {
+      return;
+    }
     // 通話與聊天共用同一份靜態前綴（_buildCommonStaticParts 同款）——
     // 前綴一致 = 同一個緩存 namespace，接通第一輪就命中聊天已建的緩存。
     // 各快照字段（習慣/自我註記/表情包/背包）走 ??= 初始化，
@@ -962,22 +1112,29 @@ extension _ChatActionMethods on _ChatScreenState {
     String? callWindowPart;
     try {
       final charId = _activeCharacterId;
-      final systemPrompt = await ApiSettings.getSystemPrompt();
+      final sessionIdentity = _requiredSessionIdentity;
+      final systemPrompt = _userPersona?.promptContent ?? '';
       final userProfile = await _buildUserProfilePrompt();
-      final selfNotesEnabled = await MemorySettings.getSelfNotesEnabled();
+      final selfNotesEnabled =
+          sessionIdentity.contextMode == ContextMode.daily &&
+          await MemorySettings.getSelfNotesEnabled();
       final selfNotes = selfNotesEnabled
           ? await DatabaseHelper.getSelfNotes(charId)
           : '';
-      final userNickname = await UserSettings.getUserName();
+      final userNickname = _userPersonaName;
       final emotionEnabled = await MemorySettings.isAbilityEnabled('emotion');
       final imagegenEnabled = await MemorySettings.isAbilityEnabled('imagegen');
-      final bioclockEnabled = await MemorySettings.isAbilityEnabled('bioclock');
+      final bioclockEnabled =
+          sessionIdentity.contextMode == ContextMode.daily &&
+          await MemorySettings.isAbilityEnabled('bioclock');
       final memoryWriteEnabled = await MemorySettings.getMemoryWriteEnabled();
       final providerName = await ApiSettings.getApiProviderName();
       final charData = await DatabaseHelper.getCharacter(charId);
       final isSpiderWebEnabled =
+          sessionIdentity.contextMode == ContextMode.daily &&
           (charData?['is_spider_web_enabled'] as int? ?? 0) == 1;
       final staticWindowSummary = await _buildStaticWindowSummaryPrompt(charId);
+      final toolFeatures = await ToolFeatureSettings.load();
       final bundle = await _buildCommonStaticParts(
         characterId: charId,
         systemPrompt: systemPrompt,
@@ -996,6 +1153,8 @@ extension _ChatActionMethods on _ChatScreenState {
             (charData?['whisper_model_override'] as int? ?? 1) == 1,
         providerName: providerName,
         staticWindowSummary: staticWindowSummary,
+        contextMode: sessionIdentity.contextMode,
+        toolFeatures: toolFeatures,
       );
       callStaticPart = bundle.staticPart;
       callProfilePart = bundle.profilePart;
@@ -1028,8 +1187,11 @@ extension _ChatActionMethods on _ChatScreenState {
 
   /// 模型來電：延遲 2.5s 響鈴
   void _scheduleIncomingCall(String openingLine) {
+    if (_sessionIdentity?.contextMode != ContextMode.daily) return;
     Future.delayed(const Duration(milliseconds: 2500), () {
-      if (!mounted) return;
+      if (!mounted || _sessionIdentity?.contextMode != ContextMode.daily) {
+        return;
+      }
       _openCall(incoming: true, openingLine: openingLine);
     });
   }
@@ -1145,7 +1307,7 @@ extension _ChatActionMethods on _ChatScreenState {
               ),
             )
             .toList(growable: false),
-        maxSelectionCount: 50,
+        maxSelectionCount: 20,
       );
       if (!mounted || options == null) return;
 
@@ -1165,7 +1327,7 @@ extension _ChatActionMethods on _ChatScreenState {
       final result = await ChatLongScreenshotService.captureAndSave(
         context: context,
         items: items,
-        backgroundColor: YanciTheme.backgroundGradient.first,
+        backgroundGradient: YanciTheme.backgroundGradient,
       );
       if (!mounted) return;
       HapticFeedback.lightImpact();
@@ -1507,16 +1669,10 @@ extension _ChatActionMethods on _ChatScreenState {
 
   void _showLongScreenshotSnack(String text, {bool isError = false}) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).hideCurrentSnackBar();
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(text),
-        backgroundColor: isError ? Colors.redAccent : YanciTheme.accent,
-        behavior: SnackBarBehavior.floating,
-        duration: const Duration(seconds: 3),
-        margin: const EdgeInsets.only(bottom: 80, left: 16, right: 16),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-      ),
+    _showChatNotice(
+      text,
+      duration: const Duration(seconds: 3),
+      tone: isError ? ThemedNoticeTone.error : ThemedNoticeTone.neutral,
     );
   }
 
@@ -1525,95 +1681,7 @@ extension _ChatActionMethods on _ChatScreenState {
     String? actionLabel,
     VoidCallback? onAction,
   }) {
-    _modelHintOverlay?.remove();
-    _modelHintOverlay = null;
-
-    final overlay = Overlay.of(context);
-    late final OverlayEntry entry;
-    void dismiss() {
-      if (_modelHintOverlay != entry) return;
-      _modelHintOverlay?.remove();
-      _modelHintOverlay = null;
-    }
-
-    entry = OverlayEntry(
-      builder: (ctx) {
-        final top = MediaQuery.of(ctx).padding.top + 12;
-        return Positioned(
-          top: top,
-          left: 16,
-          right: 16,
-          child: IgnorePointer(
-            ignoring: onAction == null,
-            child: Material(
-              color: Colors.transparent,
-              child: Center(
-                child: Container(
-                  constraints: const BoxConstraints(maxWidth: 420),
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 14,
-                    vertical: 10,
-                  ),
-                  decoration: BoxDecoration(
-                    color: YanciTheme.isDark
-                        ? const Color(0xF02B2430)
-                        : Colors.white.withValues(alpha: 0.96),
-                    borderRadius: BorderRadius.circular(YanciTheme.radiusSm),
-                    border: Border.all(
-                      color: YanciTheme.glassBorder,
-                      width: 0.5,
-                    ),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withValues(alpha: 0.12),
-                        blurRadius: 16,
-                        offset: const Offset(0, 6),
-                      ),
-                    ],
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Flexible(
-                        child: Text(
-                          message,
-                          textAlign: TextAlign.center,
-                          style: YanciTheme.bodySmall.copyWith(
-                            fontSize: 12,
-                            color: YanciTheme.textPrimary,
-                          ),
-                        ),
-                      ),
-                      if (onAction != null && actionLabel != null) ...[
-                        const SizedBox(width: 8),
-                        TextButton(
-                          onPressed: () {
-                            dismiss();
-                            onAction();
-                          },
-                          style: TextButton.styleFrom(
-                            foregroundColor: YanciTheme.accent,
-                            minimumSize: const Size(48, 44),
-                            padding: const EdgeInsets.symmetric(horizontal: 8),
-                          ),
-                          child: Text(actionLabel),
-                        ),
-                      ],
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          ),
-        );
-      },
-    );
-
-    overlay.insert(entry);
-    _modelHintOverlay = entry;
-    Future.delayed(const Duration(milliseconds: 2600), () {
-      dismiss();
-    });
+    _showChatNotice(message, actionLabel: actionLabel, onAction: onAction);
   }
 
   String _modelCostPolicyMessage(ModelCostPolicyNotice notice) {
@@ -1632,10 +1700,103 @@ extension _ChatActionMethods on _ChatScreenState {
     };
   }
 
+  String _chatModelProviderLabel(String provider) => switch (provider) {
+    'openrouter' => 'OpenRouter',
+    'xai' => 'xAI',
+    'bedrock' => 'AWS Bedrock',
+    'gemini' => 'Gemini',
+    'deepseek' => 'DeepSeek',
+    'qwen' => 'Qwen',
+    'thinking_machines' => 'Thinking Machines',
+    'openai_compatible' => L.pick(
+      en: 'Custom API',
+      zhTW: '自訂中轉站',
+      zhCN: '自定义中转站',
+    ),
+    'local_api' => L.pick(en: 'Local API', zhTW: '本地 API', zhCN: '本地 API'),
+    'local' => L.pick(en: 'On-device', zhTW: '裝置本地', zhCN: '设备本地'),
+    _ => provider,
+  };
+
+  Future<bool> _thinkingChangeWillInterruptCache({
+    required bool nextValue,
+    required String provider,
+    required String model,
+  }) async {
+    if (!await MemorySettings.getEnablePromptCaching()) return false;
+    if (TokenEstimator.cacheThresholdInfoForModel(
+          provider: provider,
+          model: model,
+        ).kind ==
+        CacheThresholdKind.unavailable) {
+      return false;
+    }
+    final lastSent = await ApiSettings.getLastSentThinkingState(
+      conversationId: widget.conversationId,
+      provider: provider,
+      model: model,
+      cacheChannel: PromptCacheChannel.text,
+    );
+    return lastSent != null && lastSent != nextValue;
+  }
+
+  String _thinkingChangedNotice({
+    required bool interruptsCache,
+    required bool requestAlreadyRunning,
+  }) {
+    if (requestAlreadyRunning && interruptsCache) {
+      return L.pick(
+        en: 'Thinking will apply from the next reply and rebuild the current cache. This request is already running.',
+        zhTW: 'Thinking 會從下一次回覆生效，並中斷目前緩存後重新建立；這次請求已經送出。',
+        zhCN: 'Thinking 会从下一次回复生效，并中断当前缓存后重新建立；这次请求已经发出。',
+      );
+    }
+    if (requestAlreadyRunning) {
+      return L.pick(
+        en: 'Thinking will apply from the next reply. The current request is already running.',
+        zhTW: 'Thinking 會從下一次回覆生效；目前這次請求已經送出。',
+        zhCN: 'Thinking 会从下一次回复生效；当前这次请求已经发出。',
+      );
+    }
+    return L.pick(
+      en: 'Changing Thinking will interrupt the current cache. The next reply will rebuild it.',
+      zhTW: 'Thinking 模式已變更，下一次回覆將中斷目前緩存並重新建立。',
+      zhCN: 'Thinking 模式已变更，下一次回复将中断当前缓存并重新建立。',
+    );
+  }
+
   /// 收藏模型快速切換
   void _showModelPicker() async {
-    final starred = await ApiSettings.getRankedStarredModels();
+    final starred = await ApiSettings.getRankedStarredModelEntries();
     final thinkingEnabled = await ApiSettings.getThinkingChain();
+    final currentProvider = await ApiSettings.getApiProvider();
+    final uniqueProviders = starred.map((entry) => entry.provider).toSet();
+    final configuredEntries = await Future.wait(
+      uniqueProviders.map(
+        (provider) async => MapEntry(
+          provider,
+          await ApiSettings.hasUsableProviderConfiguration(provider),
+        ),
+      ),
+    );
+    final providerConfigured = Map<String, bool>.fromEntries(configuredEntries);
+    final entries = List<ChatModelPickerEntry>.generate(starred.length, (
+      index,
+    ) {
+      final favorite = starred[index];
+      final modelId = favorite.modelId;
+      final provider = favorite.provider;
+      return ChatModelPickerEntry(
+        id: modelId,
+        label: _fullModelName(modelId),
+        provider: provider,
+        providerLabel: _chatModelProviderLabel(provider),
+        isLocal:
+            LocalModelService.isLocalModelId(modelId) ||
+            ApiSettings.isLocalApiModelId(modelId),
+        isProviderConfigured: providerConfigured[provider] ?? false,
+      );
+    }, growable: false);
     final pickerAccent =
         _savedThemeColor(await ThemeSettings.getCustomColor('accent')) ??
         YanciTheme.accent;
@@ -1650,17 +1811,9 @@ extension _ChatActionMethods on _ChatScreenState {
         : null;
 
     if (starred.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(L.get('chat_api_star_hint')),
-          backgroundColor: YanciTheme.accent,
-          behavior: SnackBarBehavior.floating,
-          duration: const Duration(milliseconds: 1200),
-          margin: const EdgeInsets.only(bottom: 80, left: 16, right: 16),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(YanciTheme.radiusSm),
-          ),
-        ),
+      _showChatNotice(
+        L.get('chat_api_star_hint'),
+        duration: const Duration(milliseconds: 1200),
       );
       return;
     }
@@ -1688,18 +1841,6 @@ extension _ChatActionMethods on _ChatScreenState {
         final maxPanelHeight = availableHeight < height * 0.5
             ? availableHeight
             : height * 0.5;
-        final entries = starred
-            .map(
-              (modelId) => ChatModelPickerEntry(
-                id: modelId,
-                label: _fullModelName(modelId),
-                isLocal:
-                    LocalModelService.isLocalModelId(modelId) ||
-                    ApiSettings.isLocalApiModelId(modelId),
-              ),
-            )
-            .toList(growable: false);
-
         return Stack(
           children: [
             Positioned(
@@ -1719,34 +1860,54 @@ extension _ChatActionMethods on _ChatScreenState {
                       child: ChatModelPickerPanel(
                         entries: entries,
                         currentModelId: _currentModel,
+                        currentProvider: currentProvider,
                         initialThinking: thinkingEnabled,
                         accentColor: pickerAccent,
+                        backgroundPalette: _boundChatForeground,
                         onThinkingChanged: (value) async {
+                          final contextLimitEnabled =
+                              await MemorySettings.getContextLimitEnabled();
+                          final interruptsCache = contextLimitEnabled
+                              ? false
+                              : await _thinkingChangeWillInterruptCache(
+                                  nextValue: value,
+                                  provider: currentProvider,
+                                  model: _currentModel,
+                                );
                           await ApiSettings.saveThinkingChain(value);
                           if (mounted) {
                             _refreshChatState(
                               () => _generationThinkingEnabled = value,
                             );
                           }
-                          if (!mounted || !_isGenerating) return;
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: Text(
-                                L.pick(
-                                  en: 'Thinking will apply from the next reply. The current request is already running.',
-                                  zhTW: 'Thinking 會從下一次回覆生效；目前這次請求已經送出。',
-                                  zhCN: 'Thinking 会从下一次回复生效；当前这次请求已经发出。',
-                                ),
-                              ),
-                              duration: const Duration(seconds: 2),
+                          if (!mounted || contextLimitEnabled) return;
+                          final requestAlreadyRunning = _isGenerating;
+                          if (!interruptsCache && !requestAlreadyRunning) {
+                            return;
+                          }
+                          _showChatNotice(
+                            _thinkingChangedNotice(
+                              interruptsCache: interruptsCache,
+                              requestAlreadyRunning: requestAlreadyRunning,
                             ),
+                            duration: const Duration(seconds: 2),
                           );
                         },
-                        onModelSelected: (modelId) async {
-                          final provider =
-                              await ApiSettings.resolveStarredModelProvider(
-                                modelId,
-                              );
+                        onUnavailableProviderSelected: (entry) {
+                          _showChatNotice(
+                            L.pick(
+                              en: 'Finish setting up ${entry.providerLabel} before switching to this model.',
+                              zhTW:
+                                  '請先完成 ${entry.providerLabel} 的來源設定，再切換到這個模型。',
+                              zhCN:
+                                  '请先完成 ${entry.providerLabel} 的来源设置，再切换到这个模型。',
+                            ),
+                            duration: const Duration(seconds: 2),
+                          );
+                        },
+                        onModelSelected: (entry) async {
+                          final modelId = entry.id;
+                          final provider = entry.provider;
                           await ApiSettings.saveProviderModelSelection(
                             provider,
                             modelId,

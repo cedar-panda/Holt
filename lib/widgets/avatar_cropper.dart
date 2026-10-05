@@ -1,10 +1,25 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../theme/app_theme.dart';
 import '../services/locale_strings.dart';
 import '../utils/latest_request_gate.dart';
+
+@visibleForTesting
+double avatarCropMinimumScale({
+  required Size displayedImageSize,
+  required double cropDiameter,
+}) {
+  final shortestDisplayedSide = math.min(
+    displayedImageSize.width,
+    displayedImageSize.height,
+  );
+  if (shortestDisplayedSide <= 0) return 1;
+  return (cropDiameter / shortestDisplayedSide).clamp(0.1, 1.0).toDouble();
+}
 
 /// 簡易圓形頭像裁剪器
 ///
@@ -26,8 +41,15 @@ class AvatarCropperScreen extends StatefulWidget {
     required File imageFile,
     required String outputPath,
   }) async {
+    // Profile fields may still own the iOS text-input connection when the
+    // picker returns. Release it before pushing the crop route so the keyboard
+    // cannot resize or cover the crop canvas and confirmation control.
+    FocusManager.instance.primaryFocus?.unfocus();
+    unawaited(SystemChannels.textInput.invokeMethod<void>('TextInput.hide'));
+    if (!context.mounted) return null;
     return Navigator.of(context).push<String>(
       MaterialPageRoute(
+        requestFocus: true,
         builder: (_) =>
             AvatarCropperScreen(imageFile: imageFile, outputPath: outputPath),
       ),
@@ -97,6 +119,10 @@ class _AvatarCropperScreenState extends State<AvatarCropperScreen> {
       // 計算圖片在螢幕上的實際位置和縮放
       final matrix = _transformCtrl.value;
       final inv = Matrix4.inverted(matrix);
+      final interactionScale = matrix.getMaxScaleOnAxis().clamp(
+        _minimumInteractionScale(metrics),
+        5.0,
+      );
 
       final imgW = _image!.width.toDouble();
       final imgH = _image!.height.toDouble();
@@ -108,7 +134,7 @@ class _AvatarCropperScreenState extends State<AvatarCropperScreen> {
       );
       // 以裁切框中心推導正方形來源區域，整個區域再夾回原圖邊界；
       // 不再把超出圖片的矩形硬拉伸到 512px。
-      final sourceSide = (cropDiameter / metrics.baseScale)
+      final sourceSide = (cropDiameter / (metrics.baseScale * interactionScale))
           .clamp(1.0, math.min(imgW, imgH))
           .toDouble();
       final sourceLeft = (sourceCenter.dx - sourceSide / 2)
@@ -158,6 +184,13 @@ class _AvatarCropperScreenState extends State<AvatarCropperScreen> {
     }
   }
 
+  double _minimumInteractionScale(_CropMetrics metrics) {
+    return avatarCropMinimumScale(
+      displayedImageSize: metrics.displayRect.size,
+      cropDiameter: metrics.cropDiameter,
+    );
+  }
+
   _CropMetrics _cropMetrics(Size viewSize) {
     if (_image == null) {
       return _CropMetrics(
@@ -201,7 +234,42 @@ class _AvatarCropperScreenState extends State<AvatarCropperScreen> {
     final vx = s[0] * sx + s[4] * sy + s[12];
     final vy = s[1] * sx + s[5] * sy + s[13];
     // display space → image space
-    return Offset(vx / baseScale, (vy - displayOffset.dy) / baseScale);
+    return Offset(
+      (vx - displayOffset.dx) / baseScale,
+      (vy - displayOffset.dy) / baseScale,
+    );
+  }
+
+  void _settleImageAtCropEdge(Size viewSize) {
+    if (_image == null) return;
+    final metrics = _cropMetrics(viewSize);
+    final matrix = _transformCtrl.value.clone();
+    final scale = matrix.getMaxScaleOnAxis().clamp(
+      _minimumInteractionScale(metrics),
+      5.0,
+    );
+    final cropRect = Rect.fromCircle(
+      center: metrics.cropCenter,
+      radius: metrics.cropDiameter / 2,
+    );
+    final scaledLeft = metrics.displayRect.left * scale;
+    final scaledRight = metrics.displayRect.right * scale;
+    final scaledTop = metrics.displayRect.top * scale;
+    final scaledBottom = metrics.displayRect.bottom * scale;
+    final minX = cropRect.right - scaledRight;
+    final maxX = cropRect.left - scaledLeft;
+    final minY = cropRect.bottom - scaledBottom;
+    final maxY = cropRect.top - scaledTop;
+    final currentX = matrix.storage[12];
+    final currentY = matrix.storage[13];
+    final nextX = currentX.clamp(minX, maxX).toDouble();
+    final nextY = currentY.clamp(minY, maxY).toDouble();
+    if ((nextX - currentX).abs() < 0.01 && (nextY - currentY).abs() < 0.01) {
+      return;
+    }
+    matrix.storage[12] = nextX;
+    matrix.storage[13] = nextY;
+    _transformCtrl.value = matrix;
   }
 
   @override
@@ -209,8 +277,10 @@ class _AvatarCropperScreenState extends State<AvatarCropperScreen> {
     final viewSize = MediaQuery.of(context).size;
     final metrics = _cropMetrics(viewSize);
     final cropDiameter = metrics.cropDiameter;
+    final minimumScale = _minimumInteractionScale(metrics);
 
     return Scaffold(
+      resizeToAvoidBottomInset: false,
       backgroundColor: Colors.black,
       body: Stack(
         fit: StackFit.expand,
@@ -219,15 +289,19 @@ class _AvatarCropperScreenState extends State<AvatarCropperScreen> {
           if (_image != null)
             InteractiveViewer(
               transformationController: _transformCtrl,
-              minScale: 1.0,
+              minScale: minimumScale,
               maxScale: 5.0,
               constrained: false,
               boundaryMargin: const EdgeInsets.all(double.infinity),
+              clipBehavior: Clip.none,
+              onInteractionEnd: (_) => _settleImageAtCropEdge(viewSize),
               child: Image.file(
                 widget.imageFile,
                 fit: BoxFit.contain,
                 width: viewSize.width,
                 height: viewSize.height,
+                filterQuality: FilterQuality.high,
+                gaplessPlayback: true,
               ),
             )
           else

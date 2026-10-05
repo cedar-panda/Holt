@@ -14,12 +14,16 @@ import '../services/call_prompt_composer.dart';
 import '../services/deferred_prompt.dart';
 import '../services/bio_clock_service.dart';
 import '../services/prompt_cache_channels.dart';
+import '../models/chat_session_identity.dart';
 import '../services/cache_stats_helper.dart';
 import '../memory/retriever.dart';
+import '../services/rp_memory_service.dart';
+import '../models/context_mode.dart';
 import '../memory/database.dart';
 import '../memory/emotion_coordinates.dart';
 import '../models/message.dart';
 import '../widgets/call_visual.dart';
+import '../services/user_persona_service.dart';
 
 /// ═══════════════════════════════════════════════════════════
 ///  語音通話 v2
@@ -128,6 +132,7 @@ class _CallScreenState extends State<CallScreen>
   Timer? _poorSignalFinishTimer;
   late final AnimationController _acceptPulse;
   bool _accepted = false; // 接聽動畫觸發
+  ChatSessionIdentity? _sessionIdentity;
 
   // ── STT 停頓推斷標點 ──
   // 系統 STT（SpeechRecognizer）不回傳標點，插件也沒暴露格式化開關。
@@ -174,12 +179,17 @@ class _CallScreenState extends State<CallScreen>
   Future<void> _bootstrap() async {
     try {
       final conv = await DatabaseHelper.getConversation(widget.conversationId);
-      final activeId = await UserSettings.getActiveCharacterId();
-      final cid = conv?.characterId ?? activeId;
+      final sessionIdentity = ChatSessionIdentity.fromConversation(
+        expectedConversationId: widget.conversationId,
+        conversation: conv,
+      );
+      final cid = sessionIdentity.characterId;
       final char = await DatabaseHelper.getCharacter(cid);
       final locale = await TtsSettings.getSttLocale();
       final micMode = await TtsSettings.getCallMicMode();
       if (!mounted || _popped) return;
+      _sessionIdentity = sessionIdentity;
+      CacheSession.bind(sessionIdentity);
       setState(() {
         _characterId = cid;
         _avatarPath = char?['avatar_path'] as String?;
@@ -893,7 +903,13 @@ class _CallScreenState extends State<CallScreen>
         profilePrompt = widget.profilePart;
         windowPrompt = widget.windowPart ?? '';
       } else {
-        final baseSystemPrompt = await ApiSettings.getSystemPrompt();
+        final conversation = await DatabaseHelper.getConversation(
+          widget.conversationId,
+        );
+        final persona = await UserPersonaService.personaForConversation(
+          conversation!,
+        );
+        final baseSystemPrompt = persona.promptContent;
         staticPrompt = [
           if (baseSystemPrompt.isNotEmpty) baseSystemPrompt,
           if (widget.cacheStaticSnapshot?.isNotEmpty == true)
@@ -901,17 +917,34 @@ class _CallScreenState extends State<CallScreen>
           if (emotionEnabled) EmotionCoordinates.abilityPrompt(),
           if (bioclockEnabled) BioClockService.abilityPrompt(),
         ].join('\n\n');
-        profilePrompt = null;
+        profilePrompt = UserPersonaService.buildIdentityPrompt(persona);
         windowPrompt = widget.cacheStaticSnapshot ?? '';
       }
 
       final dynamicParts = <String>[];
-      final memoryPrompt = await Retriever.buildMemoryPrompt(
-        mode: 'romance',
-        currentMessage: userText ?? '',
-        characterId: _characterId,
-        windowId: widget.conversationId,
+      final conversation = await DatabaseHelper.getConversation(
+        widget.conversationId,
       );
+      final identity = ChatSessionIdentity.fromConversation(
+        expectedConversationId: widget.conversationId,
+        conversation: conversation,
+      );
+      final memoryPrompt = identity.contextMode == ContextMode.rp
+          ? await RpMemoryService.buildPrompt(
+              mode: 'romance',
+              currentMessage: userText ?? '',
+              characterId: _characterId,
+              windowId: widget.conversationId,
+              continuityId: identity.continuityId,
+            )
+          : await Retriever.buildMemoryPrompt(
+              mode: 'romance',
+              currentMessage: userText ?? '',
+              characterId: _characterId,
+              windowId: widget.conversationId,
+              contextMode: ContextMode.daily,
+              continuityId: identity.continuityId,
+            );
       final turnEffects = DeferredPromptBatch()..add(memoryPrompt);
       if (memoryPrompt.isNotEmpty) {
         dynamicParts.add(
@@ -1026,6 +1059,9 @@ class _CallScreenState extends State<CallScreen>
       );
       final outgoing = turnPayload.messages;
       final structured = StructuredPrompt(
+        sessionIdentity:
+            _sessionIdentity ??
+            (throw StateError('Call conversation identity is unavailable')),
         staticPart: staticPrompt,
         profilePart: profilePrompt,
         windowPart: windowPrompt,
@@ -1151,6 +1187,7 @@ class _CallScreenState extends State<CallScreen>
         model: model,
         usage: requestUsage,
         characterId: _characterId,
+        requestKind: ApiRequestKind.call,
       );
 
       // 等音頻播完

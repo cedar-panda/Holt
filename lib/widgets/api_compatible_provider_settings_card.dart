@@ -45,7 +45,7 @@ class ApiCompatibleProviderSettingsCard extends StatelessWidget {
       decoration: BoxDecoration(
         color: Colors.transparent,
         borderRadius: BorderRadius.circular(YanciTheme.radiusMd),
-        border: Border.all(color: borderColor, width: 0.75),
+        border: Border.all(color: borderColor, width: 1),
       ),
       child: child,
     );

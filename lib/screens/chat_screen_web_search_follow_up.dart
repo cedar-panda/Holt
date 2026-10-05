@@ -67,6 +67,7 @@ extension _ChatScreenWebSearchFollowUp on _ChatScreenState {
         model: model,
         usage: usage,
         characterId: _activeCharacterId,
+        requestKind: ApiRequestKind.chat,
       );
       final reply = WebSearchFollowUp.sanitizeReply(buffer.toString());
       return reply.isEmpty ? fallback : reply;

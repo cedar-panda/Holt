@@ -55,6 +55,33 @@ void main() {
     expect(point('戏谑').type, '戲謔');
   });
 
+  test(
+    'emotion protocol and five dimensions follow all three locales',
+    () async {
+      await L.setLocale('zh_TW');
+      expect(EmotionCoordinates.abilityPrompt(), contains('安全感／慾望／愜意／負面情緒／戲謔'));
+      expect(EmotionCoordinates.displayDimension('負面情緒'), '負面情緒');
+
+      await L.setLocale('zh_CN');
+      expect(EmotionCoordinates.abilityPrompt(), contains('安全感／欲望／惬意／负面情绪／戏谑'));
+      expect(EmotionCoordinates.displayDimension('慾望'), '欲望');
+      expect(EmotionCoordinates.displayDimension('負面情緒'), '负面情绪');
+
+      await L.setLocale('en');
+      final prompt = EmotionCoordinates.abilityPrompt();
+      expect(
+        prompt,
+        contains('Security / Desire / Comfort / Negative emotion / Banter'),
+      );
+      expect(prompt, isNot(contains('write these Chinese labels')));
+      expect(EmotionCoordinates.displayDimension('安全感'), 'Security');
+      expect(EmotionCoordinates.displayDimension('慾望'), 'Desire');
+      expect(EmotionCoordinates.displayDimension('愜意'), 'Comfort');
+      expect(EmotionCoordinates.displayDimension('負面情緒'), 'Negative emotion');
+      expect(EmotionCoordinates.displayDimension('戲謔'), 'Banter');
+    },
+  );
+
   test('memo prompts omit the retired long-term emotion label', () async {
     await L.setLocale('zh_TW');
     final memoryPrompt = MemoryActions.abilityPrompt();

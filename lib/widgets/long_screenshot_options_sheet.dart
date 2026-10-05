@@ -38,7 +38,7 @@ class LongScreenshotOptions {
 Future<LongScreenshotOptions?> showLongScreenshotOptionsSheet({
   required BuildContext context,
   required List<LongScreenshotMessageOption> messages,
-  int maxSelectionCount = 50,
+  int maxSelectionCount = 20,
 }) {
   return showModalBottomSheet<LongScreenshotOptions>(
     context: context,
@@ -60,7 +60,7 @@ class LongScreenshotOptionsSheet extends StatefulWidget {
   const LongScreenshotOptionsSheet({
     super.key,
     required this.messages,
-    this.maxSelectionCount = 50,
+    this.maxSelectionCount = 20,
   }) : assert(maxSelectionCount > 0);
 
   @override

@@ -98,7 +98,7 @@ class L {
     'nav_character': {'zh_TW': '角色', 'zh_CN': '角色', 'en': 'Chars'},
     'nav_me': {'zh_TW': '我的', 'zh_CN': '我的', 'en': 'Me'},
     'me_character_card': {'zh_TW': '人設卡', 'zh_CN': '人设卡', 'en': 'Characters'},
-    'me_user_profile': {'zh_TW': '用戶檔案', 'zh_CN': '用户档案', 'en': 'Profile'},
+    'me_user_profile': {'zh_TW': '檔案', 'zh_CN': '档案', 'en': 'Profile'},
     'me_sticker': {'zh_TW': '我的表情庫', 'zh_CN': '我的表情库', 'en': 'My Stickers'},
     'me_theme': {'zh_TW': '主題工坊', 'zh_CN': '主题工坊', 'en': 'Theme Studio'},
     'me_theme_sub': {
@@ -505,7 +505,11 @@ class L {
       'zh_CN': '先创建一个TA吧 →',
       'en': 'Create one →',
     },
-    'char_share_code': {'zh_TW': '分享碼', 'zh_CN': '分享码', 'en': 'Share Code'},
+    'char_share_code': {
+      'zh_TW': '分享人設卡',
+      'zh_CN': '分享人设卡',
+      'en': 'Share Character Card',
+    },
     'char_import_code': {
       'zh_TW': '匯入分享碼',
       'zh_CN': '导入分享码',
@@ -574,6 +578,64 @@ class L {
       'zh_TW': '聊了才有數據～',
       'zh_CN': '聊了才有数据～',
       'en': 'Chat to see data~',
+    },
+    'usage_reference_notice': {
+      'zh_TW': '該用量統計僅供參考，請以 API 內計費為準',
+      'zh_CN': '该用量统计仅供参考，请以 API 内计费为准',
+      'en':
+          'Usage statistics are for reference only. Refer to your API provider for billing.',
+    },
+    'usage_request_breakdown': {
+      'zh_TW': '功能請求次數',
+      'zh_CN': '功能请求次数',
+      'en': 'Requests by feature',
+    },
+    'usage_kind_chat': {'zh_TW': '聊天', 'zh_CN': '聊天', 'en': 'Chat'},
+    'usage_kind_summary': {'zh_TW': '摘要', 'zh_CN': '摘要', 'en': 'Summary'},
+    'usage_kind_memory': {'zh_TW': '記憶整理', 'zh_CN': '记忆整理', 'en': 'Memory'},
+    'usage_kind_embedding': {
+      'zh_TW': '向量召回',
+      'zh_CN': '向量召回',
+      'en': 'Embedding',
+    },
+    'usage_kind_worldbook': {'zh_TW': '世界書', 'zh_CN': '世界书', 'en': 'Worldbook'},
+    'usage_kind_guide': {'zh_TW': '嚮導', 'zh_CN': '向导', 'en': 'Guide'},
+    'usage_kind_image': {'zh_TW': '畫圖', 'zh_CN': '画图', 'en': 'Image'},
+    'usage_kind_signature': {
+      'zh_TW': '個性簽名',
+      'zh_CN': '个性签名',
+      'en': 'Signature',
+    },
+    'usage_kind_call': {'zh_TW': '通話', 'zh_CN': '通话', 'en': 'Call'},
+    'usage_kind_sticker': {
+      'zh_TW': '表情辨識',
+      'zh_CN': '表情识别',
+      'en': 'Sticker vision',
+    },
+    'usage_kind_conversation_title': {
+      'zh_TW': '窗口命名',
+      'zh_CN': '窗口命名',
+      'en': 'Chat title',
+    },
+    'usage_kind_keep_alive': {
+      'zh_TW': '緩存延續',
+      'zh_CN': '缓存延续',
+      'en': 'Cache keep-alive',
+    },
+    'usage_kind_web_search': {
+      'zh_TW': '網路搜尋',
+      'zh_CN': '网络搜索',
+      'en': 'Web search',
+    },
+    'usage_kind_tts': {
+      'zh_TW': '語音生成',
+      'zh_CN': '语音生成',
+      'en': 'Text to speech',
+    },
+    'usage_kind_unknown': {
+      'zh_TW': '其他／舊記錄',
+      'zh_CN': '其他／旧记录',
+      'en': 'Other / legacy',
     },
     'usage_model_dist': {
       'zh_TW': '模型分佈',
@@ -722,9 +784,9 @@ class L {
     'settings_font': {'zh_TW': '字體', 'zh_CN': '字体', 'en': 'Font'},
     'history_title': {'zh_TW': '歷史對話', 'zh_CN': '历史对话', 'en': 'History'},
     'history_empty': {
-      'zh_TW': '還沒有故事開始。\n點水晶球，開一個。',
-      'zh_CN': '还没有故事开始。\n点水晶球，开一个。',
-      'en': 'No chats yet.\nTap the orb to start.',
+      'zh_TW': '還沒有故事開始\n點擊TA的心跳開始你們的故事',
+      'zh_CN': '还没有故事开始\n点击TA的心跳开始你们的故事',
+      'en': 'No story has begun yet\nTap their heartbeat to begin your story',
     },
     'history_edit_title': {
       'zh_TW': '編輯標題',
@@ -737,7 +799,7 @@ class L {
       'zh_CN': '永远不要停止追寻 abcdef',
       'en': 'Never stop exploring abcdef',
     },
-    'profile_title': {'zh_TW': '用戶檔案', 'zh_CN': '用户档案', 'en': 'Profile'},
+    'profile_title': {'zh_TW': '檔案', 'zh_CN': '档案', 'en': 'Profile'},
     'profile_name': {'zh_TW': '暱稱', 'zh_CN': '昵称', 'en': 'Nickname'},
     'profile_pronoun': {
       'zh_TW': '稱謂 / 代詞',

@@ -1,6 +1,6 @@
 # Holt PWA 模組架構
 
-純 HTML/CSS/JS 的 iOS PWA，SPA 架構，5 個 tab 頁面。所有資料存在 IndexedDB，不上傳。
+純 HTML/CSS/JS 的 PWA，SPA 架構，5 個 tab 頁面。持久資料存在 IndexedDB；聊天、網搜與生圖請求直送使用者選擇的 BYOK 來源。
 
 ---
 
@@ -18,6 +18,10 @@ Holt_pwa/
 ├── db.js               ← IndexedDB 存儲層（角色、對話、消息、設定、表情包、時間線）
 ├── api.js              ← LLM 流式調用（OpenRouter/Anthropic/Gemini/xAI/自訂端點）
 ├── prompt-cache.js     ← 提示詞快取邏輯（滾動斷點 + request-only 狀態分層）
+├── prompt-builder.js   ← Flutter/PWA 共用語意的結構化提示詞組裝
+├── web-search.js       ← 四來源原生網搜與引用解析
+├── image-generation.js← 四來源生圖與圖片持久化
+├── favorite-models-dialog.js ← 收藏模型刪除與排序
 ├── font-loader.js      ← 背景載入外部字體
 ├── backup-bundle.js    ← 加密備份匯出 / 匯入
 ├── splash.js           ← 開屏動畫控制
@@ -55,16 +59,18 @@ app.js 匯出 `$`, `state`, `toast`, `switchTab`, `registerTabHandler` 等工具
 
 ## 資料層（db.js）
 
-IndexedDB `holt_pwa`，version 2。
+IndexedDB `holt_pwa`，version 4。
 
 | Object Store   | Key      | 索引                        | 用途          |
 |----------------|----------|-----------------------------|---------------|
 | characters     | id       | by_updated                  | 角色卡        |
 | conversations  | id       | by_char, by_updated         | 對話          |
 | messages       | id       | by_conv, by_conv_time       | 消息          |
+| message_search | id       | by_conv                     | 純文字搜尋投影 |
 | settings       | key      | —                           | key-value 設定 |
 | stickers       | id       | by_pack                     | 表情包        |
 | timeline       | id       | by_char, by_char_date       | 時間線節點    |
+| usage_logs     | id       | by_timestamp                | 用量紀錄      |
 
 ---
 
@@ -91,6 +97,6 @@ IndexedDB `holt_pwa`，version 2。
 - install：預快取 APP_SHELL 所有檔案
 - activate：清除舊版本快取
 - fetch：
-  - 導航請求 → 返回快取的 index.html（保持原子性，避免新舊混搭閃爍）
-  - 同源靜態資源 → cache-first，miss 時 fetch 並寫入快取
+  - 導航請求 → network-first，失敗時回退快取的 index.html
+  - 同源靜態資源 → network-first，失敗時回退快取
   - 跨域 API 請求 → 不走快取

@@ -8,6 +8,59 @@ const bool _showDeveloperDiagnostics = bool.fromEnvironment(
 );
 
 extension _HomeProfileMethods on _HomeScreenState {
+  void _openSelectedPersonaFile() {
+    final personaId = _selectedUserPersona?.id;
+    unawaited(() async {
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => UserProfileScreen(personaId: personaId),
+        ),
+      );
+      if (!mounted) return;
+      await _loadPersonaShelf();
+      await _loadLatestNote();
+    }());
+  }
+
+  void _createUserPersona() {
+    showThemedPillNotice(
+      context,
+      L.pick(
+        en: 'This will add a new identity',
+        zhTW: '這將新增你的身分',
+        zhCN: '这将新增你的身份',
+      ),
+    );
+    unawaited(() async {
+      final persona = await UserPersonaService.createPersona();
+      await UserPersonaService.selectPersona(persona.id);
+      if (!mounted) return;
+      _setUserPersonaCreateSlot(false);
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => UserProfileScreen(personaId: persona.id),
+        ),
+      );
+      if (!mounted) return;
+      await _loadPersonaShelf();
+      await _loadLatestNote();
+    }());
+  }
+
+  void _openAnniversaryPanel() {
+    final persona = _selectedUserPersona;
+    if (persona == null || _userPersonaCreateSlotSelected) return;
+    unawaited(() async {
+      final changed = await showAnniversaryPanel(
+        context,
+        userPersonaId: persona.id,
+        characterId: _anniversaryCharacterId ?? _activeCharacterId,
+      );
+      if (!mounted || !changed) return;
+      await _loadPersonaShelf();
+    }());
+  }
+
   Widget _buildGridTile({
     required String title,
     required IconData icon,
@@ -18,9 +71,12 @@ extension _HomeProfileMethods on _HomeScreenState {
     Color? iconColor,
     bool glowIcon = false,
     bool hideText = false,
+    Color? imagePrimaryForeground,
+    Color? imageSecondaryForeground,
   }) {
     final effectiveAccent =
         iconColor ??
+        imageSecondaryForeground ??
         (isSecondary
             ? YanciTheme.accent.withValues(alpha: 0.45)
             : YanciTheme.accent);
@@ -29,8 +85,8 @@ extension _HomeProfileMethods on _HomeScreenState {
     final fontSize = isSecondary ? 13.5 : 16.0;
     final fontWeight = isSecondary ? FontWeight.w500 : FontWeight.w600;
     final textColor = isSecondary
-        ? YanciTheme.textSecondary
-        : YanciTheme.textPrimary;
+        ? imageSecondaryForeground ?? YanciTheme.textSecondary
+        : imagePrimaryForeground ?? YanciTheme.textPrimary;
 
     final baseIcon =
         customIcon ?? Icon(icon, color: effectiveAccent, size: iconSize);
@@ -147,8 +203,10 @@ extension _HomeProfileMethods on _HomeScreenState {
     required IconData rightIcon,
     required VoidCallback rightOnTap,
     double? height,
+    Color? imageSecondaryForeground,
   }) {
-    final effectiveAccent = YanciTheme.accent.withValues(alpha: 0.45);
+    final effectiveAccent =
+        imageSecondaryForeground ?? YanciTheme.accent.withValues(alpha: 0.45);
 
     final iconSize = 32.0;
 
@@ -180,9 +238,14 @@ extension _HomeProfileMethods on _HomeScreenState {
     );
   }
 
-  Widget _buildSoftProfileDivider({bool dots = false}) {
-    final lineColor = YanciTheme.textSecondary.withValues(alpha: 0.16);
-    final accent = YanciTheme.accent;
+  Widget _buildSoftProfileDivider({
+    bool dots = false,
+    Color? imageSecondaryForeground,
+  }) {
+    final lineColor =
+        imageSecondaryForeground?.withValues(alpha: 0.30) ??
+        YanciTheme.textSecondary.withValues(alpha: 0.16);
+    final accent = imageSecondaryForeground ?? YanciTheme.accent;
     return Row(
       children: [
         Expanded(
@@ -246,6 +309,12 @@ extension _HomeProfileMethods on _HomeScreenState {
   }
 
   Widget _buildProfilePage() {
+    final lineAnniversaries = _anniversariesAt(AnniversaryPlacement.avatarLine);
+    final belowAnniversaries = _anniversariesAt(
+      AnniversaryPlacement.belowAvatars,
+    );
+    final imagePrimaryForeground = _homeForegroundPalette?.primary;
+    final imageSecondaryForeground = _homeForegroundPalette?.secondary;
     return SafeArea(
       bottom: false,
       child: SingleChildScrollView(
@@ -257,26 +326,47 @@ extension _HomeProfileMethods on _HomeScreenState {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                // 左上角：日/夜模式切換（回到最近選過的對應主題）
-                if (YanciTheme.homeBackgroundImagePath.isEmpty &&
-                    YanciTheme.chatBackgroundImagePath.isEmpty)
-                  IconButton(
-                    tooltip: YanciTheme.isDark
-                        ? (L.pick(en: 'Light Mode', zhTW: '日間模式'))
-                        : (L.pick(en: 'Dark Mode', zhTW: '夜間模式')),
-                    onPressed: _toggleProfileThemeMode,
-                    icon: Icon(
-                      YanciTheme.isDark
-                          ? Icons.light_mode_rounded
-                          : Icons.dark_mode_rounded,
-                      size: 22,
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // 紀念日與日/夜模式入口對調：日/夜模式常駐，
+                    // 即使窗口有背景圖片也不隱藏；背景綁定只影響窗口內容。
+                    IconButton(
+                      key: const ValueKey('open-anniversary-panel'),
+                      tooltip: L.pick(
+                        en: 'Anniversaries',
+                        zhTW: '紀念日',
+                        zhCN: '纪念日',
+                      ),
+                      onPressed:
+                          _selectedUserPersona == null ||
+                              _userPersonaCreateSlotSelected
+                          ? null
+                          : _openAnniversaryPanel,
+                      icon: const Icon(Icons.calendar_month_outlined, size: 22),
+                      style: IconButton.styleFrom(
+                        foregroundColor:
+                            imageSecondaryForeground ?? YanciTheme.accent,
+                      ),
                     ),
-                    style: IconButton.styleFrom(
-                      foregroundColor: YanciTheme.accent,
+                    IconButton(
+                      tooltip: YanciTheme.isDark
+                          ? L.pick(en: 'Light Mode', zhTW: '日間模式', zhCN: '日间模式')
+                          : L.pick(en: 'Dark Mode', zhTW: '夜間模式', zhCN: '夜间模式'),
+                      onPressed: _toggleProfileThemeMode,
+                      icon: Icon(
+                        YanciTheme.isDark
+                            ? Icons.light_mode_rounded
+                            : Icons.dark_mode_rounded,
+                        size: 22,
+                      ),
+                      style: IconButton.styleFrom(
+                        foregroundColor:
+                            imageSecondaryForeground ?? YanciTheme.accent,
+                      ),
                     ),
-                  )
-                else
-                  const SizedBox(width: 48, height: 48),
+                  ],
+                ),
                 // 右上角：備份與設定
                 Row(
                   mainAxisSize: MainAxisSize.min,
@@ -286,9 +376,10 @@ extension _HomeProfileMethods on _HomeScreenState {
                       onPressed: () {
                         _showBackupSheet();
                       },
-                      icon: const Icon(Icons.backup_outlined, size: 22),
+                      icon: const Icon(Icons.save_outlined, size: 22),
                       style: IconButton.styleFrom(
-                        foregroundColor: YanciTheme.accent,
+                        foregroundColor:
+                            imageSecondaryForeground ?? YanciTheme.accent,
                       ),
                     ),
                     IconButton(
@@ -298,7 +389,8 @@ extension _HomeProfileMethods on _HomeScreenState {
                       },
                       icon: const Icon(Icons.settings_outlined, size: 22),
                       style: IconButton.styleFrom(
-                        foregroundColor: YanciTheme.accent,
+                        foregroundColor:
+                            imageSecondaryForeground ?? YanciTheme.accent,
                       ),
                     ),
                   ],
@@ -307,231 +399,244 @@ extension _HomeProfileMethods on _HomeScreenState {
             ),
             const SizedBox(height: 28),
 
-            // 居中頭像 + 名字
-            Center(
-              child: InkWell(
-                onTap: () async {
-                  await Navigator.of(context).pushNamed('/user_profile');
-                  if (!mounted) return;
-                  _loadLatestNote();
-                },
-                borderRadius: BorderRadius.circular(40),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 8.0),
-                  child: Column(
-                    children: [
-                      Container(
-                        width: 84,
-                        height: 84,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: YanciTheme.accent.withValues(alpha: 0.1),
-                          border: Border.all(
-                            color: YanciTheme.accent.withValues(alpha: 0.2),
-                            width: 1.5,
-                          ),
-                          image:
-                              _userAvatar != null &&
-                                  File(_userAvatar!).existsSync()
-                              ? DecorationImage(
-                                  image: FileImage(File(_userAvatar!)),
-                                  fit: BoxFit.cover,
-                                )
-                              : null,
-                        ),
-                        child:
-                            _userAvatar == null ||
-                                !File(_userAvatar!).existsSync()
-                            ? Icon(
-                                Icons.person_rounded,
-                                size: 38,
-                                color: YanciTheme.accent.withValues(alpha: 0.5),
-                              )
-                            : null,
-                      ),
-                      const SizedBox(height: 20),
-                      Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const SizedBox(width: 22),
-                          ConstrainedBox(
-                            constraints: BoxConstraints(
-                              maxWidth: max(
-                                120.0,
-                                MediaQuery.of(context).size.width - 140,
-                              ),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                if (_selectedUserPersona != null) ...[
+                  Center(
+                    child: _userPersonaCreateSlotSelected
+                        ? UserPersonaCreateAvatar(
+                            key: const ValueKey('persona-create-avatar'),
+                            size: 84,
+                            onTap: _createUserPersona,
+                          )
+                        : UserPersonaAvatarPair(
+                            key: ValueKey(
+                              'home-persona-pair-${_selectedUserPersona!.id}',
                             ),
-                            child: Text(
-                              _userName.isNotEmpty
-                                  ? _userName
-                                  : L.get('me_user_profile'),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              textAlign: TextAlign.center,
-                              style: TextStyle(
-                                fontSize: 18,
-                                fontWeight: FontWeight.w600,
-                                color: YanciTheme.textPrimary,
-                                fontFamily: YanciTheme.fontFamily,
-                              ),
-                            ),
+                            persona: _selectedUserPersona!,
+                            companion: _selectedPersonaCompanion,
+                            showAddWhenUnbound: false,
+                            connectionLabel: lineAnniversaries.isEmpty
+                                ? null
+                                : AnniversaryDayCounterGroup(
+                                    entries: lineAnniversaries,
+                                    compact: true,
+                                    splitAroundLine: true,
+                                  ),
+                            size: 84,
+                            onUserAvatarTap: () => _openSelectedPersonaFile(),
+                            onBindingTap: () => _openSelectedPersonaFile(),
                           ),
-                          const SizedBox(width: 6),
-                          Icon(
-                            Icons.edit_outlined,
-                            size: 16,
-                            color: YanciTheme.textSecondary.withValues(
-                              alpha: 0.5,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
                   ),
-                ),
-              ),
+                  if (!_userPersonaCreateSlotSelected &&
+                      belowAnniversaries.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    if (belowAnniversaries.length == 1)
+                      AnniversaryDayCounter(entry: belowAnniversaries.first)
+                    else
+                      AnniversaryDayCounterGroup(entries: belowAnniversaries),
+                  ],
+                  // Keep the name and book-turn controls visually below the
+                  // avatar composition instead of crowding its lower edge.
+                  const SizedBox(height: 24),
+                  UserPersonaSwitcher(
+                    personas: _userPersonas,
+                    selectedId: _selectedUserPersona!.id,
+                    onSelected: (persona) =>
+                        unawaited(_selectUserPersona(persona)),
+                    onOpenProfile: _openSelectedPersonaFile,
+                    onCreate: _createUserPersona,
+                    createSlotSelected: _userPersonaCreateSlotSelected,
+                    onCreateSlotChanged: _setUserPersonaCreateSlot,
+                    hideName:
+                        !_userPersonaCreateSlotSelected &&
+                        _anniversaryDisplaySettings.hideUserName,
+                    imagePrimaryForeground: imagePrimaryForeground,
+                    imageSecondaryForeground: imageSecondaryForeground,
+                  ),
+                ] else
+                  const SizedBox(height: 126),
+              ],
             ),
             const SizedBox(height: 28),
 
-            // 裝飾分割線
-            _buildSoftProfileDivider(),
-            const SizedBox(height: 24),
-
-            // 核心系統與模型 (Super Group)
-            _buildGridTile(
-              title: L.pick(en: 'Controls', zhTW: '開關'),
-              icon: Icons.data_usage_rounded,
-              customIcon: _SegmentedUsageIcon(
-                size: 28,
-                baseColor: YanciTheme.textSecondary.withValues(alpha: 0.38),
-                accentColor: YanciTheme.accent,
-              ),
-              height: 76,
-              onTap: () => Navigator.of(context).pushNamed('/cost_context'),
-            ),
-            const SizedBox(height: 14),
-            _buildGridTile(
-              title: L.pick(en: 'Theme Studio', zhTW: '主題工坊'),
-              icon: Icons.palette_outlined,
-              iconColor: HSLColor.fromColor(YanciTheme.accent)
-                  .withSaturation(
-                    (HSLColor.fromColor(
-                      YanciTheme.accent,
-                    ).saturation).clamp(0.5, 1.0),
-                  )
-                  .withLightness(0.62)
-                  .toColor(),
-              glowIcon: true,
-              height: 76,
-              onTap: () async {
-                await Navigator.of(context).pushNamed('/theme_workshop');
-                if (!mounted) return;
-                _refreshProfileTheme();
-              },
-            ),
-            const SizedBox(height: 26),
-
-            // 裝飾分割線 (三個小點)
-            _buildSoftProfileDivider(dots: true),
-            const SizedBox(height: 24),
-
-            Row(
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Expanded(
-                  child: _buildGridTile(
-                    title: L.pick(en: 'Voice / Ringtone', zhTW: '語音/鈴聲'),
-                    icon: Icons.record_voice_over_rounded,
-                    height: 76,
-                    isSecondary: true,
-                    onTap: () => Navigator.of(context).pushNamed('/voice_call'),
-                  ),
+                // 裝飾分割線
+                _buildSoftProfileDivider(
+                  imageSecondaryForeground: imageSecondaryForeground,
                 ),
-                const SizedBox(width: 14),
-                Expanded(
-                  child: _buildGridTile(
-                    title: L.pick(en: 'Tool API', zhTW: '工具 API'),
-                    icon: Icons.build_circle_outlined,
-                    height: 76,
-                    isSecondary: true,
-                    onTap: () => Navigator.of(context).pushNamed('/tool_model'),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 14),
+                const SizedBox(height: 24),
 
-            // 附加應用 (Bottom Row)
-            Row(
-              children: [
-                Expanded(
-                  child: _buildGridTile(
-                    title: L.pick(
-                      en: 'Profile',
-                      zhTW: 'Profile',
-                      zhCN: 'Profile',
+                // Profile 佔用原「開關」主入口；圖示沿用主入口尺寸規格。
+                _buildGridTile(
+                  title: L.pick(
+                    en: 'Profile',
+                    zhTW: '相處方式',
+                    zhCN: '相处方式',
+                  ),
+                  icon: Icons.person_outline_rounded,
+                  height: 76,
+                  imagePrimaryForeground: imagePrimaryForeground,
+                  imageSecondaryForeground: imageSecondaryForeground,
+                  onTap: () => Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) =>
+                          ProfileScreen(personaId: _selectedUserPersona?.id),
                     ),
-                    icon: Icons.person_outline_rounded,
-                    height: 76,
-                    isSecondary: true,
-                    onTap: () => Navigator.of(context).pushNamed('/profile'),
                   ),
                 ),
-                const SizedBox(width: 14),
-                Expanded(
-                  child: _buildGridTile(
-                    title: L.pick(en: 'My Stickers', zhTW: '我的表情'),
-                    icon: Icons.emoji_emotions_outlined,
+                const SizedBox(height: 14),
+                _buildGridTile(
+                  title: L.pick(en: 'Theme Studio', zhTW: '主題工坊'),
+                  icon: Icons.palette_outlined,
+                  iconColor:
+                      imageSecondaryForeground ??
+                      HSLColor.fromColor(YanciTheme.accent)
+                          .withSaturation(
+                            (HSLColor.fromColor(
+                              YanciTheme.accent,
+                            ).saturation).clamp(0.5, 1.0),
+                          )
+                          .withLightness(0.62)
+                          .toColor(),
+                  glowIcon: true,
+                  height: 76,
+                  imagePrimaryForeground: imagePrimaryForeground,
+                  imageSecondaryForeground: imageSecondaryForeground,
+                  onTap: () async {
+                    await Navigator.of(context).pushNamed('/theme_workshop');
+                    if (!mounted) return;
+                    await _refreshProfileTheme();
+                  },
+                ),
+                const SizedBox(height: 26),
+
+                // 裝飾分割線 (三個小點)
+                _buildSoftProfileDivider(
+                  dots: true,
+                  imageSecondaryForeground: imageSecondaryForeground,
+                ),
+                const SizedBox(height: 24),
+
+                Row(
+                  children: [
+                    Expanded(
+                      child: _buildGridTile(
+                        title: L.pick(en: 'Voice / Ringtone', zhTW: '語音/鈴聲'),
+                        icon: Icons.record_voice_over_rounded,
+                        height: 76,
+                        isSecondary: true,
+                        imagePrimaryForeground: imagePrimaryForeground,
+                        imageSecondaryForeground: imageSecondaryForeground,
+                        onTap: () =>
+                            Navigator.of(context).pushNamed('/voice_call'),
+                      ),
+                    ),
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: _buildGridTile(
+                        title: L.pick(
+                          en: 'Preferences',
+                          zhTW: '偏好設定',
+                          zhCN: '偏好设置',
+                        ),
+                        icon: Icons.tune_rounded,
+                        height: 76,
+                        isSecondary: true,
+                        imagePrimaryForeground: imagePrimaryForeground,
+                        imageSecondaryForeground: imageSecondaryForeground,
+                        onTap: () =>
+                            Navigator.of(context).pushNamed('/cost_context'),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 14),
+
+                // 附加應用 (Bottom Row)
+                Row(
+                  children: [
+                    Expanded(
+                      child: _buildGridTile(
+                        title: L.pick(en: 'Tool API', zhTW: '工具 API'),
+                        icon: Icons.build_circle_outlined,
+                        height: 76,
+                        isSecondary: true,
+                        imagePrimaryForeground: imagePrimaryForeground,
+                        imageSecondaryForeground: imageSecondaryForeground,
+                        onTap: () =>
+                            Navigator.of(context).pushNamed('/tool_model'),
+                      ),
+                    ),
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: _buildGridTile(
+                        title: L.pick(en: 'My Stickers', zhTW: '我的表情'),
+                        icon: Icons.emoji_emotions_outlined,
+                        height: 76,
+                        isSecondary: true,
+                        imagePrimaryForeground: imagePrimaryForeground,
+                        imageSecondaryForeground: imageSecondaryForeground,
+                        onTap: () => Navigator.of(
+                          context,
+                        ).pushNamed('/sticker', arguments: 'user'),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 14),
+
+                // 商店與背包
+                if (_shopEnabled)
+                  _buildSplitGridTile(
+                    leftIcon: Icons.storefront_outlined,
+                    leftOnTap: () => _showShopBottomSheet(context),
+                    rightIcon: Icons.backpack_outlined,
+                    rightOnTap: () => _showBackpackBottomSheet(context, 'user'),
                     height: 76,
-                    isSecondary: true,
+                    imageSecondaryForeground: imageSecondaryForeground,
+                  ),
+                if (_showDeveloperDiagnostics) ...[
+                  const SizedBox(height: 28),
+                  GestureDetector(
                     onTap: () => Navigator.of(
                       context,
-                    ).pushNamed('/sticker', arguments: 'user'),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 14),
-
-            // 商店與背包
-            _buildSplitGridTile(
-              leftIcon: Icons.storefront_outlined,
-              leftOnTap: () => _showShopBottomSheet(context),
-              rightIcon: Icons.backpack_outlined,
-              rightOnTap: () => _showBackpackBottomSheet(context, 'user'),
-              height: 76,
-            ),
-            if (_showDeveloperDiagnostics) ...[
-              const SizedBox(height: 28),
-              GestureDetector(
-                onTap: () =>
-                    Navigator.of(context).pushNamed('/developer_diagnostics'),
-                behavior: HitTestBehavior.opaque,
-                child: SizedBox(
-                  height: 60,
-                  child: Center(
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(
-                          Icons.bug_report_outlined,
-                          color: YanciTheme.accent,
+                    ).pushNamed('/developer_diagnostics'),
+                    behavior: HitTestBehavior.opaque,
+                    child: SizedBox(
+                      height: 60,
+                      child: Center(
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(
+                              Icons.bug_report_outlined,
+                              color:
+                                  imageSecondaryForeground ?? YanciTheme.accent,
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              'DeBug',
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w600,
+                                color:
+                                    imagePrimaryForeground ??
+                                    YanciTheme.textPrimary,
+                                fontFamily: YanciTheme.fontFamily,
+                              ),
+                            ),
+                          ],
                         ),
-                        const SizedBox(width: 8),
-                        Text(
-                          'DeBug',
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w600,
-                            color: YanciTheme.textPrimary,
-                            fontFamily: YanciTheme.fontFamily,
-                          ),
-                        ),
-                      ],
+                      ),
                     ),
                   ),
-                ),
-              ),
-            ],
+                ],
+              ],
+            ),
             const SizedBox(height: 48), // Bottom padding
           ],
         ),
@@ -694,6 +799,36 @@ extension _HomeProfileMethods on _HomeScreenState {
         ),
       );
     }
+  }
+
+  Future<void> _handleExternalChatImport() async {
+    if (!mounted) return;
+    final result = await FilePicker.platform.pickFiles(
+      // Android providers often expose JSON as application/octet-stream.
+      // Let the parser validate the file instead of greying it out.
+      type: FileType.any,
+      withData: false,
+      withReadStream: false,
+    );
+    if (result == null || result.files.isEmpty || !mounted) return;
+    final path = result.files.single.path;
+    if (path == null || path.trim().isEmpty) {
+      showThemedPillNotice(
+        context,
+        L.pick(
+          en: 'This file is not available to the app.',
+          zhTW: 'App 無法存取這個檔案。',
+          zhCN: 'App 无法访问这个文件。',
+        ),
+      );
+      return;
+    }
+    final imported = await Navigator.of(context).push<bool>(
+      MaterialPageRoute<bool>(
+        builder: (_) => ExternalChatImportScreen(filePath: path),
+      ),
+    );
+    if (imported == true && mounted) await _reloadHomeAfterRestore();
   }
 
   Future<void> _handleExportBackup(_BackupExportMode mode) async {
@@ -959,7 +1094,7 @@ extension _HomeProfileMethods on _HomeScreenState {
                   Row(
                     children: [
                       Icon(
-                        Icons.backup_outlined,
+                        Icons.save_outlined,
                         size: 20,
                         color: YanciTheme.accent,
                       ),
@@ -974,6 +1109,48 @@ extension _HomeProfileMethods on _HomeScreenState {
                         ),
                       ),
                       const Spacer(),
+                      IconButton(
+                        onPressed: () => showDialog<void>(
+                          context: sheetContext,
+                          builder: (dialogContext) => AlertDialog(
+                            title: Text(L.get('me_backup_auto_title')),
+                            content: Text(
+                              '${L.get('me_backup_auto_sub')}\n\n'
+                              '${L.fmt('me_backup_last', [_formatBackupTime(_lastLocalBackupAt)])}',
+                            ),
+                            actions: [
+                              TextButton(
+                                onPressed: () => Navigator.pop(dialogContext),
+                                child: Text(
+                                  L.pick(en: 'Close', zhTW: '關閉', zhCN: '关闭'),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        tooltip: L.get('me_backup_auto_title'),
+                        constraints: const BoxConstraints(
+                          minWidth: 44,
+                          minHeight: 44,
+                        ),
+                        icon: Container(
+                          width: 20,
+                          height: 20,
+                          alignment: Alignment.center,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            border: Border.all(color: YanciTheme.accent),
+                          ),
+                          child: Text(
+                            '!',
+                            style: TextStyle(
+                              color: YanciTheme.accent,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                      ),
                       IconButton(
                         onPressed: () {
                           Navigator.pop(sheetContext, _BackupSheetAction.share);
@@ -1014,76 +1191,55 @@ extension _HomeProfileMethods on _HomeScreenState {
                       ],
                     ],
                   ),
-                  const SizedBox(height: 14),
-                  Container(
-                    padding: const EdgeInsets.all(14),
-                    decoration: BoxDecoration(
-                      color: YanciTheme.accent.withValues(alpha: 0.08),
-                      borderRadius: BorderRadius.circular(YanciTheme.radiusMd),
-                      border: Border.all(
-                        color: YanciTheme.accent.withValues(alpha: 0.16),
-                        width: 0.5,
+                  const SizedBox(height: 4),
+                  Center(
+                    child: TextButton(
+                      onPressed: () =>
+                          Navigator.pop(sheetContext, _BackupSheetAction.sync),
+                      style: TextButton.styleFrom(
+                        foregroundColor: YanciTheme.accent,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 18,
+                          vertical: 10,
+                        ),
+                      ),
+                      child: Text(
+                        L.pick(
+                          en: 'One-time Wi-Fi device sync',
+                          zhTW: 'Wi-Fi單次設備同步',
+                          zhCN: 'Wi-Fi单次设备同步',
+                        ),
+                        style: const TextStyle(fontWeight: FontWeight.w700),
                       ),
                     ),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Icon(
-                          Icons.autorenew_rounded,
-                          size: 20,
-                          color: YanciTheme.accent,
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                L.get('me_backup_auto_title'),
-                                style: TextStyle(
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.w600,
-                                  color: YanciTheme.textPrimary,
-                                  fontFamily: YanciTheme.fontFamily,
-                                ),
-                              ),
-                              const SizedBox(height: 4),
-                              Text(
-                                L.get('me_backup_auto_sub'),
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  height: 1.35,
-                                  color: YanciTheme.textSecondary.withValues(
-                                    alpha: 0.76,
-                                  ),
-                                  fontFamily: YanciTheme.fontFamily,
-                                ),
-                              ),
-                              const SizedBox(height: 8),
-                              Text(
-                                L.fmt('me_backup_last', [
-                                  _formatBackupTime(_lastLocalBackupAt),
-                                ]),
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  color: YanciTheme.accent,
-                                  fontWeight: FontWeight.w600,
-                                  fontFamily: YanciTheme.fontFamily,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
                   ),
-                  const SizedBox(height: 12),
+                  const SizedBox(height: 2),
                   _buildBackupSheetAction(
-                    icon: Icons.save_alt_rounded,
+                    icon: Icons.save_outlined,
                     title: L.get('me_export_json'),
                     subtitle: L.get('me_export_json_sub'),
                     onTap: () {
                       Navigator.pop(sheetContext, _BackupSheetAction.save);
+                    },
+                  ),
+                  const SizedBox(height: 8),
+                  _buildBackupSheetAction(
+                    icon: Icons.chat_bubble_outline_rounded,
+                    title: L.pick(
+                      en: 'Import external chats',
+                      zhTW: '匯入外部對話',
+                      zhCN: '导入外部对话',
+                    ),
+                    subtitle: L.pick(
+                      en: 'Add ChatGPT, Claude, Gemini, Grok, JSON or Markdown windows',
+                      zhTW: '追加 ChatGPT、Claude、Gemini、Grok、JSON 或 Markdown 窗口',
+                      zhCN: '追加 ChatGPT、Claude、Gemini、Grok、JSON 或 Markdown 窗口',
+                    ),
+                    onTap: () {
+                      Navigator.pop(
+                        sheetContext,
+                        _BackupSheetAction.importExternal,
+                      );
                     },
                   ),
                   const SizedBox(height: 8),
@@ -1109,10 +1265,31 @@ extension _HomeProfileMethods on _HomeScreenState {
     // 完成 deactivate 時看到仍有 dependents，觸發 framework assertion。
     if (!mounted || action == null) return;
     switch (action) {
+      case _BackupSheetAction.sync:
+        final restored = await Navigator.of(context).push<bool>(
+          MaterialPageRoute<bool>(
+            builder: (_) => const LocalDeviceSyncScreen(),
+          ),
+        );
+        if (restored == true && mounted) {
+          await _reloadHomeAfterRestore();
+          if (mounted) {
+            showThemedPillNotice(
+              context,
+              L.pick(
+                en: 'Device sync complete',
+                zhTW: '設備同步完成',
+                zhCN: '设备同步完成',
+              ),
+            );
+          }
+        }
       case _BackupSheetAction.save:
         await _handleExportBackup(_BackupExportMode.save);
       case _BackupSheetAction.share:
         await _handleExportBackup(_BackupExportMode.share);
+      case _BackupSheetAction.importExternal:
+        await _handleExternalChatImport();
       case _BackupSheetAction.import:
         await _handleImportBackup();
       case _BackupSheetAction.cleanup:
@@ -1207,7 +1384,10 @@ extension _HomeProfileMethods on _HomeScreenState {
     );
   }
 
-  void _showShopBottomSheet(BuildContext context) {
+  Future<void> _showShopBottomSheet(BuildContext context) async {
+    if (!(await ToolFeatureSettings.load()).shopEnabled || !context.mounted) {
+      return;
+    }
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -1216,7 +1396,13 @@ extension _HomeProfileMethods on _HomeScreenState {
     );
   }
 
-  void _showBackpackBottomSheet(BuildContext context, String ownerId) {
+  Future<void> _showBackpackBottomSheet(
+    BuildContext context,
+    String ownerId,
+  ) async {
+    if (!(await ToolFeatureSettings.load()).shopEnabled || !context.mounted) {
+      return;
+    }
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,

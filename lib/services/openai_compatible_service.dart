@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart' show debugPrint, kDebugMode;
 import 'package:http/http.dart' as http;
 import '../utils/endpoint_security.dart';
 import 'api_adapter.dart';
+import 'locale_strings.dart';
 import 'model_info.dart';
 import 'settings/memory_settings.dart';
 import 'sse_stream.dart';
@@ -85,7 +86,17 @@ class OpenAICompatibleService implements ApiAdapter {
           )
           .timeout(const Duration(seconds: 20));
       if (response.statusCode != 200) {
-        throw Exception('無法獲取模型列表：${response.statusCode}');
+        throw Exception(
+          _httpErrorMessage(
+            response.statusCode,
+            response.body,
+            operation: L.pick(
+              en: 'Could not load model list',
+              zhTW: '無法獲取模型列表',
+              zhCN: '无法获取模型列表',
+            ),
+          ),
+        );
       }
 
       final decoded = jsonDecode(response.body);
@@ -117,6 +128,93 @@ class OpenAICompatibleService implements ApiAdapter {
   static Uri modelsUriForBase(String baseUrl) {
     final base = EndpointSecurity.parseAndValidate(baseUrl);
     return _modelsUri(base);
+  }
+
+  static Uri embeddingsUriForBase(String baseUrl) {
+    final base = EndpointSecurity.parseAndValidate(baseUrl);
+    var path = base.path.replaceFirst(RegExp(r'/+$'), '');
+    for (final suffix in const <String>[
+      '/chat/completions',
+      '/responses',
+      '/embeddings',
+    ]) {
+      if (path.endsWith(suffix)) {
+        path = path.substring(0, path.length - suffix.length);
+        break;
+      }
+    }
+    if (!path.endsWith('/v1')) path = '$path/v1';
+    return base.replace(path: '$path/embeddings', query: null);
+  }
+
+  static String httpErrorMessage(
+    int statusCode,
+    String body, {
+    String operation = 'API 錯誤',
+  }) => _httpErrorMessage(statusCode, body, operation: operation);
+
+  /// 中轉站常把可操作原因放在 `error.message`、`message` 或 `detail`；純文字
+  /// 錯誤也接受。所有原因都會壓成單行並限制長度，HTML 整頁不進聊天報錯。
+  static String _httpErrorMessage(
+    int statusCode,
+    String body, {
+    String? operation,
+  }) {
+    final reason = _extractHttpErrorReason(body);
+    final prefix = operation ?? L.pick(en: 'API error', zhTW: 'API 錯誤');
+    if (reason.isNotEmpty) return '$prefix $statusCode：$reason';
+    return L.pick(
+      en: '$prefix $statusCode: the relay did not provide a reason',
+      zhTW: '$prefix $statusCode：中轉站未提供具體原因',
+      zhCN: '$prefix $statusCode：中转站未提供具体原因',
+    );
+  }
+
+  static String _extractHttpErrorReason(String body) {
+    String? candidate;
+    try {
+      final decoded = jsonDecode(body);
+      if (decoded is Map) {
+        final error = decoded['error'];
+        if (error is Map) {
+          candidate = _firstNonEmpty(<Object?>[
+            error['message'],
+            error['detail'],
+            error['reason'],
+            error['type'],
+          ]);
+        } else if (error is String) {
+          candidate = error;
+        }
+        candidate ??= _firstNonEmpty(<Object?>[
+          decoded['message'],
+          decoded['detail'],
+          decoded['reason'],
+          decoded['title'],
+        ]);
+      }
+    } catch (_) {
+      final trimmed = body.trim();
+      if (trimmed.isNotEmpty &&
+          !trimmed.startsWith('<') &&
+          !trimmed.toLowerCase().startsWith('<!doctype')) {
+        candidate = trimmed;
+      }
+    }
+
+    final compact = (candidate ?? '').replaceAll(RegExp(r'\s+'), ' ').trim();
+    if (compact.isEmpty) return '';
+    final runes = compact.runes.toList(growable: false);
+    if (runes.length <= 240) return compact;
+    return '${String.fromCharCodes(runes.take(240))}…';
+  }
+
+  static String? _firstNonEmpty(Iterable<Object?> values) {
+    for (final value in values) {
+      final text = value?.toString().trim() ?? '';
+      if (text.isNotEmpty && text != 'null') return text;
+    }
+    return null;
   }
 
   static List<ModelInfo> _parsePricingModels(String body) {
@@ -152,6 +250,10 @@ class OpenAICompatibleService implements ApiAdapter {
   }
 
   Uri get _completionsUri {
+    return completionsUriForBase(baseUrl);
+  }
+
+  static Uri completionsUriForBase(String baseUrl) {
     final validated = EndpointSecurity.parseAndValidate(baseUrl);
     final rawUrl = validated.toString();
     final url = rawUrl.endsWith('/')
@@ -187,7 +289,7 @@ class OpenAICompatibleService implements ApiAdapter {
           .timeout(const Duration(seconds: 180));
       if (response.statusCode != 200) {
         _debugHttpFailure(response.statusCode, response.bodyBytes.length);
-        throw Exception('API 錯誤 ${response.statusCode}');
+        throw Exception(_httpErrorMessage(response.statusCode, response.body));
       }
 
       final data = jsonDecode(response.body);
@@ -249,11 +351,11 @@ class OpenAICompatibleService implements ApiAdapter {
       }
 
       if (response.statusCode != 200) {
-        final errorBytes = await response.stream
-            .fold<int>(0, (total, chunk) => total + chunk.length)
-            .timeout(SseStream.defaultIdleTimeout);
-        _debugHttpFailure(response.statusCode, errorBytes);
-        throw Exception('API 錯誤 ${response.statusCode}');
+        final errorBody = await response.stream.bytesToString().timeout(
+          SseStream.defaultIdleTimeout,
+        );
+        _debugHttpFailure(response.statusCode, utf8.encode(errorBody).length);
+        throw Exception(_httpErrorMessage(response.statusCode, errorBody));
       }
 
       Map<String, int>? requestStats;
@@ -413,18 +515,21 @@ class OpenAICompatibleService implements ApiAdapter {
     for (final m in messages) {
       final role = m['role'] ?? 'user';
       final content = m['content'] ?? '';
-      final imageUrl = m['image_data_url'];
+      final imageUrls = ApiMessageMedia.imageDataUrls(m);
 
-      if (imageUrl != null && role == 'user') {
+      if (imageUrls.isNotEmpty && role == 'user') {
         // 多模態
         final contentBlocks = <Map<String, dynamic>>[
-          {
-            'type': 'image_url',
-            'image_url': {'url': imageUrl},
-          },
+          for (final imageUrl in imageUrls)
+            {
+              'type': 'image_url',
+              'image_url': {'url': imageUrl},
+            },
           {
             'type': 'text',
-            'text': content.isNotEmpty ? content : '（用戶發送了一張圖片）',
+            'text': content.isNotEmpty
+                ? content
+                : '（用戶發送了${imageUrls.length}張圖片）',
           },
         ];
         allMessages.add({'role': role, 'content': contentBlocks});
@@ -515,7 +620,7 @@ class OpenAICompatibleService implements ApiAdapter {
         provider: 'openai_compatible',
         model: model,
         cacheChannel: structuredPrompt.cacheChannel,
-        sessionId: CacheSession.conversationId,
+        sessionId: structuredPrompt.cacheSessionId,
         transport: runtimeTransport,
         sourceMessages: messages,
         requestMessages: allMessages,

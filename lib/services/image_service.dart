@@ -4,6 +4,7 @@ import 'package:image/image.dart' as img;
 import 'dart:io';
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
+import 'background_foreground_service.dart';
 
 /// 圖片壓縮 & 編碼服務
 ///
@@ -41,27 +42,62 @@ class ImageService {
         ? p.extension(sourcePath)
         : '.jpg';
     final safeScope = scope.replaceAll(RegExp(r'[^a-zA-Z0-9_-]'), '_');
-    // 換圖前先清同 scope 的舊圖——舊版每次都存新時間戳文件，
-    // 換十次背景磁盤裡躺十張，清除按鈕也只清設定不刪文件
-    await deleteBackgroundImages(scope);
-    final name = 'bg_${safeScope}_${DateTime.now().millisecondsSinceEpoch}$ext';
+    // 新圖先完整落盤，成功後才清理舊圖；失敗時保留目前背景。
+    final name = 'bg_${safeScope}_${DateTime.now().microsecondsSinceEpoch}$ext';
     final outPath = p.join(dir.path, 'background_images', name);
     await Directory(p.dirname(outPath)).create(recursive: true);
-    await file.copy(outPath);
+    final sourceLength = await file.length();
+    final copied = await file.copy(outPath);
+    final copiedLength = await copied.length();
+    if (copiedLength != sourceLength) {
+      await copied.delete();
+      throw FileSystemException(
+        'Background copy was not byte-preserving',
+        outPath,
+      );
+    }
+    await _deleteBackgroundImages(scope, except: outPath);
     return outPath;
   }
 
   /// 刪除指定 scope 的所有背景圖文件（換圖/清除時調用）
   static Future<void> deleteBackgroundImages(String scope) async {
+    await _deleteBackgroundImages(scope);
+  }
+
+  static Future<void> _deleteBackgroundImages(
+    String scope, {
+    String? except,
+  }) async {
     try {
       final dir = await getApplicationDocumentsDirectory();
       final safeScope = scope.replaceAll(RegExp(r'[^a-zA-Z0-9_-]'), '_');
       final bgDir = Directory(p.join(dir.path, 'background_images'));
       if (!await bgDir.exists()) return;
       await for (final f in bgDir.list()) {
-        if (f is File && p.basename(f.path).startsWith('bg_${safeScope}_')) {
+        if (f is File &&
+            f.path != except &&
+            p.basename(f.path).startsWith('bg_${safeScope}_')) {
+          BackgroundForegroundService.invalidate(f.path);
           await f.delete();
         }
+      }
+    } catch (_) {}
+  }
+
+  /// 刪除單一已保存的背景檔。只接受 App 的 background_images 目錄，避免
+  /// 外部選圖路徑或其他媒體被誤刪。
+  static Future<void> deleteBackgroundFile(String path) async {
+    if (path.trim().isEmpty) return;
+    try {
+      final dir = await getApplicationDocumentsDirectory();
+      final root = p.normalize(p.join(dir.path, 'background_images'));
+      final target = p.normalize(path);
+      if (!p.isWithin(root, target)) return;
+      final file = File(target);
+      if (await file.exists()) {
+        BackgroundForegroundService.invalidate(target);
+        await file.delete();
       }
     } catch (_) {}
   }

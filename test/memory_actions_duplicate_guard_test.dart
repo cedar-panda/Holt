@@ -50,7 +50,11 @@ void main() {
         windowId: 'conv-a',
       );
       expect(await _activeCount(db), 0);
-      expect(MemoryActions.lastProposalIdsFor('conv-a'), hasLength(1));
+      expect(MemoryActions.lastProposalIdsFor('conv-a'), isEmpty);
+      final pending = await db.rawQuery(
+        "SELECT COUNT(*) AS count FROM pending_memory_actions WHERE status = 'pending'",
+      );
+      expect(pending.single['count'], 1);
 
       expect(
         await MemoryGuardService.execute(
@@ -97,6 +101,29 @@ void main() {
     expect(await _activeCount(db), 1);
     expect(MemoryActions.lastProposalIdsFor('conv-a'), hasLength(1));
     expect(MemoryActions.lastActionLogFor('conv-a').single, contains('提案匣'));
+  });
+
+  test('one model reply can create at most two memory proposals', () async {
+    const reply = '''
+<memo>[偏好] 昭昭喜歡雨聲 @雨聲</memo>
+<memo>[約定] 昭昭答應週末看電影 @週末</memo>
+<memo>[重要事件] 昭昭搬進新住處 @搬家</memo>
+''';
+
+    final visible = await MemoryActions.processReply(
+      reply,
+      characterId: 'char-a',
+      mode: 'romance',
+      windowId: 'conv-a',
+    );
+
+    expect(visible, isEmpty);
+    expect(visible, isNot(contains('<memo>')));
+    expect(MemoryActions.lastProposalIdsFor('conv-a'), hasLength(2));
+    final pending = await db.rawQuery(
+      "SELECT COUNT(*) AS count FROM pending_memory_actions WHERE status = 'pending'",
+    );
+    expect(pending.single['count'], 2);
   });
 }
 

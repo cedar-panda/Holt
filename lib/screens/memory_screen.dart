@@ -9,8 +9,11 @@ import '../memory/spider_web_layers.dart';
 
 import '../services/token_estimator.dart';
 import '../models/memory.dart';
+import '../models/context_mode.dart';
+import '../services/settings/context_mode_settings.dart';
 import '../services/settings_manager.dart';
 import '../services/memory_curation_service.dart';
+import '../services/memory_vector_recall_service.dart';
 import '../services/existing_memory_scanner.dart';
 import '../widgets/spider_web_graph_view.dart';
 import '../widgets/memory_layer_rail.dart';
@@ -21,6 +24,7 @@ import '../widgets/memory_archive_fab.dart';
 import '../widgets/memory_search_field.dart';
 import '../widgets/memory_review_tab.dart';
 import '../widgets/memory_summary_tab.dart';
+import '../widgets/themed_notice.dart';
 import '../services/memory_guard_service.dart';
 import '../services/spider_web_state_service.dart';
 
@@ -29,16 +33,54 @@ class MemoryScreen extends StatefulWidget {
   final String characterId;
   final int initialTab;
   final int? initialSourceMessageId;
+  final ContextMode? contextMode;
+  final String continuityId;
+  final String? scopeLabel;
 
   const MemoryScreen({
     super.key,
     this.characterId = 'default',
     this.initialTab = 0,
     this.initialSourceMessageId,
+    this.contextMode,
+    this.continuityId = 'main',
+    this.scopeLabel,
   });
 
   @override
   State<MemoryScreen> createState() => _MemoryScreenState();
+}
+
+class _MemoryCurationChoice {
+  final bool local;
+  final bool vector;
+  final bool summary;
+
+  const _MemoryCurationChoice.local()
+    : local = true,
+      vector = false,
+      summary = false;
+
+  const _MemoryCurationChoice.models({
+    required this.vector,
+    required this.summary,
+  }) : local = false;
+}
+
+class _MemoryConnectionReport {
+  final int firstId;
+  final int secondId;
+  final String type;
+  final double strength;
+  final String reason;
+
+  const _MemoryConnectionReport({
+    required this.firstId,
+    required this.secondId,
+    required this.type,
+    required this.strength,
+    this.reason = '',
+  });
 }
 
 class _MemoryScreenState extends State<MemoryScreen>
@@ -68,12 +110,16 @@ class _MemoryScreenState extends State<MemoryScreen>
   int _curationTotalBatches = 0;
   bool _resumableCurationJob = false;
   Map<int, SpiderWebNodePosition> _savedNodePositions = {};
+  Set<String> _spiderActiveDateKeys = const <String>{};
 
   int _tabIndex = 0; // 0=記憶庫, 1=待確認, 2=摘要
   int? _reviewSourceMessageId;
   int _reviewTotal = 0;
   int _reviewUnread = 0;
   bool _summaryModified = false;
+
+  bool get _rpStorylineScope => widget.contextMode == ContextMode.rp;
+  bool get _spiderWebAvailable => _isSpiderWebEnabled && !_rpStorylineScope;
 
   int get _suggestedRelationCount => _spiderLinks
       .where((link) => link['status']?.toString() == 'suggested')
@@ -116,7 +162,7 @@ class _MemoryScreenState extends State<MemoryScreen>
       _characterId,
     );
     await _loadMemories();
-    await _restoreCurationJob();
+    if (!_rpStorylineScope) await _restoreCurationJob();
   }
 
   Future<String> _bucket() async =>
@@ -124,19 +170,43 @@ class _MemoryScreenState extends State<MemoryScreen>
 
   Future<void> _loadMemories() async {
     final bucket = await _bucket();
-    final permanent = await DatabaseHelper.getPermanentMemories(
-      bucket,
-      characterId: _characterId,
-    );
-    final allActive = await DatabaseHelper.getActiveMemories(
-      bucket,
-      characterId: _characterId,
-    );
+    final modes = widget.contextMode == null
+        ? const <ContextMode>[ContextMode.daily, ContextMode.rp]
+        : <ContextMode>[widget.contextMode!];
+    final permanentGroups = await Future.wait<List<Memory>>([
+      for (final mode in modes)
+        DatabaseHelper.getPermanentMemories(
+          bucket,
+          characterId: _characterId,
+          contextMode: mode,
+          continuityId: mode == ContextMode.rp ? widget.continuityId : 'main',
+        ),
+    ]);
+    final activeGroups = await Future.wait<List<Memory>>([
+      for (final mode in modes)
+        DatabaseHelper.getActiveMemories(
+          bucket,
+          characterId: _characterId,
+          contextMode: mode,
+          continuityId: mode == ContextMode.rp ? widget.continuityId : 'main',
+        ),
+    ]);
+    final permanent = permanentGroups.expand((group) => group).toList();
+    final allActive = activeGroups.expand((group) => group).toList();
     final archived = await DatabaseHelper.getArchivedCount(
       characterId: _characterId,
+      contextMode: widget.contextMode,
+      continuityId: widget.continuityId,
     );
+    final activeDateKeys = _spiderWebAvailable
+        ? await DatabaseHelper.getCharacterActiveDateKeys(_characterId)
+        : const <String>{};
     final links = await DatabaseHelper.getSpiderWebLinks(_characterId);
-    final reviewCounts = await MemoryGuardService.counts(_characterId);
+    final reviewCounts = await MemoryGuardService.counts(
+      _characterId,
+      contextMode: widget.contextMode,
+      continuityId: widget.continuityId,
+    );
     // 合併去重（permanent 可能跟 allActive 重疊）
     final seen = <int>{};
     final merged = <Memory>[];
@@ -144,8 +214,11 @@ class _MemoryScreenState extends State<MemoryScreen>
       if (m.id != null && !seen.add(m.id!)) continue;
       merged.add(m);
     }
-    final graphMemories = _isSpiderWebEnabled
-        ? await DatabaseHelper.getAllActiveMemories(characterId: _characterId)
+    final graphMemories = _spiderWebAvailable
+        ? await DatabaseHelper.getAllActiveMemories(
+            characterId: _characterId,
+            contextMode: ContextMode.daily,
+          )
         : merged;
     final layers = SpiderWebLayerPlanner.build(
       memories: graphMemories,
@@ -164,6 +237,7 @@ class _MemoryScreenState extends State<MemoryScreen>
       _memories = merged;
       _graphMemories = graphMemories;
       _spiderLinks = links;
+      _spiderActiveDateKeys = activeDateKeys;
       _layers = layers;
       if (_layers.isEmpty) {
         _activeLayerIndex = 0;
@@ -210,7 +284,11 @@ class _MemoryScreenState extends State<MemoryScreen>
   }
 
   Future<void> _refreshReviewCounts() async {
-    final counts = await MemoryGuardService.counts(_characterId);
+    final counts = await MemoryGuardService.counts(
+      _characterId,
+      contextMode: widget.contextMode,
+      continuityId: widget.continuityId,
+    );
     if (!mounted) return;
     setState(() {
       _reviewTotal = counts.total;
@@ -311,6 +389,12 @@ class _MemoryScreenState extends State<MemoryScreen>
               final result = await MemoryGuardService.guardNewMemory(
                 candidate: Memory(
                   characterId: _characterId,
+                  contextMode:
+                      widget.contextMode ??
+                      await ContextModeSettings.effectiveMode(_characterId),
+                  continuityId: _rpStorylineScope
+                      ? widget.continuityId
+                      : 'main',
                   mode: await _bucket(),
                   category: categoryCtrl.text.trim().isEmpty
                       ? (L.pick(en: 'Important Event', zhTW: '重要事件'))
@@ -320,6 +404,10 @@ class _MemoryScreenState extends State<MemoryScreen>
                   triggers: triggersCtrl.text.trim(),
                 ),
                 source: 'memory_ui',
+              );
+              debugPrint(
+                '[MemoryAddDebug] character=$_characterId '
+                'result=${result.disposition.name}',
               );
               if (!ctx.mounted || !mounted) return;
               Navigator.pop(ctx);
@@ -499,6 +587,8 @@ class _MemoryScreenState extends State<MemoryScreen>
         keyword,
         characterId: _characterId,
         limit: null,
+        contextMode: widget.contextMode,
+        continuityId: widget.continuityId,
       );
       if (!mounted || _searchController.text.trim() != keyword) return;
       setState(() {
@@ -635,8 +725,26 @@ class _MemoryScreenState extends State<MemoryScreen>
     unawaited(SpiderWebStateService.clearCurationJob(_characterId));
   }
 
-  Future<void> _sendSelectedForCuration() async {
+  Future<void> _sendSelectedForCuration({
+    required bool useVector,
+    required bool useSummary,
+  }) async {
     if (_curationRunning || _selectedMemoryIds.length < 2) return;
+    if (!useVector && !useSummary) return;
+    if (!useSummary) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            L.pick(
+              en: 'Vector candidates must be reviewed by the summary model before links are changed.',
+              zhTW: '向量只提供候選，必須交由摘要模型判斷後才能變更連線。',
+              zhCN: '向量只提供候选，必须交由摘要模型判断后才能变更连线。',
+            ),
+          ),
+        ),
+      );
+      return;
+    }
     final byId = <int, Memory>{
       for (final memory in [..._graphMemories, ..._memories, ..._searchResults])
         if (memory.id != null) memory.id!: memory,
@@ -677,9 +785,24 @@ class _MemoryScreenState extends State<MemoryScreen>
       ),
     );
     try {
+      MemoryVectorCurationResult? vectorResult;
+      Object? vectorError;
+      if (useVector) {
+        try {
+          vectorResult = await MemoryVectorRecallService.analyzeSelected(
+            characterId: _characterId,
+            memories: selected,
+          );
+        } catch (error) {
+          vectorError = error;
+          if (!useSummary) rethrow;
+        }
+      }
       final result = await MemoryCurationService.analyzeAndLink(
         characterId: _characterId,
         memories: selected,
+        vectorCandidates:
+            vectorResult?.candidates ?? const <MemoryVectorPairCandidate>[],
         onBatchProgress: (completed, total) {
           if (!mounted) return;
           setState(() {
@@ -687,7 +810,18 @@ class _MemoryScreenState extends State<MemoryScreen>
             _curationTotalBatches = total;
           });
         },
+        applyImmediately: true,
       );
+      final reports = <_MemoryConnectionReport>[
+        for (final relation in result.relations)
+          _MemoryConnectionReport(
+            firstId: relation.mainId,
+            secondId: relation.relatedId,
+            type: relation.type,
+            strength: relation.score,
+            reason: relation.reason,
+          ),
+      ];
       await SpiderWebStateService.clearCurationJob(_characterId);
       if (!mounted) return;
       setState(() {
@@ -700,18 +834,22 @@ class _MemoryScreenState extends State<MemoryScreen>
       });
       await _loadMemories();
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            L.pick(
-              en: 'Analysis complete: ${result.createdLinks} relation suggestions, ${result.duplicateProposals} duplicate proposals',
-              zhTW:
-                  '分析完成：${result.createdLinks} 條關係建議、${result.duplicateProposals} 組去重提案',
-              zhCN:
-                  '分析完成：${result.createdLinks} 条关系建议、${result.duplicateProposals} 组去重提案',
-            ),
-          ),
-        ),
+      await _showMemoryConnectionReport(
+        memories: selected,
+        relations: reports,
+        createdLinks: result.createdLinks,
+        updatedLinks: result.updatedLinks,
+        unchangedLinks: result.unchangedLinks,
+        protectedLinks: result.protectedLinks,
+        mergedGroups: result.mergedGroups,
+        protectedProposals: result.duplicateProposals,
+        note: vectorError == null
+            ? null
+            : L.pick(
+                en: 'The vector pass failed; the summary model completed the review.',
+                zhTW: '向量階段失敗，已由摘要模型完成整理。',
+                zhCN: '向量阶段失败，已由摘要模型完成整理。',
+              ),
       );
     } catch (error) {
       await SpiderWebStateService.saveCurationJob(
@@ -761,6 +899,7 @@ class _MemoryScreenState extends State<MemoryScreen>
       final result = await ExistingMemoryScanner.scan(
         characterId: _characterId,
         memories: selected,
+        applyImmediately: true,
       );
       if (!mounted) return;
       setState(() {
@@ -768,26 +907,27 @@ class _MemoryScreenState extends State<MemoryScreen>
         _selectionMode = false;
         _reviewSourceMessageId = null;
         _selectedMemoryIds.clear();
-        if (result.duplicateProposals > 0) _tabIndex = 1;
       });
       await _loadMemories();
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            L.pick(
-              en: result.duplicateProposals > 0
-                  ? 'On-device check complete: ${result.duplicateProposals} duplicate proposals are ready for review.'
-                  : 'On-device check complete: ${result.suggestedRelations} relation suggestions. Open Relation suggestions above to review links.',
-              zhTW: result.duplicateProposals > 0
-                  ? '本機檢查完成：${result.duplicateProposals} 組去重提案已進入待確認。'
-                  : '本機檢查完成：${result.suggestedRelations} 條關係建議。連線請由上方「關係建議」確認。',
-              zhCN: result.duplicateProposals > 0
-                  ? '本机检查完成：${result.duplicateProposals} 组去重提案已进入待确认。'
-                  : '本机检查完成：${result.suggestedRelations} 条关系建议。连线请由上方“关系建议”确认。',
+      await _showMemoryConnectionReport(
+        memories: selected,
+        relations: <_MemoryConnectionReport>[
+          for (final relation in result.relations)
+            _MemoryConnectionReport(
+              firstId: relation.firstId,
+              secondId: relation.secondId,
+              type: relation.type,
+              strength: relation.strength,
+              reason: '',
             ),
-          ),
-        ),
+        ],
+        createdLinks: result.suggestedRelations,
+        updatedLinks: result.updatedLinks,
+        unchangedLinks: result.unchangedLinks,
+        protectedLinks: result.protectedLinks,
+        mergedGroups: result.mergedGroups,
+        protectedProposals: result.duplicateProposals,
       );
     } catch (error) {
       if (!mounted) return;
@@ -806,72 +946,256 @@ class _MemoryScreenState extends State<MemoryScreen>
     }
   }
 
-  Future<void> _showAnalysisChoice() async {
-    if (_curationRunning || _selectedMemoryIds.length < 2) return;
-    final choice = await showModalBottomSheet<String>(
+  Future<void> _showMemoryConnectionReport({
+    required List<Memory> memories,
+    required List<_MemoryConnectionReport> relations,
+    int createdLinks = 0,
+    int updatedLinks = 0,
+    int unchangedLinks = 0,
+    int protectedLinks = 0,
+    int mergedGroups = 0,
+    int protectedProposals = 0,
+    String? note,
+  }) async {
+    if (!mounted) return;
+    final byId = <int, Memory>{
+      for (final memory in memories)
+        if (memory.id != null) memory.id!: memory,
+    };
+    final relatedIds = <int>{
+      for (final relation in relations) ...[
+        relation.firstId,
+        relation.secondId,
+      ],
+    };
+    final unrelated = byId.values
+        .where((memory) => !relatedIds.contains(memory.id))
+        .toList(growable: false);
+    final unrelatedDaily = unrelated
+        .where((memory) => memory.contextMode == ContextMode.daily)
+        .toList(growable: false);
+    final unrelatedRp = unrelated
+        .where((memory) => memory.contextMode == ContextMode.rp)
+        .toList(growable: false);
+    final dailyRelations = relations
+        .where(
+          (relation) =>
+              byId[relation.firstId]?.contextMode == ContextMode.daily &&
+              byId[relation.secondId]?.contextMode == ContextMode.daily,
+        )
+        .toList(growable: false);
+    final rpMergeRelations = relations
+        .where(
+          (relation) =>
+              byId[relation.firstId]?.contextMode == ContextMode.rp &&
+              byId[relation.secondId]?.contextMode == ContextMode.rp,
+        )
+        .toList(growable: false);
+    final hasDaily = memories.any(
+      (memory) => memory.contextMode == ContextMode.daily,
+    );
+    final hasRp = memories.any(
+      (memory) => memory.contextMode == ContextMode.rp,
+    );
+    final rpOnly = hasRp && !hasDaily;
+    final mixedModes = hasRp && hasDaily;
+    await showModalBottomSheet<void>(
       context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
       backgroundColor: Colors.transparent,
-      builder: (context) => Container(
-        padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
-        decoration: BoxDecoration(
-          color: YanciTheme.surfacePanel,
-          borderRadius: const BorderRadius.vertical(top: Radius.circular(22)),
-        ),
-        child: SafeArea(
-          top: false,
+      builder: (sheetContext) => FractionallySizedBox(
+        heightFactor: 0.82,
+        child: Container(
+          decoration: BoxDecoration(
+            color: YanciTheme.surfacePanel,
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(22)),
+          ),
           child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Text(
-                L.pick(
-                  en: 'Process selected memories',
-                  zhTW: '處理已選記憶',
-                  zhCN: '处理已选记忆',
-                ),
-                style: YanciTheme.headingMedium,
-              ),
-              const SizedBox(height: 6),
-              Text(
-                L.pick(
-                  en: 'Both options create suggestions first. Existing memories are never changed automatically.',
-                  zhTW: '兩種方式都只先建立建議，不會自動改動既有記憶。',
-                  zhCN: '两种方式都只先建立建议，不会自动改动既有记忆。',
-                ),
-                style: YanciTheme.bodySmall,
-              ),
-              const SizedBox(height: 14),
-              FilledButton.tonalIcon(
-                onPressed: () => Navigator.pop(context, 'local'),
-                style: FilledButton.styleFrom(
-                  minimumSize: const Size.fromHeight(48),
-                  alignment: Alignment.centerLeft,
-                ),
-                icon: const Icon(Icons.shield_outlined, size: 19),
-                label: Text(
-                  L.pick(
-                    en: 'On-device memory deduplication check',
-                    zhTW: '本機記憶去重檢查',
-                    zhCN: '本机记忆去重检查',
+              const SizedBox(height: 10),
+              ExcludeSemantics(
+                child: Container(
+                  width: 38,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: YanciTheme.textSecondary.withValues(alpha: 0.22),
+                    borderRadius: BorderRadius.circular(2),
                   ),
                 ),
               ),
-              const SizedBox(height: 8),
-              OutlinedButton.icon(
-                onPressed: () => Navigator.pop(context, 'model'),
-                style: OutlinedButton.styleFrom(
-                  minimumSize: const Size.fromHeight(48),
-                  alignment: Alignment.centerLeft,
+              Padding(
+                padding: const EdgeInsets.fromLTRB(18, 12, 8, 8),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        L.pick(
+                          en: rpOnly
+                              ? 'RP memory organization results'
+                              : mixedModes
+                              ? 'Memory organization results'
+                              : 'Memory connection report',
+                          zhTW: rpOnly
+                              ? 'RP 記憶整理結果'
+                              : mixedModes
+                              ? '記憶整理結果'
+                              : '記憶連線報告',
+                          zhCN: rpOnly
+                              ? 'RP 记忆整理结果'
+                              : mixedModes
+                              ? '记忆整理结果'
+                              : '记忆连线报告',
+                        ),
+                        style: YanciTheme.headingMedium,
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: L.pick(en: 'Close', zhTW: '關閉', zhCN: '关闭'),
+                      onPressed: () => Navigator.pop(sheetContext),
+                      icon: const Icon(Icons.close_rounded),
+                    ),
+                  ],
                 ),
-                icon: const Icon(Icons.auto_awesome_rounded, size: 18),
-                label: Text(
-                  L.pick(
-                    en: 'Summary model · process all ${_selectedMemoryIds.length} in automatic batches · uses tokens',
-                    zhTW:
-                        '摘要模型 · 全部 ${_selectedMemoryIds.length} 條自動分批 · 會使用 token',
-                    zhCN:
-                        '摘要模型 · 全部 ${_selectedMemoryIds.length} 条自动分批 · 会使用 token',
-                  ),
+              ),
+              Expanded(
+                child: ListView(
+                  padding: const EdgeInsets.fromLTRB(18, 0, 18, 28),
+                  children: [
+                    Text(
+                      L.pick(
+                        en: rpOnly
+                            ? '$mergedGroups groups merged · ${rpMergeRelations.length} duplicate groups reviewed · ${unrelatedRp.length} memories kept${protectedProposals == 0 ? '' : ' · $protectedProposals require review'}'
+                            : mixedModes
+                            ? '${dailyRelations.length} daily connections · $mergedGroups RP groups merged · ${unrelated.length} memories kept${protectedLinks == 0 && protectedProposals == 0 ? '' : ' · ${protectedLinks + protectedProposals} protected'}'
+                            : '${dailyRelations.length} connections · $createdLinks new · $updatedLinks updated · $unchangedLinks unchanged · $mergedGroups merged · ${unrelatedDaily.length} unrelated${protectedLinks == 0 && protectedProposals == 0 ? '' : ' · ${protectedLinks + protectedProposals} protected'}',
+                        zhTW: rpOnly
+                            ? '已合併 $mergedGroups 組 · 檢查 ${rpMergeRelations.length} 組重複內容 · 保留 ${unrelatedRp.length} 條記憶${protectedProposals == 0 ? '' : ' · $protectedProposals 組需確認'}'
+                            : mixedModes
+                            ? '日常 ${dailyRelations.length} 組關聯 · RP 已合併 $mergedGroups 組 · 保留 ${unrelated.length} 條記憶${protectedLinks == 0 && protectedProposals == 0 ? '' : ' · 受保護 ${protectedLinks + protectedProposals} 組'}'
+                            : '${dailyRelations.length} 組關聯 · 新增 $createdLinks · 更新 $updatedLinks · 未變更 $unchangedLinks · 已合併 $mergedGroups 組 · ${unrelatedDaily.length} 條未發現關聯${protectedLinks == 0 && protectedProposals == 0 ? '' : ' · 受保護 ${protectedLinks + protectedProposals} 組'}',
+                        zhCN: rpOnly
+                            ? '已合并 $mergedGroups 组 · 检查 ${rpMergeRelations.length} 组重复内容 · 保留 ${unrelatedRp.length} 条记忆${protectedProposals == 0 ? '' : ' · $protectedProposals 组需确认'}'
+                            : mixedModes
+                            ? '日常 ${dailyRelations.length} 组关联 · RP 已合并 $mergedGroups 组 · 保留 ${unrelated.length} 条记忆${protectedLinks == 0 && protectedProposals == 0 ? '' : ' · 受保护 ${protectedLinks + protectedProposals} 组'}'
+                            : '${dailyRelations.length} 组关联 · 新增 $createdLinks · 更新 $updatedLinks · 未变更 $unchangedLinks · 已合并 $mergedGroups 组 · ${unrelatedDaily.length} 条未发现关联${protectedLinks == 0 && protectedProposals == 0 ? '' : ' · 受保护 ${protectedLinks + protectedProposals} 组'}',
+                      ),
+                      style: YanciTheme.bodySmall,
+                    ),
+                    if (note != null && note.trim().isNotEmpty) ...[
+                      const SizedBox(height: 6),
+                      Text(note, style: YanciTheme.bodySmall),
+                    ],
+                    if (dailyRelations.isNotEmpty) ...[
+                      const SizedBox(height: 18),
+                      _reportSectionTitle(
+                        L.pick(en: 'Connections', zhTW: '相關記憶', zhCN: '相关记忆'),
+                      ),
+                      const SizedBox(height: 6),
+                      for (final relation in dailyRelations) ...[
+                        _buildConnectionReportRow(
+                          relation,
+                          byId[relation.firstId],
+                          byId[relation.secondId],
+                        ),
+                        Divider(
+                          height: 18,
+                          thickness: 0.6,
+                          color: YanciTheme.textSecondary.withValues(
+                            alpha: 0.12,
+                          ),
+                        ),
+                      ],
+                    ],
+                    if (rpMergeRelations.isNotEmpty) ...[
+                      const SizedBox(height: 18),
+                      _reportSectionTitle(
+                        L.pick(
+                          en: 'RP memory consolidation',
+                          zhTW: 'RP 記憶合併整理',
+                          zhCN: 'RP 记忆合并整理',
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      for (final relation in rpMergeRelations) ...[
+                        _buildConnectionReportRow(
+                          relation,
+                          byId[relation.firstId],
+                          byId[relation.secondId],
+                          mergeOnly: true,
+                        ),
+                        Divider(
+                          height: 18,
+                          thickness: 0.6,
+                          color: YanciTheme.textSecondary.withValues(
+                            alpha: 0.12,
+                          ),
+                        ),
+                      ],
+                    ],
+                    if (unrelatedDaily.isNotEmpty) ...[
+                      const SizedBox(height: 12),
+                      _reportSectionTitle(
+                        L.pick(
+                          en: 'No connection created · memories kept',
+                          zhTW: '未建立連線 · 記憶保留',
+                          zhCN: '未建立连线 · 记忆保留',
+                        ),
+                      ),
+                      const SizedBox(height: 5),
+                      Text(
+                        L.pick(
+                          en: 'No strong relationship was found. These memories remain unchanged and are not marked for deletion.',
+                          zhTW: '目前沒有找到足夠明確的關聯；這些記憶會原樣保留，也不代表建議刪除。',
+                          zhCN: '目前没有找到足够明确的关联；这些记忆会原样保留，也不代表建议删除。',
+                        ),
+                        style: YanciTheme.bodySmall.copyWith(height: 1.4),
+                      ),
+                      const SizedBox(height: 4),
+                      for (final memory in unrelatedDaily)
+                        ListTile(
+                          contentPadding: EdgeInsets.zero,
+                          title: Text(
+                            memory.content,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: YanciTheme.bodyText,
+                          ),
+                        ),
+                    ],
+                    if (unrelatedRp.isNotEmpty) ...[
+                      const SizedBox(height: 12),
+                      _reportSectionTitle(
+                        L.pick(
+                          en: 'RP memories do not require links',
+                          zhTW: 'RP 記憶無需強制連線',
+                          zhCN: 'RP 记忆无需强制连线',
+                        ),
+                      ),
+                      const SizedBox(height: 5),
+                      Text(
+                        L.pick(
+                          en: 'No clear story relationship was found. RP memories can remain independent without forced links and will still participate in later recall.',
+                          zhTW:
+                              '目前沒有找到足夠明確的劇情關聯。RP 記憶可以獨立保留，不需要勉強連線，仍會正常參與後續召回。',
+                          zhCN:
+                              '目前没有找到足够明确的剧情关联。RP 记忆可以独立保留，不需要勉强连线，仍会正常参与后续召回。',
+                        ),
+                        style: YanciTheme.bodySmall.copyWith(height: 1.4),
+                      ),
+                      const SizedBox(height: 4),
+                      for (final memory in unrelatedRp)
+                        ListTile(
+                          contentPadding: EdgeInsets.zero,
+                          title: Text(
+                            memory.content,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: YanciTheme.bodyText,
+                          ),
+                        ),
+                    ],
+                  ],
                 ),
               ),
             ],
@@ -879,11 +1203,240 @@ class _MemoryScreenState extends State<MemoryScreen>
         ),
       ),
     );
+  }
+
+  Widget _reportSectionTitle(String text) => Text(
+    text,
+    style: YanciTheme.bodyText.copyWith(fontWeight: FontWeight.w600),
+  );
+
+  Widget _buildConnectionReportRow(
+    _MemoryConnectionReport relation,
+    Memory? first,
+    Memory? second, {
+    bool mergeOnly = false,
+  }) {
+    final firstText = first?.content.trim() ?? '#${relation.firstId}';
+    final secondText = second?.content.trim() ?? '#${relation.secondId}';
+    final relationLabel = mergeOnly
+        ? L.pick(en: 'Duplicate content', zhTW: '重複內容', zhCN: '重复内容')
+        : switch (relation.type) {
+            'duplicate_candidate' => L.pick(
+              en: 'Duplicate',
+              zhTW: '重複',
+              zhCN: '重复',
+            ),
+            'same_event' => L.pick(
+              en: 'Same event',
+              zhTW: '同一事件',
+              zhCN: '同一事件',
+            ),
+            'temporal' => L.pick(
+              en: 'Continuation',
+              zhTW: '前後延續',
+              zhCN: '前后延续',
+            ),
+            'conflict_update' => L.pick(
+              en: 'Possible update',
+              zhTW: '可能有更新',
+              zhCN: '可能有更新',
+            ),
+            _ => L.pick(en: 'Related', zhTW: '相關', zhCN: '相关'),
+          };
+    return Semantics(
+      label: '$relationLabel: $firstText, $secondText',
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 2),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '$relationLabel · ${(relation.strength * 100).round()}%',
+              style: YanciTheme.bodySmall.copyWith(color: YanciTheme.accent),
+            ),
+            const SizedBox(height: 5),
+            Text(
+              '$firstText\n${mergeOnly ? '＋' : '↔'} $secondText',
+              maxLines: 4,
+              overflow: TextOverflow.ellipsis,
+              style: YanciTheme.bodyText.copyWith(height: 1.35),
+            ),
+            if (relation.reason.trim().isNotEmpty) ...[
+              const SizedBox(height: 4),
+              Text(
+                relation.reason,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: YanciTheme.bodySmall,
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showAnalysisChoice() async {
+    if (_curationRunning || _selectedMemoryIds.length < 2) return;
+    final embedding = await MemorySettings.getEmbeddingSelection();
+    final summaryModel = await MemorySettings.getSummaryModel();
+    final summaryProvider = await MemorySettings.getSummaryProvider();
     if (!mounted) return;
-    if (choice == 'local') {
+    var useVector = embedding.model.isNotEmpty;
+    var useSummary = summaryModel.isNotEmpty;
+    final choice = await showModalBottomSheet<_MemoryCurationChoice>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setSheetState) => Container(
+          padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+          decoration: BoxDecoration(
+            color: YanciTheme.surfacePanel,
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(22)),
+          ),
+          child: SafeArea(
+            top: false,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(
+                  L.pick(
+                    en: 'Process selected memories',
+                    zhTW: '處理已選記憶',
+                    zhCN: '处理已选记忆',
+                  ),
+                  style: YanciTheme.headingMedium,
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  L.pick(
+                    en: 'Clear relations are connected and duplicate memories are merged immediately. Permanent memories remain protected. Results open as one concise report.',
+                    zhTW: '明確關聯會直接連線，重複記憶會直接合併；永久記憶仍保留確認保護。完成後只顯示一份簡潔報告。',
+                    zhCN: '明确关联会直接连线，重复记忆会直接合并；永久记忆仍保留确认保护。完成后只显示一份简洁报告。',
+                  ),
+                  style: YanciTheme.bodySmall,
+                ),
+                const SizedBox(height: 12),
+                FilledButton.tonalIcon(
+                  onPressed: () => Navigator.pop(
+                    context,
+                    const _MemoryCurationChoice.local(),
+                  ),
+                  style: FilledButton.styleFrom(
+                    minimumSize: const Size.fromHeight(48),
+                    alignment: Alignment.centerLeft,
+                  ),
+                  icon: const Icon(Icons.shield_outlined, size: 19),
+                  label: Text(
+                    L.pick(
+                      en: 'On-device memory deduplication check',
+                      zhTW: '本機記憶去重檢查',
+                      zhCN: '本机记忆去重检查',
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                CheckboxListTile(
+                  contentPadding: EdgeInsets.zero,
+                  value: useVector,
+                  onChanged: embedding.model.isEmpty || summaryModel.isEmpty
+                      ? null
+                      : (value) => setSheetState(() {
+                          useVector = value ?? false;
+                          if (useVector) useSummary = true;
+                        }),
+                  title: Text(
+                    L.pick(
+                      en: 'Vector relation pass',
+                      zhTW: '向量關聯',
+                      zhCN: '向量关联',
+                    ),
+                    style: YanciTheme.bodyText,
+                  ),
+                  subtitle: Text(
+                    embedding.model.isEmpty
+                        ? L.pick(
+                            en: 'No embedding model selected',
+                            zhTW: '尚未選擇向量模型',
+                            zhCN: '尚未选择向量模型',
+                          )
+                        : summaryModel.isEmpty
+                        ? L.pick(
+                            en: 'Select a summary model to review vector candidates',
+                            zhTW: '請先選擇摘要模型審核向量候選',
+                            zhCN: '请先选择摘要模型审核向量候选',
+                          )
+                        : '${embedding.provider} / ${embedding.model}',
+                    style: YanciTheme.bodySmall,
+                  ),
+                ),
+                CheckboxListTile(
+                  contentPadding: EdgeInsets.zero,
+                  value: useSummary,
+                  onChanged: summaryModel.isEmpty || useVector
+                      ? null
+                      : (value) =>
+                            setSheetState(() => useSummary = value ?? false),
+                  title: Text(
+                    L.pick(
+                      en: 'Summary model review',
+                      zhTW: '摘要共用模型整理',
+                      zhCN: '摘要共用模型整理',
+                    ),
+                    style: YanciTheme.bodyText,
+                  ),
+                  subtitle: Text(
+                    summaryModel.isEmpty
+                        ? L.pick(
+                            en: 'No summary model selected',
+                            zhTW: '尚未選擇摘要共用模型',
+                            zhCN: '尚未选择摘要共用模型',
+                          )
+                        : '${summaryProvider.isEmpty ? L.pick(en: 'Current source', zhTW: '目前來源', zhCN: '当前来源') : summaryProvider} / $summaryModel',
+                    style: YanciTheme.bodySmall,
+                  ),
+                ),
+                if (useVector)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 10),
+                    child: Text(
+                      L.pick(
+                        en: 'Vectors only suggest candidates. The summary model decides whether a relation exists after checking summaries, selected memories, and their existing links.',
+                        zhTW: '向量只負責提出候選；摘要模型會結合摘要、已選記憶及其既有連線，判斷關係是否成立。',
+                        zhCN: '向量只负责提出候选；摘要模型会结合摘要、已选记忆及其已有连线，判断关系是否成立。',
+                      ),
+                      style: YanciTheme.bodySmall,
+                    ),
+                  ),
+                FilledButton(
+                  onPressed: !useSummary
+                      ? null
+                      : () => Navigator.pop(
+                          context,
+                          _MemoryCurationChoice.models(
+                            vector: useVector,
+                            summary: useSummary,
+                          ),
+                        ),
+                  child: Text(
+                    L.pick(en: 'Start processing', zhTW: '開始處理', zhCN: '开始处理'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    if (!mounted) return;
+    if (choice?.local == true) {
       await _scanExistingMemories(memoryIds: _selectedMemoryIds);
-    } else if (choice == 'model') {
-      await _sendSelectedForCuration();
+    } else if (choice != null) {
+      await _sendSelectedForCuration(
+        useVector: choice.vector,
+        useSummary: choice.summary,
+      );
     }
   }
 
@@ -1025,7 +1578,7 @@ class _MemoryScreenState extends State<MemoryScreen>
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              _linkMemoryPreview(firstMemory, dialogContext: ctx),
+              _linkMemoryPreview(firstMemory),
               Padding(
                 padding: const EdgeInsets.symmetric(vertical: 10),
                 child: Row(
@@ -1051,7 +1604,7 @@ class _MemoryScreenState extends State<MemoryScreen>
                   ],
                 ),
               ),
-              _linkMemoryPreview(secondMemory, dialogContext: ctx),
+              _linkMemoryPreview(secondMemory),
               const SizedBox(height: 14),
               Wrap(
                 spacing: 7,
@@ -1131,11 +1684,6 @@ class _MemoryScreenState extends State<MemoryScreen>
       ),
     );
     if (action == null || !mounted) return;
-    if (action.startsWith('archive:')) {
-      final memoryId = int.tryParse(action.substring('archive:'.length));
-      if (memoryId != null) await _deleteMemories({memoryId});
-      return;
-    }
     if (action == 'review') {
       setState(() {
         _tabIndex = 1;
@@ -1289,44 +1837,16 @@ class _MemoryScreenState extends State<MemoryScreen>
     };
   }
 
-  Widget _linkMemoryPreview(
-    Map<String, dynamic> memory, {
-    required BuildContext dialogContext,
-  }) {
-    final memoryId = (memory['id'] as num?)?.toInt();
-    return Row(
+  Widget _linkMemoryPreview(Map<String, dynamic> memory) {
+    return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                memory['category']?.toString() ?? '',
-                style: YanciTheme.bodySmall.copyWith(color: YanciTheme.accent),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                memory['content']?.toString() ?? '',
-                style: YanciTheme.bodyText,
-              ),
-            ],
-          ),
+        Text(
+          memory['category']?.toString() ?? '',
+          style: YanciTheme.bodySmall.copyWith(color: YanciTheme.accent),
         ),
-        const SizedBox(width: 8),
-        TextButton.icon(
-          key: ValueKey('archive-link-memory-$memoryId'),
-          onPressed: memoryId == null
-              ? null
-              : () => Navigator.pop(dialogContext, 'archive:$memoryId'),
-          style: TextButton.styleFrom(
-            foregroundColor: Colors.red.shade400,
-            minimumSize: const Size(0, 44),
-            padding: const EdgeInsets.symmetric(horizontal: 8),
-          ),
-          icon: const Icon(Icons.delete_outline_rounded, size: 17),
-          label: Text(L.pick(en: 'Delete', zhTW: '刪除', zhCN: '删除')),
-        ),
+        const SizedBox(height: 4),
+        Text(memory['content']?.toString() ?? '', style: YanciTheme.bodyText),
       ],
     );
   }
@@ -1349,6 +1869,113 @@ class _MemoryScreenState extends State<MemoryScreen>
       title: L.pick(en: 'Relation suggestions', zhTW: '關係建議', zhCN: '关系建议'),
       icon: Icons.rule_rounded,
       initialFilter: 'suggested',
+      allowClearSuggested: true,
+    );
+  }
+
+  Future<void> _confirmAndClearSuggestedRelations(
+    BuildContext sheetContext,
+    int count,
+  ) async {
+    if (count <= 0) return;
+    final expected = MemoryReviewTab.clearConfirmationWord();
+    final controller = TextEditingController();
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setDialogState) {
+          final canDelete = controller.text.trim() == expected;
+          return AlertDialog(
+            backgroundColor: YanciTheme.surfacePanel,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(18),
+            ),
+            title: Text(
+              L.pick(
+                en: 'Clear all relation suggestions?',
+                zhTW: '清除所有關係建議？',
+                zhCN: '清除所有关系建议？',
+              ),
+              style: YanciTheme.headingMedium,
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  L.pick(
+                    en: 'This will reject all $count unconfirmed relation suggestions for this character. Memories and confirmed links will remain unchanged. Type "$expected" to continue.',
+                    zhTW:
+                        '這會拒絕目前角色的 $count 條未確認關係建議。記憶與已確認連線都不會變更。請輸入「$expected」繼續。',
+                    zhCN:
+                        '这会拒绝当前角色的 $count 条未确认关系建议。记忆与已确认连线都不会更改。请输入“$expected”继续。',
+                  ),
+                  style: YanciTheme.bodyText,
+                ),
+                const SizedBox(height: 14),
+                TextField(
+                  controller: controller,
+                  autofocus: true,
+                  keyboardType: TextInputType.text,
+                  textCapitalization: TextCapitalization.none,
+                  textInputAction: TextInputAction.done,
+                  onChanged: (_) => setDialogState(() {}),
+                  onSubmitted: (_) {
+                    if (!canDelete) return;
+                    FocusManager.instance.primaryFocus?.unfocus();
+                    Navigator.pop(dialogContext, true);
+                  },
+                  decoration: InputDecoration(hintText: expected),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext, false),
+                child: Text(L.pick(en: 'Cancel', zhTW: '取消', zhCN: '取消')),
+              ),
+              FilledButton(
+                onPressed: canDelete
+                    ? () {
+                        FocusManager.instance.primaryFocus?.unfocus();
+                        Navigator.pop(dialogContext, true);
+                      }
+                    : null,
+                style: FilledButton.styleFrom(
+                  backgroundColor: Colors.red.shade400,
+                  foregroundColor: Colors.white,
+                  disabledBackgroundColor: Colors.red.shade400.withValues(
+                    alpha: 0.18,
+                  ),
+                ),
+                child: Text(
+                  L.pick(en: 'Clear all', zhTW: '清除所有', zhCN: '清除所有'),
+                ),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 250));
+    controller.dispose();
+    if (confirmed != true || !mounted) return;
+
+    if (sheetContext.mounted && Navigator.canPop(sheetContext)) {
+      Navigator.pop(sheetContext);
+    }
+    final cleared = await MemoryGuardService.rejectAllSuggestedRelations(
+      _characterId,
+    );
+    await _loadMemories();
+    if (!mounted) return;
+    showThemedPillNotice(
+      context,
+      L.pick(
+        en: 'Cleared $cleared relation suggestions',
+        zhTW: '已清除 $cleared 條關係建議',
+        zhCN: '已清除 $cleared 条关系建议',
+      ),
     );
   }
 
@@ -1357,6 +1984,7 @@ class _MemoryScreenState extends State<MemoryScreen>
     required String title,
     IconData icon = Icons.polyline_rounded,
     String initialFilter = 'all',
+    bool allowClearSuggested = false,
   }) {
     var filter = initialFilter;
     final byId = <int, Map<String, dynamic>>{
@@ -1382,6 +2010,9 @@ class _MemoryScreenState extends State<MemoryScreen>
                 };
               })
               .toList(growable: false);
+          final suggestedCount = links
+              .where((link) => link['status']?.toString() == 'suggested')
+              .length;
           return DraggableScrollableSheet(
             initialChildSize: 0.5,
             minChildSize: 0.3,
@@ -1413,6 +2044,27 @@ class _MemoryScreenState extends State<MemoryScreen>
                         Expanded(
                           child: Text(title, style: YanciTheme.headingMedium),
                         ),
+                        if (allowClearSuggested && suggestedCount > 0)
+                          TextButton(
+                            onPressed: () => _confirmAndClearSuggestedRelations(
+                              ctx,
+                              suggestedCount,
+                            ),
+                            style: TextButton.styleFrom(
+                              foregroundColor: Colors.red.shade300,
+                              minimumSize: const Size(0, 44),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                              ),
+                            ),
+                            child: Text(
+                              L.pick(
+                                en: 'Clear all',
+                                zhTW: '清除所有',
+                                zhCN: '清除所有',
+                              ),
+                            ),
+                          ),
                       ],
                     ),
                   ),
@@ -1527,6 +2179,8 @@ class _MemoryScreenState extends State<MemoryScreen>
   void _showArchive() async {
     final archived = await DatabaseHelper.getArchivedMemories(
       characterId: _characterId,
+      contextMode: widget.contextMode,
+      continuityId: widget.continuityId,
     );
     final selectedArchiveIds = <int>{};
     if (!mounted) return;
@@ -2008,9 +2662,9 @@ class _MemoryScreenState extends State<MemoryScreen>
               child: Column(
                 children: [
                   MemoryScreenHeader(
-                    isSpiderWebEnabled: _isSpiderWebEnabled,
+                    isSpiderWebEnabled: _spiderWebAvailable,
                     isGraphView: _isGraphView,
-                    memoryCount: _isSpiderWebEnabled
+                    memoryCount: _spiderWebAvailable
                         ? _graphMemories.length
                         : _memories.length,
                     totalTokens: _totalTokens,
@@ -2055,6 +2709,20 @@ class _MemoryScreenState extends State<MemoryScreen>
                     ),
                   ),
 
+                  if (_rpStorylineScope)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 1, bottom: 3),
+                      child: Text(
+                        widget.scopeLabel?.trim().isNotEmpty == true
+                            ? 'RP · ${widget.scopeLabel!.trim()}'
+                            : 'RP',
+                        style: YanciTheme.bodySmall.copyWith(
+                          fontSize: 11,
+                          color: YanciTheme.accent.withValues(alpha: 0.72),
+                        ),
+                      ),
+                    ),
+
                   if (_tabIndex == 0)
                     Padding(
                       padding: const EdgeInsets.fromLTRB(16, 4, 16, 6),
@@ -2071,6 +2739,8 @@ class _MemoryScreenState extends State<MemoryScreen>
                       1 => MemoryReviewTab(
                         characterId: _characterId,
                         sourceMessageId: _reviewSourceMessageId,
+                        contextMode: widget.contextMode,
+                        continuityId: widget.continuityId,
                         // The review tab owns proposal state, but the memory
                         // list is cached by this parent. Reload both after a
                         // proposal is accepted so archived merge targets do
@@ -2079,6 +2749,8 @@ class _MemoryScreenState extends State<MemoryScreen>
                       ),
                       _ => MemorySummaryTab(
                         characterId: _characterId,
+                        contextMode: widget.contextMode,
+                        continuityId: widget.continuityId,
                         onSummaryModified: () {
                           _summaryModified = true;
                         },
@@ -2132,7 +2804,7 @@ class _MemoryScreenState extends State<MemoryScreen>
       }
       return _buildMemoryList(_searchResults);
     }
-    if (_isSpiderWebEnabled && _isGraphView) return _buildLayeredGraph();
+    if (_spiderWebAvailable && _isGraphView) return _buildLayeredGraph();
     if (_memories.isEmpty) {
       return Center(
         child: Padding(
@@ -2180,7 +2852,7 @@ class _MemoryScreenState extends State<MemoryScreen>
   Widget _buildMemoryActionRow() {
     final hasQuery = _searchController.text.trim().isNotEmpty;
     final showingList = !_isGraphView || hasQuery;
-    final canScan = _isSpiderWebEnabled && _graphMemories.length >= 2;
+    final canScan = _spiderWebAvailable && _graphMemories.length >= 2;
     final pendingRelations = _suggestedRelationCount;
     if ((!showingList || _memories.isEmpty) &&
         !canScan &&
@@ -2274,6 +2946,7 @@ class _MemoryScreenState extends State<MemoryScreen>
               ],
               smallWebGroups: [for (final web in layer.webs) web.isSmall],
               links: layer.links,
+              activeDateKeys: _spiderActiveDateKeys,
               savedPositions: _savedNodePositions,
               viewportRightInset: 70,
               externalLinkCount: layer.crossLayerLinkCount,

@@ -5,7 +5,7 @@
 import { $, state, toast, registerTabHandler } from "./app.js";
 import {
   listCharacters, getCharacter, newCharacter, saveCharacter, deleteCharacter,
-  listTimelineEntries, deleteTimelineEntry,
+  listTimelineEntries, listTimelineEntriesForCharacter, deleteTimelineEntry,
   getSetting, setSetting,
 } from "./db.js";
 import { renderHomeContent } from "./ui-home.js";
@@ -84,8 +84,8 @@ async function renderCharList() {
 
     const sub = [c.gender, c.relationship].filter(Boolean).join(" · ");
     const avatarHtml = c.avatarDataUrl
-      ? `<img src="${c.avatarDataUrl}" alt="" loading="lazy" decoding="async">`
-      : `<span class="avatar-fallback">${(c.name || "?")[0]}</span>`;
+      ? `<img src="${esc(c.avatarDataUrl)}" alt="" loading="lazy" decoding="async">`
+      : `<span class="avatar-fallback">${esc((c.name || "?")[0])}</span>`;
 
     const actionHtml = isActive
       ? `<div class="char-online-pill"><span class="char-online-dot"></span><span>在線</span></div>`
@@ -95,12 +95,12 @@ async function renderCharList() {
       <div class="char-card-top">
         <div class="char-card-avatar${isActive ? " is-active" : ""}">${avatarHtml}</div>
         <div class="char-card-meta">
-          <strong>${c.name || "未命名"}</strong>
-          ${sub ? `<span class="char-card-sub">${sub}</span>` : ""}
+          <strong>${esc(c.name || "未命名")}</strong>
+          ${sub ? `<span class="char-card-sub">${esc(sub)}</span>` : ""}
         </div>
         <div class="char-card-action">${actionHtml}</div>
       </div>
-      <div class="char-card-desc">${c.description || ""}</div>
+      <div class="char-card-desc">${esc(c.description || "")}</div>
     `;
 
     // In-place update instead of full rebuild → no jank
@@ -255,6 +255,8 @@ let _timelineMonth = new Date().getMonth() + 1;
 
 async function renderTimeline() {
   if (!state.selectedCharId) { charTimelinePanel.setAttribute("hidden", ""); return; }
+  const allNodes = await listTimelineEntriesForCharacter(state.selectedCharId);
+  if (!allNodes.length) { charTimelinePanel.setAttribute("hidden", ""); return; }
   charTimelinePanel.removeAttribute("hidden");
 
   const monthLabel = `${_timelineYear}.${String(_timelineMonth).padStart(2, "0")}`;
@@ -457,9 +459,9 @@ function showSelfNotesSheet(notes) {
 // ═══ HTML escape helper ═══
 
 function esc(str) {
-  const d = document.createElement("div");
-  d.textContent = str;
-  return d.innerHTML;
+  return String(str ?? "").replace(/[&<>"']/g, (character) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;",
+  })[character]);
 }
 
 // ═══ Export current character (header button) ═══
@@ -501,7 +503,7 @@ function openCharModal(char = null) {
 
   charEditAvatarData = char?.avatarDataUrl || null;
   if (charEditAvatarData) {
-    charAvatarPreview.innerHTML = `<img src="${charEditAvatarData}" alt="">`;
+    charAvatarPreview.innerHTML = `<img src="${esc(charEditAvatarData)}" alt="">`;
   } else {
     charAvatarPreview.innerHTML = `
       <svg class="line-icon" viewBox="0 0 24 24" style="width:36px;height:36px;opacity:.3"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
@@ -535,7 +537,7 @@ charAvatarInput.addEventListener("change", async () => {
     const cropped = await openAvatarCropper(file, { title: "裁剪角色頭像" });
     if (!cropped) return;
     charEditAvatarData = cropped;
-    charAvatarPreview.innerHTML = `<img src="${charEditAvatarData}" alt="">`;
+    charAvatarPreview.innerHTML = `<img src="${esc(charEditAvatarData)}" alt="">`;
   } catch (err) {
     toast("頭像裁剪失敗：" + err.message);
   } finally {

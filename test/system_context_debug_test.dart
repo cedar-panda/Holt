@@ -39,7 +39,7 @@ void main() {
         <String, dynamic>{'role': 'user', 'content': '坐過來'},
       ],
       stableContext: '## Control\nkey sk-abcdefghijklmnop',
-      liveState: '### 記憶\n[#1] 晚餐\n### 當前時間\n09:30\n生物鐘：飯點',
+      liveState: '### 記憶\n[#1] 晚餐\n### 當前時間\n09:30\n### 生物鐘\n飯點',
       cacheEnabled: true,
       cacheBreakpointIndex: 1,
     );
@@ -54,6 +54,28 @@ void main() {
     expect(snapshot.stablePreview, contains('[REDACTED_KEY]'));
     expect(snapshot.stablePreview, isNot(contains('sk-abcdefghijklmnop')));
     expect(snapshot.warnings, isEmpty);
+  });
+
+  test('memory wording alone does not report a bio-clock injection', () {
+    SystemContextDebug.recordChatRequest(
+      provider: 'gemini',
+      model: 'test-model',
+      cacheChannel: 'text',
+      sessionId: 'conv-memory-only',
+      transport: 'gemini_model_state',
+      sourceMessages: const <Map<String, String>>[
+        <String, String>{'role': 'user', 'content': '晚餐吃什麼'},
+      ],
+      requestMessages: const <Map<String, dynamic>>[
+        <String, dynamic>{'role': 'user', 'content': '晚餐吃什麼'},
+      ],
+      stableContext: 'stable',
+      liveState: '### 記憶\n[#1] 習慣在飯點聊天\n### 當前時間\n09:30',
+    );
+
+    final snapshot = SystemContextDebug.snapshots.value.single;
+    expect(snapshot.hasMemory, isTrue);
+    expect(snapshot.hasBioClock, isFalse);
   });
 
   test('detects user pollution and stable prefix drift', () {

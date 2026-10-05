@@ -4,6 +4,40 @@ import 'sticker_service.dart';
 import 'locale_strings.dart';
 import '../memory/database.dart';
 
+enum CacheThresholdKind {
+  fixed,
+  routeDependent,
+  automaticWithoutPublishedMinimum,
+  unavailable,
+}
+
+/// Provider/model-specific prompt-cache eligibility information.
+///
+/// A missing [minimumTokens] is intentional: automatic caches such as xAI do
+/// not publish a fixed minimum, while custom relays cannot be described
+/// truthfully without knowing their upstream route.
+class CacheThresholdInfo {
+  final CacheThresholdKind kind;
+  final int? minimumTokens;
+
+  const CacheThresholdInfo._(this.kind, this.minimumTokens);
+
+  const CacheThresholdInfo.fixed(int minimumTokens)
+    : this._(CacheThresholdKind.fixed, minimumTokens);
+
+  const CacheThresholdInfo.routeDependent([int? routeSafeMinimumTokens])
+    : this._(CacheThresholdKind.routeDependent, routeSafeMinimumTokens);
+
+  const CacheThresholdInfo.automaticWithoutPublishedMinimum()
+    : this._(CacheThresholdKind.automaticWithoutPublishedMinimum, null);
+
+  const CacheThresholdInfo.unavailable()
+    : this._(CacheThresholdKind.unavailable, null);
+
+  bool isEligibleAt(int tokenCount) =>
+      minimumTokens != null && tokenCount >= minimumTokens!;
+}
+
 /// Token 估算（保守方向：寧可估低，避免「以為夠門檻其實沒緩存」）
 /// CJK ≈ 1 token/字（Anthropic 實際多在 1.2~1.8），其他 ≈ 4 字符/token
 class TokenEstimator {
@@ -16,21 +50,17 @@ class TokenEstimator {
     return (cjk + other / 4).ceil();
   }
 
-  /// 當前模型的緩存最低門檻
-  /// ── Anthropic ──
-  ///   Fable/Mythos 5 → 512；Opus 4.7 → 2048；Opus 4.6/4.5 → 4096
-  ///   Opus 4.8 / Sonnet / Opus 4.1/4 → 1024；Haiku 4.5 → 4096；Haiku 3.5 → 2048
-  /// ── Gemini ──
-  ///   3.5 Flash / 3.1 Pro → 4096；2.5 Pro / 2.5 Flash → 2048
-  /// ── DeepSeek ──
-  ///   全模型 → 64（64-token 自動分塊）
-  /// ── 其他 ──
-  ///   預設 1024
-  static Future<int> cacheThreshold() async {
+  /// 目前模型的緩存規則。只有官方公開固定門檻時才回傳數字。
+  static Future<CacheThresholdInfo> cacheThresholdInfo() async {
     final provider = (await ApiSettings.getApiProvider()).toLowerCase();
     final model = (await currentModelForProvider(provider)).toLowerCase();
+    return cacheThresholdInfoForModel(provider: provider, model: model);
+  }
 
-    return cacheThresholdForModel(provider: provider, model: model);
+  /// 舊呼叫點的相容層。`0` 表示沒有可驗證的固定門檻，不可當成
+  /// 「任何內容都已達標」。新 UI 應使用 [cacheThresholdInfo]。
+  static Future<int> cacheThreshold() async {
+    return (await cacheThresholdInfo()).minimumTokens ?? 0;
   }
 
   /// 取得目前 provider 真正會送出的模型名。
@@ -48,56 +78,186 @@ class TokenEstimator {
         return ApiSettings.getQwenModel();
       case 'openai_compatible':
         return ApiSettings.getOaiCompatModel();
+      case 'xai':
+        return ApiSettings.getXaiModel();
+      case 'thinking_machines':
+        return ApiSettings.getThinkingMachinesModel();
+      case 'local_api':
+        return ApiSettings.getLocalApiModel();
+      case 'local':
+        return ApiSettings.getModel();
       default:
         return ApiSettings.getModel();
     }
   }
 
-  /// 指定 provider/model 的緩存最低門檻。
+  /// 指定 provider/model 的緩存最低門檻。沒有公開固定值時回傳 0。
   static int cacheThresholdForModel({
+    required String provider,
+    required String model,
+  }) =>
+      cacheThresholdInfoForModel(
+        provider: provider,
+        model: model,
+      ).minimumTokens ??
+      0;
+
+  /// 官方文件規則表（2026-09）。不用一個虛構的 1024 當全域預設。
+  static CacheThresholdInfo cacheThresholdInfoForModel({
     required String provider,
     required String model,
   }) {
     final p = provider.toLowerCase();
     final m = model.toLowerCase();
 
-    // ── DeepSeek（官方 or OpenRouter 都是 64t 分塊）──
-    if (p == 'deepseek' || m.contains('deepseek')) return 64;
+    // 本地 runtime 沒有可對照的 provider 緩存用量；Inkling 目前也
+    // 沒有在 adapter 內送 cache_control 或讀取 cache usage。
+    if (p == 'local' || p == 'thinking_machines') {
+      return const CacheThresholdInfo.unavailable();
+    }
+    if (p == 'local_api') {
+      return const CacheThresholdInfo.routeDependent();
+    }
+
+    // 直連來源先於模型名判定，避免 Qwen/Model Studio 下載入
+    // DeepSeek、Kimi 等模型時誤用另一家 API 的規則。
+    if (p == 'deepseek') return const CacheThresholdInfo.fixed(64);
+    if (p == 'qwen') return const CacheThresholdInfo.fixed(1024);
+    if (p == 'xai') {
+      return const CacheThresholdInfo.automaticWithoutPublishedMinimum();
+    }
 
     // ── Gemini ──
     if (p == 'gemini' || m.contains('gemini')) {
-      if (m.contains('3.5') || m.contains('3-5')) return 4096;
-      if ((m.contains('3.1') || m.contains('3-1')) && m.contains('pro')) {
-        return 4096;
+      if (_containsAny(m, [
+        '3.8',
+        '3-8',
+        '3.7',
+        '3-7',
+        '3.6',
+        '3-6',
+        '3.5',
+        '3-5',
+      ])) {
+        return const CacheThresholdInfo.fixed(4096);
       }
-      if (m.contains('2.5') || m.contains('2-5')) return 2048;
-      if (m.contains('pro')) return 4096;
-      return 2048;
+      if ((m.contains('3.1') || m.contains('3-1')) && m.contains('pro')) {
+        return const CacheThresholdInfo.fixed(4096);
+      }
+      if (m.contains('2.5') || m.contains('2-5')) {
+        return const CacheThresholdInfo.fixed(2048);
+      }
+      // 未列入官方表的 Gemini 模型不猜數字。
+      return const CacheThresholdInfo.routeDependent();
     }
 
-    // ── Anthropic / Claude（官方、OpenRouter、Bedrock）──
-    if (_containsAny(m, ['fable', 'mythos-5', 'mythos_5'])) return 512;
-    if (m.contains('mythos') && m.contains('preview')) return 2048;
-    if (m.contains('opus')) {
-      // OpenRouter 官方：Opus 4.5-4.8 門檻一律 4096
-      //（舊代碼 4.7 給 2048、4.8 落到 1024——UI 以為達標，provider 實際不建）
-      if (_containsVersion(m, '4', '5') ||
-          _containsVersion(m, '4', '6') ||
-          _containsVersion(m, '4', '7') ||
-          _containsVersion(m, '4', '8')) {
-        return 4096;
+    // ── DeepSeek：官方以 64 tokens 為緩存儲存單位。──
+    if (m.contains('deepseek')) return const CacheThresholdInfo.fixed(64);
+
+    // ── Anthropic / Claude（OpenRouter、自訂中轉、Bedrock）──
+    if (_containsAny(m, ['fable', 'mythos-5', 'mythos_5'])) {
+      return const CacheThresholdInfo.fixed(512);
+    }
+    if (m.contains('mythos') && m.contains('preview')) {
+      // Anthropic 直接路由是 2048；Bedrock 為 4096。OpenRouter 可以
+      // 在多個上游間路由，所以使用能覆蓋所有路由的安全值。
+      if (p == 'bedrock' || p == 'aws_bedrock' || p == 'openrouter') {
+        return const CacheThresholdInfo.routeDependent(4096);
       }
-      return 1024;
+      return const CacheThresholdInfo.fixed(2048);
+    }
+    if (m.contains('opus')) {
+      if (_containsVersion(m, '5', '1') || _containsMajorVersion(m, '5')) {
+        return const CacheThresholdInfo.fixed(512);
+      }
+      if (_containsVersion(m, '4', '8')) {
+        return const CacheThresholdInfo.fixed(1024);
+      }
+      if (_containsVersion(m, '4', '7')) {
+        if (p == 'bedrock' || p == 'aws_bedrock' || p == 'openrouter') {
+          return const CacheThresholdInfo.routeDependent(4096);
+        }
+        return const CacheThresholdInfo.fixed(2048);
+      }
+      if (_containsVersion(m, '4', '5') || _containsVersion(m, '4', '6')) {
+        return const CacheThresholdInfo.fixed(4096);
+      }
+      return const CacheThresholdInfo.fixed(1024);
     }
     if (m.contains('haiku')) {
-      if (_containsVersion(m, '4', '5') || m.contains('haiku-4')) return 4096;
-      if (_containsVersion(m, '3', '5') || m.contains('haiku-3')) return 2048;
-      return 1024;
+      if (_containsVersion(m, '4', '5') || m.contains('haiku-4')) {
+        return const CacheThresholdInfo.fixed(4096);
+      }
+      if (_containsVersion(m, '3', '5') || m.contains('haiku-3')) {
+        return const CacheThresholdInfo.fixed(2048);
+      }
+      return const CacheThresholdInfo.routeDependent();
     }
-    if (m.contains('claude') || m.contains('sonnet')) return 1024;
+    if (m.contains('sonnet')) return const CacheThresholdInfo.fixed(1024);
+    if (m.contains('claude')) {
+      return const CacheThresholdInfo.routeDependent();
+    }
 
-    // ── 其他模型 ──
-    return 1024;
+    // OpenAI 在 OpenRouter 的已接入路線最低為 1024。自訂中轉
+    // 不保證是 OpenAI 原生後端，所以不宣稱固定門檻。
+    if (_isOpenAiModel(m)) {
+      if (p == 'openrouter') return const CacheThresholdInfo.fixed(1024);
+      return const CacheThresholdInfo.routeDependent();
+    }
+
+    // Grok 與 Moonshot/Kimi 在 OpenRouter 是自動緩存，官方沒有公布
+    // 固定最低 token 數。
+    if (_containsAny(m, ['grok', 'x-ai', 'xai/', 'moonshot', 'kimi'])) {
+      return const CacheThresholdInfo.automaticWithoutPublishedMinimum();
+    }
+
+    // Qwen 原生來源的門檻是 1024；OpenRouter 的 Alibaba 明確緩存
+    // 還取決於路由與模型是否支援 cache_control。
+    if (m.contains('qwen')) {
+      if (p == 'openrouter') {
+        return const CacheThresholdInfo.routeDependent(1024);
+      }
+      return const CacheThresholdInfo.routeDependent();
+    }
+
+    return const CacheThresholdInfo.routeDependent();
+  }
+
+  static String localizedCacheThresholdLabel(CacheThresholdInfo info) {
+    final minimum = info.minimumTokens;
+    switch (info.kind) {
+      case CacheThresholdKind.fixed:
+        return L.pick(
+          en: 'cache min $minimum',
+          zhTW: '緩存門檻 $minimum',
+          zhCN: '缓存门槛 $minimum',
+        );
+      case CacheThresholdKind.routeDependent:
+        if (minimum != null) {
+          return L.pick(
+            en: 'route-safe cache min $minimum',
+            zhTW: '路由安全緩存門檻 $minimum',
+            zhCN: '路由安全缓存门槛 $minimum',
+          );
+        }
+        return L.pick(
+          en: 'cache minimum depends on route',
+          zhTW: '緩存門檻依實際路由而定',
+          zhCN: '缓存门槛依实际路由而定',
+        );
+      case CacheThresholdKind.automaticWithoutPublishedMinimum:
+        return L.pick(
+          en: 'automatic cache · no published fixed minimum',
+          zhTW: '自動緩存 · 官方未公布固定門檻',
+          zhCN: '自动缓存 · 官方未公布固定门槛',
+        );
+      case CacheThresholdKind.unavailable:
+        return L.pick(
+          en: 'no verifiable provider-cache threshold',
+          zhTW: '沒有可驗證的 provider 緩存門檻',
+          zhCN: '没有可验证的 provider 缓存门槛',
+        );
+    }
   }
 
   // ═══════════════════════════════════════════════════════
@@ -192,6 +352,17 @@ class TokenEstimator {
     final version = RegExp('(?:^|[^0-9])$major[-._]?$minor(?:[^0-9]|\$)');
     return version.hasMatch(text);
   }
+
+  static bool _containsMajorVersion(String text, String major) {
+    final version = RegExp('(?:^|[^0-9])$major(?:[^0-9]|\$)');
+    return version.hasMatch(text);
+  }
+
+  static bool _isOpenAiModel(String model) =>
+      model.contains('openai/') ||
+      model.contains('chatgpt') ||
+      RegExp(r'(?:^|[/_-])gpt[-._]').hasMatch(model) ||
+      RegExp(r'(?:^|[/_-])o[134](?:[-._]|$)').hasMatch(model);
 
   /// 用戶檔案 prompt（與 chat_screen._buildUserProfilePrompt 同構，
   /// 可用 override 參數帶入編輯中的即時值）

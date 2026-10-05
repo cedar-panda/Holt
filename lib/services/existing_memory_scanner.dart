@@ -2,6 +2,8 @@ import 'dart:math';
 
 import '../memory/database.dart';
 import '../models/memory.dart';
+import '../models/memory_action_proposal.dart';
+import '../models/context_mode.dart';
 import 'memory_duplicate_detector.dart';
 import 'memory_guard_service.dart';
 
@@ -10,12 +12,38 @@ class ExistingMemoryScanResult {
   final int suggestedRelations;
   final int duplicateProposals;
   final int conflictRelations;
+  final int mergedGroups;
+  final int updatedLinks;
+  final int unchangedLinks;
+  final int protectedLinks;
+  final List<ExistingMemoryRelationReport> relations;
 
   const ExistingMemoryScanResult({
     required this.comparedPairs,
     required this.suggestedRelations,
     required this.duplicateProposals,
     required this.conflictRelations,
+    this.mergedGroups = 0,
+    this.updatedLinks = 0,
+    this.unchangedLinks = 0,
+    this.protectedLinks = 0,
+    this.relations = const <ExistingMemoryRelationReport>[],
+  });
+}
+
+class ExistingMemoryRelationReport {
+  final int firstId;
+  final int secondId;
+  final String type;
+  final double strength;
+  final String reason;
+
+  const ExistingMemoryRelationReport({
+    required this.firstId,
+    required this.secondId,
+    required this.type,
+    required this.strength,
+    this.reason = '',
   });
 }
 
@@ -40,14 +68,16 @@ class _RelationCandidate {
 
 /// Zero-token scanner for memories already stored on the device.
 ///
-/// It only creates suggested graph relations and review proposals. It never
-/// archives, merges, or rewrites a memory automatically.
+/// Background/default use only creates review suggestions. A user-triggered
+/// selected-memory pass may opt into immediate links and duplicate merges;
+/// permanent memories still remain protected behind review.
 class ExistingMemoryScanner {
   static const int maxSuggestionsPerRun = 10000;
 
   static Future<ExistingMemoryScanResult> scan({
     required String characterId,
     required List<Memory> memories,
+    bool applyImmediately = false,
   }) async {
     final unique = <int, Memory>{
       for (final memory in memories)
@@ -70,12 +100,13 @@ class ExistingMemoryScanner {
       characterId,
       includeRejected: true,
     );
-    final decidedPairs = <String>{
+    final decidedRelations = <String>{
       for (final link in priorLinks)
         if (link['status'] == 'confirmed' || link['status'] == 'rejected')
-          _pairKey(
+          _relationKey(
             (link['memory_id_1'] as num?)?.toInt(),
             (link['memory_id_2'] as num?)?.toInt(),
+            link['relation_type']?.toString() ?? 'related',
           ),
     }..remove('');
 
@@ -89,14 +120,24 @@ class ExistingMemoryScanner {
         rightIndex++
       ) {
         final second = rows[rightIndex];
-        if (first.mode != second.mode ||
-            decidedPairs.contains(_pairKey(first.id, second.id))) {
+        if (first.contextMode != second.contextMode ||
+            first.continuityId != second.continuityId ||
+            first.mode != second.mode) {
           continue;
         }
         compared++;
         final match = MemoryDuplicateDetector.compare(first, second);
         final type = _relationType(match);
         if (type == null) continue;
+        if (first.contextMode == ContextMode.rp &&
+            type != 'duplicate_candidate') {
+          continue;
+        }
+        if (decidedRelations.contains(
+          _relationKey(first.id, second.id, type),
+        )) {
+          continue;
+        }
         candidates.add(
           _RelationCandidate(
             first: first,
@@ -123,23 +164,37 @@ class ExistingMemoryScanner {
 
     var inserted = 0;
     var proposals = 0;
+    var mergedGroups = 0;
     var conflicts = 0;
+    var updated = 0;
+    var unchanged = 0;
+    var protected = 0;
     for (final candidate in selected.where(
       (candidate) => !candidate.isDuplicate,
     )) {
-      final saved = await DatabaseHelper.upsertSpiderWebRelation(
+      final writeResult = await DatabaseHelper.upsertSpiderWebRelationDetailed(
         characterId,
         candidate.first.id!,
         candidate.second.id!,
         relationType: candidate.type,
         strength: candidate.strength,
-        status: 'suggested',
-        source: 'local_scan',
+        status: applyImmediately ? 'confirmed' : 'suggested',
+        source: applyImmediately ? 'user_curation' : 'local_scan',
         reason: candidate.match.reasons.join(','),
       );
-      if (!saved) continue;
-      inserted++;
-      if (candidate.isConflict) conflicts++;
+      switch (writeResult) {
+        case SpiderWebRelationWriteResult.inserted:
+          inserted++;
+          if (candidate.isConflict) conflicts++;
+        case SpiderWebRelationWriteResult.updated:
+          updated++;
+        case SpiderWebRelationWriteResult.unchanged:
+          unchanged++;
+        case SpiderWebRelationWriteResult.protected:
+          protected++;
+        case SpiderWebRelationWriteResult.invalid:
+          break;
+      }
     }
 
     final duplicateCandidates = selected
@@ -188,19 +243,44 @@ class ExistingMemoryScanner {
         reasons: reasons,
       );
       if (proposalId == null) continue;
-      proposals++;
+      var merged = false;
+      if (applyImmediately &&
+          !groupMemories.any((memory) => memory.isPermanent)) {
+        merged =
+            await MemoryGuardService.execute(proposalId, characterId) ==
+            MemoryActionProposal.statusCompleted;
+      }
+      if (merged) {
+        mergedGroups++;
+      } else {
+        proposals++;
+      }
+      if (merged) continue;
       for (final candidate in groupCandidates) {
-        final saved = await DatabaseHelper.upsertSpiderWebRelation(
-          characterId,
-          candidate.first.id!,
-          candidate.second.id!,
-          relationType: candidate.type,
-          strength: candidate.strength,
-          status: 'suggested',
-          source: 'local_scan',
-          reason: candidate.match.reasons.join(','),
-        );
-        if (saved) inserted++;
+        if (candidate.first.contextMode == ContextMode.rp) continue;
+        final writeResult =
+            await DatabaseHelper.upsertSpiderWebRelationDetailed(
+              characterId,
+              candidate.first.id!,
+              candidate.second.id!,
+              relationType: candidate.type,
+              strength: candidate.strength,
+              status: 'suggested',
+              source: 'local_scan',
+              reason: candidate.match.reasons.join(','),
+            );
+        switch (writeResult) {
+          case SpiderWebRelationWriteResult.inserted:
+            inserted++;
+          case SpiderWebRelationWriteResult.updated:
+            updated++;
+          case SpiderWebRelationWriteResult.unchanged:
+            unchanged++;
+          case SpiderWebRelationWriteResult.protected:
+            protected++;
+          case SpiderWebRelationWriteResult.invalid:
+            break;
+        }
       }
     }
 
@@ -209,6 +289,20 @@ class ExistingMemoryScanner {
       suggestedRelations: inserted,
       duplicateProposals: proposals,
       conflictRelations: conflicts,
+      mergedGroups: mergedGroups,
+      updatedLinks: updated,
+      unchangedLinks: unchanged,
+      protectedLinks: protected,
+      relations: <ExistingMemoryRelationReport>[
+        for (final candidate in selected)
+          ExistingMemoryRelationReport(
+            firstId: candidate.first.id!,
+            secondId: candidate.second.id!,
+            type: candidate.type,
+            strength: candidate.strength,
+            reason: candidate.match.reasons.join(','),
+          ),
+      ],
     );
   }
 
@@ -250,8 +344,9 @@ class ExistingMemoryScanner {
     _ => 1,
   };
 
-  static String _pairKey(int? first, int? second) {
+  static String _relationKey(int? first, int? second, String type) {
     if (first == null || second == null || first == second) return '';
-    return first < second ? '$first:$second' : '$second:$first';
+    final pair = first < second ? '$first:$second' : '$second:$first';
+    return '$pair:$type';
   }
 }

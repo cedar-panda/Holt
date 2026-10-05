@@ -81,6 +81,7 @@ class SpiderWebGraphView extends StatefulWidget {
   final List<List<Map<String, dynamic>>> memoryGroups;
   final List<bool> smallWebGroups;
   final List<Map<String, dynamic>> links;
+  final Set<String> activeDateKeys;
   final Map<int, SpiderWebNodePosition> savedPositions;
   final double viewportRightInset;
   final int externalLinkCount;
@@ -103,6 +104,7 @@ class SpiderWebGraphView extends StatefulWidget {
     this.memoryGroups = const [],
     this.smallWebGroups = const [],
     required this.links,
+    this.activeDateKeys = const <String>{},
     this.savedPositions = const {},
     this.viewportRightInset = 0,
     this.externalLinkCount = 0,
@@ -554,7 +556,11 @@ class _SpiderWebGraphViewState extends State<SpiderWebGraphView>
         : createdAt;
 
     try {
-      return SpiderWebCore.calculateClarity(refTime, category: category);
+      return SpiderWebCore.calculateClarity(
+        refTime,
+        category: category,
+        activeDateKeys: widget.activeDateKeys,
+      );
     } catch (_) {
       return 1.0;
     }

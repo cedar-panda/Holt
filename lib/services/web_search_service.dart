@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 import '../models/web_search_trace.dart';
+import 'openai_compatible_service.dart';
 import 'settings/api_settings.dart';
 import 'settings/web_search_settings.dart';
 import 'tool_runner.dart';
@@ -916,6 +917,9 @@ class ApiSettingsWebSearchConfigurationSource
       WebSearchSettings.getRelayEndpoint(),
       WebSearchSettings.getRelayApiKey(),
       WebSearchSettings.getRelayModel(),
+      ApiSettings.getOaiCompatBaseUrl(),
+      ApiSettings.getOaiCompatApiKey(),
+      ApiSettings.getOaiCompatModel(),
     ]);
     final xaiModelFallback = await ApiSettings.getXaiModel();
     final savedOrSearchModel = values[4].trim();
@@ -926,6 +930,15 @@ class ApiSettingsWebSearchConfigurationSource
         ? ''
         : savedOrSearchModel;
     final geminiSearchModel = values[5].trim();
+    final hasExplicitRelay =
+        values[8].trim().isNotEmpty ||
+        values[9].trim().isNotEmpty ||
+        values[10].trim().isNotEmpty;
+    final relayEndpoint = hasExplicitRelay
+        ? values[8].trim()
+        : _compatibleRelayEndpoint(values[11]);
+    final relayApiKey = hasExplicitRelay ? values[9] : values[12];
+    final relayModel = hasExplicitRelay ? values[10].trim() : values[13].trim();
     return WebSearchConfiguration(
       currentChatProvider: values[0],
       providers: <WebSearchProviderConfig>[
@@ -954,9 +967,9 @@ class ApiSettingsWebSearchConfigurationSource
         ),
         WebSearchProviderConfig(
           id: WebSearchProviderId.relay,
-          apiKey: values[9],
-          model: values[10].trim(),
-          endpoint: values[8].trim(),
+          apiKey: relayApiKey,
+          model: relayModel,
+          endpoint: relayEndpoint,
         ),
       ],
     );
@@ -1287,6 +1300,7 @@ class HybridWebSearchService {
       'gemini' => WebSearchProviderId.gemini,
       'openrouter' => WebSearchProviderId.openRouter,
       'xai' => WebSearchProviderId.xai,
+      'openai_compatible' => WebSearchProviderId.relay,
       _ => null,
     };
     if (current != null && available[current] != null) {
@@ -1803,7 +1817,13 @@ WebSearchProviderException _httpFailure(
   if (statusCode == 401 || statusCode == 403) {
     return WebSearchProviderException(
       code: WebSearchFailureCode.authentication,
-      safeMessage: '$label rejected the configured API key.',
+      safeMessage: provider == WebSearchProviderId.relay
+          ? OpenAICompatibleService.httpErrorMessage(
+              statusCode,
+              responseBody,
+              operation: '$label request failed',
+            )
+          : '$label rejected the configured API key.',
       statusCode: statusCode,
     );
   }
@@ -2695,8 +2715,16 @@ String _providerLabel(WebSearchProviderId provider) => switch (provider) {
   WebSearchProviderId.openRouter => 'OpenRouter',
   WebSearchProviderId.gemini => 'Gemini',
   WebSearchProviderId.xai => 'Grok / xAI',
-  WebSearchProviderId.relay => 'Search relay',
+  WebSearchProviderId.relay => 'API relay',
 };
+
+String _compatibleRelayEndpoint(String baseUrl) {
+  try {
+    return OpenAICompatibleService.completionsUriForBase(baseUrl).toString();
+  } catch (_) {
+    return '';
+  }
+}
 
 bool _isValidRelayEndpoint(String value) {
   final uri = Uri.tryParse(value.trim());

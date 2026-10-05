@@ -1,10 +1,15 @@
+import 'dart:async';
 import 'dart:convert';
 
+import 'package:sqflite/sqflite.dart';
+
 import '../memory/database.dart';
+import '../models/context_mode.dart';
 import '../utils/text_safety.dart';
 import 'api_adapter.dart';
 import 'character_signature_prompt.dart';
 import 'settings/api_settings.dart';
+import 'settings/character_signature_settings.dart';
 import 'token_tracker.dart';
 
 /// 在聊天請求之外生成角色簽名，成功後只寫入本地角色資料。
@@ -12,6 +17,242 @@ abstract final class CharacterSignatureService {
   static final Map<String, int> _latestRequestByCharacter = <String, int>{};
   static final Map<String, Future<String?>> _latestOperationByCharacter =
       <String, Future<String?>>{};
+  static final Map<String, Future<String?>> _windowOperations =
+      <String, Future<String?>>{};
+
+  static const String openingPhase = 'opening';
+  static const String closingPhase = 'closing';
+
+  /// A window may generate at most one opening and one closing signature.
+  /// The existence check happens before building an adapter, so repeated chat
+  /// turns do not create hidden provider requests.
+  static Future<String?> generateForWindow({
+    required String characterId,
+    required String conversationId,
+    required String phase,
+    required ContextMode contextMode,
+    required String continuityId,
+    required String latestUserMessage,
+    required String latestAssistantReply,
+    required String model,
+    required String provider,
+    ApiAdapter? adapterOverride,
+  }) async {
+    if (phase != openingPhase && phase != closingPhase) {
+      throw ArgumentError.value(phase, 'phase');
+    }
+    if (!await CharacterSignatureSettings.isEnabled()) return null;
+    final key = '${conversationId.trim()}::$phase';
+    final running = _windowOperations[key];
+    if (running != null) return running;
+    final operation = _generateForWindow(
+      characterId: characterId,
+      conversationId: conversationId,
+      phase: phase,
+      contextMode: contextMode,
+      continuityId: continuityId,
+      latestUserMessage: latestUserMessage,
+      latestAssistantReply: latestAssistantReply,
+      model: model,
+      provider: provider,
+      adapterOverride: adapterOverride,
+    );
+    _windowOperations[key] = operation;
+    _latestOperationByCharacter[characterId] = operation;
+    unawaited(
+      operation.then<void>(
+        (_) {
+          if (identical(_windowOperations[key], operation)) {
+            _windowOperations.remove(key);
+          }
+        },
+        onError: (Object _, StackTrace _) {
+          if (identical(_windowOperations[key], operation)) {
+            _windowOperations.remove(key);
+          }
+        },
+      ),
+    );
+    return operation;
+  }
+
+  static Future<String?> _generateForWindow({
+    required String characterId,
+    required String conversationId,
+    required String phase,
+    required ContextMode contextMode,
+    required String continuityId,
+    required String latestUserMessage,
+    required String latestAssistantReply,
+    required String model,
+    required String provider,
+    ApiAdapter? adapterOverride,
+  }) async {
+    final db = await DatabaseHelper.database;
+    final existing = await db.query(
+      'character_signatures',
+      columns: const <String>['signature'],
+      where: 'conversation_id = ? AND phase = ?',
+      whereArgs: <Object?>[conversationId, phase],
+      limit: 1,
+    );
+    if (existing.isNotEmpty) return existing.first['signature']?.toString();
+    if (latestAssistantReply.trim().isEmpty) return null;
+
+    final signature = await _generateSignature(
+      characterId: characterId,
+      latestUserMessage: latestUserMessage,
+      latestAssistantReply: latestAssistantReply,
+      model: model,
+      provider: provider,
+      adapterOverride: adapterOverride,
+    );
+    if (signature == null || signature.isEmpty) return null;
+
+    final now = DateTime.now().toIso8601String();
+    await db.transaction((txn) async {
+      await txn.insert('character_signatures', <String, Object?>{
+        'character_id': characterId,
+        'conversation_id': conversationId,
+        'context_mode': contextMode.storageValue,
+        'continuity_id': continuityId.trim().isEmpty ? 'main' : continuityId,
+        'phase': phase,
+        'signature': signature,
+        'is_selected': 0,
+        'created_at': now,
+        'updated_at': now,
+      }, conflictAlgorithm: ConflictAlgorithm.ignore);
+      final selected = await txn.query(
+        'character_signatures',
+        columns: const <String>['id'],
+        where: 'character_id = ? AND is_selected = 1',
+        whereArgs: <Object?>[characterId],
+        limit: 1,
+      );
+      if (selected.isEmpty) {
+        await txn.update(
+          'characters',
+          <String, Object?>{'signature': signature},
+          where: 'id = ?',
+          whereArgs: <Object?>[characterId],
+        );
+      }
+    });
+    return signature;
+  }
+
+  static Future<List<Map<String, dynamic>>> historyForCharacter(
+    String characterId,
+  ) async {
+    final db = await DatabaseHelper.database;
+    final rows = await db.rawQuery(
+      '''SELECT s.*, c.title AS conversation_title,
+                CASE WHEN s.is_selected = 1 OR (
+                  NOT EXISTS (
+                    SELECT 1
+                    FROM character_signatures AS pinned
+                    WHERE pinned.character_id = s.character_id
+                      AND pinned.is_selected = 1
+                  )
+                  AND s.id = (
+                    SELECT latest.id
+                    FROM character_signatures AS latest
+                    WHERE latest.character_id = s.character_id
+                    ORDER BY latest.created_at DESC, latest.id DESC
+                    LIMIT 1
+                  )
+                ) THEN 1 ELSE 0 END AS is_displayed
+         FROM character_signatures AS s
+         LEFT JOIN conversations AS c ON c.id = s.conversation_id
+         WHERE s.character_id = ?
+         ORDER BY s.created_at DESC, s.id DESC''',
+      <Object?>[characterId],
+    );
+    return rows;
+  }
+
+  /// Selects an existing history entry as the signature shown on character
+  /// cards. The ownership check rejects stale or cross-character selections.
+  static Future<String> selectDisplayedSignature({
+    required String characterId,
+    required int signatureId,
+  }) async {
+    final db = await DatabaseHelper.database;
+    return db.transaction((txn) async {
+      final rows = await txn.query(
+        'character_signatures',
+        columns: const <String>['signature'],
+        where: 'id = ? AND character_id = ?',
+        whereArgs: <Object?>[signatureId, characterId],
+        limit: 1,
+      );
+      if (rows.isEmpty) {
+        throw StateError('Character signature history entry was not found');
+      }
+      final signature = normalizeResponse(
+        rows.single['signature']?.toString() ?? '',
+      );
+      if (signature.isEmpty) {
+        throw const FormatException('Character signature is empty');
+      }
+      await txn.update(
+        'character_signatures',
+        const <String, Object?>{'is_selected': 0},
+        where: 'character_id = ?',
+        whereArgs: <Object?>[characterId],
+      );
+      await txn.update(
+        'character_signatures',
+        const <String, Object?>{'is_selected': 1},
+        where: 'id = ? AND character_id = ?',
+        whereArgs: <Object?>[signatureId, characterId],
+      );
+      await txn.update(
+        'characters',
+        <String, Object?>{'signature': signature},
+        where: 'id = ?',
+        whereArgs: <Object?>[characterId],
+      );
+      return signature;
+    });
+  }
+
+  /// Clears a manual selection and resumes showing the newest signature.
+  static Future<String> followLatestSignature(String characterId) async {
+    final db = await DatabaseHelper.database;
+    return db.transaction((txn) async {
+      final latest = await txn.query(
+        'character_signatures',
+        columns: const <String>['signature'],
+        where: 'character_id = ?',
+        whereArgs: <Object?>[characterId],
+        orderBy: 'created_at DESC, id DESC',
+        limit: 1,
+      );
+      if (latest.isEmpty) {
+        throw StateError('Character signature history is empty');
+      }
+      final signature = normalizeResponse(
+        latest.single['signature']?.toString() ?? '',
+      );
+      if (signature.isEmpty) {
+        throw const FormatException('Character signature is empty');
+      }
+      await txn.update(
+        'character_signatures',
+        const <String, Object?>{'is_selected': 0},
+        where: 'character_id = ?',
+        whereArgs: <Object?>[characterId],
+      );
+      await txn.update(
+        'characters',
+        <String, Object?>{'signature': signature},
+        where: 'id = ?',
+        whereArgs: <Object?>[characterId],
+      );
+      return signature;
+    });
+  }
 
   static Future<String?> generateAndSave({
     required String characterId,
@@ -21,14 +262,23 @@ abstract final class CharacterSignatureService {
     required String provider,
     ApiAdapter? adapterOverride,
   }) {
-    final operation = _generateAndSave(
-      characterId: characterId,
-      latestUserMessage: latestUserMessage,
-      latestAssistantReply: latestAssistantReply,
-      model: model,
-      provider: provider,
-      adapterOverride: adapterOverride,
-    );
+    final operation =
+        _generateSignature(
+          characterId: characterId,
+          latestUserMessage: latestUserMessage,
+          latestAssistantReply: latestAssistantReply,
+          model: model,
+          provider: provider,
+          adapterOverride: adapterOverride,
+        ).then((signature) async {
+          if (signature != null && signature.isNotEmpty) {
+            await DatabaseHelper.updateCharacterSignature(
+              characterId,
+              signature,
+            );
+          }
+          return signature;
+        });
     _latestOperationByCharacter[characterId] = operation;
     return operation;
   }
@@ -44,7 +294,7 @@ abstract final class CharacterSignatureService {
     }
   }
 
-  static Future<String?> _generateAndSave({
+  static Future<String?> _generateSignature({
     required String characterId,
     required String latestUserMessage,
     required String latestAssistantReply,
@@ -67,6 +317,7 @@ abstract final class CharacterSignatureService {
         await ApiSettings.buildAdapter(
           overrideModel: model,
           overrideProvider: provider,
+          thinkingEnabledOverride: false,
         );
     ApiUsage? usage;
     final response = await adapter.sendMessage(
@@ -85,21 +336,23 @@ abstract final class CharacterSignatureService {
       onUsage: (value) => usage = value,
     );
 
-    if (usage != null) {
-      await TokenTracker().recordRealUsage(
-        provider: provider,
-        model: model,
-        usage: usage!,
-        characterId: characterId,
-      );
-    }
+    await TokenTracker().recordRealUsage(
+      provider: provider,
+      model: model,
+      usage: usage ?? const ApiUsage(),
+      characterId: characterId,
+      requestKind: ApiRequestKind.signature,
+    );
 
-    final signature = normalizeResponse(response);
+    final finalOnly = ThinkingModePolicy.sanitizeVisibleReply(
+      response,
+      enabled: false,
+    );
+    final signature = normalizeResponse(finalOnly);
     if (signature.isEmpty ||
         _latestRequestByCharacter[characterId] != requestSerial) {
       return null;
     }
-    await DatabaseHelper.updateCharacterSignature(characterId, signature);
     return signature;
   }
 
@@ -123,13 +376,21 @@ abstract final class CharacterSignatureService {
   }
 
   static String normalizeResponse(String raw) {
-    var value = raw.trim();
+    var value = ThinkingModePolicy.sanitizeVisibleReply(
+      raw,
+      enabled: false,
+    ).trim();
     if (value.startsWith('```')) {
       value = value.replaceFirst(RegExp(r'^```[^\n]*\n?'), '');
       value = value.replaceFirst(RegExp(r'\n?```$'), '').trim();
     }
+    value = _extractFinalOnlySignature(value);
+    if (value.isEmpty) return '';
     value = value.replaceFirst(
-      RegExp(r'^(?:signature|個性簽名|个性签名)\s*[:：]\s*', caseSensitive: false),
+      RegExp(
+        r'^(?:\[?final(?: answer)?\]?|signature|個性簽名|个性签名)\s*[:：]?\s*',
+        caseSensitive: false,
+      ),
       '',
     );
     if (value.length >= 2) {
@@ -155,5 +416,20 @@ abstract final class CharacterSignatureService {
       value,
       CharacterSignaturePrompt.maxCharacters,
     ).trim();
+  }
+
+  static String _extractFinalOnlySignature(String value) {
+    final reasoningMarker = RegExp(
+      r'(?:^|\n)\s*(?:\[/?(?:analysis|thinking|reasoning)\]|</?(?:analysis|thinking|reasoning)\b[^>]*>|(?:analysis|thinking|reasoning)\s*[:：])',
+      caseSensitive: false,
+      multiLine: true,
+    );
+    if (!reasoningMarker.hasMatch(value)) return value;
+    final finalMarker = RegExp(
+      r'(?:^|\n)\s*(?:\[?final(?: answer)?\]?|signature|個性簽名|个性签名)\s*[:：]\s*([\s\S]+)$',
+      caseSensitive: false,
+      multiLine: true,
+    ).firstMatch(value);
+    return finalMarker?.group(1)?.trim() ?? '';
   }
 }

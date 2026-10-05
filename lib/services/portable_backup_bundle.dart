@@ -36,6 +36,7 @@ class PortableBackupBundle {
 
   static const Map<String, String> _tablePathColumns = {
     'characters': 'avatar_path',
+    'user_personas': 'avatar_path',
     'messages': 'image_path',
     'shop_items': 'image_path',
     'stickers': 'file_path',
@@ -355,6 +356,26 @@ class PortableBackupBundle {
           validRows.add(rawRow);
           continue;
         }
+        if (entry.key == 'messages') {
+          final sourcePaths = _decodeImagePaths(rawRow['image_paths_json']);
+          final portablePaths = <String>[];
+          for (final sourcePath in sourcePaths) {
+            final portable = await stagePath(sourcePath);
+            if (portable != null && !portablePaths.contains(portable)) {
+              portablePaths.add(portable);
+            }
+          }
+          if (portablePaths.isEmpty) {
+            final legacyPortable = await stagePath(rawRow[entry.value]);
+            if (legacyPortable != null) portablePaths.add(legacyPortable);
+          }
+          rawRow['image_paths_json'] = jsonEncode(portablePaths);
+          rawRow[entry.value] = portablePaths.isEmpty
+              ? null
+              : portablePaths.first;
+          validRows.add(rawRow);
+          continue;
+        }
         final portable = await stagePath(rawRow[entry.value]);
         if (portable == null &&
             (entry.key == 'stickers' || entry.key == 'saved_voices')) {
@@ -397,6 +418,26 @@ class PortableBackupBundle {
       if (rows is! List) continue;
       for (final rawRow in rows) {
         if (rawRow is! Map) continue;
+        if (entry.key == 'messages') {
+          final portablePaths = _decodeImagePaths(rawRow['image_paths_json']);
+          final resolvedPaths = <String>[];
+          for (final portablePath in portablePaths) {
+            final resolved = resolve(portablePath, emptyString: false);
+            if (resolved != null) resolvedPaths.add(resolved);
+          }
+          if (resolvedPaths.isEmpty) {
+            final legacyResolved = resolve(
+              rawRow[entry.value],
+              emptyString: false,
+            );
+            if (legacyResolved != null) resolvedPaths.add(legacyResolved);
+          }
+          rawRow['image_paths_json'] = jsonEncode(resolvedPaths);
+          rawRow[entry.value] = resolvedPaths.isEmpty
+              ? null
+              : resolvedPaths.first;
+          continue;
+        }
         rawRow[entry.value] = resolve(
           rawRow[entry.value],
           emptyString: _emptyStringPathTables.contains(entry.key),
@@ -431,6 +472,25 @@ class PortableBackupBundle {
   static Map<String, dynamic> _deepCopy(Map<String, Object?> source) {
     final decoded = jsonDecode(jsonEncode(source));
     return Map<String, dynamic>.from(decoded as Map);
+  }
+
+  static List<String> _decodeImagePaths(Object? raw) {
+    Object? decoded = raw;
+    if (raw is String && raw.trim().isNotEmpty) {
+      try {
+        decoded = jsonDecode(raw);
+      } catch (_) {
+        decoded = const <Object?>[];
+      }
+    }
+    if (decoded is! List) return const <String>[];
+    final paths = <String>[];
+    for (final value in decoded) {
+      if (value is! String || value.trim().isEmpty) continue;
+      final path = value.trim();
+      if (!paths.contains(path)) paths.add(path);
+    }
+    return paths;
   }
 
   static bool _isSafeEntryName(String name) {

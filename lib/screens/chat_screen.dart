@@ -1,6 +1,9 @@
 import 'dart:async';
+import 'dart:collection';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
+import 'dart:ui' show ImageFilter;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
@@ -13,9 +16,14 @@ import '../widgets/gradient_background.dart';
 import '../widgets/starfield_painter.dart';
 import '../widgets/neural_field.dart';
 import '../widgets/chat_bubble.dart';
+import '../widgets/chat_diagnostic_card.dart';
 import '../widgets/input_bar.dart';
+import '../widgets/scroll_edge_fade.dart';
+import '../widgets/image_card_stack.dart';
 import '../widgets/atom_thinking.dart';
 import '../services/api_adapter.dart';
+import '../services/api_error_localizer.dart';
+import '../services/stream_presentation_policy.dart';
 import '../services/settings_manager.dart';
 import '../services/token_estimator.dart';
 import '../services/deferred_prompt.dart';
@@ -29,6 +37,7 @@ import '../services/image_gen_service.dart';
 import '../memory/emotion_coordinates.dart';
 import '../services/token_tracker.dart';
 import '../services/context_compressor.dart';
+import '../services/context_summary_repair_service.dart';
 import '../services/sticker_service.dart';
 import '../services/image_service.dart';
 import '../memory/database.dart';
@@ -52,18 +61,30 @@ import '../services/email_draft_tool.dart';
 import '../services/x_post_service.dart';
 import '../services/x_post_settings.dart';
 import '../services/character_timeline_service.dart';
+import '../services/character_diary_service.dart';
+import '../services/rp_character_timeline_service.dart';
+import '../services/rp_story_service.dart';
+import '../services/rp_story_state_service.dart';
+import '../services/rp_worldbook_service.dart';
+import '../services/rp_memory_service.dart';
 import '../services/whisper_service.dart';
 import '../memory/spider_web_core.dart';
 import '../services/spider_web_service.dart';
 import '../services/local_model_service.dart';
 import '../models/message.dart';
+import '../models/chat_diagnostic_event.dart';
 import '../models/memory_action_proposal.dart';
 import '../models/chat_session_identity.dart';
+import '../models/context_mode.dart';
+import '../models/background_preset.dart';
+import '../services/background_preset_service.dart';
+import '../services/background_foreground_service.dart';
 import '../services/keep_alive_foreground.dart';
 import '../services/keep_alive_service.dart';
 import '../services/manual_summary_service.dart';
 import '../services/scratch_service.dart';
 import '../services/transfer_service.dart';
+import '../services/tool_feature_settings.dart';
 import '../widgets/scratch_card.dart';
 import '../widgets/shop_backpack_sheets.dart';
 import '../widgets/sticker_preview_quality.dart';
@@ -74,11 +95,16 @@ import '../widgets/web_search_activity_card.dart';
 import '../widgets/web_search_result_card.dart';
 import '../widgets/web_search_thinking_node.dart';
 import '../widgets/email_draft_card.dart';
+import '../widgets/context_mode_pill.dart';
 import 'call_screen.dart';
 import 'manual_summary_clean_screen.dart';
+import 'rp_story_relationship_screen.dart';
+import 'rp_storyline_screen.dart';
+import 'rp_worldbook_screen.dart';
 import '../services/call_audio_pipeline.dart';
 import '../services/chat_long_screenshot_service.dart';
 import '../services/dream_curation_service.dart';
+import '../services/user_persona_service.dart';
 
 part 'chat_screen_generation.dart';
 part 'chat_screen_actions.dart';
@@ -126,9 +152,21 @@ ToolRunner _createChatToolRunner(WebSearchToolBridge webSearchToolBridge) {
         retryableOnTimeout: true,
         validateArguments: (arguments) {
           final query = arguments['query'];
-          return query is String && query.trim().isNotEmpty
-              ? null
-              : 'chat.search requires a non-empty query.';
+          if (query is! String || query.trim().isEmpty) {
+            return 'chat.search requires a non-empty query.';
+          }
+          final scope = arguments['scope'];
+          if (scope != null &&
+              (scope is! String ||
+                  !const <String>{
+                    'current',
+                    'daily',
+                    'rp',
+                    'all',
+                  }.contains(scope))) {
+            return 'chat.search scope must be current, daily, rp, or all.';
+          }
+          return null;
         },
         localHandler: (call, context, cancellationToken) async {
           final characterId = context.characterId?.trim() ?? '';
@@ -141,6 +179,10 @@ ToolRunner _createChatToolRunner(WebSearchToolBridge webSearchToolBridge) {
           final rows = await DatabaseHelper.searchMessages(
             keyword: (call.arguments['query']! as String).trim(),
             characterId: characterId,
+            scope: call.arguments['scope']?.toString() ?? 'current',
+            currentMode: ContextMode.fromStorage(
+              context.metadata['current_context_mode'],
+            ),
           );
           cancellationToken.throwIfCancelled();
           return rows;
@@ -207,6 +249,7 @@ class _ChatScreenState extends State<ChatScreen> {
   final GlobalKey _modelPickerAnchorKey = GlobalKey(
     debugLabel: 'chatModelPickerAnchor',
   );
+  final LayerLink _noticeAnchorLink = LayerLink();
 
   /// 渲染起點（_messages 索引）——渲染與發送解耦：
   /// 上下文照常發全窗（緩存前綴不斷），UI 每次只掛最近 50 條，
@@ -222,6 +265,13 @@ class _ChatScreenState extends State<ChatScreen> {
 
   /// 分支自動發送只觸發一次（_retryInitialization 重跑 bootstrap 不重發）
   bool _autoSendFired = false;
+  static const double _messageListBottomBreathingSpace = 18;
+  static const double _chatHeaderHeight = 52;
+
+  /// 讓透明的訊息視窗延伸到輸入框後方，避免訊息區在輸入框上緣形成
+  /// 一條可見的矩形裁切線。ListView 會補回相同高度的底部 padding，
+  /// 因此最後一條訊息與輸入框之間仍維持原本的 18px 呼吸距離。
+  static const double _composerViewportUnderlay = 74;
   final ScrollController _scrollController = ScrollController();
   final TextEditingController _inputController = TextEditingController();
   final TokenTracker _tokenTracker = TokenTracker();
@@ -239,16 +289,24 @@ class _ChatScreenState extends State<ChatScreen> {
   String _streamingText = '';
   String _currentModel = '';
   String _activeCharacterId = 'default';
+  BackgroundPreset? _boundBackgroundPreset;
+  Timer? _backgroundPresetRefreshTimer;
+  ChatBubblePalette? _boundChatPalette;
+  BackgroundForegroundPalette? _boundChatForeground;
+  ChatSessionIdentity? _sessionIdentity;
   int _tokensSinceSummary = 0; // token 計數觸發
   Future<int>? _compressionInFlight;
   bool _showScrollToBottom = false;
   bool _userScrolledUp = false; // 流式輸出時用戶手動上滾 → 暫停自動跟隨
   bool _userIsScrolling = false;
+  bool _streamScrollAnimating = false;
+  bool _streamScrollRequested = false;
+  Duration? _streamScrollFrameTime;
   bool _shouldAutoName = false;
   String _conversationTitle = '';
   String _characterName = '';
   String _composerHint = '';
-  String? _pendingImagePath;
+  final List<String> _pendingImagePaths = <String>[];
   StickerInfo? _pendingSticker;
   String? _pendingScratchGiftWho;
   bool _splitReply = false;
@@ -256,24 +314,50 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _sentMessageInThisSession = false;
   bool _showChatAvatar = false;
   String? _userAvatarPath;
+  UserPersona? _userPersona;
   String? _charAvatarPath;
   final Set<int> _cacheHitIndices = {};
   final Map<String, ScratchData> _scratchDataMap = {};
   final Map<String, TransferData> _transferDataMap = {};
   final Map<int, ({int total, int unread})> _pendingMemoryActionCounts = {};
   final Map<int, List<MemoryActionProposal>> _pendingMemoryProposals = {};
+  final List<ChatDiagnosticEvent> _chatDiagnostics = [];
+  final Map<int, int> _summaryRecordedSummaryIds = <int, int>{};
+  bool _summaryEditorVisible = false;
   bool _walletChanged = false;
   List<Map<String, String>>? _lastKeepAliveMessages;
   StructuredPrompt? _lastKeepAliveStructuredPrompt;
   ApiAdapter? _lastKeepAliveAdapter;
   String? _lastKeepAliveModel;
   String? _lastKeepAliveProvider;
+
+  ChatSessionIdentity get _requiredSessionIdentity =>
+      _sessionIdentity ??
+      (throw StateError(
+        'Conversation ${widget.conversationId} is not initialized',
+      ));
+  String get _userPersonaName => _userPersona?.displayName.trim() ?? '';
   int? _coinSnapshotChar;
   int? _coinSnapshotUser;
   String? _windowSummaryId;
+  Future<List<Message>>? _previousWindowTurnsFuture;
+  Future<List<RpChapterContinuationSource>>?
+  _rpChapterContinuationSourcesFuture;
+  bool _canContinuePreviousRpChapter = false;
+  bool _hasAnyRpWindow = false;
+  bool _rpStartChoiceResolved = false;
+  List<Map<String, Object?>> _rpStorylines = const <Map<String, Object?>>[];
+  String _rpContinuationSummaryPrompt = '';
+  String? _rpContinuationSourceConversationId;
+  String _rpContinuationSourceTitle = '';
+  List<Message> _rpContinuationDisplayMessages = <Message>[];
+  bool _rpContinuationSourceExpanded = false;
+  bool _rpContinuationSourceLoading = false;
+  bool _rpContinuationSourceHasMore = false;
+  int? _rpContinuationSourceAnchorMessageId;
+  int? _rpContinuationOldestLoadedMessageId;
   String? _cacheWindowSummaryStaticSnapshot;
   String? _promptLocaleSnapshot;
-  OverlayEntry? _modelHintOverlay;
   bool _manualSummarySelecting = false;
   bool _manualSummaryRunning = false;
   final Set<int> _manualSummarySelectedIds = {};
@@ -287,6 +371,8 @@ class _ChatScreenState extends State<ChatScreen> {
   List<Map<String, dynamic>> _chatSearchResults = [];
   int _generationSerial = 0;
   bool _generationThinkingEnabled = false;
+  bool? _activeRequestThinkingEnabled;
+  int? _activeRequestThinkingGeneration;
   ApiAdapter? _activeGenerationAdapter;
   final HybridWebSearchService _webSearchService =
       const HybridWebSearchService();
@@ -315,13 +401,13 @@ class _ChatScreenState extends State<ChatScreen> {
     caseSensitive: false,
   );
   static final _completedTagRe = RegExp(
-    r'<(emo|emo_resolve|memo|memo_del|memo_merge|memo_update|memo_link|force_recall|persona_note|draw|clock|clock_keep|clock_update|clock_del|life_fix|home|whisper|search_chat|search_web|call|scratch|transfer|transfer_accept|transfer_decline|x_post|pack_star|email_draft)\b[^>]*>'
+    r'<(emo|emo_resolve|memo|memo_del|memo_merge|memo_update|memo_link|force_recall|persona_note|draw|clock|clock_keep|clock_update|clock_del|life_fix|home|whisper|search_chat|search_web|call|scratch|transfer|transfer_accept|transfer_decline|x_post|pack_star|email_draft|holt_diary)\b[^>]*>'
     r'[\s\S]*?'
     r'</\1>',
     multiLine: true,
   );
   static final _openTagRe = RegExp(
-    r'<(emo|emo_resolve|memo|memo_del|memo_merge|memo_update|memo_link|force_recall|persona_note|draw|clock|clock_keep|clock_update|clock_del|life_fix|home|whisper|search_chat|search_web|call|scratch|transfer|transfer_accept|transfer_decline|buy|x_post|shop_view|pack_star|sign_marriage|propose_marriage|email_draft)\b[\s\S]*$',
+    r'<(emo|emo_resolve|memo|memo_del|memo_merge|memo_update|memo_link|force_recall|persona_note|draw|clock|clock_keep|clock_update|clock_del|life_fix|home|whisper|search_chat|search_web|call|scratch|transfer|transfer_accept|transfer_decline|buy|x_post|shop_view|pack_star|sign_marriage|propose_marriage|email_draft|holt_diary)\b[\s\S]*$',
   );
 
   static final _scratchTagRe = RegExp(
@@ -374,10 +460,13 @@ class _ChatScreenState extends State<ChatScreen> {
   static const _marriageCertCharTag = '[marriage_cert_char]';
 
   // ═══ 流式絲滑打字機佇列 ═══
-  final List<String> _streamCharQueue = [];
-  int _streamChunkCount = 0;
-  bool _streamTextUnlocked = false;
-  Timer? _streamPopTimer;
+  final ListQueue<String> _streamCharQueue = ListQueue<String>();
+  StreamPresentationMode _streamPresentationMode =
+      StreamPresentationMode.nativeBuffered;
+  Timer? _streamRevealDelayTimer;
+  Timer? _streamRevealTimer;
+  DateTime? _streamFirstChunkAt;
+  final ValueNotifier<int> _streamRevision = ValueNotifier<int>(0);
   Timer? _streamSurfaceDelayTimer;
   final Random _streamSurfaceRandom = Random();
   Timer? _generationForegroundStartTimer;
@@ -418,6 +507,38 @@ class _ChatScreenState extends State<ChatScreen> {
     // 若新窗口尚無真消息產生的 StructuredPrompt，保活只更新入口，不發 ping。
     unawaited(_initializeChat());
     _scrollController.addListener(_onScroll);
+    BackgroundPresetService.revision.addListener(
+      _handleBackgroundPresetChanged,
+    );
+  }
+
+  void _handleBackgroundPresetChanged() {
+    if (!mounted || _sessionIdentity == null) return;
+    _backgroundPresetRefreshTimer?.cancel();
+    _backgroundPresetRefreshTimer = Timer(
+      const Duration(milliseconds: 90),
+      () => unawaited(_reloadBoundBackgroundPreset()),
+    );
+  }
+
+  Future<void> _reloadBoundBackgroundPreset() async {
+    final characterId = _activeCharacterId;
+    final preset = await BackgroundPresetService.boundPresetForCharacter(
+      characterId,
+    );
+    final chatPath = preset?.chatPath.trim() ?? '';
+    final palette = chatPath.isEmpty
+        ? null
+        : await BackgroundForegroundService.resolveChatBubblePalette(chatPath);
+    final foreground = chatPath.isEmpty
+        ? null
+        : await BackgroundForegroundService.resolve(chatPath);
+    if (!mounted || characterId != _activeCharacterId) return;
+    setState(() {
+      _boundBackgroundPreset = preset;
+      _boundChatPalette = palette;
+      _boundChatForeground = foreground;
+    });
   }
 
   /// Resolve the conversation first, then initialize every character-scoped
@@ -425,28 +546,114 @@ class _ChatScreenState extends State<ChatScreen> {
   /// is intentionally never consulted here.
   Future<void> _initializeChat() async {
     try {
-      final conversation = await DatabaseHelper.getConversation(
+      await ToolFeatureSettings.load();
+      var conversation = await DatabaseHelper.getConversation(
         widget.conversationId,
       );
+      if (conversation != null) {
+        conversation = await UserPersonaService.ensureConversationPersona(
+          conversation,
+        );
+      }
       final identity = ChatSessionIdentity.fromConversation(
         expectedConversationId: widget.conversationId,
         conversation: conversation,
       );
       if (!mounted) return;
 
+      _sessionIdentity = identity;
       _activeCharacterId = identity.characterId;
+      if (identity.contextMode == ContextMode.rp) {
+        await DatabaseHelper.ensureDefaultRpStoryline(identity.characterId);
+      }
+      final rpStorylinesFuture = identity.contextMode == ContextMode.rp
+          ? DatabaseHelper.getRpStorylines(identity.characterId)
+          : Future<List<Map<String, Object?>>>.value(
+              const <Map<String, Object?>>[],
+            );
+      final hasRpWindowFuture = identity.contextMode == ContextMode.rp
+          ? DatabaseHelper.hasConversationHistoryForCharacter(
+              characterId: identity.characterId,
+              contextMode: ContextMode.rp,
+            )
+          : Future<bool>.value(false);
+      unawaited(
+        ContextSummaryRepairService.processScope(
+          characterId: identity.characterId,
+          contextMode: identity.contextMode,
+          continuityId: identity.continuityId,
+        ),
+      );
+      final sourcesFuture = DatabaseHelper.getRpChapterContinuationSources(
+        currentConversationId: widget.conversationId,
+        characterId: identity.characterId,
+        continuityId: identity.continuityId,
+        contextMode: identity.contextMode,
+      );
+      _rpChapterContinuationSourcesFuture = sourcesFuture;
+      if (identity.contextMode == ContextMode.rp) {
+        _previousWindowTurnsFuture = sourcesFuture.then(
+          (sources) =>
+              sources.isEmpty ? const <Message>[] : sources.first.messages,
+        );
+      } else {
+        _previousWindowTurnsFuture =
+            DatabaseHelper.getPreviousConversationTurns(
+              currentConversationId: widget.conversationId,
+              characterId: identity.characterId,
+              contextMode: identity.contextMode,
+              continuityId: identity.continuityId,
+            );
+      }
+      _userPersona = await UserPersonaService.personaForConversation(
+        conversation!,
+      );
       _pendingGift = await ShopService.getPendingGift(
         scopeId: widget.conversationId,
         targetCharacterId: _activeCharacterId,
       );
-      await Future.wait<void>([_loadSettings(conversation!), _loadMessages()]);
+      await Future.wait<void>([_loadSettings(conversation), _loadMessages()]);
+      await _restoreRpContinuationBridge(identity);
+      final continuationSources = await sourcesFuture;
+      final rpStorylines = await rpStorylinesFuture;
+      final hasRpWindow = await hasRpWindowFuture;
+      final resolvedConversation = await DatabaseHelper.getConversation(
+        widget.conversationId,
+      );
+      final resolvedIdentity = ChatSessionIdentity.fromConversation(
+        expectedConversationId: widget.conversationId,
+        conversation: resolvedConversation,
+      );
+      _sessionIdentity = resolvedIdentity;
+      _activeCharacterId = resolvedIdentity.characterId;
       unawaited(_refreshMarriageState());
       if (!mounted) return;
 
       setState(() {
+        _canContinuePreviousRpChapter = continuationSources.isNotEmpty;
+        _rpStorylines = rpStorylines;
+        _hasAnyRpWindow = hasRpWindow;
         _isChatReady = true;
         _isLoading = false;
         _initializationFailed = false;
+      });
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || !_isChatReady) return;
+        final personaName = _userPersonaName.isEmpty
+            ? L.pick(en: 'you', zhTW: '你', zhCN: '你')
+            : _userPersonaName;
+        final characterName = _characterName.isEmpty
+            ? L.pick(en: 'the character', zhTW: '對方', zhCN: '对方')
+            : _characterName;
+        showThemedPillNotice(
+          context,
+          L.pick(
+            en: 'You are currently $personaName, talking with $characterName',
+            zhTW: '當前為$personaName在與$characterName交流中',
+            zhCN: '当前为$personaName在与$characterName交流中',
+          ),
+          anchorLink: _noticeAnchorLink,
+        );
       });
       // Let the loading/list transition settle before exposing pagination.
       // This prevents a recycled ListView child from flashing the old control.
@@ -502,6 +709,8 @@ class _ChatScreenState extends State<ChatScreen> {
       _transferDataMap.clear();
       _pendingMemoryActionCounts.clear();
       _pendingMemoryProposals.clear();
+      _chatDiagnostics.clear();
+      _summaryRecordedSummaryIds.clear();
       _tokensSinceSummary = 0;
       _charAvatarPath = null;
     });
@@ -517,10 +726,10 @@ class _ChatScreenState extends State<ChatScreen> {
     if (shouldShow != _showScrollToBottom) {
       setState(() => _showScrollToBottom = shouldShow);
     }
-    // 流式輸出中用戶手動上滾 → 暫停自動跟隨
-    if (_isGenerating && distanceFromBottom > 80) {
-      _userScrolledUp = true;
-    }
+    // Whether streaming should stop following is decided by the
+    // ScrollNotification gesture path below. Content growth (for example the
+    // assistant avatar appearing) also fires this controller listener and
+    // must not be mistaken for a manual upward scroll.
   }
 
   Future<void> _loadSettings(Conversation conversation) async {
@@ -529,7 +738,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _showChatAvatar = await UserSettings.getShowChatAvatar();
 
     // 用戶頭像
-    final uAvatar = await UserSettings.getUserAvatarPath();
+    final uAvatar = _userPersona?.avatarPath ?? '';
     if (uAvatar.isNotEmpty) _userAvatarPath = uAvatar;
 
     // 角色頭像與蛛網背景引擎
@@ -562,9 +771,21 @@ class _ChatScreenState extends State<ChatScreen> {
     _characterName = char['name'] as String? ?? '';
     _charAvatarPath = char['avatar_path'] as String?;
     _composerHint = CharacterWhisperState.fromCharacter(char).displayText;
+    _boundBackgroundPreset =
+        await BackgroundPresetService.boundPresetForCharacter(
+          _activeCharacterId,
+        );
+    final chatPath = _boundBackgroundPreset?.chatPath ?? '';
+    _boundChatPalette = chatPath.trim().isEmpty
+        ? null
+        : await BackgroundForegroundService.resolveChatBubblePalette(chatPath);
+    _boundChatForeground = chatPath.trim().isEmpty
+        ? null
+        : await BackgroundForegroundService.resolve(chatPath);
 
     // 背景執行：蛛網封存引擎 (清理30天未觸發的孤島記憶)
-    if ((char['is_spider_web_enabled'] as int? ?? 0) == 1) {
+    if (_requiredSessionIdentity.contextMode == ContextMode.daily &&
+        (char['is_spider_web_enabled'] as int? ?? 0) == 1) {
       SpiderWebCore.runArchiveEngine(characterId: _activeCharacterId).then((
         archivedCount,
       ) {
@@ -704,6 +925,9 @@ class _ChatScreenState extends State<ChatScreen> {
             windowFirstId,
           )
         : false;
+    await MemoryGuardService.suppressReappearingRejectedSuggestions(
+      _activeCharacterId,
+    );
     final pendingMemoryActions =
         await MemoryGuardService.pendingCountsByMessage(widget.conversationId);
     final pendingMemoryProposals =
@@ -711,6 +935,11 @@ class _ChatScreenState extends State<ChatScreen> {
           characterId: _activeCharacterId,
           conversationId: widget.conversationId,
         );
+    final diagnostics = await DatabaseHelper.getChatDiagnostics(
+      widget.conversationId,
+    );
+    final summaryRecordedSummaryIds =
+        await DatabaseHelper.getSummaryRecordedAnchors(widget.conversationId);
 
     if (!mounted) return;
     setState(() {
@@ -732,6 +961,12 @@ class _ChatScreenState extends State<ChatScreen> {
       _pendingMemoryProposals
         ..clear()
         ..addAll(pendingMemoryProposals);
+      _chatDiagnostics
+        ..clear()
+        ..addAll(diagnostics);
+      _summaryRecordedSummaryIds
+        ..clear()
+        ..addAll(summaryRecordedSummaryIds);
       _cacheHitIndices.clear();
       for (int i = 0; i < _messages.length; i++) {
         if (_messages[i].cacheHit) {
@@ -753,6 +988,9 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _refreshPendingMemoryActionCounts({bool notify = true}) async {
+    await MemoryGuardService.suppressReappearingRejectedSuggestions(
+      _activeCharacterId,
+    );
     final counts = await MemoryGuardService.pendingCountsByMessage(
       widget.conversationId,
     );
@@ -881,6 +1119,7 @@ class _ChatScreenState extends State<ChatScreen> {
   /// 這是 SQLite/SharedPreferences 狀態，不是 prompt cache。
   Future<void> _scanExplicitMenstrualTimeline() async {
     if (!await MemorySettings.getTimelineEnabled()) return;
+    if (_requiredSessionIdentity.contextMode == ContextMode.rp) return;
     final prefs = await SharedPreferences.getInstance();
     final cursor = prefs.getInt(_timelineMenstrualScanCursorKey) ?? 0;
     final messages = await DatabaseHelper.getMessagesAfterId(
@@ -908,8 +1147,58 @@ class _ChatScreenState extends State<ChatScreen> {
     await prefs.setInt(_timelineMenstrualScanCursorKey, maxId);
   }
 
+  Future<void> _generateClosingSignatureOnDispose({
+    required String conversationId,
+    required String characterId,
+    required ChatSessionIdentity identity,
+    required String model,
+    required String provider,
+  }) async {
+    try {
+      final messages = await DatabaseHelper.getMessages(conversationId);
+      Message? assistant;
+      var assistantIndex = -1;
+      for (var i = messages.length - 1; i >= 0; i--) {
+        final message = messages[i];
+        if (!message.isUser &&
+            !message.isIncomplete &&
+            message.text.trim().isNotEmpty) {
+          assistant = message;
+          assistantIndex = i;
+          break;
+        }
+      }
+      if (assistant == null) return;
+
+      Message? user;
+      for (var i = assistantIndex - 1; i >= 0; i--) {
+        if (messages[i].isUser && messages[i].text.trim().isNotEmpty) {
+          user = messages[i];
+          break;
+        }
+      }
+      await CharacterSignatureService.generateForWindow(
+        characterId: characterId,
+        conversationId: conversationId,
+        phase: CharacterSignatureService.closingPhase,
+        contextMode: identity.contextMode,
+        continuityId: identity.continuityId,
+        latestUserMessage: user?.text ?? '',
+        latestAssistantReply: assistant.text,
+        model: model,
+        provider: provider,
+      );
+    } catch (error) {
+      debugPrint('關閉窗口個性簽名生成失敗：$error');
+    }
+  }
+
   @override
   void dispose() {
+    BackgroundPresetService.revision.removeListener(
+      _handleBackgroundPresetChanged,
+    );
+    _backgroundPresetRefreshTimer?.cancel();
     _clearStreamQueue();
     _streamSurfaceDelayTimer?.cancel();
     _generationForegroundStartTimer?.cancel();
@@ -922,6 +1211,24 @@ class _ChatScreenState extends State<ChatScreen> {
     final charId = _activeCharacterId;
     final shouldMaintainWindow =
         _sentMessageInThisSession || _lastKeepAliveMessages != null;
+
+    final sessionIdentity = _sessionIdentity;
+    final closingModel = _lastKeepAliveModel;
+    final closingProvider = _lastKeepAliveProvider;
+    if (shouldMaintainWindow &&
+        sessionIdentity != null &&
+        closingModel != null &&
+        closingProvider != null) {
+      unawaited(
+        _generateClosingSignatureOnDispose(
+          conversationId: convId,
+          characterId: charId,
+          identity: sessionIdentity,
+          model: closingModel,
+          provider: closingProvider,
+        ),
+      );
+    }
 
     MemorySettings.getWindowSummaryEnabled()
         .then((enabled) {
@@ -940,6 +1247,8 @@ class _ChatScreenState extends State<ChatScreen> {
                 triggerTokenLimit: triggerTokenLimit,
                 minTokenThreshold: minTokenThreshold,
                 thresholdTokenCount: _tokensSinceSummary,
+                contextMode: _requiredSessionIdentity.contextMode,
+                continuityId: _requiredSessionIdentity.continuityId,
               );
               if (compressedTokens > 0) {
                 final pendingTokens = await ContextCompressor.pendingTokenCount(
@@ -960,10 +1269,9 @@ class _ChatScreenState extends State<ChatScreen> {
           debugPrint('Error checking window summary settings: $e');
         });
 
-    if (shouldMaintainWindow) {
+    if (shouldMaintainWindow && sessionIdentity != null) {
       KeepAliveService.instance.start(
-        conversationId: convId,
-        characterId: charId,
+        sessionIdentity: sessionIdentity,
         messages: _lastKeepAliveMessages,
         structuredPrompt: _lastKeepAliveStructuredPrompt,
         adapter: _lastKeepAliveAdapter,
@@ -996,10 +1304,9 @@ class _ChatScreenState extends State<ChatScreen> {
     SpiderWebCore.releaseWindow(convId);
 
     _scrollController.removeListener(_onScroll);
-    _modelHintOverlay?.remove();
-    _modelHintOverlay = null;
     _scrollController.dispose();
     _inputController.dispose();
+    _streamRevision.dispose();
     super.dispose();
   }
 
@@ -1056,14 +1363,17 @@ class _ChatScreenState extends State<ChatScreen> {
   void _scrollToBottom({bool force = false, int settlePass = 0}) {
     // 流式輸出時用戶手動上滾了 → 不強制跟隨（除非 force）
     if (_userIsScrolling || (_userScrolledUp && !force)) return;
+    if (_isGenerating && !force) {
+      _scheduleStreamScrollFollow();
+      return;
+    }
     WidgetsBinding.instance.addPostFrameCallback((_) {
       // callback 排隊後，用戶可能才開始拖曳內容或互動式捲動條。
       // 再檢查一次，避免手放開時被舊的自動到底動作搶回位置。
       if (_scrollController.hasClients &&
           !_userIsScrolling &&
           (force || !_userScrolledUp)) {
-        if (_isGenerating || force) {
-          // 流式輸出中：直接跳轉，不做動畫（避免每個 token 都觸發 300ms 動畫卡頓）
+        if (force || MediaQuery.disableAnimationsOf(context)) {
           _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
         } else {
           _scrollController.animateTo(
@@ -1083,6 +1393,62 @@ class _ChatScreenState extends State<ChatScreen> {
         }
       }
     });
+  }
+
+  void _scheduleStreamScrollFollow() {
+    if (_streamScrollRequested) return;
+    _streamScrollRequested = true;
+    // The streaming bubble changes the list extent during layout. Read its
+    // target after that layout has completed so the first avatar frame follows
+    // immediately instead of observing the previous maxScrollExtent.
+    WidgetsBinding.instance.addPostFrameCallback(_followStreamScrollFrame);
+    WidgetsBinding.instance.scheduleFrame();
+  }
+
+  void _followStreamScrollFrame(Duration frameTime) {
+    _streamScrollRequested = false;
+    if (!mounted ||
+        !_isGenerating ||
+        !_scrollController.hasClients ||
+        _userIsScrolling ||
+        _userScrolledUp) {
+      _streamScrollFrameTime = null;
+      return;
+    }
+
+    final position = _scrollController.position;
+    final target = position.maxScrollExtent;
+    final distance = target - position.pixels;
+    if (distance.abs() < 0.5) {
+      _streamScrollFrameTime = null;
+      return;
+    }
+
+    final disableAnimations = MediaQuery.disableAnimationsOf(context);
+    final previousFrame = _streamScrollFrameTime;
+    final elapsedSeconds = previousFrame == null
+        ? 1 / 60
+        : ((frameTime - previousFrame).inMicroseconds / 1000000).clamp(
+            1 / 240,
+            0.05,
+          );
+    _streamScrollFrameTime = frameTime;
+    final followFraction = disableAnimations
+        ? 1.0
+        : 1 - exp(-elapsedSeconds / 0.045);
+    final next = distance.abs() < 0.8
+        ? target
+        : position.pixels + distance * followFraction;
+
+    _streamScrollAnimating = true;
+    try {
+      _scrollController.jumpTo(next.clamp(0.0, target).toDouble());
+    } finally {
+      _streamScrollAnimating = false;
+    }
+    if (!disableAnimations && (target - next).abs() >= 0.5) {
+      _scheduleStreamScrollFollow();
+    }
   }
 
   Widget _buildInitializationError() {
@@ -1159,420 +1525,493 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      resizeToAvoidBottomInset: true,
-      body: GestureDetector(
-        onTap: () => FocusScope.of(context).unfocus(),
-        child: GradientBackground(
-          scope: YanciBackgroundScope.chat,
-          child: Stack(
-            children: [
-              Positioned.fill(
-                child: YanciTheme.starEnabled
-                    ? (YanciTheme.bgEffect == 'stars'
-                          ? const StarfieldWidget(starCount: 10)
-                          : const NeuralFieldWidget(nodeCount: 18))
-                    : const SizedBox.shrink(),
-              ),
-              SafeArea(
-                child: Column(
-                  children: [
-                    _buildAppBar(),
-                    Expanded(
-                      child: Stack(
-                        children: [
-                          _isLoading
-                              ? const Center(child: CircularProgressIndicator())
-                              : _initializationFailed
-                              ? _buildInitializationError()
-                              : _messages.isEmpty &&
-                                    _streamingText.isEmpty &&
-                                    !_isGenerating
-                              ? _buildEmptyState()
-                              : _buildMessageList(),
-                          // 一鍵滾底按鈕
-                          if (_showScrollToBottom)
-                            Positioned(
-                              right: YanciTheme.spacingMd,
-                              bottom: YanciTheme.spacingSm,
-                              child: GestureDetector(
-                                onTap: () {
-                                  _userScrolledUp = false;
-                                  _scrollToBottom(force: true);
-                                },
-                                child: Container(
-                                  width: 36,
-                                  height: 36,
-                                  decoration: BoxDecoration(
-                                    color: YanciTheme.glassInputBg,
-                                    shape: BoxShape.circle,
-                                    boxShadow: [
-                                      BoxShadow(
-                                        color: Colors.black.withValues(
-                                          alpha: 0.08,
+    return ThemedNoticeAnchorScope(
+      link: _noticeAnchorLink,
+      child: GradientBackground(
+        scope: YanciBackgroundScope.chat,
+        presetOverride: _boundBackgroundPreset,
+        chatPaletteOverride: _boundChatPalette,
+        foregroundOverride: _boundChatForeground,
+        child: Scaffold(
+          backgroundColor: Colors.transparent,
+          resizeToAvoidBottomInset: true,
+          body: GestureDetector(
+            onTap: () => FocusScope.of(context).unfocus(),
+            child: Stack(
+              children: [
+                Positioned.fill(
+                  child: YanciTheme.starEnabled
+                      ? (YanciTheme.bgEffect == 'stars'
+                            ? const StarfieldWidget(starCount: 10)
+                            : const NeuralFieldWidget(nodeCount: 18))
+                      : const SizedBox.shrink(),
+                ),
+                SafeArea(
+                  child: Column(
+                    children: [
+                      const SizedBox(height: _chatHeaderHeight),
+                      Expanded(
+                        child: Stack(
+                          clipBehavior: Clip.none,
+                          children: [
+                            _isLoading
+                                ? const Center(
+                                    child: CircularProgressIndicator(),
+                                  )
+                                : _initializationFailed
+                                ? _buildInitializationError()
+                                : _messages.isEmpty &&
+                                      _streamingText.isEmpty &&
+                                      !_isGenerating
+                                ? _buildEmptyState()
+                                : Positioned(
+                                    key: const ValueKey(
+                                      'chat-message-viewport-underlay',
+                                    ),
+                                    top: -_chatHeaderHeight,
+                                    left: 0,
+                                    right: 0,
+                                    bottom: -_composerViewportUnderlay,
+                                    child: ScrollEdgeFade(
+                                      controller: _scrollController,
+                                      topInset: _chatHeaderHeight - 12,
+                                      topExtent: _chatHeaderHeight + 70,
+                                      bottomExtent: 104,
+                                      blurSigma: 0,
+                                      topBlurSigma: 0,
+                                      bottomBlurSigma: 0,
+                                      alwaysFadeTop: true,
+                                      alwaysFadeBottom: true,
+                                      child: _buildMessageList(),
+                                    ),
+                                  ),
+                            // 一鍵滾底按鈕
+                            if (_showScrollToBottom)
+                              Positioned(
+                                right: YanciTheme.spacingMd,
+                                bottom: YanciTheme.spacingSm,
+                                child: GestureDetector(
+                                  onTap: () {
+                                    _userScrolledUp = false;
+                                    _scrollToBottom(force: true);
+                                  },
+                                  child: Container(
+                                    width: 36,
+                                    height: 36,
+                                    decoration: BoxDecoration(
+                                      color: YanciTheme.glassInputBg,
+                                      shape: BoxShape.circle,
+                                      boxShadow: [
+                                        BoxShadow(
+                                          color: Colors.black.withValues(
+                                            alpha: 0.08,
+                                          ),
+                                          blurRadius: 8,
                                         ),
-                                        blurRadius: 8,
-                                      ),
-                                    ],
-                                  ),
-                                  child: Icon(
-                                    Icons.keyboard_arrow_down_rounded,
-                                    size: 22,
-                                    color: YanciTheme.accent,
-                                  ),
-                                ),
-                              ),
-                            ),
-                        ],
-                      ),
-                    ),
-                    // ═══ 待發圖片預覽 ═══
-                    if (_pendingImagePath != null)
-                      Container(
-                        padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
-                        child: Row(
-                          children: [
-                            ClipRRect(
-                              borderRadius: BorderRadius.circular(8),
-                              child: Image.file(
-                                File(_pendingImagePath!),
-                                width: 48,
-                                height: 48,
-                                fit: BoxFit.cover,
-                                errorBuilder: (_, _, _) => Container(
-                                  width: 48,
-                                  height: 48,
-                                  color: YanciTheme.glassInputBg,
-                                  child: const Icon(
-                                    Icons.broken_image,
-                                    size: 16,
+                                      ],
+                                    ),
+                                    child: Icon(
+                                      Icons.keyboard_arrow_down_rounded,
+                                      size: 22,
+                                      color: YanciTheme.accent,
+                                    ),
                                   ),
                                 ),
                               ),
-                            ),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: Text(
-                                L.get('chat_image_hint'),
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  color: YanciTheme.textSecondary.withValues(
-                                    alpha: 0.5,
-                                  ),
-                                ),
-                              ),
-                            ),
-                            GestureDetector(
-                              onTap: () =>
-                                  setState(() => _pendingImagePath = null),
-                              child: Icon(
-                                Icons.close_rounded,
-                                size: 18,
-                                color: YanciTheme.textSecondary.withValues(
-                                  alpha: 0.4,
-                                ),
-                              ),
-                            ),
                           ],
                         ),
                       ),
-                    // ═══ 待發表情包預覽 ═══
-                    if (_pendingSticker != null)
-                      Container(
-                        padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
-                        child: Row(
-                          children: [
-                            ClipRRect(
-                              borderRadius: BorderRadius.circular(8),
-                              child: Image.file(
-                                File(_pendingSticker!.filePath),
-                                width: 48,
-                                height: 48,
-                                cacheWidth:
-                                    StickerPreviewQuality.cacheDimension(
-                                      context,
-                                      logicalSize: 48,
-                                      previousMinimum: 64,
-                                    ),
-                                cacheHeight:
-                                    StickerPreviewQuality.cacheDimension(
-                                      context,
-                                      logicalSize: 48,
-                                      previousMinimum: 64,
-                                    ),
-                                fit: BoxFit.cover,
-                                filterQuality: FilterQuality.medium,
-                                errorBuilder: (_, _, _) => Container(
-                                  width: 48,
-                                  height: 48,
-                                  color: YanciTheme.glassInputBg,
-                                  child: const Icon(
-                                    Icons.broken_image,
-                                    size: 16,
-                                  ),
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: Text(
-                                _pendingSticker!.line ??
-                                    _pendingSticker!.mood ??
-                                    '',
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  color: YanciTheme.textSecondary.withValues(
-                                    alpha: 0.5,
-                                  ),
-                                ),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ),
-                            GestureDetector(
-                              onTap: () =>
-                                  setState(() => _pendingSticker = null),
-                              child: Icon(
-                                Icons.close_rounded,
-                                size: 18,
-                                color: YanciTheme.textSecondary.withValues(
-                                  alpha: 0.4,
-                                ),
-                              ),
-                            ),
-                          ],
+                      CompositedTransformTarget(
+                        link: _noticeAnchorLink,
+                        child: const SizedBox(
+                          key: ValueKey('chat-notice-anchor'),
+                          width: double.infinity,
+                          height: 0,
                         ),
                       ),
-                    // ═══ 待發轉帳預覽 ═══
-                    if (_pendingUserTransfer != null)
-                      Container(
-                        padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
-                        child: Row(
-                          children: [
-                            Container(
-                              width: 48,
-                              height: 48,
-                              decoration: BoxDecoration(
-                                color: const Color(
-                                  0xFFF2C96D,
-                                ).withValues(alpha: 0.10),
+                      // ═══ 待發圖片預覽 ═══
+                      if (_pendingImagePaths.isNotEmpty)
+                        Container(
+                          padding: const EdgeInsets.fromLTRB(12, 4, 12, 0),
+                          child: ImageCardStack(
+                            paths: _pendingImagePaths,
+                            height: 124,
+                            removable: true,
+                            onRemove: (index) {
+                              if (index < 0 ||
+                                  index >= _pendingImagePaths.length) {
+                                return;
+                              }
+                              setState(
+                                () => _pendingImagePaths.removeAt(index),
+                              );
+                            },
+                          ),
+                        ),
+                      // ═══ 待發表情包預覽 ═══
+                      if (_pendingSticker != null)
+                        Container(
+                          padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+                          child: Row(
+                            children: [
+                              ClipRRect(
                                 borderRadius: BorderRadius.circular(8),
-                                border: Border.all(
+                                child: Image.file(
+                                  File(_pendingSticker!.filePath),
+                                  width: 48,
+                                  height: 48,
+                                  cacheWidth:
+                                      StickerPreviewQuality.cacheDimension(
+                                        context,
+                                        logicalSize: 48,
+                                        previousMinimum: 64,
+                                      ),
+                                  cacheHeight:
+                                      StickerPreviewQuality.cacheDimension(
+                                        context,
+                                        logicalSize: 48,
+                                        previousMinimum: 64,
+                                      ),
+                                  fit: BoxFit.cover,
+                                  filterQuality: FilterQuality.medium,
+                                  errorBuilder: (_, _, _) => Container(
+                                    width: 48,
+                                    height: 48,
+                                    color: YanciTheme.glassInputBg,
+                                    child: const Icon(
+                                      Icons.broken_image,
+                                      size: 16,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  _pendingSticker!.line ??
+                                      _pendingSticker!.mood ??
+                                      '',
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    color: YanciTheme.textSecondary.withValues(
+                                      alpha: 0.5,
+                                    ),
+                                  ),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                              GestureDetector(
+                                onTap: () =>
+                                    setState(() => _pendingSticker = null),
+                                child: Icon(
+                                  Icons.close_rounded,
+                                  size: 18,
+                                  color: YanciTheme.textSecondary.withValues(
+                                    alpha: 0.4,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      // ═══ 待發轉帳預覽 ═══
+                      if (_pendingUserTransfer != null)
+                        Container(
+                          padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+                          child: Row(
+                            children: [
+                              Container(
+                                width: 48,
+                                height: 48,
+                                decoration: BoxDecoration(
                                   color: const Color(
                                     0xFFF2C96D,
-                                  ).withValues(alpha: 0.35),
-                                  width: 0.8,
-                                ),
-                              ),
-                              child: Center(
-                                child: Image.asset(
-                                  'assets/images/shell_coin.png',
-                                  width: 24,
-                                  height: 24,
-                                  filterQuality: FilterQuality.none,
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: Text(
-                                L.pick(
-                                  en: 'Transfer ${_pendingUserTransfer!.amount} shells',
-                                  zhTW: L.pick(
-                                    en: 'Pending transfer: ${_pendingUserTransfer!.amount} shells',
-                                    zhTW:
-                                        '待轉帳 ${_pendingUserTransfer!.amount} 貝殼',
+                                  ).withValues(alpha: 0.10),
+                                  borderRadius: BorderRadius.circular(8),
+                                  border: Border.all(
+                                    color: const Color(
+                                      0xFFF2C96D,
+                                    ).withValues(alpha: 0.35),
+                                    width: 0.8,
                                   ),
                                 ),
-                                style: TextStyle(
-                                  fontSize: 11,
+                                child: Center(
+                                  child: Image.asset(
+                                    'assets/images/shell_coin.png',
+                                    width: 24,
+                                    height: 24,
+                                    filterQuality: FilterQuality.none,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  L.pick(
+                                    en: 'Transfer ${_pendingUserTransfer!.amount} shells',
+                                    zhTW: L.pick(
+                                      en: 'Pending transfer: ${_pendingUserTransfer!.amount} shells',
+                                      zhTW:
+                                          '待轉帳 ${_pendingUserTransfer!.amount} 貝殼',
+                                    ),
+                                  ),
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    color: YanciTheme.textSecondary.withValues(
+                                      alpha: 0.5,
+                                    ),
+                                  ),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                              GestureDetector(
+                                onTap: () =>
+                                    setState(() => _pendingUserTransfer = null),
+                                child: Icon(
+                                  Icons.close_rounded,
+                                  size: 18,
                                   color: YanciTheme.textSecondary.withValues(
-                                    alpha: 0.5,
+                                    alpha: 0.4,
                                   ),
                                 ),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
                               ),
-                            ),
-                            GestureDetector(
-                              onTap: () =>
-                                  setState(() => _pendingUserTransfer = null),
-                              child: Icon(
-                                Icons.close_rounded,
-                                size: 18,
-                                color: YanciTheme.textSecondary.withValues(
-                                  alpha: 0.4,
-                                ),
-                              ),
-                            ),
-                          ],
+                            ],
+                          ),
                         ),
-                      ),
-                    // ═══ 待發刮刮卡預覽（讓 TA 刮）═══
-                    if (_pendingScratchGiftWho != null)
-                      Container(
-                        padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
-                        child: Row(
-                          children: [
-                            Container(
-                              width: 48,
-                              height: 48,
-                              decoration: BoxDecoration(
-                                color: YanciTheme.accent.withValues(
-                                  alpha: 0.10,
-                                ),
-                                borderRadius: BorderRadius.circular(8),
-                                border: Border.all(
+                      // ═══ 待發刮刮卡預覽（讓 TA 刮）═══
+                      if (_pendingScratchGiftWho != null)
+                        Container(
+                          padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+                          child: Row(
+                            children: [
+                              Container(
+                                width: 48,
+                                height: 48,
+                                decoration: BoxDecoration(
                                   color: YanciTheme.accent.withValues(
-                                    alpha: 0.28,
+                                    alpha: 0.10,
                                   ),
-                                  width: 0.8,
+                                  borderRadius: BorderRadius.circular(8),
+                                  border: Border.all(
+                                    color: YanciTheme.accent.withValues(
+                                      alpha: 0.28,
+                                    ),
+                                    width: 0.8,
+                                  ),
+                                ),
+                                child: Icon(
+                                  Icons.confirmation_number_outlined,
+                                  size: 24,
+                                  color: YanciTheme.accent.withValues(
+                                    alpha: 0.78,
+                                  ),
                                 ),
                               ),
-                              child: Icon(
-                                Icons.confirmation_number_outlined,
-                                size: 24,
-                                color: YanciTheme.accent.withValues(
-                                  alpha: 0.78,
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  L.pick(
+                                    en: 'Scratch card for them',
+                                    zhTW: '待發刮刮卡：讓 TA 刮',
+                                  ),
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    color: YanciTheme.textSecondary.withValues(
+                                      alpha: 0.5,
+                                    ),
+                                  ),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
                                 ),
+                              ),
+                              GestureDetector(
+                                onTap: () => setState(
+                                  () => _pendingScratchGiftWho = null,
+                                ),
+                                child: Icon(
+                                  Icons.close_rounded,
+                                  size: 18,
+                                  color: YanciTheme.textSecondary.withValues(
+                                    alpha: 0.4,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      // ═══ 圖片生成中 banner ═══
+                      if (_isGeneratingImage)
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 8,
+                          ),
+                          decoration: BoxDecoration(
+                            color: YanciTheme.accent.withValues(alpha: 0.08),
+                            border: Border(
+                              bottom: BorderSide(
+                                color: YanciTheme.accent.withValues(
+                                  alpha: 0.12,
+                                ),
+                                width: 0.5,
                               ),
                             ),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: Text(
+                          ),
+                          child: Row(
+                            children: [
+                              SizedBox(
+                                width: 14,
+                                height: 14,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 1.5,
+                                  color: YanciTheme.accent.withValues(
+                                    alpha: 0.6,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Text(
                                 L.pick(
-                                  en: 'Scratch card for them',
-                                  zhTW: '待發刮刮卡：讓 TA 刮',
+                                  en: 'Generating image...',
+                                  zhTW: '圖片生成中……',
                                 ),
                                 style: TextStyle(
-                                  fontSize: 11,
-                                  color: YanciTheme.textSecondary.withValues(
-                                    alpha: 0.5,
+                                  fontSize: 12,
+                                  color: YanciTheme.accent.withValues(
+                                    alpha: 0.7,
                                   ),
                                 ),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
                               ),
-                            ),
-                            GestureDetector(
-                              onTap: () =>
-                                  setState(() => _pendingScratchGiftWho = null),
-                              child: Icon(
-                                Icons.close_rounded,
-                                size: 18,
-                                color: YanciTheme.textSecondary.withValues(
-                                  alpha: 0.4,
+                            ],
+                          ),
+                        ),
+                      if (_manualSummarySelecting)
+                        _buildManualSummarySelectionBar()
+                      else
+                        IgnorePointer(
+                          ignoring: !_isChatReady,
+                          child: Opacity(
+                            opacity: _isChatReady ? 1 : 0.45,
+                            child: ValueListenableBuilder<ToolFeatureState>(
+                              valueListenable: ToolFeatureSettings.state,
+                              builder: (context, toolFeatures, _) => InputBar(
+                                externalController: _inputController,
+                                hintText: _composerHint.isEmpty
+                                    ? null
+                                    : _composerHint,
+                                onSend: (text) => _onSendMessage(
+                                  text,
+                                  clearComposerOnAccept: true,
+                                ),
+                                isSendBlocked:
+                                    !_isChatReady ||
+                                    _sendSubmissionInProgress ||
+                                    _isGenerating ||
+                                    _isGeneratingImage ||
+                                    _localModelLoading,
+                                hasPendingContent:
+                                    _pendingImagePaths.isNotEmpty ||
+                                    _pendingSticker != null ||
+                                    _pendingUserTransfer != null ||
+                                    _pendingScratchGiftWho != null ||
+                                    _pendingGift != null,
+                                isGeneratingImage: _isGeneratingImage,
+                                isGeneratingResponse: _isGenerating,
+                                onStopGeneration: () {
+                                  if (_isGenerating) {
+                                    _stopActiveGeneration();
+                                  } else {
+                                    setState(() => _isGeneratingImage = false);
+                                  }
+                                },
+                                onImagesPicked: (paths) {
+                                  var overflowed = false;
+                                  setState(() {
+                                    for (final path in paths) {
+                                      if (_pendingImagePaths.contains(path)) {
+                                        continue;
+                                      }
+                                      if (_pendingImagePaths.length >= 10) {
+                                        overflowed = true;
+                                        break;
+                                      }
+                                      _pendingImagePaths.add(path);
+                                    }
+                                  });
+                                  if (overflowed) {
+                                    _showChatNotice(
+                                      L.pick(
+                                        en: 'You can send up to 10 images at a time.',
+                                        zhTW: '每次最多可發送 10 張圖片',
+                                        zhCN: '每次最多可发送 10 张图片',
+                                      ),
+                                    );
+                                  }
+                                },
+                                onStickerTap: _showStickerPicker,
+                                onScratchGift: _onScratchGift,
+                                onShopGift: _openChatShop,
+                                onBackpackTap: _openChatBackpack,
+                                onStoryArchiveTap:
+                                    _sessionIdentity?.contextMode ==
+                                        ContextMode.rp
+                                    ? _openRpStoryArchive
+                                    : null,
+                                pendingGiftName: _pendingGift?.itemName,
+                                onCancelGift: _cancelPendingGift,
+                                onTransfer: _onTransferToChar,
+                                showTransfer: toolFeatures.transferEnabled,
+                                showScratch: toolFeatures.scratchEnabled,
+                                showShop: toolFeatures.shopEnabled,
+                                showBackpack: toolFeatures.shopEnabled,
+                                showMarriageCert:
+                                    _marriageUnlocked && !_pendingMarriageCert,
+                                onMarriageCert: () =>
+                                    setState(() => _pendingMarriageCert = true),
+                                marriageCertPending: _pendingMarriageCert,
+                                onCancelMarriageCert: () => setState(
+                                  () => _pendingMarriageCert = false,
                                 ),
                               ),
                             ),
-                          ],
-                        ),
-                      ),
-                    // ═══ 圖片生成中 banner ═══
-                    if (_isGeneratingImage)
-                      Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 16,
-                          vertical: 8,
-                        ),
-                        decoration: BoxDecoration(
-                          color: YanciTheme.accent.withValues(alpha: 0.08),
-                          border: Border(
-                            bottom: BorderSide(
-                              color: YanciTheme.accent.withValues(alpha: 0.12),
-                              width: 0.5,
-                            ),
                           ),
                         ),
-                        child: Row(
-                          children: [
-                            SizedBox(
-                              width: 14,
-                              height: 14,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 1.5,
-                                color: YanciTheme.accent.withValues(alpha: 0.6),
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            Text(
-                              L.pick(
-                                en: 'Generating image...',
-                                zhTW: '圖片生成中……',
-                              ),
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: YanciTheme.accent.withValues(alpha: 0.7),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    if (_manualSummarySelecting)
-                      _buildManualSummarySelectionBar()
-                    else
-                      IgnorePointer(
-                        ignoring: !_isChatReady,
-                        child: Opacity(
-                          opacity: _isChatReady ? 1 : 0.45,
-                          child: InputBar(
-                            externalController: _inputController,
-                            hintText: _composerHint.isEmpty
-                                ? null
-                                : _composerHint,
-                            onSend: (text) => _onSendMessage(
-                              text,
-                              clearComposerOnAccept: true,
-                            ),
-                            isSendBlocked:
-                                !_isChatReady ||
-                                _sendSubmissionInProgress ||
-                                _isGenerating ||
-                                _isGeneratingImage ||
-                                _localModelLoading,
-                            hasPendingContent:
-                                _pendingImagePath != null ||
-                                _pendingSticker != null ||
-                                _pendingUserTransfer != null ||
-                                _pendingScratchGiftWho != null ||
-                                _pendingGift != null,
-                            isGeneratingImage: _isGeneratingImage,
-                            isGeneratingResponse: _isGenerating,
-                            onStopGeneration: () {
-                              if (_isGenerating) {
-                                _stopActiveGeneration();
-                              } else {
-                                setState(() => _isGeneratingImage = false);
-                              }
-                            },
-                            onImagePicked: (path) {
-                              setState(() => _pendingImagePath = path);
-                            },
-                            onStickerTap: _showStickerPicker,
-                            onScratchGift: _onScratchGift,
-                            onShopGift: _openChatShop,
-                            onBackpackTap: _openChatBackpack,
-                            pendingGiftName: _pendingGift?.itemName,
-                            onCancelGift: _cancelPendingGift,
-                            onTransfer: _onTransferToChar,
-                            showMarriageCert:
-                                _marriageUnlocked && !_pendingMarriageCert,
-                            onMarriageCert: () =>
-                                setState(() => _pendingMarriageCert = true),
-                            marriageCertPending: _pendingMarriageCert,
-                            onCancelMarriageCert: () =>
-                                setState(() => _pendingMarriageCert = false),
-                          ),
-                        ),
-                      ),
-                  ],
+                    ],
+                  ),
                 ),
-              ),
-            ],
+                Positioned(
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  child: SafeArea(bottom: false, child: _buildAppBar()),
+                ),
+              ],
+            ),
           ),
         ),
       ),
+    );
+  }
+
+  void _showChatNotice(
+    String message, {
+    Duration duration = const Duration(milliseconds: 2600),
+    ThemedNoticeTone tone = ThemedNoticeTone.neutral,
+    String? actionLabel,
+    VoidCallback? onAction,
+  }) {
+    showThemedPillNotice(
+      context,
+      message,
+      duration: duration,
+      tone: tone,
+      action: actionLabel != null && onAction != null
+          ? ThemedNoticeAction(label: actionLabel, onPressed: onAction)
+          : null,
+      anchorLink: _noticeAnchorLink,
     );
   }
 
@@ -1651,17 +2090,29 @@ class _ChatScreenState extends State<ChatScreen> {
                 final date = (r['created_at'] as String).substring(0, 10);
                 var text = r['text'] as String;
                 if (text.length > 60) text = '${text.substring(0, 60)}…';
+                final mode = ContextMode.fromStorage(r['context_mode']);
                 return Padding(
                   padding: const EdgeInsets.only(bottom: 4),
-                  child: Text(
-                    '$who $date  $text',
-                    style: TextStyle(
-                      fontSize: 10,
-                      color: YanciTheme.textSecondary.withValues(alpha: 0.7),
-                      height: 1.4,
-                    ),
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      ContextModeLabel(mode: mode, compact: true),
+                      const SizedBox(width: 5),
+                      Expanded(
+                        child: Text(
+                          '$who $date  $text',
+                          style: TextStyle(
+                            fontSize: 10,
+                            color: YanciTheme.textSecondary.withValues(
+                              alpha: 0.7,
+                            ),
+                            height: 1.4,
+                          ),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
                   ),
                 );
               }),
@@ -1679,6 +2130,143 @@ class _ChatScreenState extends State<ChatScreen> {
       ),
     );
   }
+
+  Widget _buildRpContinuationHeader() {
+    final expanded = _rpContinuationSourceExpanded;
+    final actionLabel = expanded
+        ? L.pick(en: 'Collapse', zhTW: '收起', zhCN: '收起')
+        : L.pick(en: 'Open original window', zhTW: '展開原窗口', zhCN: '展开原窗口');
+    final title = _rpContinuationSourceTitle.isEmpty
+        ? L.pick(en: 'Previous window', zhTW: '上一窗口', zhCN: '上一窗口')
+        : _rpContinuationSourceTitle;
+    return Semantics(
+      button: true,
+      label: '$title，$actionLabel',
+      child: InkWell(
+        key: const ValueKey('rp-continuation-source-header'),
+        onTap: _rpContinuationSourceLoading
+            ? null
+            : () => unawaited(_toggleRpContinuationSourceHistory()),
+        borderRadius: BorderRadius.circular(10),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(22, 12, 22, 8),
+          child: Row(
+            children: <Widget>[
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    Text(
+                      L.pick(
+                        en: 'FROM THE PREVIOUS WINDOW',
+                        zhTW: '來自上一窗口',
+                        zhCN: '来自上一窗口',
+                      ),
+                      style: YanciTheme.bodySmall.copyWith(
+                        fontSize: 9.5,
+                        letterSpacing: 0.8,
+                        color: YanciTheme.textSecondary.withValues(alpha: 0.5),
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: YanciTheme.bodyText.copyWith(
+                        fontSize: 12.5,
+                        color: YanciTheme.accent.withValues(alpha: 0.82),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 10),
+              if (_rpContinuationSourceLoading)
+                SizedBox(
+                  width: 14,
+                  height: 14,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 1.2,
+                    color: YanciTheme.accent.withValues(alpha: 0.55),
+                  ),
+                )
+              else
+                Icon(
+                  expanded
+                      ? Icons.keyboard_arrow_up_rounded
+                      : Icons.keyboard_arrow_down_rounded,
+                  size: 18,
+                  color: YanciTheme.accent.withValues(alpha: 0.55),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildRpContinuationLoadEarlier() => Center(
+    child: Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: TextButton(
+        key: const ValueKey('rp-continuation-load-earlier'),
+        onPressed: _rpContinuationSourceLoading
+            ? null
+            : () => unawaited(_loadEarlierRpContinuationSourceHistory()),
+        child: Text(
+          L.pick(
+            en: '↑ Show 50 earlier messages',
+            zhTW: '↑ 查看更早的 50 條',
+            zhCN: '↑ 查看更早的 50 条',
+          ),
+          style: YanciTheme.bodySmall.copyWith(
+            fontSize: 11,
+            color: YanciTheme.accent.withValues(alpha: 0.65),
+          ),
+        ),
+      ),
+    ),
+  );
+
+  Widget _buildRpContinuationBoundary() => Semantics(
+    label: L.pick(
+      en: 'The current window continues from here',
+      zhTW: '本窗口從這裡接續',
+      zhCN: '本窗口从这里接续',
+    ),
+    child: Padding(
+      key: const ValueKey('rp-continuation-boundary'),
+      padding: const EdgeInsets.fromLTRB(28, 10, 28, 14),
+      child: Row(
+        children: <Widget>[
+          Expanded(
+            child: Container(
+              height: 0.6,
+              color: YanciTheme.accent.withValues(alpha: 0.18),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 10),
+            child: Text(
+              L.pick(en: 'continued here', zhTW: '本窗口從這裡接續', zhCN: '本窗口从这里接续'),
+              style: YanciTheme.bodySmall.copyWith(
+                fontSize: 10.5,
+                letterSpacing: 0.25,
+                color: YanciTheme.accent.withValues(alpha: 0.5),
+              ),
+            ),
+          ),
+          Expanded(
+            child: Container(
+              height: 0.6,
+              color: YanciTheme.accent.withValues(alpha: 0.18),
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
 
   Widget _buildMessageList() {
     final hasWebSearchActivity = _webSearchActivity != null;
@@ -1727,6 +2315,64 @@ class _ChatScreenState extends State<ChatScreen> {
     final displayItems = <_DisplayItem>[];
     for (var srcIdx = 0; srcIdx < renderSource.length; srcIdx++) {
       final (msg, i) = renderSource[srcIdx];
+
+      // RP 新窗口的「繼續這一篇章」是模型可見的使用者動作，但不是
+      // 對話正文；保留在歷史中維持因果與 cache 前綴。畫面改用來源窗口
+      // 的只讀虛擬拼接，避免把舊消息複製進本窗口後污染摘要、編輯與刪除。
+      if (msg.isRpChapterContinuation) {
+        if (_rpContinuationSourceConversationId != null &&
+            _rpContinuationDisplayMessages.isNotEmpty) {
+          displayItems.add(
+            _DisplayItem(
+              text: '',
+              isUser: false,
+              messageId: 'rp_continuation_header',
+              originalIndex: -1,
+              showToolbar: false,
+              continuationKind: _RpContinuationDisplayKind.header,
+            ),
+          );
+          if (_rpContinuationSourceExpanded && _rpContinuationSourceHasMore) {
+            displayItems.add(
+              _DisplayItem(
+                text: '',
+                isUser: false,
+                messageId: 'rp_continuation_load_earlier',
+                originalIndex: -1,
+                showToolbar: false,
+                continuationKind: _RpContinuationDisplayKind.loadEarlier,
+              ),
+            );
+          }
+          for (final sourceMessage in _rpContinuationDisplayMessages) {
+            displayItems.add(
+              _DisplayItem(
+                text: sourceMessage.text,
+                isUser: sourceMessage.isUser,
+                timestamp: sourceMessage.createdAt,
+                imagePath: sourceMessage.imagePath,
+                imagePaths: sourceMessage.imagePaths,
+                messageId:
+                    'rp_source_${_rpContinuationSourceConversationId}_'
+                    '${sourceMessage.id ?? sourceMessage.createdAt.microsecondsSinceEpoch}',
+                originalIndex: -1,
+                showToolbar: false,
+              ),
+            );
+          }
+          displayItems.add(
+            _DisplayItem(
+              text: '',
+              isUser: false,
+              messageId: 'rp_continuation_boundary',
+              originalIndex: -1,
+              showToolbar: false,
+              continuationKind: _RpContinuationDisplayKind.boundary,
+            ),
+          );
+        }
+        continue;
+      }
 
       // 通話操作是模型可見的 user action，入庫以維持跨模式 append-only
       // cache prefix；純協議標記不在聊天 UI 顯示。
@@ -1793,6 +2439,7 @@ class _ChatScreenState extends State<ChatScreen> {
               isUser: false,
               timestamp: isLast ? msg.createdAt : null,
               imagePath: j == 0 ? msg.imagePath : null,
+              imagePaths: j == 0 ? msg.imagePaths : const <String>[],
               messageId: 'msg_${msg.id}_$j',
               dbMessageId: msg.id,
               originalIndex: i,
@@ -1817,6 +2464,9 @@ class _ChatScreenState extends State<ChatScreen> {
               // 她遞的證書卡跟在拆分回覆的最後一段
               hasMarriageCert: isLast && splitHasCert,
               certFromChar: isLast && splitHasCert,
+              summaryRecordedId: isLast && msg.id != null
+                  ? _summaryRecordedSummaryIds[msg.id]
+                  : null,
             ),
           );
         }
@@ -1829,6 +2479,7 @@ class _ChatScreenState extends State<ChatScreen> {
             isUser: msg.isUser,
             timestamp: msg.createdAt,
             imagePath: msg.imagePath,
+            imagePaths: msg.imagePaths,
             messageId: 'msg_${msg.id}',
             dbMessageId: msg.id,
             originalIndex: i,
@@ -1854,6 +2505,9 @@ class _ChatScreenState extends State<ChatScreen> {
                 (!msg.isUser && msg.text.contains(_marriageCertCharTag)),
             certFromChar:
                 !msg.isUser && msg.text.contains(_marriageCertCharTag),
+            summaryRecordedId: msg.id == null
+                ? null
+                : _summaryRecordedSummaryIds[msg.id],
           ),
         );
 
@@ -1883,9 +2537,7 @@ class _ChatScreenState extends State<ChatScreen> {
     final itemCount =
         (hasOlderButton ? 1 : 0) +
         displayItems.length +
-        (hasStreamingBubble
-            ? (_splitReply ? _streamingSplitParts().length : 1)
-            : 0) +
+        (hasStreamingBubble ? 1 : 0) +
         (hasSearchCard ? 1 : 0) +
         (hasWebSearchActivity ? 1 : 0) +
         (showAtom ? 1 : 0);
@@ -1897,7 +2549,12 @@ class _ChatScreenState extends State<ChatScreen> {
           _userIsScrolling = true;
           _userScrolledUp = true;
         } else if (notification is UserScrollNotification) {
-          _userIsScrolling = notification.direction != ScrollDirection.idle;
+          if (notification.direction == ScrollDirection.idle) {
+            _userIsScrolling = false;
+          } else if (!_streamScrollAnimating) {
+            _userIsScrolling = true;
+            if (_isGenerating) _userScrolledUp = true;
+          }
         } else if (notification is ScrollEndNotification) {
           _userIsScrolling = false;
         }
@@ -1917,8 +2574,9 @@ class _ChatScreenState extends State<ChatScreen> {
           ),
           scrollCacheExtent: ScrollCacheExtent.pixels(800.0),
           padding: const EdgeInsets.only(
-            top: YanciTheme.spacingSm,
-            bottom: YanciTheme.spacingSm,
+            top: YanciTheme.spacingSm + _chatHeaderHeight,
+            bottom:
+                _messageListBottomBreathingSpace + _composerViewportUnderlay,
           ),
           itemCount: itemCount,
           itemBuilder: (context, rawIndex) {
@@ -1976,6 +2634,16 @@ class _ChatScreenState extends State<ChatScreen> {
             final index = hasOlderButton ? rawIndex - 1 : rawIndex;
             if (index < displayItems.length) {
               final item = displayItems[index];
+              switch (item.continuationKind) {
+                case _RpContinuationDisplayKind.header:
+                  return _buildRpContinuationHeader();
+                case _RpContinuationDisplayKind.loadEarlier:
+                  return _buildRpContinuationLoadEarlier();
+                case _RpContinuationDisplayKind.boundary:
+                  return _buildRpContinuationBoundary();
+                case null:
+                  break;
+              }
               // ═══ 通話結束分割線：線 — 文字 — 線，主題色低調款 ═══
               if (item.callDivider != null) {
                 return Padding(
@@ -2072,6 +2740,7 @@ class _ChatScreenState extends State<ChatScreen> {
                     : null,
                 messageId: item.messageId,
                 imagePath: item.imagePath,
+                imagePaths: item.imagePaths,
                 conversationId: widget.conversationId,
                 conversationTitle: _characterName,
                 characterId: _activeCharacterId,
@@ -2117,6 +2786,24 @@ class _ChatScreenState extends State<ChatScreen> {
                       item.webSearchResult!,
                     );
               final attachments = <Widget>[];
+              if (item.summaryRecordedId != null) {
+                attachments.add(
+                  _buildSummaryRecordedDivider(item.summaryRecordedId!),
+                );
+              }
+              if (item.dbMessageId != null) {
+                for (final diagnostic in _chatDiagnostics.where(
+                  (event) => event.anchorMessageId == item.dbMessageId,
+                )) {
+                  attachments.add(
+                    ChatDiagnosticCard(
+                      key: ValueKey('chat-diagnostic-${diagnostic.id}'),
+                      event: diagnostic,
+                      onRetry: () => _retryChatDiagnostic(diagnostic),
+                    ),
+                  );
+                }
+              }
               final emailDraft = item.emailDraft;
               if (emailDraft != null && item.dbMessageId != null) {
                 attachments.add(
@@ -2156,9 +2843,7 @@ class _ChatScreenState extends State<ChatScreen> {
               );
             } else {
               // ═══ 搜索卡片（streaming 後、最末尾）═══
-              final streamSlots = hasStreamingBubble
-                  ? (_splitReply ? _streamingSplitParts().length : 1)
-                  : 0;
+              final streamSlots = hasStreamingBubble ? 1 : 0;
               final searchCardIdx =
                   displayItems.length + (showAtom ? 1 : 0) + streamSlots;
               if (hasSearchCard && index == searchCardIdx) {
@@ -2180,45 +2865,154 @@ class _ChatScreenState extends State<ChatScreen> {
                 );
               }
               // ═══ 流式氣泡（拆分回覆時按段落拆）═══
-              if (_splitReply) {
-                final parts = _streamingSplitParts();
-                final streamIdx =
-                    index - displayItems.length - (showAtom ? 1 : 0);
-                if (streamIdx < 0 || streamIdx >= parts.length) {
-                  return const SizedBox.shrink();
-                }
-                final isLast = streamIdx == parts.length - 1;
-                return ChatBubble(
-                  text: parts[streamIdx],
-                  isUser: false,
-                  isStreaming: isLast,
-                  messageId: 'streaming_$streamIdx',
-                  conversationId: widget.conversationId,
-                  conversationTitle: _characterName,
-                  characterId: _activeCharacterId,
-                  showAvatar: _showChatAvatar,
-                  avatarPath: _charAvatarPath,
-                  webSearchTrace: isLast ? pendingWebSearchTrace : null,
-                );
-              } else {
-                return ChatBubble(
-                  text: _displayStreamingText,
-                  isUser: false,
-                  isStreaming: true,
-                  messageId: 'streaming',
-                  conversationId: widget.conversationId,
-                  conversationTitle: _characterName,
-                  characterId: _activeCharacterId,
-                  showAvatar: _showChatAvatar,
-                  avatarPath: _charAvatarPath,
-                  webSearchTrace: pendingWebSearchTrace,
-                );
-              }
+              return ValueListenableBuilder<int>(
+                valueListenable: _streamRevision,
+                builder: (context, _, _) {
+                  if (!_splitReply) {
+                    return ChatBubble(
+                      text: _displayStreamingText,
+                      isUser: false,
+                      isStreaming: true,
+                      messageId: 'streaming',
+                      conversationId: widget.conversationId,
+                      conversationTitle: _characterName,
+                      characterId: _activeCharacterId,
+                      showAvatar: _showChatAvatar,
+                      avatarPath: _charAvatarPath,
+                      webSearchTrace: pendingWebSearchTrace,
+                    );
+                  }
+                  final parts = _streamingSplitParts();
+                  return Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: <Widget>[
+                      for (
+                        var streamIdx = 0;
+                        streamIdx < parts.length;
+                        streamIdx++
+                      )
+                        ChatBubble(
+                          key: ValueKey<String>('streaming_$streamIdx'),
+                          text: parts[streamIdx],
+                          isUser: false,
+                          isStreaming: streamIdx == parts.length - 1,
+                          messageId: 'streaming_$streamIdx',
+                          conversationId: widget.conversationId,
+                          conversationTitle: _characterName,
+                          characterId: _activeCharacterId,
+                          showAvatar: _showChatAvatar,
+                          avatarPath: _charAvatarPath,
+                          webSearchTrace: streamIdx == parts.length - 1
+                              ? pendingWebSearchTrace
+                              : null,
+                        ),
+                    ],
+                  );
+                },
+              );
             }
           },
         ),
       ),
     );
+  }
+
+  Widget _buildSummaryRecordedDivider(int summaryId) {
+    final thinkingColor = _boundBackgroundPreset?.chatThinkingTextColor == null
+        ? _boundChatPalette?.thinkingText ??
+              Color.lerp(
+                YanciTheme.textSecondary,
+                YanciTheme.textPrimary,
+                0.34,
+              )!
+        : Color(_boundBackgroundPreset!.chatThinkingTextColor!);
+    final color = thinkingColor.withValues(alpha: 0.6);
+    final label = L.pick(en: 'Summary recorded', zhTW: '摘要已記錄', zhCN: '摘要已记录');
+    final semanticLabel = L.pick(
+      en: 'Summary recorded. Tap to view or edit this summary.',
+      zhTW: '摘要已記錄，點擊查看或編輯本次摘要',
+      zhCN: '摘要已记录，点击查看或编辑本次摘要',
+    );
+
+    return Semantics(
+      button: true,
+      label: semanticLabel,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(18),
+        onTap: () => _showWindowSummaryEditor(summaryId),
+        child: ExcludeSemantics(
+          child: Padding(
+            padding: const EdgeInsets.only(top: 5, bottom: 9),
+            child: Center(
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  Container(width: 22, height: 0.6, color: color),
+                  const SizedBox(width: 8),
+                  Text(
+                    label,
+                    style: TextStyle(
+                      color: color,
+                      fontSize: 11,
+                      fontFamily: YanciTheme.fontFamily,
+                      letterSpacing: 0.35,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Container(width: 22, height: 0.6, color: color),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showWindowSummaryEditor(int summaryId) async {
+    if (_summaryEditorVisible) return;
+    _summaryEditorVisible = true;
+    try {
+      final identity = _requiredSessionIdentity;
+      final row = await DatabaseHelper.getConversationContextSummaryById(
+        summaryId: summaryId,
+        conversationId: widget.conversationId,
+        contextMode: identity.contextMode,
+        continuityId: identity.continuityId,
+      );
+      if (!mounted) return;
+      if (row == null || row['id'] is! int) {
+        _showChatNotice(
+          L.pick(
+            en: 'No summary is available for this window yet',
+            zhTW: '目前窗口還沒有可查看的摘要',
+            zhCN: '当前窗口还没有可查看的摘要',
+          ),
+        );
+        return;
+      }
+      final content = await showModalBottomSheet<String>(
+        context: context,
+        isScrollControlled: true,
+        backgroundColor: Colors.transparent,
+        builder: (_) => _WindowSummaryEditorSheet(
+          initialContent: row['content']?.toString() ?? '',
+        ),
+      );
+      if (content == null || !mounted) return;
+      await DatabaseHelper.updateContextSummary(
+        id: row['id'] as int,
+        content: content,
+        tokenCount: TokenEstimator.estimate(content),
+      );
+      if (mounted) {
+        _showChatNotice(
+          L.pick(en: 'Summary updated', zhTW: '摘要已更新', zhCN: '摘要已更新'),
+        );
+      }
+    } finally {
+      _summaryEditorVisible = false;
+    }
   }
 
   Widget _buildManualSummarySelectionBar() {
@@ -2311,81 +3105,97 @@ class _ChatScreenState extends State<ChatScreen> {
         alignment: Alignment.center,
         children: [
           // ═══ 置中的標題區域 ═══
-          Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // ═══ 角色名（加粗）═══
-              Text(
-                _characterName.isNotEmpty ? _characterName : 'Holt',
-                style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w700,
-                  color: YanciTheme.textPrimary,
-                  fontFamily: YanciTheme.fontFamily,
-                  letterSpacing: 0.5,
+          ConstrainedBox(
+            constraints: BoxConstraints(
+              maxWidth: MediaQuery.sizeOf(context).width * 0.58,
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // ═══ 角色名（加粗）═══
+                Text(
+                  _characterName.isNotEmpty ? _characterName : 'Holt',
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w400,
+                    color: Colors.white.withValues(alpha: 0.94),
+                    fontFamily: YanciTheme.fontFamily,
+                    letterSpacing: 0.5,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                 ),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-              const SizedBox(height: 2),
-              // ═══ 模型 + token ═══
-              GestureDetector(
-                key: _modelPickerAnchorKey,
-                onTap: _showModelPicker,
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    if (_localModelLoading) ...[
-                      SizedBox(
-                        width: 10,
-                        height: 10,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 1.5,
-                          color: YanciTheme.accent.withValues(alpha: 0.6),
-                        ),
+                const SizedBox(height: 3),
+                // ═══ 模型 + token ═══
+                Semantics(
+                  button: true,
+                  label: L.pick(en: 'Choose model', zhTW: '選擇模型', zhCN: '选择模型'),
+                  child: GestureDetector(
+                    key: _modelPickerAnchorKey,
+                    behavior: HitTestBehavior.opaque,
+                    onTap: _showModelPicker,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 9,
+                        vertical: 3,
                       ),
-                      const SizedBox(width: 4),
-                    ],
-                    Text(
-                      _localModelLoading
-                          ? (L.pick(en: 'Loading…', zhTW: '加載中…'))
-                          : _shortModelName(_currentModel),
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: YanciTheme.textSecondary.withValues(alpha: 0.6),
-                        fontFamily: YanciTheme.fontFamily,
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (_localModelLoading) ...[
+                            SizedBox(
+                              width: 10,
+                              height: 10,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 1.5,
+                                color: Colors.white.withValues(alpha: 0.62),
+                              ),
+                            ),
+                            const SizedBox(width: 4),
+                          ],
+                          Flexible(
+                            child: Text(
+                              _localModelLoading
+                                  ? (L.pick(en: 'Loading…', zhTW: '加載中…'))
+                                  : _shortModelName(_currentModel),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: Colors.white.withValues(alpha: 0.62),
+                                fontFamily: YanciTheme.fontFamily,
+                              ),
+                            ),
+                          ),
+                          if (_tokenTracker.totalTokens > 0) ...[
+                            Text(
+                              ' · ',
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: Colors.white.withValues(alpha: 0.32),
+                              ),
+                            ),
+                            Text(
+                              '${_tokenTracker.formatTokens()} tokens',
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: Colors.white.withValues(alpha: 0.48),
+                              ),
+                            ),
+                          ],
+                          const SizedBox(width: 3),
+                          Icon(
+                            Icons.unfold_more_rounded,
+                            size: 10,
+                            color: Colors.white.withValues(alpha: 0.38),
+                          ),
+                        ],
                       ),
                     ),
-                    if (_tokenTracker.totalTokens > 0) ...[
-                      Text(
-                        ' · ',
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: YanciTheme.textSecondary.withValues(
-                            alpha: 0.4,
-                          ),
-                        ),
-                      ),
-                      Text(
-                        '${_tokenTracker.formatTokens()} tokens',
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: YanciTheme.textSecondary.withValues(
-                            alpha: 0.5,
-                          ),
-                        ),
-                      ),
-                    ],
-                    const SizedBox(width: 3),
-                    Icon(
-                      Icons.unfold_more_rounded,
-                      size: 10,
-                      color: YanciTheme.textSecondary.withValues(alpha: 0.4),
-                    ),
-                  ],
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
           // ═══ 左右按鈕 ═══
           Row(
@@ -2395,7 +3205,8 @@ class _ChatScreenState extends State<ChatScreen> {
                 icon: Icon(
                   Icons.arrow_back_ios_rounded,
                   size: 20,
-                  color: YanciTheme.textPrimary,
+                  color:
+                      _boundChatForeground?.primary ?? YanciTheme.textPrimary,
                 ),
                 onPressed: () => Navigator.of(context).pop(_walletChanged),
               ),
@@ -2403,26 +3214,34 @@ class _ChatScreenState extends State<ChatScreen> {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   // ═══ 語音通話 ═══
-                  Semantics(
-                    button: true,
-                    label: L.pick(en: 'Voice call', zhTW: '語音通話'),
-                    child: GestureDetector(
-                      behavior: HitTestBehavior.opaque,
-                      onTap: _isChatReady ? () => _openCall() : null,
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 10,
-                          vertical: 8,
-                        ),
-                        child: Icon(
-                          Icons.call_rounded,
-                          size: 21,
-                          color: YanciTheme.accent.withValues(alpha: 0.5),
+                  if (_sessionIdentity?.contextMode == ContextMode.daily) ...[
+                    Semantics(
+                      button: true,
+                      label: L.pick(
+                        en: 'Voice call',
+                        zhTW: '語音通話',
+                        zhCN: '语音通话',
+                      ),
+                      child: GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onTap: _isChatReady ? () => _openCall() : null,
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 8,
+                          ),
+                          child: Icon(
+                            Icons.call_rounded,
+                            size: 21,
+                            color:
+                                _boundChatForeground?.primary ??
+                                YanciTheme.accent.withValues(alpha: 0.5),
+                          ),
                         ),
                       ),
                     ),
-                  ),
-                  const SizedBox(width: 2),
+                    const SizedBox(width: 2),
+                  ],
                   // ═══ 長截圖（取代低頻的新窗口入口）═══
                   Semantics(
                     button: true,
@@ -2444,17 +3263,19 @@ class _ChatScreenState extends State<ChatScreen> {
                                   height: 18,
                                   child: CircularProgressIndicator(
                                     strokeWidth: 1.7,
-                                    color: YanciTheme.accent.withValues(
-                                      alpha: 0.65,
-                                    ),
+                                    color:
+                                        _boundChatForeground?.primary ??
+                                        YanciTheme.accent.withValues(
+                                          alpha: 0.65,
+                                        ),
                                   ),
                                 )
                               : Icon(
                                   Icons.panorama_vertical_outlined,
                                   size: 22,
-                                  color: YanciTheme.accent.withValues(
-                                    alpha: 0.5,
-                                  ),
+                                  color:
+                                      _boundChatForeground?.primary ??
+                                      YanciTheme.accent.withValues(alpha: 0.5),
                                 ),
                         ),
                       ),
@@ -2472,7 +3293,9 @@ class _ChatScreenState extends State<ChatScreen> {
 
   /// 模型短名
   String _shortModelName(String model) {
-    if (model.isEmpty) return '選模型';
+    if (model.isEmpty) {
+      return L.pick(en: 'Select model', zhTW: '選模型', zhCN: '选模型');
+    }
     // 本地模型：local:qwen3-1.7b-q4 → 📱 Qwen3 1.7B
     if (model.startsWith('local:')) {
       final key = model.substring(6);
@@ -2509,7 +3332,9 @@ class _ChatScreenState extends State<ChatScreen> {
 
   /// 模型全名（不截斷，供 picker / marquee 使用）
   String _fullModelName(String model) {
-    if (model.isEmpty) return '選模型';
+    if (model.isEmpty) {
+      return L.pick(en: 'Select model', zhTW: '選模型', zhCN: '选模型');
+    }
     if (model.startsWith('local:')) {
       final key = model.substring(6);
       final info = LocalModelService.availableModels
@@ -2543,23 +3368,161 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Widget _buildEmptyState() {
+    final isRp = _requiredSessionIdentity.contextMode == ContextMode.rp;
+    final showDailyContinuation = !isRp && _canContinuePreviousRpChapter;
+    final showRpChapterChoices =
+        isRp && _hasAnyRpWindow && !_rpStartChoiceResolved;
+    final hasMultipleRpStorylines = _rpStorylines.length > 1;
+    final showPlaceholder = !isRp || !_hasAnyRpWindow;
     return Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(
-            Icons.chat_bubble_outline_rounded,
-            size: 48,
-            color: YanciTheme.textSecondary.withValues(alpha: 0.3),
-          ),
-          const SizedBox(height: YanciTheme.spacingMd),
-          Text(
-            L.get('chat_placeholder'),
-            style: YanciTheme.bodySmall.copyWith(
-              color: YanciTheme.textSecondary.withValues(alpha: 0.5),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 28),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              Icons.chat_bubble_outline_rounded,
+              size: 48,
+              color: YanciTheme.textSecondary.withValues(alpha: 0.3),
             ),
-          ),
-        ],
+            const SizedBox(height: YanciTheme.spacingMd),
+            if (showPlaceholder)
+              Text(
+                L.get('chat_placeholder'),
+                textAlign: TextAlign.center,
+                style: YanciTheme.bodySmall.copyWith(
+                  color: YanciTheme.textSecondary.withValues(alpha: 0.5),
+                ),
+              ),
+            if (showDailyContinuation) ...<Widget>[
+              const SizedBox(height: 24),
+              Semantics(
+                button: true,
+                label: L.pick(
+                  en: 'Continue the previous conversation. Let them respond first.',
+                  zhTW: '繼續上一窗口的對話，讓 TA 先自然回應',
+                  zhCN: '继续上一窗口的对话，让 TA 先自然回应',
+                ),
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(minWidth: 176),
+                  child: OutlinedButton(
+                    onPressed: _continuePreviousRpChapter,
+                    style: OutlinedButton.styleFrom(
+                      minimumSize: const Size(176, 48),
+                      foregroundColor: YanciTheme.textPrimary.withValues(
+                        alpha: 0.82,
+                      ),
+                      side: BorderSide(
+                        color: YanciTheme.accent.withValues(alpha: 0.30),
+                        width: 0.8,
+                      ),
+                      shape: const StadiumBorder(),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 22,
+                        vertical: 12,
+                      ),
+                    ),
+                    child: Text(
+                      L.pick(
+                        en: 'Continue this conversation',
+                        zhTW: '繼續這段對話',
+                        zhCN: '继续这段对话',
+                      ),
+                      textAlign: TextAlign.center,
+                      style: YanciTheme.bodyText.copyWith(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                L.pick(
+                  en: 'Let them respond first',
+                  zhTW: '讓 TA 先自然回應',
+                  zhCN: '让 TA 先自然回应',
+                ),
+                textAlign: TextAlign.center,
+                style: YanciTheme.bodySmall.copyWith(
+                  color: YanciTheme.textSecondary.withValues(alpha: 0.58),
+                  height: 1.35,
+                ),
+              ),
+            ],
+            if (showRpChapterChoices) ...<Widget>[
+              const SizedBox(height: 24),
+              ConstrainedBox(
+                constraints: const BoxConstraints(minWidth: 190),
+                child: OutlinedButton(
+                  key: const ValueKey('rp-continue-chapter-action'),
+                  onPressed: hasMultipleRpStorylines
+                      ? _selectCurrentRpChapter
+                      : _continuePreviousRpChapter,
+                  style: OutlinedButton.styleFrom(
+                    minimumSize: const Size(190, 48),
+                    foregroundColor: YanciTheme.textPrimary.withValues(
+                      alpha: 0.84,
+                    ),
+                    side: BorderSide(
+                      color: YanciTheme.accent.withValues(alpha: 0.3),
+                      width: 0.8,
+                    ),
+                    shape: const StadiumBorder(),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 22,
+                      vertical: 12,
+                    ),
+                  ),
+                  child: Text(
+                    L.pick(
+                      en: hasMultipleRpStorylines
+                          ? 'Choose current chapter'
+                          : 'Continue this chapter',
+                      zhTW: hasMultipleRpStorylines ? '選擇當前篇章' : '繼續這一篇章',
+                      zhCN: hasMultipleRpStorylines ? '选择当前篇章' : '继续这一篇章',
+                    ),
+                    textAlign: TextAlign.center,
+                    style: YanciTheme.bodyText.copyWith(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 10),
+              ConstrainedBox(
+                constraints: const BoxConstraints(minWidth: 190),
+                child: TextButton(
+                  key: const ValueKey('rp-open-new-chapter-action'),
+                  onPressed: _openNewRpChapter,
+                  style: TextButton.styleFrom(
+                    minimumSize: const Size(190, 44),
+                    foregroundColor: YanciTheme.accent.withValues(alpha: 0.82),
+                    shape: const StadiumBorder(),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 22,
+                      vertical: 10,
+                    ),
+                  ),
+                  child: Text(
+                    L.pick(
+                      en: 'Open a new chapter',
+                      zhTW: '開啟新篇章',
+                      zhCN: '开启新篇章',
+                    ),
+                    textAlign: TextAlign.center,
+                    style: YanciTheme.bodyText.copyWith(
+                      fontSize: 13.5,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ],
+        ),
       ),
     );
   }
@@ -2663,12 +3626,128 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 }
 
+class _WindowSummaryEditorSheet extends StatefulWidget {
+  final String initialContent;
+
+  const _WindowSummaryEditorSheet({required this.initialContent});
+
+  @override
+  State<_WindowSummaryEditorSheet> createState() =>
+      _WindowSummaryEditorSheetState();
+}
+
+class _WindowSummaryEditorSheetState extends State<_WindowSummaryEditorSheet> {
+  late final TextEditingController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: widget.initialContent);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _save() {
+    final content = _controller.text.trim();
+    if (content.isEmpty) return;
+    Navigator.pop(context, content);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
+      child: Container(
+        constraints: BoxConstraints(
+          maxHeight: MediaQuery.sizeOf(context).height * 0.82,
+        ),
+        padding: const EdgeInsets.fromLTRB(20, 16, 20, 18),
+        decoration: BoxDecoration(
+          color: YanciTheme.surfacePanel,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(22)),
+        ),
+        child: SafeArea(
+          top: false,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              Text(
+                L.pick(
+                  en: 'Current window summary',
+                  zhTW: '目前窗口摘要',
+                  zhCN: '当前窗口摘要',
+                ),
+                style: YanciTheme.headingMedium,
+              ),
+              const SizedBox(height: 6),
+              Text(
+                L.pick(
+                  en: 'Edits affect later summary recall. The cache snapshot already pinned when this window opened remains unchanged.',
+                  zhTW: '修改會套用到後續摘要召回；本窗口開啟時已釘選的 cache 快照不會被改寫。',
+                  zhCN: '修改会应用到后续摘要召回；本窗口开启时已固定的 cache 快照不会被改写。',
+                ),
+                style: YanciTheme.bodySmall,
+              ),
+              const SizedBox(height: 12),
+              Flexible(
+                child: TextField(
+                  controller: _controller,
+                  minLines: 8,
+                  maxLines: null,
+                  keyboardType: TextInputType.multiline,
+                  style: YanciTheme.bodyText.copyWith(height: 1.5),
+                  decoration: InputDecoration(
+                    hintText: L.pick(
+                      en: 'Summary content',
+                      zhTW: '摘要內容',
+                      zhCN: '摘要内容',
+                    ),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: <Widget>[
+                  Expanded(
+                    child: TextButton(
+                      onPressed: () => Navigator.pop(context),
+                      child: Text(L.pick(en: 'Cancel', zhTW: '取消', zhCN: '取消')),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: FilledButton(
+                      onPressed: _save,
+                      child: Text(L.pick(en: 'Save', zhTW: '儲存', zhCN: '保存')),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+enum _RpContinuationDisplayKind { header, loadEarlier, boundary }
+
 /// 顯示用消息項（支持拆分回覆）
 class _DisplayItem {
   final String text;
   final bool isUser;
   final DateTime? timestamp;
   final String? imagePath;
+  final List<String> imagePaths;
   final String messageId;
   final int? dbMessageId;
   final int originalIndex;
@@ -2706,11 +3785,19 @@ class _DisplayItem {
   /// 證書是她遞出的（未簽時卡片可點擊簽署）
   final bool certFromChar;
 
+  /// Exact automatic rolling summary shown after this UI anchor message.
+  final int? summaryRecordedId;
+
+  /// Non-null items are lightweight controls around the read-only source
+  /// transcript virtually joined above an RP continuation.
+  final _RpContinuationDisplayKind? continuationKind;
+
   _DisplayItem({
     required this.text,
     required this.isUser,
     this.timestamp,
     this.imagePath,
+    this.imagePaths = const <String>[],
     required this.messageId,
     this.dbMessageId,
     required this.originalIndex,
@@ -2729,5 +3816,7 @@ class _DisplayItem {
     this.giftAccepted = false,
     this.hasMarriageCert = false,
     this.certFromChar = false,
+    this.summaryRecordedId,
+    this.continuationKind,
   });
 }

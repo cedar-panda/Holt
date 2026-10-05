@@ -1,11 +1,31 @@
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:project_yanci/memory/database.dart';
 import 'package:project_yanci/models/memory.dart';
+import 'package:project_yanci/models/context_mode.dart';
 import 'package:project_yanci/services/api_adapter.dart';
 import 'package:project_yanci/services/memory_curation_service.dart';
+import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+  late Database db;
+
+  setUpAll(sqfliteFfiInit);
+
+  setUp(() async {
+    db = await databaseFactoryFfi.openDatabase(inMemoryDatabasePath);
+    DatabaseHelper.useDatabaseForTesting(db);
+    await DatabaseHelper.createSchemaForTesting(db);
+  });
+
+  tearDown(() async {
+    DatabaseHelper.useDatabaseInitializerForTesting(null);
+    DatabaseHelper.useDatabaseForTesting(null);
+    await db.close();
+  });
+
   test('curation decoder rejects hallucinated, weak and duplicate links', () {
     const response = '''```json
 {"relations":[
@@ -94,10 +114,67 @@ void main() {
       expect(result.proposedRelations, 0);
     },
   );
+
+  test('manual curation splits daily and RP story scopes', () async {
+    final adapter = _RecordingAdapter();
+    final memories = <Memory>[
+      Memory(
+        id: 1,
+        characterId: 'char-a',
+        contextMode: ContextMode.daily,
+        continuityId: 'main',
+        mode: 'romance',
+        category: '事件',
+        content: '日常一',
+      ),
+      Memory(
+        id: 2,
+        characterId: 'char-a',
+        contextMode: ContextMode.daily,
+        continuityId: 'main',
+        mode: 'romance',
+        category: '事件',
+        content: '日常二',
+      ),
+      Memory(
+        id: 3,
+        characterId: 'char-a',
+        contextMode: ContextMode.rp,
+        continuityId: 'route-a',
+        mode: 'story',
+        category: '事件',
+        content: '劇情一',
+      ),
+      Memory(
+        id: 4,
+        characterId: 'char-a',
+        contextMode: ContextMode.rp,
+        continuityId: 'route-a',
+        mode: 'story',
+        category: '事件',
+        content: '劇情二',
+      ),
+    ];
+
+    await MemoryCurationService.analyzeAndLink(
+      characterId: 'char-a',
+      memories: memories,
+      adapterOverride: adapter,
+      modelOverride: 'test-summary-model',
+      providerOverride: 'test',
+    );
+
+    expect(adapter.scopes, hasLength(2));
+    expect(
+      adapter.scopes,
+      containsAll(<String>{'daily/main/romance', 'rp/route-a/story'}),
+    );
+  });
 }
 
 class _RecordingAdapter implements ApiAdapter {
   final List<List<int>> batches = <List<int>>[];
+  final List<String> scopes = <String>[];
 
   @override
   void cancelActive() {}
@@ -112,6 +189,12 @@ class _RecordingAdapter implements ApiAdapter {
   }) async {
     final payload = jsonDecode(messages.single['content']!) as Map;
     final memories = payload['memories'] as List;
+    final scope = payload['scope'];
+    if (scope is Map) {
+      scopes.add(
+        '${scope['context_mode']}/${scope['continuity_id']}/${scope['memory_mode']}',
+      );
+    }
     batches.add(
       memories
           .map((memory) => ((memory as Map)['id'] as num).toInt())

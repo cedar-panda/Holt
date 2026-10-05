@@ -1,5 +1,8 @@
+import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../background_image_path_service.dart';
+import '../../theme/app_theme.dart';
 import '../../theme/theme_presets.dart';
 
 /// 主題與外觀設定（配色、氣泡、星光、字體）
@@ -14,6 +17,7 @@ class ThemeSettings {
   static const String _keyBubbleRadius = 'bubble_radius';
   static const String _keyStarEnabled = 'star_enabled';
   static const String _keyStarDensity = 'star_density';
+  static const String _keyAiBubbleFlat = 'ai_bubble_flat';
 
   static Future<void> saveDarkMode(bool v) async {
     final p = await SharedPreferences.getInstance();
@@ -156,6 +160,17 @@ class ThemeSettings {
     return p.getInt(_keyStarDensity) ?? 12;
   }
 
+  /// AI 氣泡平鋪模式（true = 無氣泡，false = 正常氣泡）
+  static Future<void> saveAiBubbleFlat(bool v) async {
+    final p = await SharedPreferences.getInstance();
+    await p.setBool(_keyAiBubbleFlat, v);
+  }
+
+  static Future<bool> getAiBubbleFlat() async {
+    final p = await SharedPreferences.getInstance();
+    return p.getBool(_keyAiBubbleFlat) ?? false;
+  }
+
   // ═══ 自定義圖片背景（首頁 / 對話分開）═══
   static String _backgroundPathKey(String scope) => 'bg_image_${scope}_path';
   static String _backgroundScaleKey(String scope) => 'bg_image_${scope}_scale';
@@ -163,19 +178,26 @@ class ThemeSettings {
       'bg_image_${scope}_offset_x';
   static String _backgroundOffsetYKey(String scope) =>
       'bg_image_${scope}_offset_y';
+  static String _backgroundBlurKey(String scope) => 'bg_image_${scope}_blur';
 
   static Future<void> saveBackgroundImagePath(String scope, String path) async {
     final p = await SharedPreferences.getInstance();
     if (path.isEmpty) {
       await p.remove(_backgroundPathKey(scope));
     } else {
-      await p.setString(_backgroundPathKey(scope), path);
+      await p.setString(
+        _backgroundPathKey(scope),
+        await BackgroundImagePathService.forStorage(path, scope: scope),
+      );
     }
   }
 
   static Future<String> getBackgroundImagePath(String scope) async {
     final p = await SharedPreferences.getInstance();
-    return p.getString(_backgroundPathKey(scope)) ?? '';
+    return BackgroundImagePathService.resolve(
+      p.getString(_backgroundPathKey(scope)) ?? '',
+      scope: scope,
+    );
   }
 
   static Future<void> saveBackgroundImageScale(
@@ -215,6 +237,21 @@ class ThemeSettings {
   static Future<double> getBackgroundImageOffsetY(String scope) async {
     final p = await SharedPreferences.getInstance();
     return p.getDouble(_backgroundOffsetYKey(scope)) ?? 0.0;
+  }
+
+  static Future<void> saveBackgroundImageBlur(String scope, double blur) async {
+    final p = await SharedPreferences.getInstance();
+    await p.setDouble(
+      _backgroundBlurKey(scope),
+      blur.clamp(0.0, 20.0).toDouble(),
+    );
+  }
+
+  static Future<double> getBackgroundImageBlur(String scope) async {
+    final p = await SharedPreferences.getInstance();
+    return (p.getDouble(_backgroundBlurKey(scope)) ?? 0.0)
+        .clamp(0.0, 20.0)
+        .toDouble();
   }
 
   // ═══ 對話圖片背景專用配色 ═══
@@ -282,6 +319,40 @@ class ThemeSettings {
   static Future<double?> getChatBackgroundBubbleOpacity() async {
     final p = await SharedPreferences.getInstance();
     return p.getDouble(_keyChatBackgroundBubbleOpacity);
+  }
+
+  // ═══ 每套主題的氣泡配色 ═══
+
+  static String _themeBubbleColorKey(
+    String presetId,
+    ThemeBubbleColorRole role,
+  ) => 'theme_bubble_color_${presetId}_${role.name}';
+
+  static Future<void> restoreThemeBubbleColors(String presetId) async {
+    final p = await SharedPreferences.getInstance();
+    for (final role in ThemeBubbleColorRole.values) {
+      final argb = p.getInt(_themeBubbleColorKey(presetId, role));
+      YanciTheme.setBubbleColorOverride(
+        presetId,
+        role,
+        argb == null ? null : Color(argb),
+      );
+    }
+  }
+
+  static Future<void> saveThemeBubbleColor(
+    String presetId,
+    ThemeBubbleColorRole role,
+    Color? color,
+  ) async {
+    final p = await SharedPreferences.getInstance();
+    final key = _themeBubbleColorKey(presetId, role);
+    if (color == null) {
+      await p.remove(key);
+    } else {
+      await p.setInt(key, color.toARGB32());
+    }
+    YanciTheme.setBubbleColorOverride(presetId, role, color);
   }
 
   // ═══ 自定義色覆蓋 ═══

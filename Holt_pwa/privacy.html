@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="theme-color" content="#faf9f6">
+    <meta name="description" content="Holt PWA 隱私與資料說明">
+    <link rel="manifest" href="./manifest.webmanifest">
+    <link rel="icon" href="./assets/images/app_icon.png" type="image/png">
+    <link rel="stylesheet" href="./styles.css?v=90">
+    <title>隱私與資料 · Holt</title>
+  </head>
+  <body class="privacy-document-body">
+    <main class="privacy-document">
+      <a class="privacy-back" href="./index.html" aria-label="返回 Holt">‹ 返回 Holt</a>
+      <p class="eyebrow">PRIVACY &amp; DATA</p>
+      <h1>隱私與資料</h1>
+      <p class="privacy-lead">Holt PWA 採本機優先與 BYOK 架構。Holt 不代管你的對話服務，但你選擇的 API 供應商仍會收到完成請求所需的內容。</p>
+
+      <section>
+        <h2>儲存在這個裝置</h2>
+        <p>角色、對話歷史、圖片、表情包、聲音收藏、記憶、時間線、情緒、生物鐘、貝殼、偏好、收藏模型、用量紀錄與 API Key 儲存在目前瀏覽器來源的 IndexedDB。清除瀏覽器網站資料、變更瀏覽器或網域，都可能使資料無法再存取。</p>
+      </section>
+
+      <section>
+        <h2>會傳送到 API 來源</h2>
+        <p>聊天內容、必要的角色提示詞與附加圖片會傳送到目前選擇的聊天來源。啟用原生網搜時，搜尋問題會傳送到選擇的搜尋來源；生成圖片時，生圖提示詞會傳送到選擇的生圖來源。</p>
+        <p>記憶、時間線、情緒、生物鐘與貝殼資料只有被組入當輪提示詞的必要文字上下文會隨聊天請求傳送；收藏的聲音檔不會自動上傳。</p>
+        <p>可用來源包含 OpenRouter、xAI、Google Gemini 與你自行設定的 HTTPS OpenAI 相容中轉站。各來源的日誌、保留和訓練政策由該供應商或中轉站營運者決定。</p>
+      </section>
+
+      <section>
+        <h2>API Key 與備份</h2>
+        <p>API Key 僅保存在目前瀏覽器，且不會寫入 Holt 備份。PWA 無法提供原生 Keychain 等級的硬體保護，因此請只在你信任且設有裝置鎖的裝置上使用。</p>
+        <p>匯出的 <code>.holt.backup</code> 使用密碼加密。請妥善保管密碼；Holt 無法替你重設或復原。</p>
+      </section>
+
+      <section>
+        <h2>刪除與控制</h2>
+        <p>你可以在「我 → 清除本機資料」刪除目前來源中的角色、對話、圖片、設定與 API Key。執行前建議先匯出加密備份。</p>
+      </section>
+
+      <p class="privacy-updated">更新日期：2026-08-25</p>
+    </main>
+  </body>
+</html>

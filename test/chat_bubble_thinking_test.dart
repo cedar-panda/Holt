@@ -6,10 +6,13 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:project_yanci/services/locale_strings.dart';
 import 'package:project_yanci/services/memory_guard_service.dart';
+import 'package:project_yanci/services/background_foreground_service.dart';
+import 'package:project_yanci/models/background_preset.dart';
 import 'package:project_yanci/models/memory_action_proposal.dart';
 import 'package:project_yanci/theme/app_theme.dart';
 import 'package:project_yanci/theme/theme_presets.dart';
 import 'package:project_yanci/widgets/chat_bubble.dart';
+import 'package:project_yanci/widgets/gradient_background.dart';
 import 'package:project_yanci/widgets/bubble_action_glyph.dart';
 import 'package:project_yanci/widgets/thinking_context_widgets.dart';
 
@@ -364,6 +367,62 @@ void main() {
     expect(hiddenDecoration.boxShadow!.first.color.a, 0.0);
     expect(find.text('角色訊息'), findsOneWidget);
     expect(find.text('用戶訊息'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('bound character palette does not inherit active slot colors', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    final originalAi = YanciTheme.chatBackgroundAiBubbleOverride;
+    final originalUser = YanciTheme.chatBackgroundUserBubbleOverride;
+    addTearDown(() {
+      YanciTheme.chatBackgroundAiBubbleOverride = originalAi;
+      YanciTheme.chatBackgroundUserBubbleOverride = originalUser;
+    });
+    YanciTheme.chatBackgroundAiBubbleOverride = const Color(0xFF112233);
+    YanciTheme.chatBackgroundUserBubbleOverride = const Color(0xFF334455);
+
+    const palette = ChatBubblePalette(
+      aiBubble: Color(0xFFABCDEF),
+      userBubble: Color(0xFFFEDCBA),
+      bubbleText: Color(0xFF010203),
+      thinkingText: Color(0xFF040506),
+      bubbleOpacity: 0.75,
+      inputBarBg: Color(0xFF070809),
+      inputBarBorder: Color(0xFF0A0B0C),
+      inputBarText: Color(0xFF0D0E0F),
+    );
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: ChatBackgroundPresetScope(
+            preset: BackgroundPreset(slot: 2, chatPath: 'bound.png'),
+            palette: palette,
+            child: Column(
+              children: [
+                ChatBubble(text: '角色訊息', isUser: false, captureMode: true),
+                ChatBubble(text: '用戶訊息', isUser: true, captureMode: true),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+
+    final bubbles = tester
+        .widgetList<Container>(
+          find.byKey(const ValueKey('chat-bubble-surface')),
+        )
+        .toList();
+    expect(
+      (bubbles[0].decoration! as BoxDecoration).color,
+      const Color(0xFFABCDEF).withValues(alpha: 0.75),
+    );
+    expect(
+      (bubbles[1].decoration! as BoxDecoration).color,
+      const Color(0xFFFEDCBA).withValues(alpha: 0.75),
+    );
     expect(tester.takeException(), isNull);
   });
 

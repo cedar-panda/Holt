@@ -1,0 +1,4 @@
+name: llamadart
+version: 0.0.0
+environment:
+  sdk: '>=3.11.5 <4.0.0'

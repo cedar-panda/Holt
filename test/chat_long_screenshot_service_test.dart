@@ -51,6 +51,25 @@ void main() {
     expect(stitched.getPixel(5, 3).b, 128);
   });
 
+  test('transparent chunks are composed over one continuous gradient', () {
+    final source = img.Image(width: 2, height: 4, numChannels: 4);
+    img.fill(source, color: img.ColorRgba8(0, 0, 0, 0));
+
+    final result = stitchLongScreenshotChunksForTesting(<String, Object>{
+      'chunks': <Uint8List>[Uint8List.fromList(img.encodePng(source))],
+      'widths': <int>[2],
+      'heights': <int>[4],
+      'maxHeight': 20,
+      'backgroundGradient': <int>[0xFFFF0000, 0xFF0000FF],
+    });
+
+    final stitched = img.decodePng(result['bytes']! as Uint8List)!;
+    expect(stitched.getPixel(0, 0).r, 255);
+    expect(stitched.getPixel(0, 0).b, 0);
+    expect(stitched.getPixel(0, 3).r, 0);
+    expect(stitched.getPixel(0, 3).b, 255);
+  });
+
   test('small selections supersample while long captures stay bounded', () {
     expect(
       resolveLongScreenshotPixelRatioForTesting(
@@ -87,6 +106,30 @@ void main() {
         requestedPixelRatio: 2,
       ),
       2,
+    );
+  });
+
+  test('very tall iOS captures are split below the raster limit', () {
+    final heights = splitLongScreenshotTileHeightsForTesting(
+      logicalWidth: 430,
+      logicalHeight: 9500,
+      pixelRatio: 3,
+      maxRasterDimension: 8192,
+    );
+
+    expect(heights.length, 4);
+    expect(heights.reduce((a, b) => a + b), closeTo(9500, 0.001));
+    expect(heights.every((height) => height * 3 <= 8192), isTrue);
+  });
+
+  test('ordinary captures remain a single raster tile', () {
+    expect(
+      splitLongScreenshotTileHeightsForTesting(
+        logicalWidth: 430,
+        logicalHeight: 1200,
+        pixelRatio: 3,
+      ),
+      <double>[1200],
     );
   });
 }

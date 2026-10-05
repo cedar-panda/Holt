@@ -183,9 +183,13 @@ class SystemContextDebug {
       r'(當前本地時間|当前本地时间|現在時間|现在时间|current local time|current time|\d{1,2}:\d{2})',
       caseSensitive: false,
     ).hasMatch(liveState);
+    // Detect the App-authored section marker only. Recalled memory can
+    // legitimately mention habits, meals or fatigue; those words alone do not
+    // mean that the bio-clock module was injected into this request.
     final hasBioClock = RegExp(
-      r'(生物鐘|生物钟|bio\s*clock|飯點|饭点|疲勞|疲劳|habit|meal time)',
+      r'^###\s*(?:生物鐘(?:變動)?|生物钟(?:变动)?|bio\s*clock(?:\s*changes)?)\s*$',
       caseSensitive: false,
+      multiLine: true,
     ).hasMatch(liveState);
     final hasMemory = RegExp(
       r'(###\s*(記憶|记忆|memory)|【[^】]*(記憶|记忆|memory)|\[#\d+)',

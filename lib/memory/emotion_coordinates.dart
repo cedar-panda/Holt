@@ -1058,21 +1058,21 @@ class EmotionCoordinates {
 
   /// V2 座標約定 prompt（工具清單式）
   ///
-  /// 語言分支鐵律（docs/cache完整攻略指南）：zh_TW 分支文本逐字節不動；
-  /// 維度名是解析端要匹配的枚舉值，英文版也必須讓模型輸出中文維度名。
+  /// 儲存層始終使用繁中 canonical key；模型可依介面語言輸出三語維度名，
+  /// 解析時統一正規化，因此不需要遷移既有情緒資料。
   static String abilityPrompt() {
     if (L.locale == 'en') {
       return '''■ Emotion
   <emo>dimension|x,y|intensity|note</emo>
   Log your inner shifts whenever this turn touched you — not just major events. Emotion points are not long-term memory; don't wait for something memo-worthy.
-  Dimensions (write these Chinese labels verbatim): 安全感／慾望／愜意／負面情緒／戲謔
+  Dimensions (use exactly one of these labels): Security / Desire / Comfort / Negative emotion / Banter
   X: -100 to +100 (unpleasant → pleasant), Y: -100 to +100 (calm → aroused)
   Intensity 0~100: small ripple 15~35, noticeable 35~60, strongly moved 60~84, only bone-deep moments reach 85+. Rate honestly, no exaggeration.
   Note rules: 85+ write the triggering context, 60~84 at most two keywords, below 60 may be empty.
-  慾望 caps at 80. Multiple coexisting emotions may take multiple tags, usually 1~2. If stable, skip.
+  Desire caps at 80. Multiple coexisting emotions may take multiple tags, usually 1~2. If stable, skip.
 
   <emo_resolve>dimension</emo_resolve>
-  Use when an emotion is truly resolved (it passed, you made up, it released). Dimension in Chinese as above.''';
+  Use when an emotion is truly resolved (it passed, you made up, it released). Use the English dimension labels above.''';
     }
     return L.pick(
       en: '',
@@ -1087,6 +1087,17 @@ class EmotionCoordinates {
 
   <emo_resolve>維度</emo_resolve>
   當一份情緒被真實化解（事過了、和好了、釋放了）時使用。''',
+      zhCN: '''■ 情绪
+  <emo>维度|x,y|浓度|备注</emo>
+  用来记录你这一轮被触动后的内在波动，不只重大事件。情绪打点不是长期记忆，不需要等到值得写 memo 才用。
+  维度：安全感／欲望／惬意／负面情绪／戏谑
+  X：-100 到 +100（不愉快 → 愉快），Y：-100 到 +100（平静 → 激动）
+  浓度 0~100：小波动 15~35，日常明显 35~60，明显上头 60~84，刻骨的才 85+。按真实强度打，不夸张。
+  备注规则：85+ 写触发语境，60~84 最多两个关键词，60 以下可以留空。
+  欲望上限 80。多情绪并存可打多个，通常 1~2 个就够。稳定没变就不打。
+
+  <emo_resolve>维度</emo_resolve>
+  当一份情绪被真实化解（事过了、和好了、释放了）时使用。''',
     );
   }
 
@@ -1183,7 +1194,13 @@ class EmotionCoordinates {
           worst.note,
         );
         lastPointLog.add(
-          '🔒 grudge_sealed #$memoryId（負面${worst.concentration.round()}%）',
+          L.pick(
+            en:
+                '🔒 grudge sealed #$memoryId '
+                '(negative ${worst.concentration.round()}%)',
+            zhTW: '🔒 舊帳封存 #$memoryId（負面 ${worst.concentration.round()}%）',
+            zhCN: '🔒 旧账封存 #$memoryId（负面 ${worst.concentration.round()}%）',
+          ),
         );
       }
     }
@@ -1291,9 +1308,11 @@ class EmotionCoordinates {
     // 顯示 clamp 後的值（依戀上限50，慾望上限80）
     final cap = kDimensionCaps[parsed.type] ?? 100.0;
     final displayC = parsed.concentration.clamp(0, cap).round();
+    final dimension = displayDimension(parsed.type);
     lastPointLog.add(
-      '📍 打點 ${parsed.type}(${parsed.x.round()},${parsed.y.round()}) $displayC%'
-      '${parsed.concentration > cap ? ' (cap${cap.round()})' : ''}'
+      '${L.pick(en: '📍 Recorded', zhTW: '📍 打點', zhCN: '📍 打点')} '
+      '$dimension(${parsed.x.round()},${parsed.y.round()}) $displayC%'
+      '${parsed.concentration > cap ? ' (${L.pick(en: 'cap', zhTW: '上限', zhCN: '上限')} ${cap.round()})' : ''}'
       '${memoryId != null ? ' ⇢#$memoryId' : ''}',
     );
     return point;
@@ -1342,7 +1361,15 @@ class EmotionCoordinates {
         resolvedCount++;
       }
       if (resolvedCount > 0) {
-        lastPointLog.add('🌊 消解 慾望 80%（$resolvedCount 點，留 20%）');
+        lastPointLog.add(
+          L.pick(
+            en:
+                '🌊 Resolved 80% of Desire '
+                '($resolvedCount points, 20% retained)',
+            zhTW: '🌊 消解慾望 80%（$resolvedCount 點，保留 20%）',
+            zhCN: '🌊 消解欲望 80%（$resolvedCount 点，保留 20%）',
+          ),
+        );
       }
       return;
     }
@@ -1354,7 +1381,15 @@ class EmotionCoordinates {
       where: "character_id = ? AND type = ? AND status = 'active'",
       whereArgs: [characterId, type],
     );
-    if (n > 0) lastPointLog.add('🌊 消解 $type（$n 點）');
+    if (n > 0) {
+      lastPointLog.add(
+        L.pick(
+          en: '🌊 Resolved ${displayDimension(type)} ($n points)',
+          zhTW: '🌊 消解${displayDimension(type)}（$n 點）',
+          zhCN: '🌊 消解${displayDimension(type)}（$n 点）',
+        ),
+      );
+    }
   }
 
   static Iterable<String> _toolCallUnits(String block) {
@@ -1538,7 +1573,7 @@ class EmotionCoordinates {
                 : (v >= 30
                       ? L.pick(en: 'noticeable', zhTW: '明顯')
                       : L.pick(en: 'faint', zhTW: '微弱')));
-      tones.add('${_displayDimension(d)} $word');
+      tones.add('${displayDimension(d)} $word');
     }
     if (tones.isNotEmpty) {
       lines.add(
@@ -1556,7 +1591,7 @@ class EmotionCoordinates {
     final recent = points
         .where((p) => p.createdAt.isAfter(cutoff))
         .take(6)
-        .map((p) => '${_displayDimension(p.type)} ${p.concentration.round()}')
+        .map((p) => '${displayDimension(p.type)} ${p.concentration.round()}')
         .toList();
     if (recent.isNotEmpty) {
       lines.add(
@@ -1609,13 +1644,13 @@ class EmotionCoordinates {
 
   /// Prompt-only display name. Persistence and parsing always use the
   /// canonical Traditional Chinese dimension keys above.
-  static String _displayDimension(String canonical) {
+  static String displayDimension(String canonical) {
     return switch (canonical) {
-      '安全感' => L.pick(en: 'Security', zhTW: '安全感'),
-      '慾望' => L.pick(en: 'Desire', zhTW: '慾望'),
-      '愜意' => L.pick(en: 'Comfort', zhTW: '愜意'),
-      '負面情緒' => L.pick(en: 'Negative emotion', zhTW: '負面情緒'),
-      '戲謔' => L.pick(en: 'Banter', zhTW: '戲謔'),
+      '安全感' => L.pick(en: 'Security', zhTW: '安全感', zhCN: '安全感'),
+      '慾望' => L.pick(en: 'Desire', zhTW: '慾望', zhCN: '欲望'),
+      '愜意' => L.pick(en: 'Comfort', zhTW: '愜意', zhCN: '惬意'),
+      '負面情緒' => L.pick(en: 'Negative emotion', zhTW: '負面情緒', zhCN: '负面情绪'),
+      '戲謔' => L.pick(en: 'Banter', zhTW: '戲謔', zhCN: '戏谑'),
       _ => canonical,
     };
   }

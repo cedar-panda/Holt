@@ -1,10 +1,10 @@
-import 'dart:convert';
 import 'dart:io';
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:uuid/uuid.dart';
 import '../theme/app_theme.dart';
 import '../services/locale_strings.dart';
@@ -18,6 +18,9 @@ import '../services/token_estimator.dart';
 import '../services/sticker_service.dart';
 import '../services/spider_web_state_service.dart';
 import '../services/whisper_service.dart';
+import '../services/character_card_png_service.dart';
+import '../widgets/x_post_panel.dart';
+import '../widgets/character_signature_history_sheet.dart';
 import '../utils/latest_request_gate.dart';
 
 /// 人設卡 — 創建/編輯（存 DB，無行數限制）
@@ -47,7 +50,8 @@ class _CharacterCardScreenState extends State<CharacterCardScreen> {
   // ═══ Token 計數（緩存門檻提示）═══
   int _descTokens = 0;
   int _staticTotalTokens = 0;
-  int _cacheThresholdVal = 1024;
+  CacheThresholdInfo _cacheThresholdInfo =
+      const CacheThresholdInfo.unavailable();
   String _fixedStaticText = ''; // 用戶檔案 + 表情包（本頁不變的部分）
   String? _avatarPath;
   String _ttsVoiceId = '';
@@ -142,14 +146,14 @@ class _CharacterCardScreenState extends State<CharacterCardScreen> {
     final parts = <String>[];
     if (profile.isNotEmpty) parts.add(profile);
     if (sticker.isNotEmpty) parts.add(sticker);
-    final threshold = await TokenEstimator.cacheThreshold();
+    final thresholdInfo = await TokenEstimator.cacheThresholdInfo();
     if (!mounted ||
         characterId != widget.characterId ||
         !_tokenGate.isCurrent(generation)) {
       return;
     }
     _fixedStaticText = parts.join('\n\n');
-    _cacheThresholdVal = threshold;
+    _cacheThresholdInfo = thresholdInfo;
     _recalcTokens();
   }
 
@@ -175,11 +179,14 @@ class _CharacterCardScreenState extends State<CharacterCardScreen> {
 
   /// 輸入框上方的 token 徽章
   Widget _tokenBadge() {
-    final ok = _staticTotalTokens >= _cacheThresholdVal;
+    final ok = _cacheThresholdInfo.isEligibleAt(_staticTotalTokens);
+    final thresholdLabel = TokenEstimator.localizedCacheThresholdLabel(
+      _cacheThresholdInfo,
+    );
     final label = L.pick(
-      en: 'This card ≈$_descTokens · static total ≈$_staticTotalTokens / cache min $_cacheThresholdVal',
-      zhTW:
-          '本卡 ≈$_descTokens · 靜態總計 ≈$_staticTotalTokens / 緩存門檻 $_cacheThresholdVal',
+      en: 'This card ≈$_descTokens · static total ≈$_staticTotalTokens / $thresholdLabel',
+      zhTW: '本卡 ≈$_descTokens · 靜態總計 ≈$_staticTotalTokens / $thresholdLabel',
+      zhCN: '本卡 ≈$_descTokens · 静态总计 ≈$_staticTotalTokens / $thresholdLabel',
     );
     return Padding(
       padding: const EdgeInsets.only(left: 4, bottom: 6),
@@ -275,8 +282,48 @@ class _CharacterCardScreenState extends State<CharacterCardScreen> {
                               style: YanciTheme.headingMedium,
                             ),
                           ),
-                          // 分享 + 刪除（從角色列表卡片移入；X 入口移去列表）
+                          // 已建立角色才有角色專屬的 X 綁定、分享與刪除操作。
                           if (widget.characterId != null) ...[
+                            IconButton(
+                              tooltip: L.pick(
+                                en: 'Signature history',
+                                zhTW: '個性簽名歷史',
+                                zhCN: '个性签名历史',
+                              ),
+                              onPressed: () => showCharacterSignatureHistory(
+                                context,
+                                widget.characterId!,
+                              ),
+                              icon: Icon(
+                                Icons.history_rounded,
+                                size: 19,
+                                color: YanciTheme.textSecondary.withValues(
+                                  alpha: 0.65,
+                                ),
+                              ),
+                            ),
+                            IconButton(
+                              key: const ValueKey(
+                                'character-card-x-settings-button',
+                              ),
+                              tooltip: L.pick(
+                                en: 'X account settings',
+                                zhTW: 'X 帳號設定',
+                                zhCN: 'X 账号设置',
+                              ),
+                              onPressed: () =>
+                                  showXPostPanel(context, widget.characterId!),
+                              icon: Text(
+                                '𝕏',
+                                style: TextStyle(
+                                  color: YanciTheme.textSecondary.withValues(
+                                    alpha: 0.72,
+                                  ),
+                                  fontSize: 19,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
                             IconButton(
                               icon: Icon(
                                 Icons.share_outlined,
@@ -571,11 +618,6 @@ class _CharacterCardScreenState extends State<CharacterCardScreen> {
                             _buildDrawAnchorEntry(),
                             const SizedBox(height: YanciTheme.spacingMd),
 
-                            // ═══ 相處細節：輸入框悄悄話 ═══
-                            _buildWhisperSection(),
-
-                            const SizedBox(height: YanciTheme.spacingXl),
-
                             // 儲存按鈕
                             SizedBox(
                               width: double.infinity,
@@ -615,6 +657,11 @@ class _CharacterCardScreenState extends State<CharacterCardScreen> {
                                       ),
                               ),
                             ),
+                            const SizedBox(height: YanciTheme.spacingMd),
+
+                            // ═══ 相處細節：輸入框悄悄話 ═══
+                            _buildWhisperSection(),
+
                             const SizedBox(height: YanciTheme.spacingXl),
                           ],
                         ),
@@ -1191,7 +1238,7 @@ class _CharacterCardScreenState extends State<CharacterCardScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            L.pick(en: 'Together details', zhTW: '相處細節'),
+            L.pick(en: 'Together details', zhTW: '相處細節', zhCN: '相处细节'),
             style: TextStyle(
               fontSize: 13,
               fontWeight: FontWeight.w500,
@@ -1201,12 +1248,16 @@ class _CharacterCardScreenState extends State<CharacterCardScreen> {
           ),
           const SizedBox(height: 12),
           Text(
-            L.pick(en: 'Whisper', zhTW: '悄悄話'),
+            L.pick(en: 'Whisper', zhTW: '悄悄話', zhCN: '悄悄话'),
             style: YanciTheme.bodyText.copyWith(fontSize: 13),
           ),
           const SizedBox(height: 3),
           Text(
-            L.pick(en: 'The line they see while typing.', zhTW: '對方輸入時看到的那句話。'),
+            L.pick(
+              en: 'The line they see while typing.',
+              zhTW: '對方輸入時看到的那句話。',
+              zhCN: '对方输入时看到的那句话。',
+            ),
             style: YanciTheme.bodySmall.copyWith(
               fontSize: 11,
               color: YanciTheme.textSecondary.withValues(alpha: 0.55),
@@ -1217,6 +1268,9 @@ class _CharacterCardScreenState extends State<CharacterCardScreen> {
             controller: _whisperController,
             maxLength: WhisperService.maxLength,
             maxLengthEnforcement: MaxLengthEnforcement.enforced,
+            minLines: WhisperService.maxLines,
+            maxLines: WhisperService.maxLines,
+            keyboardType: TextInputType.multiline,
             style: YanciTheme.bodyText.copyWith(fontSize: 14),
             onChanged: (_) => _whisperResetRequested = false,
             decoration: InputDecoration(
@@ -1254,7 +1308,11 @@ class _CharacterCardScreenState extends State<CharacterCardScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      L.pick(en: 'Allow TA to overwrite', zhTW: '允許 TA 覆蓋'),
+                      L.pick(
+                        en: 'Allow TA to overwrite',
+                        zhTW: '允許 TA 覆蓋',
+                        zhCN: '允许 TA 覆盖',
+                      ),
                       style: YanciTheme.bodyText.copyWith(fontSize: 13),
                     ),
                     Text(
@@ -1262,10 +1320,12 @@ class _CharacterCardScreenState extends State<CharacterCardScreen> {
                           ? L.pick(
                               en: 'TA may change it naturally.',
                               zhTW: 'TA 可以自然地換掉這句話。',
+                              zhCN: 'TA 可以自然地换掉这句话。',
                             )
                           : L.pick(
                               en: 'The whisper tool is not sent to the model.',
                               zhTW: '不向模型發送悄悄話工具。',
+                              zhCN: '不向模型发送悄悄话工具。',
                             ),
                       style: YanciTheme.bodySmall.copyWith(
                         fontSize: 10.5,
@@ -1410,74 +1470,41 @@ class _CharacterCardScreenState extends State<CharacterCardScreen> {
     if (id == null) return;
     final c = await DatabaseHelper.getCharacter(id);
     if (c == null || !mounted) return;
-
-    final export = {
-      'yanci_character': 1,
-      'name': c['name'],
-      'gender': c['gender'],
-      'relationship': c['relationship'],
-      'description': c['description'],
-      'race': c['race'],
-      'skill': c['skill'],
-      'age': c['age'],
-      'height': c['height'],
-      'signature': c['signature'],
-    };
-    export.removeWhere((k, v) => v == null || v == '');
-    final code = base64Encode(utf8.encode(jsonEncode(export)));
-
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(YanciTheme.radiusMd),
+    try {
+      final file = await CharacterCardPngService.export(c);
+      if (!mounted) return;
+      await SharePlus.instance.share(
+        ShareParams(
+          files: <XFile>[XFile(file.path, mimeType: 'image/png')],
+          title: L.pick(
+            en: 'Share character card',
+            zhTW: '分享人設卡',
+            zhCN: '分享人设卡',
+          ),
+          sharePositionOrigin: Rect.fromLTWH(
+            MediaQuery.sizeOf(context).width / 2,
+            MediaQuery.sizeOf(context).height / 2,
+            1,
+            1,
+          ),
         ),
-        title: Text(L.get('char_share_code'), style: YanciTheme.headingMedium),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.grey.withValues(alpha: 0.08),
-                borderRadius: BorderRadius.circular(YanciTheme.radiusSm),
-              ),
-              child: SelectableText(
-                code,
-                style: const TextStyle(fontSize: 11, fontFamily: 'monospace'),
-              ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            L.pick(
+              en: 'Could not create the PNG character card',
+              zhTW: '無法建立 PNG 人設卡',
+              zhCN: '无法建立 PNG 人设卡',
             ),
-            const SizedBox(height: 12),
-            TextButton(
-              onPressed: () {
-                Clipboard.setData(ClipboardData(text: code));
-                Navigator.pop(ctx);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text(L.get('copied_clipboard')),
-                    backgroundColor: YanciTheme.accent,
-                    behavior: SnackBarBehavior.floating,
-                    duration: const Duration(milliseconds: 1200),
-                    margin: const EdgeInsets.only(
-                      bottom: 80,
-                      left: 16,
-                      right: 16,
-                    ),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(YanciTheme.radiusSm),
-                    ),
-                  ),
-                );
-              },
-              child: Text(
-                L.get('chat_copy'),
-                style: TextStyle(color: YanciTheme.accent),
-              ),
-            ),
-          ],
+          ),
+          behavior: SnackBarBehavior.floating,
         ),
-      ),
-    );
+      );
+      debugPrint('Character card PNG export failed: $error');
+    }
   }
 
   Future<void> _confirmDeleteCard() async {

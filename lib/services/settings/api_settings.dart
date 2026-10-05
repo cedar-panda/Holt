@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:shared_preferences/shared_preferences.dart';
 import '../secure_store.dart';
@@ -14,6 +15,7 @@ import '../thinking_machines_service.dart';
 import '../local_model_service.dart';
 import '../locale_strings.dart';
 import 'memory_settings.dart';
+import '../../models/context_mode.dart';
 
 /// 使用者尚未完成 API 來源設定。這類錯誤應由 UI 引導設定，不能當成
 /// 角色回覆寫入聊天紀錄。
@@ -26,6 +28,29 @@ class ApiConfigException implements Exception {
   String toString() => message;
 }
 
+/// 一筆收藏模型的穩定身分。相同 [modelId] 可分別收藏於不同 [provider]。
+class StarredModelEntry {
+  final String provider;
+  final String modelId;
+
+  const StarredModelEntry({required this.provider, required this.modelId});
+
+  String get identity => '$provider\u0000$modelId';
+
+  Map<String, String> toJson() => <String, String>{
+    'provider': provider,
+    'model_id': modelId,
+  };
+
+  static StarredModelEntry? fromJson(Object? value) {
+    if (value is! Map) return null;
+    final provider = '${value['provider'] ?? ''}'.trim();
+    final modelId = '${value['model_id'] ?? ''}'.trim();
+    if (provider.isEmpty || modelId.isEmpty) return null;
+    return StarredModelEntry(provider: provider, modelId: modelId);
+  }
+}
+
 /// API 供應商配置（OpenRouter / xAI / Bedrock / Gemini / DeepSeek / Qwen / OpenAI Compatible / Local API）
 class ApiSettings {
   // ═══ 通用 ═══
@@ -33,8 +58,11 @@ class ApiSettings {
   static const String _keyOpenRouterApiKey = 'openrouter_api_key';
   static const String _keyModel = 'model';
   static const String _keySystemPrompt = 'system_prompt';
+  static const String _keyRpSystemPrompt = 'system_prompt_rp_v1';
   static const String _keyApiProvider = 'api_provider';
   static const String _keyImageGenModel = 'image_gen_model';
+  static const String _keyImageGenProvider = 'image_gen_provider';
+  static const String _keyImageGenModels = 'image_gen_models_v1';
   static String? _cachedLocalModelKey;
   static LocalModelService? _cachedLocalModelService;
   static Future<LocalModelService>? _cachedLocalModelFuture;
@@ -48,16 +76,68 @@ class ApiSettings {
     return p.getString(_keyApiProvider) ?? 'openrouter';
   }
 
-  /// 畫圖模型（OpenRouter 圖像輸出模型）
-  static Future<void> saveImageGenModel(String model) async {
+  /// 畫圖來源。與主聊天來源分開保存，讓任何聊天模型都能調用同一個畫圖能力。
+  static Future<void> saveImageGenProvider(String provider) async {
     final p = await SharedPreferences.getInstance();
-    await p.setString(_keyImageGenModel, model);
+    await p.setString(_keyImageGenProvider, provider.trim());
   }
 
-  static Future<String> getImageGenModel() async {
+  static Future<String> getImageGenProvider() async {
     final p = await SharedPreferences.getInstance();
-    final v = p.getString(_keyImageGenModel) ?? '';
-    return v.isEmpty ? 'openai/gpt-5.4-image-2' : v;
+    final saved = p.getString(_keyImageGenProvider)?.trim() ?? '';
+    return saved.isEmpty ? 'openrouter' : saved;
+  }
+
+  /// 每個畫圖來源各自保存模型，切換來源時不覆蓋另一來源的選擇。
+  /// 舊版 OpenRouter 單值會在首次讀取時自然遷移。
+  static Future<void> saveImageGenModel(
+    String model, {
+    String? provider,
+  }) async {
+    final normalized = model.trim();
+    if (normalized.isEmpty) return;
+    final p = await SharedPreferences.getInstance();
+    final source = provider?.trim().isNotEmpty == true
+        ? provider!.trim()
+        : await getImageGenProvider();
+    final models = _decodeImageGenModels(p.getString(_keyImageGenModels));
+    models[source] = normalized;
+    await p.setString(_keyImageGenModels, jsonEncode(models));
+    if (source == 'openrouter') {
+      await p.setString(_keyImageGenModel, normalized);
+    }
+  }
+
+  static Future<String> getImageGenModel({String? provider}) async {
+    final p = await SharedPreferences.getInstance();
+    final source = provider?.trim().isNotEmpty == true
+        ? provider!.trim()
+        : await getImageGenProvider();
+    final models = _decodeImageGenModels(p.getString(_keyImageGenModels));
+    final saved = models[source]?.trim() ?? '';
+    if (saved.isNotEmpty) return saved;
+    if (source == 'openrouter') {
+      final legacy = p.getString(_keyImageGenModel)?.trim() ?? '';
+      if (legacy.isNotEmpty) return legacy;
+    }
+    return switch (source) {
+      'gemini' => 'gemini-3.1-flash-image',
+      'xai' => 'grok-imagine-image-2.0',
+      'qwen' => 'qwen-image-3.0-pro',
+      'openai_compatible' || 'local_api' => 'gpt-image-1',
+      _ => 'openai/gpt-5.4-image-2',
+    };
+  }
+
+  static Map<String, String> _decodeImageGenModels(String? raw) {
+    if (raw == null || raw.isEmpty) return <String, String>{};
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return <String, String>{};
+      return decoded.map((key, value) => MapEntry('$key', '$value'));
+    } catch (_) {
+      return <String, String>{};
+    }
   }
 
   static Future<void> saveApiKey(String key) async {
@@ -133,6 +213,35 @@ class ApiSettings {
         return getLocalApiKey();
       default:
         return '';
+    }
+  }
+
+  /// 收藏模型快速切換前的輕量配置檢查。
+  ///
+  /// 這裡只判斷建立對應 adapter 所需的最低配置是否存在，不發送網路
+  /// 請求，也不驗證憑證是否仍有效。如此可讓模型選單保留所有收藏，同時
+  /// 避免點到尚未設定的來源後，把目前可用來源悄悄切走。
+  static Future<bool> hasUsableProviderConfiguration(String provider) async {
+    switch (provider) {
+      case 'local':
+        return true;
+      case 'local_api':
+        return (await getLocalApiBaseUrl()).trim().isNotEmpty;
+      case 'openai_compatible':
+        return (await getOaiCompatBaseUrl()).trim().isNotEmpty &&
+            (await getOaiCompatApiKey()).trim().isNotEmpty;
+      case 'bedrock':
+        return (await getAwsAccessKeyId()).trim().isNotEmpty &&
+            (await getAwsSecretAccessKey()).trim().isNotEmpty;
+      case 'openrouter':
+      case 'xai':
+      case 'gemini':
+      case 'deepseek':
+      case 'qwen':
+      case 'thinking_machines':
+        return (await getApiKeyForProvider(provider)).trim().isNotEmpty;
+      default:
+        return false;
     }
   }
 
@@ -241,6 +350,21 @@ class ApiSettings {
   static Future<String> getSystemPrompt() async {
     final p = await SharedPreferences.getInstance();
     return p.getString(_keySystemPrompt) ?? '';
+  }
+
+  static Future<void> saveSystemPromptFor(
+    ContextMode mode,
+    String prompt,
+  ) async {
+    if (mode == ContextMode.daily) return saveSystemPrompt(prompt);
+    final p = await SharedPreferences.getInstance();
+    await p.setString(_keyRpSystemPrompt, prompt);
+  }
+
+  static Future<String> getSystemPromptFor(ContextMode mode) async {
+    if (mode == ContextMode.daily) return getSystemPrompt();
+    final p = await SharedPreferences.getInstance();
+    return p.getString(_keyRpSystemPrompt) ?? '';
   }
 
   static Future<void> saveApiProvider(String provider) async {
@@ -514,7 +638,10 @@ class ApiSettings {
   // ═══ 星標模型 ═══
   static const String _keyStarredModels = 'starred_models';
   static const String _keyStarredModelProviders = 'starred_model_providers_v1';
+  static const String _keyStarredModelEntries = 'starred_model_entries_v2';
   static const String _keyStarredModelUsage = 'starred_model_usage_v1';
+  static const String _keyStarredModelManualOrder =
+      'starred_model_manual_order_v1';
 
   static Future<Map<String, int>> getStarredModelUsageCounts() async {
     final p = await SharedPreferences.getInstance();
@@ -534,37 +661,163 @@ class ApiSettings {
     }
   }
 
-  /// 只計算仍在收藏中的模型。取消收藏後計數休眠但不刪除，
+  /// 只計算仍在收藏中的來源＋模型。取消收藏後計數休眠但不刪除，
   /// 重新收藏即可延續原本的常用度排序。
-  static Future<void> recordStarredModelUsage(String modelId) async {
+  static Future<void> recordStarredModelUsage(
+    String modelId, {
+    String? provider,
+  }) async {
     final normalized = modelId.trim();
     if (normalized.isEmpty) return;
+    final resolvedProvider = (provider ?? '').trim().isNotEmpty
+        ? provider!.trim()
+        : await resolveStarredModelProvider(normalized);
+    final identity = StarredModelEntry(
+      provider: resolvedProvider,
+      modelId: normalized,
+    ).identity;
+    final starred = await getStarredModelEntries();
+    if (!starred.any((entry) => entry.identity == identity)) return;
     final p = await SharedPreferences.getInstance();
-    final starred = p.getStringList(_keyStarredModels) ?? const <String>[];
-    if (!starred.contains(normalized)) return;
     final counts = await getStarredModelUsageCounts();
-    counts[normalized] = (counts[normalized] ?? 0) + 1;
+    counts[identity] = (counts[identity] ?? counts[normalized] ?? 0) + 1;
     await p.setString(_keyStarredModelUsage, jsonEncode(counts));
   }
 
   /// 雲端模型優先、本地模型置底；每組內按完成聊天輪數由高到低。
   /// 同次數時維持原收藏順序，避免每次打開列表跳動。
-  static Future<List<String>> getRankedStarredModels() async {
-    final starred = await getStarredModels();
+  static Future<List<StarredModelEntry>> getRankedStarredModelEntries() async {
+    final saved = await getStarredModelEntries();
+    final starred = Platform.isIOS
+        ? saved.where((entry) =>
+            entry.provider != 'local' &&
+            !LocalModelService.isLocalModelId(entry.modelId)).toList()
+        : saved;
+    final preferences = await SharedPreferences.getInstance();
+    if (preferences.getBool(_keyStarredModelManualOrder) == true) {
+      return starred;
+    }
     final counts = await getStarredModelUsageCounts();
     final originalOrder = <String, int>{
-      for (var i = 0; i < starred.length; i++) starred[i]: i,
+      for (var i = 0; i < starred.length; i++) starred[i].identity: i,
     };
-    bool isLocal(String modelId) =>
-        LocalModelService.isLocalModelId(modelId) || isLocalApiModelId(modelId);
+    bool isLocal(StarredModelEntry entry) =>
+        entry.provider == 'local' ||
+        entry.provider == 'local_api' ||
+        LocalModelService.isLocalModelId(entry.modelId) ||
+        isLocalApiModelId(entry.modelId);
 
     return [...starred]..sort((a, b) {
       final localOrder = (isLocal(a) ? 1 : 0).compareTo(isLocal(b) ? 1 : 0);
       if (localOrder != 0) return localOrder;
-      final usageOrder = (counts[b] ?? 0).compareTo(counts[a] ?? 0);
+      final usageA = counts[a.identity] ?? counts[a.modelId] ?? 0;
+      final usageB = counts[b.identity] ?? counts[b.modelId] ?? 0;
+      final usageOrder = usageB.compareTo(usageA);
       if (usageOrder != 0) return usageOrder;
-      return (originalOrder[a] ?? 0).compareTo(originalOrder[b] ?? 0);
+      return (originalOrder[a.identity] ?? 0).compareTo(
+        originalOrder[b.identity] ?? 0,
+      );
     });
+  }
+
+  /// 舊呼叫端只需要模型 ID；相同 ID 的不同來源在這個兼容視圖中合併。
+  static Future<List<String>> getRankedStarredModels() async {
+    final entries = await getRankedStarredModelEntries();
+    final seen = <String>{};
+    return <String>[
+      for (final entry in entries)
+        if (seen.add(entry.modelId)) entry.modelId,
+    ];
+  }
+
+  static Future<List<StarredModelEntry>> getStarredModelEntries() async {
+    final preferences = await SharedPreferences.getInstance();
+    final raw = preferences.getString(_keyStarredModelEntries);
+    if (raw != null) {
+      try {
+        final decoded = jsonDecode(raw);
+        if (decoded is List) {
+          final entries = <StarredModelEntry>[];
+          final seen = <String>{};
+          for (final value in decoded) {
+            final entry = StarredModelEntry.fromJson(value);
+            if (entry != null && seen.add(entry.identity)) entries.add(entry);
+          }
+          return entries;
+        }
+      } catch (_) {
+        // 解析失敗時從舊欄位重建，避免整份收藏消失。
+      }
+    }
+    return _migrateLegacyStarredModelEntries(preferences);
+  }
+
+  static Future<List<StarredModelEntry>> _migrateLegacyStarredModelEntries(
+    SharedPreferences preferences,
+  ) async {
+    final models = preferences.getStringList(_keyStarredModels) ?? <String>[];
+    final providers = await getStarredModelProviders();
+    final currentProvider = await getApiProvider();
+    final currentModel = await getModelForProvider(currentProvider);
+    final hasCustomRelay = (await getOaiCompatBaseUrl()).trim().isNotEmpty;
+    final entries = <StarredModelEntry>[];
+    final seen = <String>{};
+    for (final rawModel in models) {
+      final modelId = rawModel.trim();
+      if (modelId.isEmpty) continue;
+      final savedProvider = (providers[modelId] ?? '').trim();
+      final provider = savedProvider.isNotEmpty
+          ? savedProvider
+          : isLocalApiModelId(modelId)
+          ? 'local_api'
+          : LocalModelService.isLocalModelId(modelId)
+          ? 'local'
+          : isThinkingMachinesModelId(modelId)
+          ? 'thinking_machines'
+          : currentModel == modelId
+          ? currentProvider
+          : modelId.contains('/')
+          ? 'openrouter'
+          : hasCustomRelay
+          ? 'openai_compatible'
+          : currentProvider;
+      final entry = StarredModelEntry(provider: provider, modelId: modelId);
+      if (seen.add(entry.identity)) entries.add(entry);
+    }
+    await _writeStarredModelEntries(entries, preferences: preferences);
+    return entries;
+  }
+
+  static Future<void> _writeStarredModelEntries(
+    Iterable<StarredModelEntry> values, {
+    SharedPreferences? preferences,
+  }) async {
+    final entries = <StarredModelEntry>[];
+    final seen = <String>{};
+    for (final value in values) {
+      final provider = value.provider.trim();
+      final modelId = value.modelId.trim();
+      if (provider.isEmpty || modelId.isEmpty) continue;
+      final entry = StarredModelEntry(provider: provider, modelId: modelId);
+      if (seen.add(entry.identity)) entries.add(entry);
+    }
+    final p = preferences ?? await SharedPreferences.getInstance();
+    await p.setString(
+      _keyStarredModelEntries,
+      jsonEncode(entries.map((entry) => entry.toJson()).toList()),
+    );
+
+    // 同步舊欄位，讓尚未來源化的邊緣功能仍能讀取不重複的模型清單。
+    final legacyModels = <String>[];
+    final legacyProviders = <String, String>{};
+    for (final entry in entries) {
+      if (!legacyModels.contains(entry.modelId)) {
+        legacyModels.add(entry.modelId);
+      }
+      legacyProviders.putIfAbsent(entry.modelId, () => entry.provider);
+    }
+    await p.setStringList(_keyStarredModels, legacyModels);
+    await p.setString(_keyStarredModelProviders, jsonEncode(legacyProviders));
   }
 
   static Future<Map<String, String>> getStarredModelProviders() async {
@@ -581,8 +834,11 @@ class ApiSettings {
   }
 
   static Future<String?> getStarredModelProvider(String modelId) async {
-    final providers = await getStarredModelProviders();
-    return providers[modelId];
+    final normalized = modelId.trim();
+    for (final entry in await getStarredModelEntries()) {
+      if (entry.modelId == normalized) return entry.provider;
+    }
+    return null;
   }
 
   /// 兼容舊版只保存模型 ID、沒有保存來源的星標。
@@ -627,51 +883,132 @@ class ApiSettings {
     Iterable<String> modelIds,
     String provider,
   ) async {
-    final starred = (await getStarredModels()).toSet();
-    final providers = await getStarredModelProviders();
+    final entries = await getStarredModelEntries();
     var changed = false;
-    for (final modelId in modelIds) {
-      if (starred.contains(modelId) && providers[modelId] != provider) {
-        providers[modelId] = provider;
+    for (final rawModelId in modelIds) {
+      final modelId = rawModelId.trim();
+      final matchingIndexes = <int>[
+        for (var i = 0; i < entries.length; i++)
+          if (entries[i].modelId == modelId) i,
+      ];
+      if (matchingIndexes.isEmpty ||
+          matchingIndexes.any((index) => entries[index].provider == provider)) {
+        continue;
+      }
+      if (matchingIndexes.length == 1) {
+        entries[matchingIndexes.single] = StarredModelEntry(
+          provider: provider,
+          modelId: modelId,
+        );
         changed = true;
       }
     }
     if (!changed) return;
-    final p = await SharedPreferences.getInstance();
-    await p.setString(_keyStarredModelProviders, jsonEncode(providers));
+    await _writeStarredModelEntries(entries);
   }
 
   static Future<void> saveStarredModels(List<String> models) async {
-    final p = await SharedPreferences.getInstance();
-    await p.setStringList(_keyStarredModels, models);
-    final providers = await getStarredModelProviders();
-    providers.removeWhere((modelId, _) => !models.contains(modelId));
-    await p.setString(_keyStarredModelProviders, jsonEncode(providers));
+    final normalizedModels = <String>[];
+    final seenModels = <String>{};
+    for (final model in models) {
+      final value = model.trim();
+      if (value.isNotEmpty && seenModels.add(value)) {
+        normalizedModels.add(value);
+      }
+    }
+    final existing = await getStarredModelEntries();
+    final byModel = <String, List<StarredModelEntry>>{};
+    for (final entry in existing) {
+      byModel
+          .putIfAbsent(entry.modelId, () => <StarredModelEntry>[])
+          .add(entry);
+    }
+    final entries = <StarredModelEntry>[];
+    for (final modelId in normalizedModels) {
+      final retained = byModel[modelId];
+      if (retained != null && retained.isNotEmpty) {
+        entries.addAll(retained);
+        continue;
+      }
+      final provider = isLocalApiModelId(modelId)
+          ? 'local_api'
+          : LocalModelService.isLocalModelId(modelId)
+          ? 'local'
+          : isThinkingMachinesModelId(modelId)
+          ? 'thinking_machines'
+          : await resolveStarredModelProvider(modelId);
+      entries.add(StarredModelEntry(provider: provider, modelId: modelId));
+    }
+    await _writeStarredModelEntries(entries);
+  }
+
+  /// 使用者在收藏模型管理窗手動排定的順序。手動排序後，聊天模型選擇框
+  /// 會忠實採用這個順序，不再被完成輪數的自動排名覆蓋。
+  static Future<void> saveStarredModelOrder(List<String> models) async {
+    final normalized = <String>[];
+    final seen = <String>{};
+    for (final model in models) {
+      final value = model.trim();
+      if (value.isNotEmpty && seen.add(value)) normalized.add(value);
+    }
+    await saveStarredModels(normalized);
+    final preferences = await SharedPreferences.getInstance();
+    await preferences.setBool(_keyStarredModelManualOrder, true);
+  }
+
+  static Future<void> saveStarredModelEntryOrder(
+    List<StarredModelEntry> entries,
+  ) async {
+    await _writeStarredModelEntries(entries);
+    final preferences = await SharedPreferences.getInstance();
+    await preferences.setBool(_keyStarredModelManualOrder, true);
   }
 
   static Future<List<String>> getStarredModels() async {
-    final p = await SharedPreferences.getInstance();
-    return p.getStringList(_keyStarredModels) ?? [];
+    final entries = await getStarredModelEntries();
+    final seen = <String>{};
+    return <String>[
+      for (final entry in entries)
+        if (seen.add(entry.modelId)) entry.modelId,
+    ];
+  }
+
+  static Future<bool> isStarredModel(String modelId, String provider) async {
+    final identity = StarredModelEntry(
+      provider: provider.trim(),
+      modelId: modelId.trim(),
+    ).identity;
+    return (await getStarredModelEntries()).any(
+      (entry) => entry.identity == identity,
+    );
   }
 
   static Future<void> toggleStarModel(
     String modelId, {
     String? provider,
   }) async {
-    final list = await getStarredModels();
-    final providers = await getStarredModelProviders();
-    if (list.contains(modelId)) {
-      list.remove(modelId);
-      providers.remove(modelId);
+    final normalizedModel = modelId.trim();
+    if (normalizedModel.isEmpty) return;
+    final normalizedProvider = (provider ?? '').trim().isNotEmpty
+        ? provider!.trim()
+        : await resolveStarredModelProvider(normalizedModel);
+    final entries = await getStarredModelEntries();
+    final identity = StarredModelEntry(
+      provider: normalizedProvider,
+      modelId: normalizedModel,
+    ).identity;
+    final index = entries.indexWhere((entry) => entry.identity == identity);
+    if (index >= 0) {
+      entries.removeAt(index);
     } else {
-      list.add(modelId);
-      if (provider != null && provider.isNotEmpty) {
-        providers[modelId] = provider;
-      }
+      entries.add(
+        StarredModelEntry(
+          provider: normalizedProvider,
+          modelId: normalizedModel,
+        ),
+      );
     }
-    final p = await SharedPreferences.getInstance();
-    await p.setStringList(_keyStarredModels, list);
-    await p.setString(_keyStarredModelProviders, jsonEncode(providers));
+    await _writeStarredModelEntries(entries);
   }
 
   // ═══ 工廠方法 ═══
@@ -679,12 +1016,20 @@ class ApiSettings {
   static Future<ApiAdapter> buildAdapter({
     String? overrideModel,
     String? overrideProvider,
+    bool? thinkingEnabledOverride,
   }) async {
     final provider = overrideProvider ?? await getApiProvider();
-    final thinkingEnabled = await getThinkingChain();
+    final thinkingEnabled = thinkingEnabledOverride ?? await getThinkingChain();
     // 如果指定了本地模型，直接返回 LocalModelService
     final modelId = overrideModel ?? await _modelForProvider(provider);
     if (LocalModelService.isLocalModelId(modelId)) {
+      if (Platform.isIOS) {
+        throw ApiConfigException(L.pick(
+          en: 'On-device models are unavailable on iOS. Select an API model.',
+          zhTW: 'iOS 不提供本機模型，請選擇 API 模型。',
+          zhCN: 'iOS 不提供本地模型，请选择 API 模型。',
+        ));
+      }
       final key = LocalModelService.extractKey(modelId);
       final cached = _cachedLocalModelService;
       if (_cachedLocalModelKey == key && cached != null) return cached;
@@ -774,6 +1119,15 @@ class ApiSettings {
         );
       }
       final model = overrideModel ?? await getGeminiModel();
+      // Utility requests such as character signatures must not mutate the
+      // shared chat adapter's Thinking state while a chat request is active.
+      if (thinkingEnabledOverride != null) {
+        return GeminiService(
+          apiKey: key,
+          modelId: model,
+          thinkingEnabled: thinkingEnabled,
+        );
+      }
       final cached = _cachedGeminiService;
       if (_cachedGeminiKey == key &&
           _cachedGeminiModel == model &&
@@ -919,6 +1273,7 @@ class ApiSettings {
 
   // ═══ 思考鏈 ═══
   static const String _keyThinkingChain = 'thinking_chain_enabled';
+  static const String _keyThinkingRequestStates = 'thinking_request_states_v1';
 
   static Future<void> saveThinkingChain(bool v) async {
     final p = await SharedPreferences.getInstance();
@@ -928,6 +1283,99 @@ class ApiSettings {
   static Future<bool> getThinkingChain() async {
     final p = await SharedPreferences.getInstance();
     return p.getBool(_keyThinkingChain) ?? false;
+  }
+
+  static String _thinkingRequestIdentity({
+    required String conversationId,
+    required String provider,
+    required String model,
+    required String cacheChannel,
+  }) => jsonEncode(<String>[
+    conversationId.trim(),
+    provider.trim().toLowerCase(),
+    model.trim(),
+    cacheChannel.trim().toLowerCase(),
+  ]);
+
+  /// The Thinking value committed by the latest dispatched request for one concrete
+  /// cache identity. Merely toggling the UI never writes this state.
+  static Future<bool?> getLastSentThinkingState({
+    required String conversationId,
+    required String provider,
+    required String model,
+    required String cacheChannel,
+  }) async {
+    final p = await SharedPreferences.getInstance();
+    final raw = p.getString(_keyThinkingRequestStates);
+    if (raw == null || raw.isEmpty) return null;
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return null;
+      final identity = _thinkingRequestIdentity(
+        conversationId: conversationId,
+        provider: provider,
+        model: model,
+        cacheChannel: cacheChannel,
+      );
+      final entry = decoded[identity];
+      if (entry is Map && entry['enabled'] is bool) {
+        return entry['enabled'] as bool;
+      }
+    } catch (_) {
+      // Corrupt diagnostic state must never block model selection.
+    }
+    return null;
+  }
+
+  /// Records only a value committed when a request is dispatched.
+  /// Entries are bounded because model/provider changes create new identities.
+  static Future<void> recordSentThinkingState({
+    required String conversationId,
+    required String provider,
+    required String model,
+    required String cacheChannel,
+    required bool enabled,
+  }) async {
+    final p = await SharedPreferences.getInstance();
+    final states = <String, dynamic>{};
+    final raw = p.getString(_keyThinkingRequestStates);
+    if (raw != null && raw.isNotEmpty) {
+      try {
+        final decoded = jsonDecode(raw);
+        if (decoded is Map) {
+          for (final entry in decoded.entries) {
+            states[entry.key.toString()] = entry.value;
+          }
+        }
+      } catch (_) {
+        // Replace corrupt non-essential state with a clean bounded map.
+      }
+    }
+    final identity = _thinkingRequestIdentity(
+      conversationId: conversationId,
+      provider: provider,
+      model: model,
+      cacheChannel: cacheChannel,
+    );
+    states[identity] = <String, Object>{
+      'enabled': enabled,
+      'updated_at': DateTime.now().toUtc().toIso8601String(),
+    };
+    if (states.length > 160) {
+      final ordered = states.entries.toList()
+        ..sort((left, right) {
+          String timestamp(MapEntry<String, dynamic> entry) {
+            final value = entry.value;
+            return value is Map ? '${value['updated_at'] ?? ''}' : '';
+          }
+
+          return timestamp(right).compareTo(timestamp(left));
+        });
+      states
+        ..clear()
+        ..addEntries(ordered.take(160));
+    }
+    await p.setString(_keyThinkingRequestStates, jsonEncode(states));
   }
 
   // ═══ 節省 Token ═══

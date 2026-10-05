@@ -19,19 +19,35 @@ class YanciTheme {
   static double bubbleRadiusUser = 16.0;
   static bool starEnabled = true;
   static int starDensity = 12; // 粒子數
+  static bool aiBubbleFlat = false; // true = AI 訊息無氣泡（平鋪）
   static String homeBackgroundImagePath = '';
   static double homeBackgroundImageScale = 1.0;
   static double homeBackgroundImageOffsetX = 0.0;
   static double homeBackgroundImageOffsetY = 0.0;
+  static double homeBackgroundImageBlur = 0.0;
   static String chatBackgroundImagePath = '';
   static double chatBackgroundImageScale = 1.0;
   static double chatBackgroundImageOffsetX = 0.0;
   static double chatBackgroundImageOffsetY = 0.0;
+  static double chatBackgroundImageBlur = 0.0;
   static Color? chatBackgroundAiBubbleOverride;
   static Color? chatBackgroundUserBubbleOverride;
   static Color? chatBackgroundBubbleTextOverride;
   static Color? chatBackgroundThinkingTextOverride;
   static double? chatBackgroundBubbleOpacityOverride;
+
+  // 自動從背景圖推導的配色（手動覆蓋優先）
+  static Color? chatBackgroundAutoAiBubble;
+  static Color? chatBackgroundAutoUserBubble;
+  static Color? chatBackgroundAutoBubbleText;
+  static Color? chatBackgroundAutoThinkingText;
+  static double? chatBackgroundAutoOpacity;
+  static Color? chatBackgroundAutoInputBarBg;
+  static Color? chatBackgroundAutoInputBarBorder;
+  static Color? chatBackgroundAutoInputBarText;
+  static final Map<String, Color> _aiBubbleOverrides = <String, Color>{};
+  static final Map<String, Color> _userBubbleOverrides = <String, Color>{};
+  static final Map<String, Color> _bubbleTextOverrides = <String, Color>{};
 
   // ═══ Getters ═══
   static ThemePreset get preset => _preset;
@@ -49,6 +65,33 @@ class YanciTheme {
   }
 
   static void setFontScale(double v) => _fontScale = v;
+
+  /// 每套主題各自保存氣泡配色，切換主題時不會把上一套主題的微調帶過去。
+  static void setBubbleColorOverride(
+    String presetId,
+    ThemeBubbleColorRole role,
+    Color? color,
+  ) {
+    final overrides = switch (role) {
+      ThemeBubbleColorRole.aiBubble => _aiBubbleOverrides,
+      ThemeBubbleColorRole.userBubble => _userBubbleOverrides,
+      ThemeBubbleColorRole.textOnBubble => _bubbleTextOverrides,
+    };
+    if (color == null) {
+      overrides.remove(presetId);
+    } else {
+      overrides[presetId] = color;
+    }
+  }
+
+  static Color? bubbleColorOverride(
+    String presetId,
+    ThemeBubbleColorRole role,
+  ) => switch (role) {
+    ThemeBubbleColorRole.aiBubble => _aiBubbleOverrides[presetId],
+    ThemeBubbleColorRole.userBubble => _userBubbleOverrides[presetId],
+    ThemeBubbleColorRole.textOnBubble => _bubbleTextOverrides[presetId],
+  };
 
   // 兼容舊代碼
   static void setDark(bool v) {
@@ -76,12 +119,15 @@ class YanciTheme {
   }
 
   static Color get aiBubble =>
-      _shiftBubble(_preset.aiBubble).withValues(alpha: bubbleOpacity);
+      (_aiBubbleOverrides[_preset.id] ?? _shiftBubble(_preset.aiBubble))
+          .withValues(alpha: bubbleOpacity);
   static Color get userBubble =>
-      _shiftBubble(_preset.userBubble).withValues(alpha: bubbleOpacity);
+      (_userBubbleOverrides[_preset.id] ?? _shiftBubble(_preset.userBubble))
+          .withValues(alpha: bubbleOpacity);
 
   /// AI 氣泡漸變（頂粉→底白），null 則純色
   static Gradient? get aiBubbleGradient {
+    if (_aiBubbleOverrides.containsKey(_preset.id)) return null;
     if (_preset.aiBubbleTop == null) return null;
     return LinearGradient(
       begin: Alignment.topCenter,
@@ -100,25 +146,42 @@ class YanciTheme {
   static Color get textPrimary => _preset.textPrimary;
   static Color get textSecondary => _preset.textSecondary;
   static Color get textAccent => accent;
-  static Color get textOnBubble => _preset.textOnBubble;
+  static Color get textOnBubble =>
+      _bubbleTextOverrides[_preset.id] ?? _preset.textOnBubble;
 
   /// 對話圖片背景專用配色。沒有覆蓋時仍跟隨目前主題預設；一般漸層背景
   /// 不讀取這些值，避免自訂圖片的可讀性調整污染全域主題。
   static double get chatBackgroundBubbleOpacity =>
-      chatBackgroundBubbleOpacityOverride ?? bubbleOpacity;
+      chatBackgroundBubbleOpacityOverride ??
+      chatBackgroundAutoOpacity ??
+      bubbleOpacity;
   static Color get chatBackgroundAiBubbleColor =>
-      (chatBackgroundAiBubbleOverride ?? aiBubble).withValues(
-        alpha: chatBackgroundBubbleOpacity,
-      );
+      (chatBackgroundAiBubbleOverride ?? chatBackgroundAutoAiBubble ?? aiBubble)
+          .withValues(alpha: chatBackgroundBubbleOpacity);
   static Color get chatBackgroundUserBubbleColor =>
-      (chatBackgroundUserBubbleOverride ?? userBubble).withValues(
-        alpha: chatBackgroundBubbleOpacity,
-      );
+      (chatBackgroundUserBubbleOverride ??
+              chatBackgroundAutoUserBubble ??
+              userBubble)
+          .withValues(alpha: chatBackgroundBubbleOpacity);
   static Color get chatBackgroundBubbleTextColor =>
-      chatBackgroundBubbleTextOverride ?? textOnBubble;
+      chatBackgroundBubbleTextOverride ??
+      chatBackgroundAutoBubbleText ??
+      textOnBubble;
   static Color get chatBackgroundThinkingTextColor =>
       chatBackgroundThinkingTextOverride ??
+      chatBackgroundAutoThinkingText ??
       Color.lerp(textSecondary, textPrimary, 0.34)!;
+
+  // ── 對話背景圖 · 輸入框自適應配色 ──
+  static Color get chatBackgroundInputBarBg =>
+      chatBackgroundAutoInputBarBg ?? glassInputBg;
+  static Color get chatBackgroundInputBarBorder =>
+      chatBackgroundAutoInputBarBorder ?? glassBorder;
+  static Color get chatBackgroundInputBarText =>
+      chatBackgroundBubbleTextOverride ??
+      bubbleColorOverride(presetId, ThemeBubbleColorRole.textOnBubble) ??
+      chatBackgroundAutoInputBarText ??
+      textOnBubble;
 
   /// 角色卡資源提示與自我註記正文使用的淡色文字。
   /// 讓文字退到背景後方，把視線留給資源 icon 與角色名字。
@@ -292,3 +355,5 @@ class YanciTheme {
     );
   }
 }
+
+enum ThemeBubbleColorRole { aiBubble, userBubble, textOnBubble }

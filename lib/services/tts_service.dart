@@ -6,6 +6,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:audioplayers/audioplayers.dart';
 import '../memory/database.dart';
 import 'settings_manager.dart';
+import 'token_tracker.dart';
 
 /// TTS 播放狀態
 enum TtsState { idle, connecting, playing }
@@ -488,6 +489,13 @@ class TtsService {
     if (response.statusCode != 200) {
       throw Exception('OpenAI TTS 錯誤 ${response.statusCode}');
     }
+    await TokenTracker().recordBillableOperation(
+      provider: 'openai',
+      model: 'tts-1',
+      estimatedCost: 0,
+      characterId: characterId ?? 'default',
+      requestKind: ApiRequestKind.tts,
+    );
     return response.bodyBytes;
   }
 
@@ -540,6 +548,13 @@ class TtsService {
         '${response.body.length > 100 ? response.body.substring(0, 100) : response.body}',
       );
     }
+    await TokenTracker().recordBillableOperation(
+      provider: 'elevenlabs',
+      model: model.isEmpty ? 'eleven_multilingual_v2' : model,
+      estimatedCost: 0,
+      characterId: characterId ?? 'default',
+      requestKind: ApiRequestKind.tts,
+    );
     return response.bodyBytes;
   }
 

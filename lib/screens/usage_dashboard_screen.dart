@@ -19,6 +19,7 @@ class _UsageDashboardScreenState extends State<UsageDashboardScreen> {
   Map<String, dynamic> _summary = {};
   List<Map<String, dynamic>> _dailyData = [];
   List<Map<String, dynamic>> _modelBreakdown = [];
+  List<Map<String, dynamic>> _requestKindBreakdown = [];
   bool _isLoading = true;
   final LatestRequestGate _loadGate = LatestRequestGate();
 
@@ -58,6 +59,7 @@ class _UsageDashboardScreenState extends State<UsageDashboardScreen> {
     final summary = await DatabaseHelper.getUsageSummary(from, to);
     final daily = await DatabaseHelper.getDailyUsage(from, to);
     final models = await DatabaseHelper.getUsageByModel(from, to);
+    final requestKinds = await DatabaseHelper.getUsageByRequestKind(from, to);
 
     if (!mounted || period != _period || !_loadGate.isCurrent(generation)) {
       return;
@@ -66,6 +68,7 @@ class _UsageDashboardScreenState extends State<UsageDashboardScreen> {
       _summary = summary;
       _dailyData = daily;
       _modelBreakdown = models;
+      _requestKindBreakdown = requestKinds;
       _isLoading = false;
     });
   }
@@ -162,6 +165,10 @@ class _UsageDashboardScreenState extends State<UsageDashboardScreen> {
                         ),
                         children: [
                           _buildSummaryCards(),
+                          if (_requestKindBreakdown.isNotEmpty) ...[
+                            const SizedBox(height: YanciTheme.spacingLg),
+                            _buildRequestKindBreakdown(),
+                          ],
                           if (_dailyData.length > 1) ...[
                             const SizedBox(height: YanciTheme.spacingLg),
                             _buildChart(),
@@ -185,6 +192,8 @@ class _UsageDashboardScreenState extends State<UsageDashboardScreen> {
     final completion = (_summary['total_completion'] as num?)?.toInt() ?? 0;
     final cacheHit = (_summary['total_cache_hit'] as num?)?.toInt() ?? 0;
     final requests = (_summary['total_requests'] as num?)?.toInt() ?? 0;
+    final knownCostRequests =
+        (_summary['known_cost_requests'] as num?)?.toInt() ?? 0;
 
     return Column(
       children: [
@@ -200,7 +209,11 @@ class _UsageDashboardScreenState extends State<UsageDashboardScreen> {
           child: Column(
             children: [
               Text(
-                cost < 0.001 ? '< \$0.001' : '\$${cost.toStringAsFixed(4)}',
+                knownCostRequests == 0
+                    ? '—'
+                    : cost < 0.001
+                    ? '< \$0.001'
+                    : '\$${cost.toStringAsFixed(4)}',
                 style: TextStyle(
                   fontSize: 32,
                   fontWeight: FontWeight.w300,
@@ -229,6 +242,14 @@ class _UsageDashboardScreenState extends State<UsageDashboardScreen> {
               L.get('usage_cache_hit'),
             ),
           ],
+        ),
+        const SizedBox(height: 8),
+        Text(
+          L.get('usage_reference_notice'),
+          textAlign: TextAlign.center,
+          style: YanciTheme.bodySmall.copyWith(
+            color: YanciTheme.textSecondary.withValues(alpha: 0.5),
+          ),
         ),
       ],
     );
@@ -261,6 +282,77 @@ class _UsageDashboardScreenState extends State<UsageDashboardScreen> {
         ),
       ),
     );
+  }
+
+  Widget _buildRequestKindBreakdown() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(L.get('usage_request_breakdown'), style: YanciTheme.bodySmall),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: _requestKindBreakdown
+              .map((item) {
+                final kind = item['request_kind'] as String? ?? 'unknown';
+                final requests = (item['requests'] as num?)?.toInt() ?? 0;
+                return Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 7,
+                  ),
+                  decoration: BoxDecoration(
+                    color: YanciTheme.glassWhite,
+                    borderRadius: BorderRadius.circular(YanciTheme.radiusSm),
+                  ),
+                  child: Text.rich(
+                    TextSpan(
+                      children: [
+                        TextSpan(
+                          text: _requestKindLabel(kind),
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: YanciTheme.textSecondary,
+                          ),
+                        ),
+                        TextSpan(
+                          text: '  $requests',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: YanciTheme.textPrimary,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              })
+              .toList(growable: false),
+        ),
+      ],
+    );
+  }
+
+  String _requestKindLabel(String kind) {
+    const keys = <String, String>{
+      'chat': 'usage_kind_chat',
+      'summary': 'usage_kind_summary',
+      'memory': 'usage_kind_memory',
+      'embedding': 'usage_kind_embedding',
+      'worldbook': 'usage_kind_worldbook',
+      'guide': 'usage_kind_guide',
+      'image': 'usage_kind_image',
+      'signature': 'usage_kind_signature',
+      'call': 'usage_kind_call',
+      'sticker': 'usage_kind_sticker',
+      'conversation_title': 'usage_kind_conversation_title',
+      'keep_alive': 'usage_kind_keep_alive',
+      'web_search': 'usage_kind_web_search',
+      'tts': 'usage_kind_tts',
+    };
+    return L.get(keys[kind] ?? 'usage_kind_unknown');
   }
 
   // ═══ 折線圖 ═══
@@ -307,9 +399,12 @@ class _UsageDashboardScreenState extends State<UsageDashboardScreen> {
         const SizedBox(height: 8),
         ..._modelBreakdown.map((m) {
           final model = m['model'] as String? ?? '?';
+          final provider = m['provider'] as String? ?? '';
           final tokens = (m['total_tokens'] as num?)?.toInt() ?? 0;
           final cost = (m['cost'] as num?)?.toDouble() ?? 0.0;
           final reqs = (m['requests'] as num?)?.toInt() ?? 0;
+          final knownCostRequests =
+              (m['known_cost_requests'] as num?)?.toInt() ?? 0;
 
           // 短名
           final shortName = model.contains('/') ? model.split('/').last : model;
@@ -332,7 +427,9 @@ class _UsageDashboardScreenState extends State<UsageDashboardScreen> {
                         style: YanciTheme.bodyText.copyWith(fontSize: 13),
                       ),
                       Text(
-                        L.fmt('n_reqs_tokens', [reqs, _formatK(tokens)]),
+                        provider.isEmpty
+                            ? L.fmt('n_reqs_tokens', [reqs, _formatK(tokens)])
+                            : '$provider · ${L.fmt('n_reqs_tokens', [reqs, _formatK(tokens)])}',
                         style: TextStyle(
                           fontSize: 10,
                           color: YanciTheme.textSecondary,
@@ -342,7 +439,11 @@ class _UsageDashboardScreenState extends State<UsageDashboardScreen> {
                   ),
                 ),
                 Text(
-                  cost < 0.001 ? '< \$0.001' : '\$${cost.toStringAsFixed(4)}',
+                  knownCostRequests == 0
+                      ? '—'
+                      : cost < 0.001
+                      ? '< \$0.001'
+                      : '\$${cost.toStringAsFixed(4)}',
                   style: TextStyle(
                     fontSize: 13,
                     color: YanciTheme.accent,

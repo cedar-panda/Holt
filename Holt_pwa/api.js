@@ -12,6 +12,7 @@ import {
   estimateTokens,
   getPromptCachingEnabled,
   hashText,
+  liveStateEnvelope,
 } from "./prompt-cache.js";
 
 // ═══ Provider 定義 ═══
@@ -47,10 +48,18 @@ const PROVIDERS = {
 // ═══ 讀取當前 provider 設定 ═══
 
 function normalizeCustomEndpoint(value) {
-  return String(value || "")
-    .trim()
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  let url;
+  try { url = new URL(raw); } catch { throw new Error("自訂中轉站 URL 格式無效"); }
+  if (url.protocol !== "https:" || !url.hostname || url.username || url.password || url.hash) {
+    throw new Error("自訂中轉站只接受不含帳密與片段的 HTTPS URL");
+  }
+  url.pathname = url.pathname
     .replace(/\/+$/, "")
     .replace(/\/(?:chat\/completions|models)$/, "");
+  url.search = "";
+  return url.toString().replace(/\/+$/, "");
 }
 
 function isUsablePwaModelId(value) {
@@ -59,6 +68,59 @@ function isUsablePwaModelId(value) {
 
 function isLegacyPwaDefaultModel(value) {
   return /^anthropic\/claude-sonnet-4$/i.test(String(value || "").trim());
+}
+
+function compactApiErrorBody(body) {
+  const text = String(body || "").trim();
+  if (!text) return "";
+  const sanitize = (value) => String(value || "")
+    .replace(/[<>]/g, "")
+    .replace(/[\x00-\x1f\x7f]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 280);
+  try {
+    const json = JSON.parse(text);
+    const detail = json?.error?.message || json?.error?.detail || json?.message || json?.detail;
+    if (detail) return sanitize(detail);
+  } catch {}
+  return sanitize(text.replace(/<[^>]*>/g, " "));
+}
+
+function apiHttpError(operation, status, body = "") {
+  const reason = compactApiErrorBody(body);
+  const statusHint = status === 403
+    ? "中轉站拒絕此請求，常見原因是金鑰權限、模型白名單、來源網域或上游帳戶限制"
+    : status === 401
+      ? "API Key 無效或已失效"
+      : status === 429
+        ? "請求過多或額度不足"
+        : "請檢查來源設定與模型是否可用";
+  return new Error(`${operation}（HTTP ${status}）：${reason || statusHint}${reason ? `；${statusHint}` : ""}`);
+}
+
+function timedSignal(externalSignal, timeoutMs = 45000) {
+  const controller = new AbortController();
+  let timedOut = false;
+  const timeoutId = setTimeout(() => {
+    timedOut = true;
+    controller.abort(new DOMException("請求逾時", "TimeoutError"));
+  }, timeoutMs);
+  const onAbort = () => controller.abort(externalSignal?.reason || new DOMException("已取消", "AbortError"));
+  if (externalSignal?.aborted) onAbort();
+  else externalSignal?.addEventListener("abort", onAbort, { once: true });
+  return {
+    signal: controller.signal,
+    timedOut: () => timedOut,
+    cleanup() {
+      clearTimeout(timeoutId);
+      externalSignal?.removeEventListener("abort", onAbort);
+    },
+  };
+}
+
+function timeoutError(error, request) {
+  return request.timedOut() ? new Error("API 請求逾時，請檢查網路或中轉站狀態") : error;
 }
 
 async function getProviderConfig(overrides = {}) {
@@ -74,7 +136,9 @@ async function getProviderConfig(overrides = {}) {
   // 忽略空白模型 ID
   const usableProviderModel = isUsablePwaModelId(providerModel) ? providerModel : "";
   const usableLegacyModel = isUsablePwaModelId(legacyModel) ? legacyModel : "";
-  const savedModel = usableProviderModel || usableLegacyModel;
+  // The old `model` key belonged to whichever provider was selected when it
+  // was saved. Do not leak that model into another provider after switching.
+  const savedModel = usableProviderModel || (providerId === savedProviderId ? usableLegacyModel : "");
   const model = String(
     overrides.model ?? (savedModel || provider.defaultModel || ""),
   ).trim();
@@ -111,7 +175,7 @@ async function fetchModels(overrides = {}) {
       : { Authorization: `Bearer ${apiKey}` },
     signal: AbortSignal.timeout(15000),
   });
-  if (!res.ok) throw new Error(`模型列表請求失敗：${res.status}`);
+  if (!res.ok) throw apiHttpError("模型列表請求失敗", res.status, await res.text().catch(() => ""));
 
   const data = await res.json();
   const rawModels = providerId === "gemini"
@@ -212,7 +276,7 @@ async function ensureGeminiCache({ apiKey, model, prompt, signal }) {
 async function buildGeminiRequest({ apiKey, model, messages, opts, stream }) {
   const prompt = opts.structuredPrompt || createStructuredPrompt({ staticPart: opts.systemPrompt || "" });
   const contents = geminiContents(messages);
-  const liveState = prompt.requestOnlyPart.trim();
+  const liveState = liveStateEnvelope(prompt.requestOnlyPart);
   const latestUser = [...contents].map((message, index) => ({ message, index }))
     .reverse().find(({ message }) => message.role === "user")?.index ?? -1;
   let liveAttached = false;
@@ -262,6 +326,13 @@ function extractGeminiText(data) {
     .join("");
 }
 
+function openAiMessageText(content) {
+  if (Array.isArray(content)) {
+    return content.map((part) => typeof part === "string" ? part : part?.text || "").join("");
+  }
+  return String(content || "");
+}
+
 function processGeminiEvent(data, opts, state) {
   if (data.usageMetadata) opts.onUsage?.(data.usageMetadata);
   const parts = data.candidates?.[0]?.content?.parts;
@@ -287,17 +358,29 @@ async function streamGemini(messages, opts, config) {
     stream: true,
   });
   opts.onPlan?.(plan);
-  const res = await fetch(`${config.provider.endpoint}/models/${model}:streamGenerateContent?alt=sse`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "x-goog-api-key": config.apiKey },
-    body: JSON.stringify(body),
-    signal: opts.signal,
-  });
+  const request = timedSignal(opts.signal);
+  let res;
+  try {
+    res = await fetch(`${config.provider.endpoint}/models/${model}:streamGenerateContent?alt=sse`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-goog-api-key": config.apiKey },
+      body: JSON.stringify(body),
+      signal: request.signal,
+    });
+  } catch (error) {
+    request.cleanup();
+    throw timeoutError(error, request);
+  }
   if (!res.ok) {
     const errText = await res.text().catch(() => "");
-    throw new Error(`Gemini API 錯誤 ${res.status}：${errText.slice(0, 300)}`);
+    request.cleanup();
+    throw apiHttpError("Gemini API 錯誤", res.status, errText);
   }
 
+  if (!res.body) {
+    request.cleanup();
+    throw new Error("Gemini 未返回可讀取的串流內容");
+  }
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
@@ -305,17 +388,29 @@ async function streamGemini(messages, opts, config) {
   const consume = (line) => {
     const trimmed = line.trim();
     if (!trimmed || trimmed === "data: [DONE]" || !trimmed.startsWith("data: ")) return;
-    try { processGeminiEvent(JSON.parse(trimmed.slice(6)), opts, state); } catch {}
+    let data;
+    try { data = JSON.parse(trimmed.slice(6)); } catch { return; }
+    if (data?.error) {
+      throw new Error(`Gemini 串流錯誤：${compactApiErrorBody(JSON.stringify(data)) || "未知錯誤"}`);
+    }
+    processGeminiEvent(data, opts, state);
   };
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split("\n");
-    buffer = lines.pop() || "";
-    lines.forEach(consume);
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+      lines.forEach(consume);
+    }
+  } catch (error) {
+    throw timeoutError(error, request);
+  } finally {
+    request.cleanup();
   }
   if (buffer) consume(buffer);
+  if (!state.fullText.trim()) throw new Error("Gemini 返回空白回覆，請確認模型可用性");
   opts.onDone?.(state.fullText);
   return state.fullText;
 }
@@ -330,19 +425,34 @@ async function chatGemini(messages, opts, config) {
     stream: false,
   });
   opts.onPlan?.(plan);
-  const res = await fetch(`${config.provider.endpoint}/models/${model}:generateContent`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "x-goog-api-key": config.apiKey },
-    body: JSON.stringify(body),
-    signal: opts.signal,
-  });
+  const request = timedSignal(opts.signal, 20000);
+  let res;
+  try {
+    res = await fetch(`${config.provider.endpoint}/models/${model}:generateContent`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-goog-api-key": config.apiKey },
+      body: JSON.stringify(body),
+      signal: request.signal,
+    });
+  } catch (error) {
+    request.cleanup();
+    throw timeoutError(error, request);
+  }
   if (!res.ok) {
     const errText = await res.text().catch(() => "");
-    throw new Error(`Gemini API 錯誤 ${res.status}：${errText.slice(0, 300)}`);
+    request.cleanup();
+    throw apiHttpError("Gemini API 錯誤", res.status, errText);
   }
-  const data = await res.json();
+  let data;
+  try {
+    data = await res.json();
+  } finally {
+    request.cleanup();
+  }
   opts.onUsage?.(data.usageMetadata);
-  return extractGeminiText(data);
+  const text = extractGeminiText(data);
+  if (!text.trim()) throw new Error("Gemini 返回空白回覆");
+  return text;
 }
 
 // ═══ 流式聊天 ═══
@@ -362,6 +472,8 @@ async function streamChat(messages, opts = {}) {
   const { providerId, apiKey, model, endpoint } = config;
 
   if (!apiKey) throw new Error("尚未設定 API Key，請先到設定頁面填入。");
+  if (!model) throw new Error("尚未選擇模型，請先到設定頁面填入模型 ID。");
+  if (!endpoint) throw new Error("API 端點未設定完整。");
   if (providerId === "gemini") return streamGemini(messages, opts, config);
 
   const { body, plan } = await buildPromptCachePlan({
@@ -375,56 +487,93 @@ async function streamChat(messages, opts = {}) {
   });
   opts.onPlan?.(plan);
 
-  const res = await fetch(endpoint, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
-      ...plan.headers,
-    },
-    body: JSON.stringify(body),
-    signal: opts.signal,
-  });
+  const request = timedSignal(opts.signal);
+  let res;
+  try {
+    res = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+        ...plan.headers,
+      },
+      body: JSON.stringify(body),
+      signal: request.signal,
+    });
+  } catch (error) {
+    request.cleanup();
+    throw timeoutError(error, request);
+  }
 
   if (!res.ok) {
     const errText = await res.text().catch(() => "");
-    throw new Error(`API 錯誤 ${res.status}：${errText.slice(0, 300)}`);
+    request.cleanup();
+    throw apiHttpError("API 請求失敗", res.status, errText);
   }
 
+  const contentType = String(res.headers.get("content-type") || "").toLowerCase();
+  if (contentType.includes("application/json")) {
+    let data;
+    try {
+      data = await res.json().catch(() => ({}));
+    } finally {
+      request.cleanup();
+    }
+    if (data?.error) throw new Error(`API 串流錯誤：${compactApiErrorBody(JSON.stringify(data)) || "未知錯誤"}`);
+    const fallbackText = openAiMessageText(data?.choices?.[0]?.message?.content).trim();
+    if (!fallbackText) throw new Error("API 返回空白回覆或不支援 SSE 串流");
+    opts.onDelta?.(fallbackText);
+    if (data.usage) opts.onUsage?.(data.usage);
+    opts.onDone?.(fallbackText);
+    return fallbackText;
+  }
+  if (!res.body) {
+    request.cleanup();
+    throw new Error("API 未返回可讀取的串流內容");
+  }
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let fullText = "";
   let buffer = "";
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split("\n");
-    buffer = lines.pop() || "";
-
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed === "data: [DONE]") continue;
-      if (!trimmed.startsWith("data: ")) continue;
-
-      try {
-        const json = JSON.parse(trimmed.slice(6));
-        const delta = json.choices?.[0]?.delta;
-        const reasoning = delta?.reasoning_content || delta?.reasoning || delta?.thought;
-        if (reasoning) {
-          opts.onThinkingDelta?.(reasoning);
-        }
-        if (delta?.content) {
-          fullText += delta.content;
-          opts.onDelta?.(delta.content);
-        }
-        if (json.usage) opts.onUsage?.(json.usage);
-      } catch {
-        // 跳過格式不正確的行
-      }
+  const consumeLine = (line) => {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed === "data: [DONE]" || !trimmed.startsWith("data:")) return;
+    const payload = trimmed.slice(5).trim();
+    if (!payload) return;
+    let json;
+    try { json = JSON.parse(payload); } catch { return; }
+    if (json?.error) throw new Error(`API 串流錯誤：${compactApiErrorBody(JSON.stringify(json)) || "未知錯誤"}`);
+    const delta = json.choices?.[0]?.delta;
+    const reasoning = delta?.reasoning_content || delta?.reasoning || delta?.thought;
+    if (reasoning) opts.onThinkingDelta?.(reasoning);
+    const content = Array.isArray(delta?.content)
+      ? delta.content.map((part) => part?.text || "").join("")
+      : delta?.content;
+    if (content) {
+      fullText += content;
+      opts.onDelta?.(content);
     }
+    if (json.usage) opts.onUsage?.(json.usage);
+  };
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+      for (const line of lines) consumeLine(line);
+    }
+    if (buffer) consumeLine(buffer);
+  } catch (error) {
+    throw timeoutError(error, request);
+  } finally {
+    request.cleanup();
+  }
+  if (!fullText.trim()) {
+    throw new Error("模型返回空白回覆，請確認模型支援 SSE 或更換模型");
   }
 
   opts.onDone?.(fullText);
@@ -434,9 +583,11 @@ async function streamChat(messages, opts = {}) {
 // ═══ 非流式（備用）═══
 
 async function chat(messages, opts = {}) {
-  const config = await getProviderConfig();
+  const config = await getProviderConfig(opts.configOverrides || {});
   const { providerId, apiKey, model, endpoint } = config;
   if (!apiKey) throw new Error("尚未設定 API Key");
+  if (!model) throw new Error("尚未選擇模型");
+  if (!endpoint) throw new Error("API 端點未設定完整");
   if (providerId === "gemini") return chatGemini(messages, opts, config);
 
   const { body, plan } = await buildPromptCachePlan({
@@ -450,24 +601,48 @@ async function chat(messages, opts = {}) {
   });
   opts.onPlan?.(plan);
 
-  const res = await fetch(endpoint, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
-      ...plan.headers,
-    },
-    body: JSON.stringify(body),
-    signal: opts.signal,
-  });
+  const request = timedSignal(opts.signal, 20000);
+  let res;
+  try {
+    res = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+        ...plan.headers,
+      },
+      body: JSON.stringify(body),
+      signal: request.signal,
+    });
+  } catch (error) {
+    request.cleanup();
+    throw timeoutError(error, request);
+  }
 
   if (!res.ok) {
     const errText = await res.text().catch(() => "");
-    throw new Error(`API 錯誤 ${res.status}：${errText.slice(0, 300)}`);
+    request.cleanup();
+    throw apiHttpError("API 請求失敗", res.status, errText);
   }
 
-  const data = await res.json();
-  return data.choices?.[0]?.message?.content || "";
+  let data;
+  try {
+    data = await res.json();
+  } finally {
+    request.cleanup();
+  }
+  const text = openAiMessageText(data.choices?.[0]?.message?.content);
+  if (!String(text).trim()) throw new Error("模型返回空白回覆");
+  return text;
+}
+
+async function testProviderConnection(overrides = {}) {
+  const reply = await chat([{ role: "user", content: "Reply with OK only." }], {
+    configOverrides: overrides,
+    systemPrompt: "This is a connection test. Reply with OK only.",
+  });
+  if (!String(reply || "").trim()) throw new Error("模型連線成功但返回空白內容");
+  return String(reply).trim();
 }
 
 // ═══ 構建 vision 消息（圖片 + 文字）═══
@@ -491,6 +666,8 @@ export {
   fetchModels,
   isUsablePwaModelId,
   isLegacyPwaDefaultModel,
+  apiHttpError,
+  testProviderConnection,
   streamChat,
   chat,
   buildVisionMessage,

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../models/memory.dart';
 import '../services/locale_strings.dart';
 import '../theme/app_theme.dart';
+import 'context_mode_pill.dart';
 
 class MemoryListTile extends StatelessWidget {
   final Memory memory;
@@ -70,6 +71,8 @@ class MemoryListTile extends StatelessWidget {
                           ),
                         ),
                       ),
+                      const SizedBox(width: 6),
+                      ContextModeLabel(mode: memory.contextMode, compact: true),
                       if (memory.isPermanent) ...[
                         const SizedBox(width: 4),
                         Icon(

@@ -8,8 +8,10 @@ import 'package:uuid/uuid.dart';
 import '../memory/database.dart';
 import '../models/memory.dart';
 import '../models/memory_action_proposal.dart';
+import '../models/context_mode.dart';
 import 'locale_strings.dart';
 import 'memory_duplicate_detector.dart';
+import 'memory_debug_log.dart';
 
 enum GuardedMemoryWriteDisposition {
   inserted,
@@ -53,6 +55,10 @@ class MemoryGuardService {
   static final RegExp _recordDatePattern = RegExp(
     r'\[\s*(?:(?:\d{2,4})[./-])?\d{1,2}[./-]\d{1,2}\s*\]',
   );
+  static final RegExp _mergeProcessNotePattern = RegExp(
+    r'\s*[（(]\s*(?:重複記憶已合併|重复记忆已合并|duplicate memor(?:y|ies) (?:was |were )?merged|merged duplicate memor(?:y|ies))\s*[）)]\s*',
+    caseSensitive: false,
+  );
 
   static bool _requiresManualConfirmation(String source) =>
       source == 'model' || source == 'summary';
@@ -68,10 +74,30 @@ class MemoryGuardService {
   }) async {
     final db = await DatabaseHelper.database;
     return db.transaction<GuardedMemoryWriteResult>((txn) async {
+      if (_requiresManualConfirmation(source) &&
+          await _matchesRejectedSuggestion(txn, candidate)) {
+        return const GuardedMemoryWriteResult(
+          disposition: GuardedMemoryWriteDisposition.skippedDuplicate,
+        );
+      }
+      if (_requiresManualConfirmation(source) &&
+          await _matchesOpenSuggestion(txn, candidate)) {
+        return const GuardedMemoryWriteResult(
+          disposition: GuardedMemoryWriteDisposition.skippedDuplicate,
+        );
+      }
       final rows = await txn.query(
         'memories',
-        where: 'character_id = ? AND mode = ? AND status = ?',
-        whereArgs: [candidate.characterId, candidate.mode, 'active'],
+        where:
+            'character_id = ? AND mode = ? AND context_mode = ? '
+            'AND continuity_id = ? AND status = ?',
+        whereArgs: [
+          candidate.characterId,
+          candidate.mode,
+          candidate.contextMode.storageValue,
+          candidate.continuityId,
+          'active',
+        ],
         orderBy: 'updated_at DESC, id DESC',
       );
       final existing = rows.map(Memory.fromMap).toList(growable: false);
@@ -139,6 +165,396 @@ class MemoryGuardService {
     });
   }
 
+  /// Keeps a rejected model suggestion from returning merely because the
+  /// provider paraphrased it. Scope is deliberately limited to the same
+  /// character, lane, continuity and memory mode, and contradictory/new facts
+  /// are never suppressed.
+  static Future<bool> _matchesRejectedSuggestion(
+    DatabaseExecutor db,
+    Memory candidate,
+  ) async {
+    final tombstones = await db.query(
+      'memory_rejection_tombstones',
+      columns: const <String>['candidate_json'],
+      where:
+          'character_id = ? AND context_mode = ? AND continuity_id = ? '
+          'AND mode = ?',
+      whereArgs: <Object?>[
+        candidate.characterId,
+        candidate.contextMode.storageValue,
+        candidate.continuityId,
+        candidate.mode,
+      ],
+      orderBy: 'created_at DESC',
+      limit: 1000,
+    );
+    for (final row in tombstones) {
+      try {
+        final raw = jsonDecode(row['candidate_json']?.toString() ?? '');
+        if (raw is! Map) continue;
+        final rejected = Map<String, dynamic>.from(raw);
+        final content = rejected['content']?.toString().trim() ?? '';
+        if (content.isEmpty) continue;
+        final previous = Memory(
+          characterId: candidate.characterId,
+          contextMode: candidate.contextMode,
+          continuityId: candidate.continuityId,
+          mode: rejected['mode']?.toString() ?? candidate.mode,
+          category: rejected['category']?.toString() ?? '',
+          content: content,
+          triggers: rejected['triggers']?.toString() ?? '',
+          isPermanent: rejected['permanent'] == true,
+        );
+        if (_isRejectedSuggestionMatch(candidate, previous)) return true;
+      } catch (_) {
+        // A damaged tombstone must not suppress an unrelated new fact.
+      }
+    }
+
+    // Legacy fallback: older versions kept the decision only on the proposal.
+    final rows = await db.query(
+      'pending_memory_actions',
+      columns: ['payload_json', 'source_conversation_id'],
+      where:
+          'character_id = ? AND context_mode = ? AND continuity_id = ? '
+          'AND mode = ? AND action = ? AND status = ?',
+      whereArgs: [
+        candidate.characterId,
+        candidate.contextMode.storageValue,
+        candidate.continuityId,
+        candidate.mode,
+        MemoryActionProposal.actionCreate,
+        MemoryActionProposal.statusRejected,
+      ],
+      orderBy: 'resolved_at DESC, created_at DESC',
+      limit: 1000,
+    );
+    for (final row in rows) {
+      try {
+        final payload = jsonDecode(row['payload_json']?.toString() ?? '');
+        if (payload is! Map || payload['candidate'] is! Map) continue;
+        final rejected = Map<String, dynamic>.from(payload['candidate'] as Map);
+        final content = rejected['content']?.toString().trim() ?? '';
+        if (content.isEmpty) continue;
+        final previous = Memory(
+          characterId: candidate.characterId,
+          contextMode: candidate.contextMode,
+          continuityId: candidate.continuityId,
+          mode: rejected['mode']?.toString() ?? candidate.mode,
+          category: rejected['category']?.toString() ?? '',
+          content: content,
+          triggers: rejected['triggers']?.toString() ?? '',
+          isPermanent: rejected['permanent'] == true,
+          sourceConversationId: row['source_conversation_id']?.toString(),
+        );
+        if (_isRejectedSuggestionMatch(candidate, previous)) {
+          return true;
+        }
+      } catch (_) {
+        // A malformed historical proposal must not block a new memory write.
+      }
+    }
+    return false;
+  }
+
+  static bool _isRejectedSuggestionMatch(Memory candidate, Memory rejected) {
+    final match = MemoryDuplicateDetector.compare(candidate, rejected);
+    if (_hasMaterialSuggestionConflict(candidate.content, rejected.content)) {
+      return false;
+    }
+    if (match.exactContent || match.contentScore >= 0.82) return true;
+    final overlap = _suggestionTextOverlap(candidate.content, rejected.content);
+    if (overlap.common >= 6 &&
+        overlap.coverage >= 0.72 &&
+        overlap.dice >= 0.35) {
+      return true;
+    }
+    final triggerCoverage = _semanticTriggerCoverage(
+      candidate.triggers,
+      rejected.triggers,
+    );
+    if (triggerCoverage >= 0.66 &&
+        overlap.common >= 10 &&
+        overlap.dice >= 0.25) {
+      return true;
+    }
+    return match.categoryScore > 0 &&
+        triggerCoverage >= 0.5 &&
+        overlap.common >= 8 &&
+        overlap.dice >= 0.16;
+  }
+
+  /// Pending model extractions are compared with one another before a new
+  /// review card is created. This prevents one response (or a quick retry)
+  /// from filling the inbox with several rewrites of the same fact.
+  static Future<bool> _matchesOpenSuggestion(
+    DatabaseExecutor db,
+    Memory candidate,
+  ) async {
+    final rows = await db.query(
+      'pending_memory_actions',
+      columns: ['payload_json', 'source_conversation_id'],
+      where:
+          'character_id = ? AND context_mode = ? AND continuity_id = ? '
+          'AND mode = ? AND action = ? '
+          "AND source IN ('model', 'summary') "
+          "AND status IN ('pending', 'snoozed', 'failed')",
+      whereArgs: [
+        candidate.characterId,
+        candidate.contextMode.storageValue,
+        candidate.continuityId,
+        candidate.mode,
+        MemoryActionProposal.actionCreate,
+      ],
+      orderBy: 'created_at DESC',
+      limit: 200,
+    );
+    for (final row in rows) {
+      try {
+        final payload = jsonDecode(row['payload_json']?.toString() ?? '');
+        if (payload is! Map || payload['candidate'] is! Map) continue;
+        final raw = Map<String, dynamic>.from(payload['candidate'] as Map);
+        final content = raw['content']?.toString().trim() ?? '';
+        if (content.isEmpty) continue;
+        final open = Memory(
+          characterId: candidate.characterId,
+          contextMode: candidate.contextMode,
+          continuityId: candidate.continuityId,
+          mode: raw['mode']?.toString() ?? candidate.mode,
+          category: raw['category']?.toString() ?? '',
+          content: content,
+          triggers: raw['triggers']?.toString() ?? '',
+          isPermanent: raw['permanent'] == true,
+          sourceConversationId: row['source_conversation_id']?.toString(),
+        );
+        if (_isRejectedSuggestionMatch(candidate, open)) return true;
+      } catch (_) {
+        // A malformed historical proposal must not block a new suggestion.
+      }
+    }
+    return false;
+  }
+
+  static ({int common, double coverage, double dice}) _suggestionTextOverlap(
+    String left,
+    String right,
+  ) {
+    final leftGrams = _bigrams(_canonicalSuggestionText(left));
+    final rightGrams = _bigrams(_canonicalSuggestionText(right));
+    if (leftGrams.isEmpty || rightGrams.isEmpty) {
+      return (common: 0, coverage: 0, dice: 0);
+    }
+    final common = leftGrams.intersection(rightGrams).length;
+    return (
+      common: common,
+      coverage: common / min(leftGrams.length, rightGrams.length),
+      dice: (2 * common) / (leftGrams.length + rightGrams.length),
+    );
+  }
+
+  static Set<String> _bigrams(String value) {
+    if (value.length < 2) return value.isEmpty ? const {} : <String>{value};
+    return <String>{
+      for (var index = 0; index < value.length - 1; index++)
+        value.substring(index, index + 2),
+    };
+  }
+
+  static String _canonicalSuggestionText(String raw) {
+    var value = MemoryDuplicateDetector.normalizeContent(raw);
+    const aliases = <String, String>{
+      '父親': '父',
+      '父亲': '父',
+      '爸爸': '父',
+      '爹': '父',
+      '爸': '父',
+      '母親': '母',
+      '母亲': '母',
+      '媽媽': '母',
+      '妈妈': '母',
+      '娘': '母',
+      '媽': '母',
+      '妈': '母',
+    };
+    for (final entry in aliases.entries) {
+      value = value.replaceAll(entry.key, entry.value);
+    }
+    return value;
+  }
+
+  static Set<String> _canonicalTriggers(String raw) => raw
+      .split(RegExp(r'[,，、;；]'))
+      .map(_canonicalSuggestionText)
+      .where((value) => value.isNotEmpty)
+      .toSet();
+
+  static double _semanticTriggerCoverage(String left, String right) {
+    final leftSet = _canonicalTriggers(left);
+    final rightSet = _canonicalTriggers(right);
+    if (leftSet.isEmpty || rightSet.isEmpty) return 0;
+    var matches = 0;
+    final remaining = rightSet.toList(growable: true);
+    for (final leftTrigger in leftSet) {
+      final index = remaining.indexWhere(
+        (rightTrigger) =>
+            leftTrigger == rightTrigger ||
+            leftTrigger.contains(rightTrigger) ||
+            rightTrigger.contains(leftTrigger),
+      );
+      if (index < 0) continue;
+      matches++;
+      remaining.removeAt(index);
+    }
+    return matches / min(leftSet.length, rightSet.length);
+  }
+
+  /// Only explicit opposing facts block rejection matching. The generic
+  /// duplicate detector intentionally remains cautious, but treating any
+  /// newly added Chinese negation (for example "not deceased") as a conflict
+  /// lets ordinary paraphrases repeatedly escape a user's rejection.
+  static bool _hasMaterialSuggestionConflict(String left, String right) {
+    final leftText = _canonicalSuggestionText(left);
+    final rightText = _canonicalSuggestionText(right);
+    const opposites = <(String, String)>[
+      ('喜歡', '不喜歡'),
+      ('喜欢', '不喜欢'),
+      ('願意', '不願意'),
+      ('愿意', '不愿意'),
+      ('同意', '拒絕'),
+      ('同意', '拒绝'),
+      ('親近', '不親近'),
+      ('亲近', '不亲近'),
+      ('在一起', '分開'),
+      ('在一起', '分开'),
+    ];
+    for (final pair in opposites) {
+      final leftNegative = leftText.contains(pair.$2);
+      final rightNegative = rightText.contains(pair.$2);
+      final leftPositive = leftText.replaceAll(pair.$2, '').contains(pair.$1);
+      final rightPositive = rightText.replaceAll(pair.$2, '').contains(pair.$1);
+      if ((leftNegative && rightPositive) || (rightNegative && leftPositive)) {
+        return true;
+      }
+    }
+
+    final leftNumbers = _nonDateNumbers(left);
+    final rightNumbers = _nonDateNumbers(right);
+    return leftNumbers.isNotEmpty &&
+        rightNumbers.isNotEmpty &&
+        (leftNumbers.length != rightNumbers.length ||
+            !leftNumbers.containsAll(rightNumbers));
+  }
+
+  static Set<String> _nonDateNumbers(String raw) {
+    var value = raw.replaceAll(
+      RegExp(
+        r'(?:\d{4}[./-])?\d{1,2}[./-]\d{1,2}|\d{4}\s*年\s*\d{1,2}\s*月\s*\d{1,2}\s*日',
+      ),
+      ' ',
+    );
+    value = value.replaceAll(_recordDatePattern, ' ');
+    return RegExp(
+      r'\d+(?:\.\d+)?',
+    ).allMatches(value).map((match) => match.group(0)!).toSet();
+  }
+
+  /// Cleans up proposals that were already rejected in an earlier reply but
+  /// returned after the provider paraphrased them. Rejection is a durable user
+  /// decision inside the same character/lane/story/memory scope.
+  static Future<int> suppressReappearingRejectedSuggestions(
+    String characterId,
+  ) async {
+    final db = await DatabaseHelper.database;
+    return db.transaction<int>((txn) async {
+      final rows = await txn.query(
+        'pending_memory_actions',
+        where:
+            'character_id = ? AND action = ? '
+            "AND source IN ('model', 'summary') "
+            "AND status IN ('pending', 'snoozed', 'failed')",
+        whereArgs: [characterId, MemoryActionProposal.actionCreate],
+      );
+      if (rows.isEmpty) return 0;
+      final rejectedRows = await txn.query(
+        'pending_memory_actions',
+        where: 'character_id = ? AND action = ? AND status = ?',
+        whereArgs: [
+          characterId,
+          MemoryActionProposal.actionCreate,
+          MemoryActionProposal.statusRejected,
+        ],
+        orderBy: 'resolved_at DESC, created_at DESC',
+        limit: 1000,
+      );
+      if (rejectedRows.isEmpty) return 0;
+
+      Memory? candidateFromRow(Map<String, Object?> row) {
+        try {
+          final payload = jsonDecode(row['payload_json']?.toString() ?? '');
+          if (payload is! Map || payload['candidate'] is! Map) return null;
+          final raw = Map<String, dynamic>.from(payload['candidate'] as Map);
+          final content = raw['content']?.toString().trim() ?? '';
+          if (content.isEmpty) return null;
+          return Memory(
+            characterId: characterId,
+            contextMode: ContextMode.fromStorage(
+              row['context_mode']?.toString() ?? 'daily',
+            ),
+            continuityId: row['continuity_id']?.toString() ?? 'main',
+            mode: row['mode']?.toString() ?? 'romance',
+            category: raw['category']?.toString() ?? '',
+            content: content,
+            triggers: raw['triggers']?.toString() ?? '',
+            isPermanent: raw['permanent'] == true,
+            sourceConversationId: row['source_conversation_id']?.toString(),
+          );
+        } catch (_) {
+          return null;
+        }
+      }
+
+      final rejectedByScope = <String, List<Memory>>{};
+      for (final row in rejectedRows) {
+        final memory = candidateFromRow(row);
+        if (memory == null) continue;
+        final key =
+            '${memory.contextMode.storageValue}\u0000'
+            '${memory.continuityId}\u0000${memory.mode}';
+        rejectedByScope.putIfAbsent(key, () => <Memory>[]).add(memory);
+      }
+
+      final now = DateTime.now().toIso8601String();
+      var suppressed = 0;
+      for (final row in rows) {
+        final candidate = candidateFromRow(row);
+        if (candidate == null) continue;
+        final key =
+            '${candidate.contextMode.storageValue}\u0000'
+            '${candidate.continuityId}\u0000${candidate.mode}';
+        final rejected = rejectedByScope[key] ?? const <Memory>[];
+        if (!rejected.any(
+          (previous) => _isRejectedSuggestionMatch(candidate, previous),
+        )) {
+          continue;
+        }
+        suppressed += await txn.update(
+          'pending_memory_actions',
+          <String, Object?>{
+            'status': MemoryActionProposal.statusRejected,
+            'seen_at': now,
+            'resolved_at': now,
+            'error': '',
+          },
+          where:
+              'id = ? AND character_id = ? '
+              "AND status IN ('pending', 'snoozed', 'failed')",
+          whereArgs: [row['id'], characterId],
+        );
+      }
+      return suppressed;
+    });
+  }
+
   static Future<String?> _createCandidateProposal(
     DatabaseExecutor db, {
     required Memory candidate,
@@ -166,6 +582,8 @@ class MemoryGuardService {
           utf8.encode(
             jsonEncode(<String, Object?>{
               'character_id': candidate.characterId,
+              'context_mode': candidate.contextMode.storageValue,
+              'continuity_id': candidate.continuityId,
               'action': MemoryActionProposal.actionCreate,
               'target_id': targetId,
               'target_version': targetId == null
@@ -190,6 +608,8 @@ class MemoryGuardService {
       <String, Object?>{
         'id': id,
         'character_id': candidate.characterId,
+        'context_mode': candidate.contextMode.storageValue,
+        'continuity_id': candidate.continuityId,
         'mode': candidate.mode,
         'action': MemoryActionProposal.actionCreate,
         'source': source,
@@ -277,6 +697,8 @@ class MemoryGuardService {
     required String mode,
     required String sourceConversationId,
     required List<int> targetIds,
+    ContextMode contextMode = ContextMode.daily,
+    String continuityId = 'main',
   }) async {
     return _createProposal(
       characterId: characterId,
@@ -285,6 +707,8 @@ class MemoryGuardService {
       sourceConversationId: sourceConversationId,
       targetIds: targetIds,
       mergeResult: null,
+      contextMode: contextMode,
+      continuityId: continuityId,
     );
   }
 
@@ -296,6 +720,8 @@ class MemoryGuardService {
     required String category,
     required String content,
     required String triggers,
+    ContextMode contextMode = ContextMode.daily,
+    String continuityId = 'main',
   }) async {
     if (targetIds.toSet().length < 2) return null;
     return _createProposal(
@@ -309,6 +735,8 @@ class MemoryGuardService {
         'content': content,
         'triggers': triggers,
       },
+      contextMode: contextMode,
+      continuityId: continuityId,
     );
   }
 
@@ -373,11 +801,14 @@ class MemoryGuardService {
     required List<String> reasons,
     Map<String, Object?>? mergeResult,
   }) async {
+    if (memories.isEmpty) return null;
     final unique = <int, Memory>{
       for (final memory in memories)
         if (memory.id != null &&
             memory.characterId == characterId &&
-            memory.mode == mode)
+            memory.mode == mode &&
+            memory.contextMode == memories.first.contextMode &&
+            memory.continuityId == memories.first.continuityId)
           memory.id!: memory,
     };
     if (unique.length < 2) return null;
@@ -390,6 +821,8 @@ class MemoryGuardService {
       source: 'local_scan',
       targetIds: unique.keys.toList(growable: false),
       mergeResult: _normalizedMergePreview(rows, preferred: mergeResult),
+      contextMode: rows.first.contextMode,
+      continuityId: rows.first.continuityId,
       payloadExtras: <String, Object?>{
         'duplicate_score': score,
         'reasons': reasons.toSet().toList(growable: false),
@@ -437,7 +870,10 @@ class MemoryGuardService {
     Iterable<String> sources, {
     String preferred = '',
   }) {
-    final sourceList = sources.toList(growable: false);
+    final sourceList = sources
+        .map(_stripMergeProcessNarration)
+        .toList(growable: false);
+    preferred = _stripMergeProcessNarration(preferred);
     final date =
         _recordDatePattern.firstMatch(preferred)?.group(0) ??
         sourceList
@@ -452,17 +888,13 @@ class MemoryGuardService {
     } else {
       final byLength = sourceList.map(_stripRecordDates).toList()
         ..sort((left, right) => right.length.compareTo(left.length));
-      final kept = <String>[];
-      final normalized = <String>[];
-      for (final content in byLength) {
-        final next = MemoryDuplicateDetector.normalizeContent(content);
-        if (next.isEmpty || normalized.any((prior) => prior.contains(next))) {
-          continue;
-        }
-        kept.add(content);
-        normalized.add(next);
-      }
-      body = kept.join(L.locale == 'en' ? '; ' : '；');
+      // A deterministic on-device pass cannot safely author new facts. For a
+      // duplicate cluster, keep the most complete source instead of visibly
+      // concatenating every source into a synthetic "merged" paragraph.
+      body = byLength.firstWhere(
+        (content) => content.isNotEmpty,
+        orElse: () => '',
+      );
     }
     if (date.isEmpty) return body;
     if (body.isEmpty) return date;
@@ -474,6 +906,18 @@ class MemoryGuardService {
       .replaceAll(RegExp(r'\s+'), ' ')
       .trim()
       .replaceFirst(RegExp(r'^[；;,，。\s]+'), '')
+      .trim();
+
+  static String _stripMergeProcessNarration(String content) => content
+      .replaceAll(_mergeProcessNotePattern, ' ')
+      .replaceAll(
+        RegExp(
+          r'\s*(?:重複記憶已合併|重复记忆已合并|duplicate memor(?:y|ies) (?:was |were )?merged|merged duplicate memor(?:y|ies))\s*[。.!！]?\s*$',
+          caseSensitive: false,
+        ),
+        '',
+      )
+      .replaceAll(RegExp(r'\s+'), ' ')
       .trim();
 
   /// Repairs pairwise local-scan proposals created by older builds. Only the
@@ -567,6 +1011,8 @@ class MemoryGuardService {
     required Map<String, Object?>? mergeResult,
     String source = 'model',
     Map<String, Object?> payloadExtras = const <String, Object?>{},
+    ContextMode contextMode = ContextMode.daily,
+    String continuityId = 'main',
   }) async {
     final uniqueIds = targetIds.toSet().toList()..sort();
     if (uniqueIds.isEmpty) return null;
@@ -574,8 +1020,15 @@ class MemoryGuardService {
     final placeholders = List.filled(uniqueIds.length, '?').join(',');
     final rows = (await db.rawQuery(
       'SELECT * FROM memories WHERE id IN ($placeholders) '
-      'AND character_id = ? AND status = ?',
-      [...uniqueIds, characterId, 'active'],
+      'AND character_id = ? AND context_mode = ? AND continuity_id = ? '
+      'AND status = ?',
+      [
+        ...uniqueIds,
+        characterId,
+        contextMode.storageValue,
+        continuityId,
+        'active',
+      ],
     )).toList();
     if (rows.length != uniqueIds.length) return null;
     rows.sort((a, b) => (a['id'] as int).compareTo(b['id'] as int));
@@ -620,6 +1073,8 @@ class MemoryGuardService {
           utf8.encode(
             jsonEncode(<String, Object?>{
               'character_id': characterId,
+              'context_mode': contextMode.storageValue,
+              'continuity_id': continuityId,
               'action': action,
               'target_ids': uniqueIds,
               'base_versions': baseVersions,
@@ -638,6 +1093,8 @@ class MemoryGuardService {
         .insert('pending_memory_actions', <String, Object?>{
           'id': id,
           'character_id': characterId,
+          'context_mode': contextMode.storageValue,
+          'continuity_id': continuityId,
           'mode': mode,
           'action': action,
           'source': source,
@@ -687,9 +1144,7 @@ class MemoryGuardService {
         result != null &&
         jsonEncode(existingResult is Map ? existingResult : const {}) !=
             jsonEncode(result);
-    if (policyAdvanced &&
-        (_reviewStatuses.contains(existingStatus) ||
-            existingStatus == MemoryActionProposal.statusRejected)) {
+    if (policyAdvanced && _reviewStatuses.contains(existingStatus)) {
       await db.update(
         'pending_memory_actions',
         <String, Object?>{
@@ -740,17 +1195,28 @@ class MemoryGuardService {
   }
 
   static Future<List<MemoryActionProposal>> listForReview(
-    String characterId,
-  ) async {
+    String characterId, {
+    ContextMode? contextMode,
+    String continuityId = 'main',
+  }) async {
+    await suppressReappearingRejectedSuggestions(characterId);
     final db = await DatabaseHelper.database;
     final statuses = _reviewStatuses.toList(growable: false);
     final placeholders = List.filled(statuses.length, '?').join(',');
+    final scopeClause = contextMode == null
+        ? ''
+        : ' AND context_mode = ? AND continuity_id = ?';
     final rows = await db.rawQuery(
       'SELECT * FROM pending_memory_actions '
-      'WHERE character_id = ? AND status IN ($placeholders) '
+      'WHERE character_id = ? AND status IN ($placeholders)$scopeClause '
       "ORDER BY CASE status WHEN 'pending' THEN 0 WHEN 'failed' THEN 1 "
       "WHEN 'stale' THEN 2 ELSE 3 END, created_at DESC",
-      [characterId, ...statuses],
+      [
+        characterId,
+        ...statuses,
+        if (contextMode != null) contextMode.storageValue,
+        if (contextMode != null) continuityId,
+      ],
     );
     final result = <MemoryActionProposal>[];
     for (final rawRow in rows) {
@@ -796,6 +1262,8 @@ class MemoryGuardService {
         Memory(
           id: snapshot['id'] as int?,
           characterId: proposal.characterId,
+          contextMode: proposal.contextMode,
+          continuityId: proposal.continuityId,
           mode: proposal.mode,
           category: snapshot['category']?.toString() ?? '',
           content: snapshot['content']?.toString() ?? '',
@@ -814,6 +1282,8 @@ class MemoryGuardService {
         sources.add(
           Memory(
             characterId: proposal.characterId,
+            contextMode: proposal.contextMode,
+            continuityId: proposal.continuityId,
             mode: candidate['mode']?.toString() ?? proposal.mode,
             category: candidate['category']?.toString() ?? '',
             content: content,
@@ -826,16 +1296,29 @@ class MemoryGuardService {
     return sources;
   }
 
-  static Future<({int total, int unread})> counts(String characterId) async {
+  static Future<({int total, int unread})> counts(
+    String characterId, {
+    ContextMode? contextMode,
+    String continuityId = 'main',
+  }) async {
+    await suppressReappearingRejectedSuggestions(characterId);
     final db = await DatabaseHelper.database;
     final statuses = _reviewStatuses.toList(growable: false);
     final placeholders = List.filled(statuses.length, '?').join(',');
+    final scopeClause = contextMode == null
+        ? ''
+        : ' AND context_mode = ? AND continuity_id = ?';
     final rows = await db.rawQuery(
       'SELECT COUNT(*) AS total, '
       "SUM(CASE WHEN status = 'pending' AND seen_at IS NULL THEN 1 ELSE 0 END) AS unread "
       'FROM pending_memory_actions '
-      'WHERE character_id = ? AND status IN ($placeholders)',
-      [characterId, ...statuses],
+      'WHERE character_id = ? AND status IN ($placeholders)$scopeClause',
+      [
+        characterId,
+        ...statuses,
+        if (contextMode != null) contextMode.storageValue,
+        if (contextMode != null) continuityId,
+      ],
     );
     final row = rows.first;
     return (
@@ -873,6 +1356,7 @@ class MemoryGuardService {
     required String characterId,
     required String conversationId,
   }) async {
+    await suppressReappearingRejectedSuggestions(characterId);
     final db = await DatabaseHelper.database;
     final statuses = _reviewStatuses.toList(growable: false);
     final placeholders = List.filled(statuses.length, '?').join(',');
@@ -900,6 +1384,8 @@ class MemoryGuardService {
     String characterId, {
     int? sourceMessageId,
     bool includeLocalScan = false,
+    ContextMode? contextMode,
+    String continuityId = 'main',
   }) async {
     final db = await DatabaseHelper.database;
     final sourceClause = sourceMessageId == null
@@ -907,15 +1393,22 @@ class MemoryGuardService {
         : includeLocalScan
         ? ' AND (source_message_id = ? OR source = ?)'
         : ' AND source_message_id = ?';
+    final scopeClause = contextMode == null
+        ? ''
+        : ' AND context_mode = ? AND continuity_id = ?';
     await db.update(
       'pending_memory_actions',
       {'seen_at': DateTime.now().toIso8601String()},
-      where: 'character_id = ? AND status = ? AND seen_at IS NULL$sourceClause',
+      where:
+          'character_id = ? AND status = ? AND seen_at IS NULL'
+          '$sourceClause$scopeClause',
       whereArgs: [
         characterId,
         MemoryActionProposal.statusPending,
         ?sourceMessageId,
         if (sourceMessageId != null && includeLocalScan) 'local_scan',
+        if (contextMode != null) contextMode.storageValue,
+        if (contextMode != null) continuityId,
       ],
     );
   }
@@ -930,14 +1423,171 @@ class MemoryGuardService {
     );
   }
 
-  static Future<void> reject(String id, String characterId) {
-    return _setStatus(
-      id,
-      characterId,
-      from: _reviewStatuses,
-      to: MemoryActionProposal.statusRejected,
-      resolved: true,
-    );
+  static Future<void> reject(String id, String characterId) async {
+    final db = await DatabaseHelper.database;
+    await db.transaction<void>((txn) async {
+      final rows = await txn.query(
+        'pending_memory_actions',
+        where: 'id = ? AND character_id = ?',
+        whereArgs: <Object?>[id, characterId],
+        limit: 1,
+      );
+      if (rows.isEmpty) return;
+      final proposal = MemoryActionProposal.fromMap(rows.single);
+      if (!_reviewStatuses.contains(proposal.status)) return;
+      await _storeRejectionTombstone(txn, proposal);
+      await _setStatusInDatabase(
+        txn,
+        id,
+        characterId,
+        from: _reviewStatuses,
+        to: MemoryActionProposal.statusRejected,
+        resolved: true,
+      );
+    });
+  }
+
+  /// Rejects every currently reviewable proposal for one character without
+  /// deleting or rewriting any stored memory. Suggested graph edges attached
+  /// to those proposals are rejected as well; confirmed edges are preserved.
+  static Future<int> rejectAllForReview(
+    String characterId, {
+    ContextMode? contextMode,
+    String continuityId = 'main',
+  }) async {
+    final db = await DatabaseHelper.database;
+    return db.transaction<int>((txn) async {
+      final statuses = _reviewStatuses.toList(growable: false);
+      final placeholders = List.filled(statuses.length, '?').join(',');
+      final scopeClause = contextMode == null
+          ? ''
+          : ' AND context_mode = ? AND continuity_id = ?';
+      final scopeArgs = <Object?>[
+        if (contextMode != null) contextMode.storageValue,
+        if (contextMode != null) continuityId,
+      ];
+      final rows = await txn.rawQuery(
+        'SELECT * FROM pending_memory_actions '
+        'WHERE character_id = ? AND status IN ($placeholders)$scopeClause',
+        [characterId, ...statuses, ...scopeArgs],
+      );
+      if (rows.isEmpty) return 0;
+
+      final proposals = rows
+          .map(MemoryActionProposal.fromMap)
+          .toList(growable: false);
+      for (final proposal in proposals) {
+        await _storeRejectionTombstone(txn, proposal);
+      }
+      final now = DateTime.now().toIso8601String();
+      final changed = await txn.rawUpdate(
+        'UPDATE pending_memory_actions SET status = ?, '
+        'seen_at = COALESCE(seen_at, ?), resolved_at = ? '
+        'WHERE character_id = ? AND status IN ($placeholders)$scopeClause',
+        [
+          MemoryActionProposal.statusRejected,
+          now,
+          now,
+          characterId,
+          ...statuses,
+          ...scopeArgs,
+        ],
+      );
+
+      for (final proposal in proposals) {
+        final ids = proposal.targetIds.toSet().toList()..sort();
+        for (var leftIndex = 0; leftIndex < ids.length; leftIndex++) {
+          for (
+            var rightIndex = leftIndex + 1;
+            rightIndex < ids.length;
+            rightIndex++
+          ) {
+            await txn.update(
+              'spider_web_links',
+              <String, Object?>{
+                'status': 'rejected',
+                'source': 'user',
+                'updated_at': now,
+              },
+              where:
+                  'character_id = ? AND memory_id_1 = ? AND memory_id_2 = ? '
+                  'AND status = ?',
+              whereArgs: [
+                characterId,
+                ids[leftIndex],
+                ids[rightIndex],
+                'suggested',
+              ],
+            );
+          }
+        }
+      }
+      return changed;
+    });
+  }
+
+  /// Rejects every unconfirmed graph relation for one character while keeping
+  /// memories and confirmed edges untouched. Matching duplicate-review items
+  /// are rejected in the same transaction so the cleared relation cannot
+  /// remain visible in another review surface.
+  static Future<int> rejectAllSuggestedRelations(String characterId) async {
+    final db = await DatabaseHelper.database;
+    return db.transaction<int>((txn) async {
+      final links = await txn.query(
+        'spider_web_links',
+        columns: <String>['memory_id_1', 'memory_id_2', 'relation_type'],
+        where: 'character_id = ? AND status = ?',
+        whereArgs: <Object?>[characterId, 'suggested'],
+      );
+      if (links.isEmpty) return 0;
+
+      final now = DateTime.now().toIso8601String();
+      final changed = await txn.update(
+        'spider_web_links',
+        <String, Object?>{
+          'status': 'rejected',
+          'source': 'user',
+          'updated_at': now,
+        },
+        where: 'character_id = ? AND status = ?',
+        whereArgs: <Object?>[characterId, 'suggested'],
+      );
+
+      final duplicatePairs = <String>{
+        for (final link in links)
+          if (link['relation_type'] == 'duplicate_candidate')
+            '${link['memory_id_1']}:${link['memory_id_2']}',
+      };
+      if (duplicatePairs.isNotEmpty) {
+        final statuses = _reviewStatuses.toList(growable: false);
+        final placeholders = List.filled(statuses.length, '?').join(',');
+        final proposalRows = await txn.rawQuery(
+          'SELECT * FROM pending_memory_actions '
+          'WHERE character_id = ? AND status IN ($placeholders)',
+          <Object?>[characterId, ...statuses],
+        );
+        for (final row in proposalRows) {
+          final proposal = MemoryActionProposal.fromMap(row);
+          if (!proposal.isExistingDuplicateScan) continue;
+          final ids = proposal.targetIds.toSet().toList()..sort();
+          if (ids.length != 2 ||
+              !duplicatePairs.contains('${ids.first}:${ids.last}')) {
+            continue;
+          }
+          await txn.update(
+            'pending_memory_actions',
+            <String, Object?>{
+              'status': MemoryActionProposal.statusRejected,
+              'seen_at': row['seen_at'] ?? now,
+              'resolved_at': now,
+            },
+            where: 'id = ? AND character_id = ?',
+            whereArgs: <Object?>[proposal.id, characterId],
+          );
+        }
+      }
+      return changed;
+    });
   }
 
   static Future<void> _setStatus(
@@ -948,6 +1598,24 @@ class MemoryGuardService {
     required bool resolved,
   }) async {
     final db = await DatabaseHelper.database;
+    await _setStatusInDatabase(
+      db,
+      id,
+      characterId,
+      from: from,
+      to: to,
+      resolved: resolved,
+    );
+  }
+
+  static Future<void> _setStatusInDatabase(
+    DatabaseExecutor db,
+    String id,
+    String characterId, {
+    required Set<String> from,
+    required String to,
+    required bool resolved,
+  }) async {
     final statuses = from.toList(growable: false);
     final placeholders = List.filled(statuses.length, '?').join(',');
     await db.rawUpdate(
@@ -965,6 +1633,50 @@ class MemoryGuardService {
     );
   }
 
+  static Future<void> _storeRejectionTombstone(
+    DatabaseExecutor db,
+    MemoryActionProposal proposal,
+  ) async {
+    if (proposal.action != MemoryActionProposal.actionCreate) return;
+    final candidate = proposal.candidatePreview;
+    final content = candidate['content']?.toString().trim() ?? '';
+    if (content.isEmpty) return;
+    final category = candidate['category']?.toString().trim() ?? '';
+    final triggers = candidate['triggers']?.toString().trim() ?? '';
+    final canonical = <String>[
+      _canonicalSuggestionText(category),
+      _canonicalSuggestionText(content),
+      ...(_canonicalTriggers(triggers).toList()..sort()),
+    ].join('|');
+    final factKey = sha256.convert(utf8.encode(canonical)).toString();
+    final storedCandidate = <String, Object?>{
+      ...candidate,
+      'mode': candidate['mode']?.toString() ?? proposal.mode,
+      'category': category,
+      'content': content,
+      'triggers': triggers,
+    };
+    final scopeKey = <String>[
+      proposal.characterId,
+      proposal.contextMode.storageValue,
+      proposal.continuityId,
+      proposal.mode,
+      factKey,
+    ].join('|');
+    await db.insert('memory_rejection_tombstones', <String, Object?>{
+      'id': sha256.convert(utf8.encode(scopeKey)).toString(),
+      'character_id': proposal.characterId,
+      'context_mode': proposal.contextMode.storageValue,
+      'continuity_id': proposal.continuityId,
+      'mode': proposal.mode,
+      'category': category,
+      'fact_key': factKey,
+      'candidate_json': jsonEncode(storedCandidate),
+      'source_proposal_id': proposal.id,
+      'created_at': DateTime.now().toIso8601String(),
+    }, conflictAlgorithm: ConflictAlgorithm.ignore);
+  }
+
   static Future<String> execute(
     String id,
     String characterId, {
@@ -974,8 +1686,14 @@ class MemoryGuardService {
     Map<String, Object?>? mergeResultOverride,
   }) async {
     final db = await DatabaseHelper.database;
+    var debugAction = '';
+    var debugMode = '';
+    var debugContinuity = '';
+    var debugTargetIds = const <int>[];
+    int? debugNewMemoryId;
+    var debugLinkedPairs = 0;
     try {
-      return await db.transaction<String>((txn) async {
+      final status = await db.transaction<String>((txn) async {
         final proposals = await txn.query(
           'pending_memory_actions',
           where: 'id = ? AND character_id = ?',
@@ -984,6 +1702,10 @@ class MemoryGuardService {
         );
         if (proposals.isEmpty) return 'missing';
         final proposal = MemoryActionProposal.fromMap(proposals.first);
+        debugAction = proposal.action;
+        debugMode = proposal.contextMode.storageValue;
+        debugContinuity = proposal.continuityId;
+        debugTargetIds = List<int>.unmodifiable(proposal.targetIds);
         if (!_executableStatuses.contains(proposal.status)) {
           return proposal.status;
         }
@@ -1045,6 +1767,7 @@ class MemoryGuardService {
             source: confirmed ? 'user' : 'model',
           );
           result['linked_pairs'] = linkedPairs;
+          debugLinkedPairs = linkedPairs;
           result['decision'] = linkDecision;
         } else if (proposal.action == MemoryActionProposal.actionMerge) {
           final preview = _normalizedMergePreview(
@@ -1060,12 +1783,15 @@ class MemoryGuardService {
           );
           final newMemory = Memory(
             characterId: characterId,
+            contextMode: proposal.contextMode,
+            continuityId: proposal.continuityId,
             mode: preview['mode']?.toString() ?? proposal.mode,
             category: preview['category']?.toString() ?? '重要事件',
             content: preview['content']?.toString() ?? '',
             confidence: 'high',
             triggers: preview['triggers']?.toString() ?? '',
             isPermanent: targetPermanent || preview['permanent'] == true,
+            sourceConversationId: proposal.sourceConversationId,
             createdAt: now,
             updatedAt: now,
           );
@@ -1088,6 +1814,7 @@ class MemoryGuardService {
             );
           }
           result['new_memory_id'] = newId;
+          debugNewMemoryId = newId;
           result['archived_ids'] = proposal.targetIds;
         } else if (proposal.action == MemoryActionProposal.actionCreate) {
           if (createDecision != createDecisionUseNew &&
@@ -1110,6 +1837,8 @@ class MemoryGuardService {
           final now = DateTime.now();
           final newMemory = Memory(
             characterId: characterId,
+            contextMode: proposal.contextMode,
+            continuityId: proposal.continuityId,
             mode: selected['mode']?.toString() ?? proposal.mode,
             category: selected['category']?.toString() ?? '重要事件',
             content: selected['content']?.toString() ?? '',
@@ -1126,7 +1855,8 @@ class MemoryGuardService {
                 candidate['permanent'] == true,
             sourceConversationId:
                 selected['source_conversation_id']?.toString() ??
-                candidate['source_conversation_id']?.toString(),
+                candidate['source_conversation_id']?.toString() ??
+                proposal.sourceConversationId,
             triggers: selected['triggers']?.toString() ?? '',
             emotionX:
                 (selected['emotion_x'] as num?)?.toInt() ??
@@ -1196,6 +1926,7 @@ class MemoryGuardService {
           }
           result['decision'] = createDecision;
           result['new_memory_id'] = newId;
+          debugNewMemoryId = newId;
           result['archived_ids'] = proposal.targetIds;
         } else {
           throw StateError('不支援的記憶提案：${proposal.action}');
@@ -1217,6 +1948,26 @@ class MemoryGuardService {
         );
         return MemoryActionProposal.statusCompleted;
       });
+      if (status == MemoryActionProposal.statusCompleted) {
+        MemoryDebugLog.record(
+          stage: debugMode == 'rp'
+              ? 'rp_memory_change_applied'
+              : 'daily_memory_change_applied',
+          contextMode: debugMode,
+          continuityId: debugContinuity,
+          inputCount: debugTargetIds.length,
+          resultIds: <int>[
+            ...debugTargetIds,
+            if (debugNewMemoryId != null) debugNewMemoryId!,
+          ],
+          details: <String, Object?>{
+            'action': debugAction,
+            'linked_pairs': debugLinkedPairs,
+            'created_memory': debugNewMemoryId != null,
+          },
+        );
+      }
+      return status;
     } catch (error) {
       await db.update(
         'pending_memory_actions',
@@ -1227,6 +1978,15 @@ class MemoryGuardService {
         },
         where: 'id = ? AND character_id = ? AND status != ?',
         whereArgs: [id, characterId, MemoryActionProposal.statusCompleted],
+      );
+      MemoryDebugLog.record(
+        stage: 'memory_change_failed',
+        contextMode: debugMode,
+        continuityId: debugContinuity,
+        inputCount: debugTargetIds.length,
+        resultIds: debugTargetIds,
+        details: <String, Object?>{'action': debugAction},
+        error: error,
       );
       return MemoryActionProposal.statusFailed;
     }
@@ -1396,29 +2156,74 @@ class MemoryGuardService {
       [characterId, ...oldIds, ...oldIds],
     );
     final oldSet = oldIds.toSet();
+    final now = DateTime.now().toIso8601String();
     for (final edge in edges) {
-      if (edge['status']?.toString() != 'confirmed') continue;
       final first = edge['memory_id_1'] as int;
       final second = edge['memory_id_2'] as int;
       final other = oldSet.contains(first) ? second : first;
       if (oldSet.contains(other) || other == newId) continue;
-      await txn.rawInsert(
-        'INSERT OR IGNORE INTO spider_web_links '
-        '(character_id, memory_id_1, memory_id_2, created_at, '
-        'relation_type, strength, status, source, reason, updated_at) '
-        'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-        [
-          characterId,
-          min(newId, other),
-          max(newId, other),
-          DateTime.now().toIso8601String(),
-          edge['relation_type']?.toString() ?? 'related',
-          (edge['strength'] as num?)?.toDouble() ?? 1.0,
-          'confirmed',
-          'merge_remap',
-          edge['reason']?.toString() ?? '',
-          DateTime.now().toIso8601String(),
-        ],
+      final relationType = edge['relation_type']?.toString() ?? 'related';
+      final incomingStatus = switch (edge['status']?.toString()) {
+        'rejected' => 'rejected',
+        'suggested' => 'suggested',
+        _ => 'confirmed',
+      };
+      final targetFirst = min(newId, other);
+      final targetSecond = max(newId, other);
+      final existing = await txn.query(
+        'spider_web_links',
+        where:
+            'character_id = ? AND memory_id_1 = ? AND memory_id_2 = ? '
+            'AND relation_type = ?',
+        whereArgs: [characterId, targetFirst, targetSecond, relationType],
+        limit: 1,
+      );
+      final incomingStrength = (edge['strength'] as num?)?.toDouble() ?? 1.0;
+      final incomingReason = edge['reason']?.toString() ?? '';
+      if (existing.isEmpty) {
+        await txn.insert('spider_web_links', <String, Object?>{
+          'character_id': characterId,
+          'memory_id_1': targetFirst,
+          'memory_id_2': targetSecond,
+          'created_at': now,
+          'relation_type': relationType,
+          'strength': incomingStrength,
+          'status': incomingStatus,
+          'source': 'merge_remap',
+          'reason': incomingReason,
+          'updated_at': now,
+        });
+        continue;
+      }
+
+      final current = existing.first;
+      final currentStatus = current['status']?.toString() ?? 'confirmed';
+      // A rejected relation is a user decision, not a disposable suggestion.
+      // Keep it rejected when another old endpoint remaps a weaker relation
+      // onto the same pair; otherwise a merge could silently revive it.
+      if (currentStatus == 'rejected' && incomingStatus != 'rejected') {
+        continue;
+      }
+      if (currentStatus == 'confirmed' && incomingStatus != 'confirmed') {
+        continue;
+      }
+      final nextStatus =
+          currentStatus == 'confirmed' || incomingStatus == 'confirmed'
+          ? 'confirmed'
+          : incomingStatus;
+      final currentStrength = (current['strength'] as num?)?.toDouble() ?? 1.0;
+      final currentReason = current['reason']?.toString() ?? '';
+      await txn.update(
+        'spider_web_links',
+        <String, Object?>{
+          'strength': max(currentStrength, incomingStrength),
+          'status': nextStatus,
+          'source': 'merge_remap',
+          'reason': currentReason.isNotEmpty ? currentReason : incomingReason,
+          'updated_at': now,
+        },
+        where: 'id = ?',
+        whereArgs: [current['id']],
       );
     }
     await txn.rawDelete(

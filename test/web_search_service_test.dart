@@ -2282,6 +2282,40 @@ void main() {
       expect(result.provider, WebSearchProviderId.relay);
       expect(result.sources.single.url, 'https://relay.example/source');
     });
+
+    test('relay 403 exposes the upstream reason', () async {
+      final provider = RelayWebSearchProvider(
+        apiKey: 'relay-key',
+        model: 'search-model',
+        endpoint: 'https://relay.example/v1/chat/completions',
+        clientFactory: () => MockClient(
+          (_) async => http.Response(
+            jsonEncode(<String, Object?>{
+              'error': <String, String>{
+                'message': 'Web search is disabled for this model.',
+              },
+            }),
+            403,
+          ),
+        ),
+      );
+
+      await expectLater(
+        provider.search(
+          WebSearchRequest(query: 'relay search'),
+          ToolCancellationController().token,
+        ),
+        throwsA(
+          isA<WebSearchProviderException>()
+              .having((error) => error.statusCode, 'status', 403)
+              .having(
+                (error) => error.safeMessage,
+                'message',
+                contains('Web search is disabled for this model.'),
+              ),
+        ),
+      );
+    });
   });
 }
 

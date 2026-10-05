@@ -24,6 +24,7 @@ class CacheDebugLog {
     final sessionId = (enriched['session_id'] ?? '').toString();
     final model = (enriched['model'] ?? '').toString();
     final channel = (enriched['cache_channel'] ?? 'text').toString();
+    final contextMode = (enriched['context_mode'] ?? '').toString();
     if (isMainRequest && sessionId.isNotEmpty && model.isNotEmpty) {
       final staticTokens = enriched['static_t'] as int? ?? 0;
       final dynamicTokens = enriched['dynamic_t'] as int? ?? 0;
@@ -35,7 +36,7 @@ class CacheDebugLog {
       final looksStalled =
           historyBeyondPrefix >= 1024 &&
           readTokens <= stablePrefixTokens + tolerance;
-      final key = '$sessionId|$model|$channel';
+      final key = '$sessionId|$model|$channel|$contextMode';
       final nextCount = looksStalled ? (_contextStallCounts[key] ?? 0) + 1 : 0;
       _contextStallCounts[key] = nextCount;
       enriched['context_stall_count'] = nextCount;
@@ -59,6 +60,7 @@ class CacheDebugLog {
     final sessionId = (current['session_id'] ?? '').toString();
     final model = (current['model'] ?? '').toString();
     final channel = (current['cache_channel'] ?? 'text').toString();
+    final contextMode = (current['context_mode'] ?? '').toString();
     if (sessionId.isEmpty || model.isEmpty) return null;
 
     for (var i = currentIndex + 1; i < entries.length; i++) {
@@ -69,6 +71,7 @@ class CacheDebugLog {
       if ((candidate['cache_channel'] ?? 'text').toString() != channel) {
         continue;
       }
+      if ((candidate['context_mode'] ?? '').toString() != contextMode) continue;
       return candidate;
     }
     return null;

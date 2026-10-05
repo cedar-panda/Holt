@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
 import '../services/transfer_service.dart';
 import '../services/locale_strings.dart';
+import 'themed_notice.dart';
 
 /// 轉帳迷你卡片 — 嵌在氣泡下方，類似 ScratchMiniCard
 class TransferMiniCard extends StatefulWidget {
@@ -83,20 +84,16 @@ class _TransferMiniCardState extends State<TransferMiniCard>
       widget.characterId,
     );
     if (!ok && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            L.pick(
-              en: widget.data.direction == 'toUser'
-                  ? 'The other side lacks enough shells'
-                  : 'Not enough shells',
-              zhTW: widget.data.direction == 'toUser' ? '對方貝殼不足' : '貝殼不夠了',
-            ),
-          ),
-          backgroundColor: YanciTheme.accent,
-          behavior: SnackBarBehavior.floating,
-          duration: const Duration(seconds: 2),
+      showThemedPillNotice(
+        context,
+        L.pick(
+          en: widget.data.direction == 'toUser'
+              ? 'The other side lacks enough shells'
+              : 'Not enough shells',
+          zhTW: widget.data.direction == 'toUser' ? '對方貝殼不足' : '貝殼不夠了',
         ),
+        tone: ThemedNoticeTone.error,
+        duration: const Duration(seconds: 2),
       );
     }
     widget.onUpdated?.call();

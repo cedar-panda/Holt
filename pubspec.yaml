@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 1.4.2+25
+version: 1.5.5+27
 
 environment:
   sdk: ^3.11.5
@@ -39,6 +39,7 @@ dependencies:
   shared_preferences: ^2.5.5
   http: ^1.6.0
   sqflite: ^2.4.2+1
+  sqflite_common_ffi: ^2.4.0
   path: ^1.9.1
   characters: ^1.4.0
   archive: ^4.0.9
@@ -76,7 +77,6 @@ dependencies:
 dev_dependencies:
   flutter_test:
     sdk: flutter
-  sqflite_common_ffi: ^2.4.0
 
   # The "flutter_lints" package below contains a set of recommended lints to
   # encourage good coding practices. The lint set provided by the package is
@@ -111,6 +111,8 @@ flutter:
     - PRIVACY.md
     - third_party/licenses/lora/OFL.txt
     - third_party/licenses/lxgw-wenkai-tc/OFL.txt
+    - third_party/licenses/cormorant-garamond/OFL.txt
+    - third_party/licenses/asr_zh/Apache-2.0.txt
     - third_party/licenses/android/
     - third_party/licenses/native/
     - third_party/licenses/native/flutter_soloud/
@@ -152,6 +154,9 @@ flutter:
     - family: Lora
       fonts:
         - asset: assets/fonts/Lora-Regular.ttf
+    - family: Cormorant Garamond
+      fonts:
+        - asset: assets/fonts/CormorantGaramond-Regular.ttf
 
 flutter_launcher_icons:
   android: true

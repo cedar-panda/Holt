@@ -2,6 +2,22 @@ import '../memory/database.dart';
 import 'api_adapter.dart';
 import 'token_estimator.dart';
 
+abstract final class ApiRequestKind {
+  static const chat = 'chat';
+  static const summary = 'summary';
+  static const memory = 'memory';
+  static const embedding = 'embedding';
+  static const worldbook = 'worldbook';
+  static const guide = 'guide';
+  static const image = 'image';
+  static const signature = 'signature';
+  static const call = 'call';
+  static const sticker = 'sticker';
+  static const conversationTitle = 'conversation_title';
+  static const keepAlive = 'keep_alive';
+  static const tts = 'tts';
+}
+
 /// Token 用量追蹤器（真實 API 用量 + 持久化）
 class TokenTracker {
   int _promptTokens = 0;
@@ -19,26 +35,24 @@ class TokenTracker {
     required String model,
     required ApiUsage usage,
     String characterId = 'default',
+    String requestKind = ApiRequestKind.chat,
   }) async {
     final prompt = usage.promptTokens;
     final completion = usage.completionTokens;
     final cacheHit = usage.cacheReadTokens;
     final cacheCreation = usage.cacheCreationTokens;
 
-    // 如果 API 沒返回真實值，不記錄（避免寫入 0）
-    if (prompt == 0 && completion == 0) return;
-
     _promptTokens += prompt;
     _completionTokens += completion;
     _cacheHitTokens += cacheHit;
 
-    // Native xAI and OpenRouter return the amount actually billed after cache
-    // discounts. Prefer that over a generic local price table; other providers
-    // keep the existing estimator fallback.
+    // Only store money returned by the provider. A guessed local price table
+    // becomes incorrect as routes, tiers and model revisions change, and made
+    // the dashboard look far more precise than the data really was.
     final actualCost = usage.diagnostics['actual_cost_usd'];
-    final cost = actualCost is num
-        ? actualCost.toDouble()
-        : _estimateCost(model, prompt, completion, cacheHit, cacheCreation);
+    final hasKnownCost =
+        actualCost is num && actualCost.isFinite && actualCost >= 0;
+    final cost = hasKnownCost ? actualCost.toDouble() : 0.0;
 
     await DatabaseHelper.logUsage(
       provider: provider,
@@ -49,6 +63,42 @@ class TokenTracker {
       cacheHitTokens: cacheHit,
       cacheCreationTokens: cacheCreation,
       estimatedCost: cost,
+      requestKind: requestKind,
+      costKnown: hasKnownCost,
+    );
+  }
+
+  /// 記錄沒有 token 回傳、但確實送出的 API 請求（例如畫圖）。
+  ///
+  /// 圖片 API 多數只回圖片資料，不回 prompt/completion token。若供應商
+  /// 沒有回傳實際費用，仍記錄請求次數，但不把本地估價當成可信費用。
+  Future<void> recordBillableOperation({
+    required String provider,
+    required String model,
+    required double estimatedCost,
+    String characterId = 'default',
+    int promptTokens = 0,
+    int completionTokens = 0,
+    int cacheHitTokens = 0,
+    int cacheCreationTokens = 0,
+    String requestKind = ApiRequestKind.image,
+    bool costKnown = false,
+  }) async {
+    _promptTokens += promptTokens;
+    _completionTokens += completionTokens;
+    _cacheHitTokens += cacheHitTokens;
+
+    await DatabaseHelper.logUsage(
+      provider: provider,
+      model: model,
+      characterId: characterId,
+      promptTokens: promptTokens,
+      completionTokens: completionTokens,
+      cacheHitTokens: cacheHitTokens,
+      cacheCreationTokens: cacheCreationTokens,
+      estimatedCost: estimatedCost,
+      requestKind: requestKind,
+      costKnown: costKnown,
     );
   }
 
@@ -68,69 +118,9 @@ class TokenTracker {
     return '${(totalTokens / 1000).toStringAsFixed(1)}k';
   }
 
-  String formatCost(String model) {
-    final cost = _estimateCost(
-      model,
-      _promptTokens,
-      _completionTokens,
-      _cacheHitTokens,
-    );
-    if (cost < 0.001) return '< \$0.001';
-    if (cost < 0.01) return '\$${cost.toStringAsFixed(4)}';
-    return '\$${cost.toStringAsFixed(3)}';
-  }
-
   void reset() {
     _promptTokens = 0;
     _completionTokens = 0;
     _cacheHitTokens = 0;
-  }
-
-  /// 計算費用（含緩存折扣與寫入加價）
-  static double _estimateCost(
-    String model,
-    int prompt,
-    int completion,
-    int cacheHit, [
-    int cacheCreation = 0,
-  ]) {
-    final prices = _getModelPrices(model);
-    // 命中 0.1x；寫入 2x（1h TTL；5m 是 1.25x，按當前配置取 2x）
-    var normalInput = prompt - cacheHit - cacheCreation;
-    if (normalInput < 0) normalInput = 0;
-    final inputCost =
-        (normalInput * prices['input']! +
-            cacheHit * prices['input']! * 0.1 +
-            cacheCreation * prices['input']! * 2.0) /
-        1000000;
-    final outputCost = completion * prices['output']! / 1000000;
-    return inputCost + outputCost;
-  }
-
-  static Map<String, double> _getModelPrices(String model) {
-    final m = model.toLowerCase();
-
-    if (m.contains('opus')) return {'input': 15.0, 'output': 75.0};
-    if (m.contains('sonnet')) return {'input': 3.0, 'output': 15.0};
-    if (m.contains('haiku')) return {'input': 0.25, 'output': 1.25};
-    if (m.contains('gpt-4o')) return {'input': 2.5, 'output': 10.0};
-    if (m.contains('gpt-4')) return {'input': 30.0, 'output': 60.0};
-    if (m.contains('gemini') && m.contains('flash')) {
-      return {'input': 0.075, 'output': 0.3};
-    }
-    if (m.contains('gemini') && m.contains('pro')) {
-      return {'input': 1.25, 'output': 5.0};
-    }
-    if (m.contains('deepseek')) return {'input': 0.27, 'output': 1.1};
-    if (m.contains('qwen')) return {'input': 0.3, 'output': 0.6};
-    if (m.contains('mistral-large')) return {'input': 2.0, 'output': 6.0};
-    if (m.contains('thinkingmachines/inkling')) {
-      if (m.contains(':peft:262144')) {
-        return {'input': 3.74, 'output': 9.36};
-      }
-      return {'input': 1.87, 'output': 4.68};
-    }
-
-    return {'input': 1.0, 'output': 3.0};
   }
 }

@@ -1,4 +1,7 @@
+import 'dart:convert';
+
 import 'locale_strings.dart';
+import '../models/chat_session_identity.dart';
 
 /// 結構化請求上下文（支持 prompt caching）。
 ///
@@ -14,6 +17,7 @@ import 'locale_strings.dart';
 /// [liveStatePart] 由 adapter 依模型能力放入 request-only 的 system、developer
 /// 或 assistant-state 通道。兩者都不會寫入聊天紀錄，也不得借用 user role。
 class StructuredPrompt {
+  final ChatSessionIdentity? sessionIdentity;
   final String staticPart;
   final String? profilePart;
   final String windowPart;
@@ -23,6 +27,7 @@ class StructuredPrompt {
   final String cacheChannel;
 
   StructuredPrompt({
+    this.sessionIdentity,
     required this.staticPart,
     this.profilePart,
     this.windowPart = '',
@@ -33,6 +38,7 @@ class StructuredPrompt {
   });
 
   StructuredPrompt copyWith({
+    ChatSessionIdentity? sessionIdentity,
     String? staticPart,
     String? profilePart,
     String? windowPart,
@@ -42,6 +48,7 @@ class StructuredPrompt {
     String? cacheChannel,
   }) {
     return StructuredPrompt(
+      sessionIdentity: sessionIdentity ?? this.sessionIdentity,
       staticPart: staticPart ?? this.staticPart,
       profilePart: profilePart ?? this.profilePart,
       windowPart: windowPart ?? this.windowPart,
@@ -56,6 +63,14 @@ class StructuredPrompt {
   /// App UI 語言與角色邊界屬於穩定控制：只有語言／設定真的改變時才
   /// 刷新 cache 前綴，時間與生物鐘更新不會碰這一段。
   String get resolvedControlPart => SystemContextControl.compose(controlPart);
+
+  /// Production chat prompts carry their immutable window identity directly.
+  /// The global CacheSession fallback only exists for internal/test callers.
+  String get cacheSessionId =>
+      sessionIdentity?.conversationId ?? CacheSession.conversationId;
+
+  String get cacheContextMode =>
+      sessionIdentity?.contextMode.storageValue ?? CacheSession.contextMode;
 
   List<String> get cacheableParts => <String>[
     staticPart,
@@ -398,11 +413,11 @@ abstract final class ThinkingModePolicy {
       zhCNTitle: 'Thinking',
       content: enabled
           ? L.pick(
-              en: 'Thinking Mode is on. Before the final reply, put the visible first-person thought process in <think>...</think>, using the reply language. Keep clock, tool, and other protocol tags after </think>; never put them inside the thinking block.',
+              en: 'Thinking Mode is on. Before the final reply, put the visible first-person thought process in <think>...</think>, using the reply language. Always provide a non-empty final reply after </think>. Keep clock, tool, and other protocol tags after </think>; never put them inside the thinking block.',
               zhTW:
-                  'Thinking 模式已開啟。正常回覆前，使用回覆語言在 <think>...</think> 中呈現第一人稱思考過程。所有 clock、tool 和其他協議標籤都必須放在 </think> 之後，不能放進思考區塊。',
+                  'Thinking 模式已開啟。正常回覆前，使用回覆語言在 <think>...</think> 中呈現第一人稱思考過程；</think> 後必須提供非空白的正式回覆。所有 clock、tool 和其他協議標籤都必須放在 </think> 之後，不能放進思考區塊。',
               zhCN:
-                  'Thinking 模式已开启。正常回复前，使用回复语言在 <think>...</think> 中呈现第一人称思考过程。所有 clock、tool 和其他协议标签都必须放在 </think> 之后，不能放进思考区块。',
+                  'Thinking 模式已开启。正常回复前，使用回复语言在 <think>...</think> 中呈现第一人称思考过程；</think> 后必须提供非空白的正式回复。所有 clock、tool 和其他协议标签都必须放在 </think> 之后，不能放进思考区块。',
             )
           : L.pick(
               en: 'Thinking Mode is off. Return only the final reply. Do not output <think> or <thinking> tags, and do not imitate visible thought-process blocks from earlier assistant messages.',
@@ -544,6 +559,44 @@ abstract class ApiAdapter {
   void cancelActive() {}
 }
 
+/// Multimodal metadata stays string-valued at the adapter boundary so the
+/// existing request/cache contracts remain source-compatible. A message may
+/// carry one legacy `image_data_url` or a JSON-encoded `image_data_urls` list.
+abstract final class ApiMessageMedia {
+  static List<String> imageDataUrls(Map<String, String> message) {
+    final encoded = message['image_data_urls']?.trim() ?? '';
+    if (encoded.isNotEmpty) {
+      try {
+        final decoded = jsonDecode(encoded);
+        if (decoded is List) {
+          final urls = decoded
+              .whereType<String>()
+              .map((url) => url.trim())
+              .where((url) => url.isNotEmpty)
+              .toList(growable: false);
+          if (urls.isNotEmpty) return urls;
+        }
+      } catch (_) {
+        // Fall through to the single-image compatibility key.
+      }
+    }
+    final single = message['image_data_url']?.trim() ?? '';
+    return single.isEmpty ? const <String>[] : <String>[single];
+  }
+
+  static ({String mimeType, String base64})? splitDataUrl(String url) {
+    final match = RegExp(
+      r'^data:([^;]+);base64,(.*)$',
+      dotAll: true,
+    ).firstMatch(url);
+    if (match == null) return null;
+    final mimeType = match.group(1)?.trim() ?? '';
+    final base64 = match.group(2)?.trim() ?? '';
+    if (mimeType.isEmpty || base64.isEmpty) return null;
+    return (mimeType: mimeType, base64: base64);
+  }
+}
+
 /// 共用：Anthropic 風格滾動緩存斷點（1 小時 TTL）
 /// 掛在「最新 user 之前的最後一條消息」的最後一個 block 上，
 /// 緩存邊界停在純歷史上，最新 user 永遠不帶 cache_control。
@@ -604,14 +657,36 @@ class CacheBreakpoint {
 /// 進出同一對話 = 同 session（命中中的緩存不被打斷）。
 /// chat_screen 進入對話時設置。
 class CacheSession {
-  static String conversationId = '';
-  static String _lastCacheHitConversationId = '';
+  static ChatSessionIdentity? _identity;
+  static String _legacyConversationId = '';
+  static String _lastCacheHitNamespace = '';
+
+  static String get conversationId =>
+      _identity?.conversationId ?? _legacyConversationId;
+
+  /// Compatibility for isolated internal requests and existing tests. Main
+  /// chat/call/keep-alive paths must use [bind] with a full identity.
+  static set conversationId(String value) {
+    _identity = null;
+    _legacyConversationId = value;
+  }
+
+  static String get contextMode => _identity?.contextMode.storageValue ?? '';
+
+  static String get namespace =>
+      _identity?.cacheNamespace ?? _legacyConversationId;
+
+  static void bind(ChatSessionIdentity identity) {
+    _identity = identity;
+    _legacyConversationId = '';
+  }
 
   static bool get hasCacheHitForCurrentConversation =>
-      conversationId.isNotEmpty &&
-      _lastCacheHitConversationId == conversationId;
+      namespace.isNotEmpty && _lastCacheHitNamespace == namespace;
 
   static void markCacheHit(String id) {
-    if (id.isNotEmpty) _lastCacheHitConversationId = id;
+    if (id.isNotEmpty && id == conversationId) {
+      _lastCacheHitNamespace = namespace;
+    }
   }
 }

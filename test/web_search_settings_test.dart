@@ -118,6 +118,34 @@ void main() {
     expect(await WebSearchSettings.getMode(), WebSearchMode.auto);
   });
 
+  test(
+    'custom API source is available to native search as the relay',
+    () async {
+      await ApiSettings.saveOaiCompatBaseUrl('https://relay.example/v1');
+      await ApiSettings.saveOaiCompatApiKey('relay-test-key');
+      await ApiSettings.saveProviderModelSelection(
+        'openai_compatible',
+        'relay/search-capable-model',
+      );
+
+      final configuration =
+          await const ApiSettingsWebSearchConfigurationSource().load();
+      final relay = configuration.providers.singleWhere(
+        (provider) => provider.id == WebSearchProviderId.relay,
+      );
+
+      expect(relay.apiKey, 'relay-test-key');
+      expect(relay.model, 'relay/search-capable-model');
+      expect(relay.endpoint, 'https://relay.example/v1/chat/completions');
+
+      final plan = await const HybridWebSearchService().resolvePlan(
+        WebSearchMode.auto,
+      );
+      expect(plan.providers.single.id, WebSearchProviderId.relay);
+      expect(plan.providers.single.model, 'relay/search-capable-model');
+    },
+  );
+
   testWidgets('auto source lists every starred model for its resolved source', (
     tester,
   ) async {
@@ -153,6 +181,9 @@ void main() {
       await tester.drag(settingsList, const Offset(0, -420));
       await tester.pump(const Duration(milliseconds: 50));
     }
+
+    await tester.tap(find.text('原生網路搜尋'));
+    await tester.pumpAndSettle();
 
     expect(find.text('Gemini · 已就緒'), findsOneWidget);
     final modelDropdowns = find.byWidgetPredicate(
@@ -206,12 +237,15 @@ void main() {
       await tester.pump(const Duration(milliseconds: 50));
     }
 
+    await tester.tap(find.text('原生網路搜尋'));
+    await tester.pumpAndSettle();
+
     expect(find.text('OpenRouter · 已就緒'), findsOneWidget);
     expect(find.text('Gemini · 已就緒'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('model-list errors stay with the provider that produced them', (
+  testWidgets('provider picker and advanced settings remain reachable', (
     tester,
   ) async {
     tester.view.physicalSize = const Size(1080, 2400);
@@ -226,39 +260,72 @@ void main() {
       await tester.pump(const Duration(milliseconds: 50));
     }
 
-    await tester.tap(find.byTooltip(L.get('settings_model_refresh')).first);
-    await tester.pump();
-    expect(find.text('請先輸入 OpenRouter API Key'), findsOneWidget);
-
     await tester.tap(find.byKey(const Key('api_settings_provider_toggle')));
     await tester.pump();
-    await tester.tap(find.byKey(const Key('api_settings_provider_gemini')));
+    expect(find.byKey(const Key('api_settings_provider_xai')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('api_settings_provider_xai')));
     await tester.pumpAndSettle();
+    expect(find.text('xAI (Grok)'), findsOneWidget);
 
-    expect(find.text('請先輸入 OpenRouter API Key'), findsNothing);
+    await tester.scrollUntilVisible(
+      find.byKey(const Key('api_settings_advanced_button')),
+      420,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.tap(find.byKey(const Key('api_settings_advanced_button')));
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const Key('api_settings_model_refresh_button')),
+      findsOneWidget,
+    );
+    expect(find.text('原生網路搜尋'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
 
-    Future<void> expectProviderConfigurationError(
-      String menuLabel,
-      String expectedError,
-    ) async {
-      final providerId = switch (menuLabel) {
-        'xAI (Grok)' => 'xai',
-        'DeepSeek' => 'deepseek',
-        'OpenAI Compatible (Custom)' => 'openai_compatible',
-        _ => throw StateError('Unknown provider label: $menuLabel'),
-      };
-      await tester.tap(find.byKey(Key('api_settings_provider_$providerId')));
-      await tester.pump();
-      expect(find.text(expectedError), findsOneWidget);
-      expect(find.text('請先輸入 OpenRouter API Key'), findsNothing);
+  testWidgets('favorite model entry opens management dialog and can delete', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1080, 2400);
+    tester.view.devicePixelRatio = 3;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await L.setLocale('zh_TW');
+    const model = 'relay/model-for-dialog';
+    await ApiSettings.toggleStarModel(model, provider: 'openai_compatible');
+
+    await tester.pumpWidget(const MaterialApp(home: ApiSettingsScreen()));
+    for (var i = 0; i < 20; i++) {
+      await tester.pump(const Duration(milliseconds: 50));
     }
 
-    await expectProviderConfigurationError('xAI (Grok)', '請先輸入 xAI API Key');
-    await expectProviderConfigurationError('DeepSeek', '請先輸入 DeepSeek API Key');
-    await expectProviderConfigurationError(
-      'OpenAI Compatible (Custom)',
-      '請先輸入 Base URL',
+    await tester.tap(
+      find.byKey(const Key('api_settings_favorite_models_button')),
     );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const Key('api_settings_favorite_models_dialog')),
+      findsOneWidget,
+    );
+    expect(find.textContaining('長按條目拖動'), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byKey(const Key('api_settings_favorite_models_dialog')),
+        matching: find.text('自訂中轉站'),
+      ),
+      findsOneWidget,
+    );
+
+    await tester.tap(
+      find.byKey(
+        const ValueKey<String>(
+          'delete_favorite_model_openai_compatible\u0000$model',
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(await ApiSettings.getStarredModels(), isNot(contains(model)));
     expect(tester.takeException(), isNull);
   });
 }

@@ -16,6 +16,7 @@ import '../utils/iso_week.dart';
 import 'character_timeline_service.dart';
 import 'encrypted_backup_bundle.dart';
 import 'keep_alive_service.dart';
+import 'user_persona_service.dart';
 import 'model_cost_policy.dart';
 import 'portable_backup_bundle.dart';
 
@@ -36,29 +37,75 @@ class LegacyExportStats {
 /// 由 conversation + content 重新配對。
 class BackupService {
   static const int exportVersion = 5;
+  static const int _contextModeSchemaVersion = 48;
+  static const int _personaSchemaVersion = 50;
+  static const int _personaModeSchemaVersion = 51;
+  static const int _chatDiagnosticsSchemaVersion = 57;
+  static const int _rpStorySchemaVersion = 59;
+  static const int _rpRevisionSchemaVersion = 69;
+  static const int _rpStoryStateSchemaVersion = 70;
+  static const int _rpWorldbookSchemaVersion = 71;
+  static const int _rpProjectionRevisionSchemaVersion = 73;
+  static const int _summaryRepairSchemaVersion = 73;
+  static const int _characterDiarySchemaVersion = 77;
+  static const Set<String> _rpRevisionTables = <String>{
+    'rp_storylines',
+    'message_revisions',
+    'memory_rejection_tombstones',
+  };
+  static const Set<String> _rpStoryStateTables = <String>{
+    'rp_story_entity_aliases',
+    'rp_story_states',
+  };
+  static const Set<String> _rpWorldbookTables = <String>{
+    'rp_worldbook_entries',
+    'rp_worldbook_sync_state',
+    'rp_worldbook_review_items',
+  };
   static final _operationLock = _AsyncMutex();
 
   /// v5 明確列出的 app-owned tables；不包含 sqlite_sequence 等 SQLite 內部表。
   static const List<String> appTables = [
     'characters',
+    'rp_storylines',
+    'user_personas',
+    'user_persona_mode_overrides',
+    'character_persona_bindings',
     'conversations',
     'messages',
+    'message_revisions',
+    'chat_diagnostics',
     'memories',
+    'memory_embeddings',
     'spider_web_links',
     'archive',
     'pending_memory_actions',
+    'memory_rejection_tombstones',
     'sticky_notes',
+    'character_diaries',
     'shop_items',
     'backpack_items',
     'stickers',
     'saved_messages',
     'context_summaries',
+    'context_summary_repairs',
     'context_keywords',
     'usage_logs',
     'web_search_usage_logs',
     'emotion_points',
     'grudge_seals',
     'character_timeline',
+    'rp_character_timeline',
+    'rp_story_characters',
+    'rp_story_entity_aliases',
+    'rp_story_states',
+    'rp_story_relationships',
+    'rp_story_relationship_events',
+    'rp_story_projection_revisions',
+    'rp_worldbook_entries',
+    'rp_worldbook_sync_state',
+    'rp_worldbook_review_items',
+    'character_signatures',
     'saved_voices',
   ];
 
@@ -67,20 +114,27 @@ class BackupService {
 
   static const Set<String> _integerPrimaryKeyTables = {
     'messages',
+    'message_revisions',
+    'chat_diagnostics',
     'memories',
     'spider_web_links',
     'archive',
     'sticky_notes',
+    'character_diaries',
     'backpack_items',
     'stickers',
     'saved_messages',
     'context_summaries',
+    'context_summary_repairs',
     'context_keywords',
     'usage_logs',
     'web_search_usage_logs',
     'emotion_points',
     'grudge_seals',
     'character_timeline',
+    'rp_character_timeline',
+    'rp_story_projection_revisions',
+    'character_signatures',
     'saved_voices',
   };
 
@@ -433,6 +487,11 @@ class BackupService {
     } catch (error) {
       debugPrint('Post-restore FTS rebuild failed: $error');
     }
+    try {
+      await UserPersonaService.ensureDefaultPersona();
+    } catch (error) {
+      debugPrint('Post-restore default persona hydration failed: $error');
+    }
 
     final charCount = prepared.tables['characters']!.length;
     final convCount = prepared.tables['conversations']!.length;
@@ -499,12 +558,14 @@ class BackupService {
     }
 
     final isLegacy = version < exportVersion;
+    var declaredDatabaseVersion = 0;
     if (!isLegacy) {
       final schema = _stringKeyMap(data['schema'], field: 'schema');
       if (schema['database_version'] is! int ||
           (schema['database_version'] as int) <= 0) {
         throw const FormatException('v5 schema.database_version 必須是正整數');
       }
+      declaredDatabaseVersion = schema['database_version'] as int;
       final tables = _list(
         schema['tables'],
         field: 'schema.tables',
@@ -513,8 +574,39 @@ class BackupService {
       // Older v5 exports remain valid and restore them empty.
       final missing = appTables.where(
         (table) =>
+            table != 'memory_embeddings' &&
             table != 'pending_memory_actions' &&
             table != 'web_search_usage_logs' &&
+            (table != 'rp_character_timeline' ||
+                declaredDatabaseVersion >= _contextModeSchemaVersion) &&
+            (table != 'user_personas' &&
+                    table != 'character_persona_bindings' ||
+                declaredDatabaseVersion >= _personaSchemaVersion) &&
+            (table != 'user_persona_mode_overrides' ||
+                declaredDatabaseVersion >= _personaModeSchemaVersion) &&
+            (table != 'character_signatures' ||
+                declaredDatabaseVersion >= 54) &&
+            (table != 'chat_diagnostics' ||
+                declaredDatabaseVersion >= _chatDiagnosticsSchemaVersion) &&
+            (!const <String>{
+                  'rp_story_characters',
+                  'rp_story_relationships',
+                  'rp_story_relationship_events',
+                }.contains(table) ||
+                declaredDatabaseVersion >= _rpStorySchemaVersion) &&
+            (!_rpRevisionTables.contains(table) ||
+                declaredDatabaseVersion >= _rpRevisionSchemaVersion) &&
+            (!_rpStoryStateTables.contains(table) ||
+                declaredDatabaseVersion >= _rpStoryStateSchemaVersion) &&
+            (!_rpWorldbookTables.contains(table) ||
+                declaredDatabaseVersion >= _rpWorldbookSchemaVersion) &&
+            (table != 'rp_story_projection_revisions' ||
+                declaredDatabaseVersion >=
+                    _rpProjectionRevisionSchemaVersion) &&
+            (table != 'context_summary_repairs' ||
+                declaredDatabaseVersion >= _summaryRepairSchemaVersion) &&
+            (table != 'character_diaries' ||
+                declaredDatabaseVersion >= _characterDiarySchemaVersion) &&
             !tables.contains(table),
       );
       if (missing.isNotEmpty) {
@@ -529,6 +621,10 @@ class BackupService {
       for (final table in appTables) table: <Map<String, Object?>>[],
     };
 
+    final requiresContextMode =
+        !isLegacy && declaredDatabaseVersion >= _contextModeSchemaVersion;
+    final requiresPersonaSchema =
+        !isLegacy && declaredDatabaseVersion >= _personaSchemaVersion;
     if (isLegacy) {
       _normalizeLegacyCore(data, result, fallbackTime);
     } else {
@@ -537,14 +633,105 @@ class BackupService {
           data[table],
           field: table,
           required:
+              table != 'memory_embeddings' &&
               table != 'pending_memory_actions' &&
-              table != 'web_search_usage_logs',
+              table != 'web_search_usage_logs' &&
+              (table != 'rp_character_timeline' || requiresContextMode) &&
+              (table != 'user_personas' &&
+                      table != 'character_persona_bindings' ||
+                  requiresPersonaSchema) &&
+              (table != 'user_persona_mode_overrides' ||
+                  declaredDatabaseVersion >= _personaModeSchemaVersion) &&
+              (table != 'character_signatures' ||
+                  declaredDatabaseVersion >= 54) &&
+              (table != 'chat_diagnostics' ||
+                  declaredDatabaseVersion >= _chatDiagnosticsSchemaVersion) &&
+              (!const <String>{
+                    'rp_story_characters',
+                    'rp_story_relationships',
+                    'rp_story_relationship_events',
+                  }.contains(table) ||
+                  declaredDatabaseVersion >= _rpStorySchemaVersion) &&
+              (!_rpRevisionTables.contains(table) ||
+                  declaredDatabaseVersion >= _rpRevisionSchemaVersion) &&
+              (!_rpStoryStateTables.contains(table) ||
+                  declaredDatabaseVersion >= _rpStoryStateSchemaVersion) &&
+              (!_rpWorldbookTables.contains(table) ||
+                  declaredDatabaseVersion >= _rpWorldbookSchemaVersion) &&
+              (table != 'rp_story_projection_revisions' ||
+                  declaredDatabaseVersion >=
+                      _rpProjectionRevisionSchemaVersion) &&
+              (table != 'context_summary_repairs' ||
+                  declaredDatabaseVersion >= _summaryRepairSchemaVersion) &&
+              (table != 'character_diaries' ||
+                  declaredDatabaseVersion >= _characterDiarySchemaVersion),
         );
       }
     }
 
+    if (declaredDatabaseVersion < _rpStorySchemaVersion) {
+      result['rp_story_characters'] = <Map<String, Object?>>[];
+      result['rp_story_relationships'] = <Map<String, Object?>>[];
+      result['rp_story_relationship_events'] = <Map<String, Object?>>[];
+    }
+    if (declaredDatabaseVersion < _rpStoryStateSchemaVersion) {
+      result['rp_story_entity_aliases'] = <Map<String, Object?>>[];
+      result['rp_story_states'] = <Map<String, Object?>>[];
+    }
+    if (declaredDatabaseVersion < _rpWorldbookSchemaVersion) {
+      for (final table in _rpWorldbookTables) {
+        result[table] = <Map<String, Object?>>[];
+      }
+    }
+    if (declaredDatabaseVersion < _rpProjectionRevisionSchemaVersion) {
+      result['rp_story_projection_revisions'] = <Map<String, Object?>>[];
+    }
+    if (declaredDatabaseVersion < _summaryRepairSchemaVersion) {
+      result['context_summary_repairs'] = <Map<String, Object?>>[];
+    }
+    if (declaredDatabaseVersion < _characterDiarySchemaVersion) {
+      result['character_diaries'] = <Map<String, Object?>>[];
+    }
+
+    if (declaredDatabaseVersion < _personaModeSchemaVersion) {
+      result['user_persona_mode_overrides'] = <Map<String, Object?>>[];
+    }
+
+    if (!requiresPersonaSchema) {
+      final legacyPersonaIds = <String>{UserPersonaService.defaultPersonaId};
+      for (final conversation in result['conversations']!) {
+        final id = _normalizedOptionalId(conversation['user_persona_id']);
+        if (id != null) legacyPersonaIds.add(id);
+      }
+      result['user_personas'] = legacyPersonaIds
+          .map(
+            (id) => <String, Object?>{
+              'id': id,
+              'display_name': '',
+              'pronouns': '',
+              'bio': '',
+              'avatar_path': '',
+              'prompt_content': '',
+              'is_default': id == UserPersonaService.defaultPersonaId ? 1 : 0,
+              'is_archived': 0,
+              'created_at': fallbackTime,
+              'updated_at': fallbackTime,
+            },
+          )
+          .toList(growable: false);
+      result['character_persona_bindings'] = <Map<String, Object?>>[];
+    }
+
     // Old and new rows both pass through path sanitisation and safe defaults.
-    _normalizeCommonRows(result, fallbackTime, isLegacy: isLegacy);
+    _normalizeCommonRows(
+      result,
+      fallbackTime,
+      isLegacy: isLegacy,
+      requiresContextMode: requiresContextMode,
+      requiresPersonaSchema: requiresPersonaSchema,
+    );
+    _validateContextScopeLinks(result);
+    _normalizeMemoryEmbeddings(result, fallbackTime);
     _normalizeSpiderWebLinks(result);
     _deduplicateSavedMessages(result);
     _normalizeTimelineEvents(result, fallbackTime);
@@ -617,6 +804,10 @@ class BackupService {
           'text': legacyMessage['text']?.toString() ?? '',
           'is_user': _sqliteBool(legacyMessage['is_user'], defaultValue: 1),
           'image_path': _sanitizeImportPath(legacyMessage['image_path']),
+          'image_paths_json': _normalizeMessageImagePaths(
+            legacyMessage['image_paths_json'],
+            legacyMessage['image_path'],
+          ),
           'split_mode': _sqliteBool(legacyMessage['split_mode']),
           'memory_log': legacyMessage['memory_log']?.toString() ?? '',
           'cache_hit': _sqliteBool(legacyMessage['cache_hit']),
@@ -646,10 +837,17 @@ class BackupService {
     Map<String, List<Map<String, Object?>>> tables,
     String fallbackTime, {
     required bool isLegacy,
+    required bool requiresContextMode,
+    required bool requiresPersonaSchema,
   }) {
     for (final character in tables['characters']!) {
       character['id'] = _requiredId(character['id'], 'characters.id');
       character['name'] = character['name']?.toString() ?? '';
+      character['preferred_context_mode'] = _normalizedContextMode(
+        character['preferred_context_mode'],
+        field: 'characters.preferred_context_mode',
+        required: requiresContextMode,
+      );
       character['created_at'] =
           _validIsoString(character['created_at']) ?? fallbackTime;
       character['updated_at'] =
@@ -661,6 +859,73 @@ class BackupService {
       }
     }
 
+    for (final persona in tables['user_personas']!) {
+      persona['id'] = _requiredId(persona['id'], 'user_personas.id');
+      persona['display_name'] = persona['display_name']?.toString() ?? '';
+      persona['pronouns'] = persona['pronouns']?.toString() ?? '';
+      persona['bio'] = persona['bio']?.toString() ?? '';
+      persona['avatar_path'] =
+          _sanitizeImportPath(persona['avatar_path']) ?? '';
+      persona['prompt_content'] = persona['prompt_content']?.toString() ?? '';
+      persona['is_default'] = _sqliteBool(persona['is_default']);
+      persona['is_archived'] = _sqliteBool(persona['is_archived']);
+      persona['created_at'] =
+          _validIsoString(persona['created_at']) ?? fallbackTime;
+      persona['updated_at'] =
+          _validIsoString(persona['updated_at']) ?? fallbackTime;
+    }
+
+    for (final override in tables['user_persona_mode_overrides']!) {
+      override['user_persona_id'] = _requiredId(
+        override['user_persona_id'],
+        'user_persona_mode_overrides.user_persona_id',
+      );
+      override['context_mode'] = _normalizedContextMode(
+        override['context_mode'],
+        field: 'user_persona_mode_overrides.context_mode',
+        required: true,
+      );
+      for (final field in const <String>[
+        'display_name',
+        'pronouns',
+        'bio',
+        'prompt_content',
+      ]) {
+        if (override[field] != null) {
+          override[field] = override[field].toString();
+        }
+      }
+      override['created_at'] =
+          _validIsoString(override['created_at']) ?? fallbackTime;
+      override['updated_at'] =
+          _validIsoString(override['updated_at']) ?? fallbackTime;
+    }
+
+    for (final binding in tables['character_persona_bindings']!) {
+      binding['character_id'] = _requiredId(
+        binding['character_id'],
+        'character_persona_bindings.character_id',
+      );
+      binding['context_mode'] = _normalizedContextMode(
+        binding['context_mode'],
+        field: 'character_persona_bindings.context_mode',
+        required: true,
+      );
+      binding['continuity_id'] = _normalizedContinuityId(
+        binding['continuity_id'],
+        field: 'character_persona_bindings.continuity_id',
+        required: true,
+      );
+      binding['user_persona_id'] = _requiredId(
+        binding['user_persona_id'],
+        'character_persona_bindings.user_persona_id',
+      );
+      binding['created_at'] =
+          _validIsoString(binding['created_at']) ?? fallbackTime;
+      binding['updated_at'] =
+          _validIsoString(binding['updated_at']) ?? fallbackTime;
+    }
+
     for (final conversation in tables['conversations']!) {
       conversation['id'] = _requiredId(
         conversation['id'] ?? conversation['conversation_id'],
@@ -670,6 +935,29 @@ class BackupService {
       conversation['character_id'] = _nonEmptyString(
         conversation['character_id'],
         fallback: 'default',
+      );
+      conversation['context_mode'] = _normalizedContextMode(
+        conversation['context_mode'],
+        field: 'conversations.context_mode',
+        required: requiresContextMode,
+      );
+      conversation['continuity_id'] = _normalizedContinuityId(
+        conversation['continuity_id'],
+        field: 'conversations.continuity_id',
+        required: requiresContextMode,
+      );
+      conversation['user_persona_id'] = requiresPersonaSchema
+          ? _requiredId(
+              conversation['user_persona_id'],
+              'conversations.user_persona_id',
+            )
+          : _normalizedOptionalId(conversation['user_persona_id']) ??
+                UserPersonaService.defaultPersonaId;
+      conversation['user_persona_snapshot'] = requiresPersonaSchema
+          ? conversation['user_persona_snapshot']?.toString() ?? ''
+          : '';
+      conversation['worldbook_set_id'] = _normalizedOptionalId(
+        conversation['worldbook_set_id'],
       );
       conversation['window_summary_id'] =
           conversation['window_summary_id']?.toString() ?? '';
@@ -691,6 +979,52 @@ class BackupService {
       if (!isLegacy && messages != null) {
         throw const FormatException('v5 conversations 不應包含巢狀 messages');
       }
+    }
+
+    tables['rp_storylines'] = List<Map<String, Object?>>.from(
+      tables['rp_storylines']!,
+      growable: true,
+    );
+    final storylineKeys = <String>{};
+    for (final storyline in tables['rp_storylines']!) {
+      final characterId = _requiredId(
+        storyline['character_id'],
+        'rp_storylines.character_id',
+      );
+      final storylineId = _requiredId(storyline['id'], 'rp_storylines.id');
+      storyline['character_id'] = characterId;
+      storyline['id'] = storylineId;
+      storyline['name'] = storyline['name']?.toString() ?? '';
+      storyline['status'] = storyline['status'] == 'archived'
+          ? 'archived'
+          : 'active';
+      storyline['is_default'] = _sqliteBool(
+        storyline['is_default'],
+        defaultValue: storylineId == 'main' ? 1 : 0,
+      );
+      storyline['created_at'] =
+          _validIsoString(storyline['created_at']) ?? fallbackTime;
+      storyline['updated_at'] =
+          _validIsoString(storyline['updated_at']) ?? storyline['created_at'];
+      storylineKeys.add('$characterId\u0000$storylineId');
+    }
+    // v68-and-earlier backups have continuity_id but no registry table. Build
+    // the registry from their RP windows so restore never detaches a story.
+    for (final conversation in tables['conversations']!) {
+      if (conversation['context_mode'] != 'rp') continue;
+      final characterId = conversation['character_id']!.toString();
+      final storylineId = conversation['continuity_id']!.toString();
+      final key = '$characterId\u0000$storylineId';
+      if (!storylineKeys.add(key)) continue;
+      tables['rp_storylines']!.add(<String, Object?>{
+        'character_id': characterId,
+        'id': storylineId,
+        'name': '',
+        'status': 'active',
+        'is_default': storylineId == 'main' ? 1 : 0,
+        'created_at': conversation['created_at'],
+        'updated_at': conversation['updated_at'],
+      });
     }
 
     var nextLegacyId = 1;
@@ -716,11 +1050,20 @@ class BackupService {
       message['text'] = message['text']?.toString() ?? '';
       message['is_user'] = _sqliteBool(message['is_user'], defaultValue: 1);
       message['image_path'] = _sanitizeImportPath(message['image_path']);
+      message['image_paths_json'] = _normalizeMessageImagePaths(
+        message['image_paths_json'],
+        message['image_path'],
+      );
       message['split_mode'] = _sqliteBool(message['split_mode']);
       message['memory_log'] = message['memory_log']?.toString() ?? '';
       message['web_search_trace_json'] =
           message['web_search_trace_json']?.toString() ?? '';
       message['cache_hit'] = _sqliteBool(message['cache_hit']);
+      message['summary_recorded'] = _sqliteBool(message['summary_recorded']);
+      final rawRevision = message['revision'];
+      message['revision'] = rawRevision is int && rawRevision > 0
+          ? rawRevision
+          : 1;
       message['status'] = message['status'] == Message.statusIncomplete
           ? Message.statusIncomplete
           : Message.statusComplete;
@@ -728,14 +1071,657 @@ class BackupService {
           _validIsoString(message['created_at']) ?? fallbackTime;
     }
 
+    for (final revision in tables['message_revisions']!) {
+      if (revision['id'] is! int || (revision['id'] as int) <= 0) {
+        throw const FormatException('message_revisions.id 必須是正整數');
+      }
+      if (revision['message_id'] is! int ||
+          (revision['message_id'] as int) <= 0) {
+        throw const FormatException('message_revisions.message_id 必須是正整數');
+      }
+      revision['conversation_id'] = _requiredId(
+        revision['conversation_id'],
+        'message_revisions.conversation_id',
+      );
+      final value = revision['revision'];
+      revision['revision'] = value is int && value > 0 ? value : 1;
+      revision['snapshot_json'] = revision['snapshot_json']?.toString() ?? '{}';
+      revision['archive_reason'] =
+          revision['archive_reason']?.toString() ?? 'restore';
+      revision['archived_at'] =
+          _validIsoString(revision['archived_at']) ?? fallbackTime;
+    }
+
+    for (final table in const <String>[
+      'memories',
+      'context_summaries',
+      'context_keywords',
+      'pending_memory_actions',
+      'memory_rejection_tombstones',
+    ]) {
+      for (final row in tables[table]!) {
+        row['context_mode'] = _normalizedContextMode(
+          row['context_mode'],
+          field: '$table.context_mode',
+          required: requiresContextMode,
+        );
+        row['continuity_id'] = _normalizedContinuityId(
+          row['continuity_id'],
+          field: '$table.continuity_id',
+          required: requiresContextMode,
+        );
+      }
+    }
+
+    for (final summary in tables['context_summaries']!) {
+      final revision = summary['revision'];
+      summary['revision'] = revision is int && revision > 0 ? revision : 1;
+      summary['revision_status'] = summary['revision_status'] == 'invalidated'
+          ? 'invalidated'
+          : 'valid';
+      summary['invalidation_reason'] =
+          summary['invalidation_reason']?.toString() ?? '';
+      summary['story_time_text'] = summary['story_time_text']?.toString() ?? '';
+    }
+
+    for (final tombstone in tables['memory_rejection_tombstones']!) {
+      tombstone['id'] = _requiredId(
+        tombstone['id'],
+        'memory_rejection_tombstones.id',
+      );
+      tombstone['fact_key'] = _requiredId(
+        tombstone['fact_key'],
+        'memory_rejection_tombstones.fact_key',
+      );
+      tombstone['category'] = tombstone['category']?.toString() ?? '';
+      tombstone['candidate_json'] =
+          tombstone['candidate_json']?.toString() ?? '{}';
+      tombstone['source_proposal_id'] = tombstone['source_proposal_id']
+          ?.toString();
+      tombstone['created_at'] =
+          _validIsoString(tombstone['created_at']) ?? fallbackTime;
+    }
+
+    for (final row in tables['rp_character_timeline']!) {
+      row['continuity_id'] = _normalizedContinuityId(
+        row['continuity_id'],
+        field: 'rp_character_timeline.continuity_id',
+        required: requiresContextMode,
+      );
+      final type = row['type']?.toString().trim() ?? 'event';
+      if (type != 'state' && type != 'event') {
+        throw FormatException('rp_character_timeline.type 不合法：$type');
+      }
+      row['type'] = type;
+      row['event_key'] = row['event_key']?.toString().trim() ?? '';
+      final narrativeLayer =
+          row['narrative_layer']?.toString().trim() ?? 'main';
+      if (!const <String>{
+        'main',
+        'memory',
+        'dream',
+        'hypothetical',
+        'au',
+      }.contains(narrativeLayer)) {
+        throw FormatException(
+          'rp_character_timeline.narrative_layer 不合法：$narrativeLayer',
+        );
+      }
+      row['narrative_layer'] = narrativeLayer;
+      row['subject_entity_ids'] = _normalizeRpEntityKeyJsonList(
+        row['subject_entity_ids'],
+        field: 'rp_character_timeline.subject_entity_ids',
+      );
+      row['source_conversation_id'] = _normalizedOptionalId(
+        row['source_conversation_id'],
+      );
+      row['value'] = row['value']?.toString() ?? '';
+      row['story_time_text'] = row['story_time_text']?.toString() ?? '';
+      row['scene'] = row['scene']?.toString() ?? '';
+      row['source_message_ids'] = row['source_message_ids']?.toString() ?? '[]';
+      row['source_evidence'] = row['source_evidence']?.toString() ?? '';
+      row['confirmed'] = _sqliteBool(row['confirmed'], defaultValue: 1);
+      row['sequence_order'] = row['sequence_order'] is int
+          ? row['sequence_order']
+          : 0;
+      row['created_at'] = _validIsoString(row['created_at']) ?? fallbackTime;
+      row['updated_at'] =
+          _validIsoString(row['updated_at']) ?? row['created_at'];
+    }
+
+    final entityOrdinals = <String, int>{};
+    for (final row in tables['rp_story_characters']!) {
+      row['id'] = _requiredId(row['id'], 'rp_story_characters.id');
+      row['character_id'] = _requiredId(
+        row['character_id'],
+        'rp_story_characters.character_id',
+      );
+      row['continuity_id'] = _normalizedContinuityId(
+        row['continuity_id'],
+        field: 'rp_story_characters.continuity_id',
+        required: true,
+      );
+      final scopeKey = '${row['character_id']}\u0000${row['continuity_id']}';
+      var entityKey = row['entity_key']?.toString().trim() ?? '';
+      if (!RegExp(r'^P-\d{4,}$').hasMatch(entityKey)) {
+        final next = (entityOrdinals[scopeKey] ?? 0) + 1;
+        entityOrdinals[scopeKey] = next;
+        entityKey = 'P-${next.toString().padLeft(4, '0')}';
+      }
+      row['entity_key'] = entityKey;
+      for (final field in const <String>[
+        'normalized_name',
+        'name',
+        'aliases_json',
+        'identities_json',
+        'gender',
+        'identity',
+        'relation_to_leads',
+        'personality',
+        'appearance',
+        'first_scene',
+        'faction',
+        'core_motivation',
+        'current_stance',
+        'recurrence',
+        'tier',
+        'source_conversation_id',
+        'source_message_ids',
+        'evidence',
+        'tags_json',
+      ]) {
+        row[field] = row[field]?.toString() ?? '';
+      }
+      row['is_important'] = _sqliteBool(row['is_important']);
+      row['user_edited'] = _sqliteBool(row['user_edited']);
+      row['mention_count'] = row['mention_count'] is int
+          ? row['mention_count']
+          : 0;
+      row['worldbook_entry_id'] = _normalizedOptionalId(
+        row['worldbook_entry_id'],
+      );
+      row['last_seen_at'] =
+          _validIsoString(row['last_seen_at']) ?? fallbackTime;
+      row['created_at'] = _validIsoString(row['created_at']) ?? fallbackTime;
+      row['updated_at'] = _validIsoString(row['updated_at']) ?? fallbackTime;
+    }
+
+    if (tables['rp_story_entity_aliases']!.isEmpty) {
+      for (final character in tables['rp_story_characters']!) {
+        final aliases = <String>{character['name']!.toString()};
+        try {
+          final decoded = jsonDecode(character['aliases_json']!.toString());
+          if (decoded is List) {
+            aliases.addAll(decoded.map((value) => value?.toString() ?? ''));
+          }
+        } catch (_) {
+          // Legacy malformed aliases remain non-fatal during restore.
+        }
+        for (final alias
+            in aliases
+                .map((value) => value.trim())
+                .where((value) => value.isNotEmpty)) {
+          final normalized = alias.toLowerCase().replaceAll(
+            RegExp(r'[\s\p{P}\p{S}]+', unicode: true),
+            '',
+          );
+          if (normalized.isEmpty) continue;
+          tables['rp_story_entity_aliases']!.add(<String, Object?>{
+            'character_id': character['character_id'],
+            'continuity_id': character['continuity_id'],
+            'entity_key': character['entity_key'],
+            'normalized_alias': normalized,
+            'display_alias': alias,
+            'alias_type': alias == character['name'] ? 'name' : 'identity',
+            'created_at': character['created_at'],
+            'updated_at': character['updated_at'],
+          });
+        }
+      }
+    }
+
+    for (final alias in tables['rp_story_entity_aliases']!) {
+      alias['character_id'] = _requiredId(
+        alias['character_id'],
+        'rp_story_entity_aliases.character_id',
+      );
+      alias['continuity_id'] = _normalizedContinuityId(
+        alias['continuity_id'],
+        field: 'rp_story_entity_aliases.continuity_id',
+        required: true,
+      );
+      alias['entity_key'] = _requiredId(
+        alias['entity_key'],
+        'rp_story_entity_aliases.entity_key',
+      );
+      alias['normalized_alias'] = _requiredId(
+        alias['normalized_alias'],
+        'rp_story_entity_aliases.normalized_alias',
+      );
+      alias['display_alias'] = _requiredId(
+        alias['display_alias'],
+        'rp_story_entity_aliases.display_alias',
+      );
+      alias['alias_type'] =
+          const <String>{
+            'name',
+            'identity',
+            'title',
+            'other',
+          }.contains(alias['alias_type'])
+          ? alias['alias_type']
+          : 'other';
+      alias['created_at'] =
+          _validIsoString(alias['created_at']) ?? fallbackTime;
+      alias['updated_at'] =
+          _validIsoString(alias['updated_at']) ?? fallbackTime;
+    }
+
+    const stateTypes = <String>{
+      'scene',
+      'promise',
+      'body',
+      'identity',
+      'knowledge',
+      'plot',
+      'item',
+    };
+    const narrativeLayers = <String>{
+      'main',
+      'memory',
+      'dream',
+      'hypothetical',
+      'au',
+      'ooc',
+    };
+    for (final state in tables['rp_story_states']!) {
+      state['id'] = _requiredId(state['id'], 'rp_story_states.id');
+      state['character_id'] = _requiredId(
+        state['character_id'],
+        'rp_story_states.character_id',
+      );
+      state['continuity_id'] = _normalizedContinuityId(
+        state['continuity_id'],
+        field: 'rp_story_states.continuity_id',
+        required: true,
+      );
+      state['state_key'] = _requiredId(
+        state['state_key'],
+        'rp_story_states.state_key',
+      );
+      if (!stateTypes.contains(state['state_type'])) {
+        throw const FormatException('rp_story_states.state_type 無效');
+      }
+      state['narrative_layer'] =
+          narrativeLayers.contains(state['narrative_layer'])
+          ? state['narrative_layer']
+          : 'main';
+      for (final field in const <String>[
+        'subject_entity_key',
+        'object_entity_key',
+        'value',
+        'status',
+        'story_time',
+        'source_conversation_id',
+        'source_message_ids',
+        'evidence',
+      ]) {
+        state[field] = state[field]?.toString() ?? '';
+      }
+      state['source_summary_id'] = state['source_summary_id'] is int
+          ? state['source_summary_id']
+          : null;
+      state['user_edited'] = _sqliteBool(state['user_edited']);
+      state['created_at'] =
+          _validIsoString(state['created_at']) ?? fallbackTime;
+      state['updated_at'] =
+          _validIsoString(state['updated_at']) ?? fallbackTime;
+    }
+
+    for (final revision in tables['rp_story_projection_revisions']!) {
+      if (revision['id'] is! int || (revision['id'] as int) <= 0) {
+        throw const FormatException('rp_story_projection_revisions.id 必須是正整數');
+      }
+      final projectionTable = revision['projection_table']?.toString() ?? '';
+      if (!const <String>{
+        'character',
+        'relationship',
+      }.contains(projectionTable)) {
+        throw const FormatException(
+          'rp_story_projection_revisions.projection_table 無效',
+        );
+      }
+      revision['projection_table'] = projectionTable;
+      revision['projection_id'] = _requiredId(
+        revision['projection_id'],
+        'rp_story_projection_revisions.projection_id',
+      );
+      revision['character_id'] = _requiredId(
+        revision['character_id'],
+        'rp_story_projection_revisions.character_id',
+      );
+      revision['continuity_id'] = _normalizedContinuityId(
+        revision['continuity_id'],
+        field: 'rp_story_projection_revisions.continuity_id',
+        required: true,
+      );
+      if (revision['source_summary_id'] is! int ||
+          (revision['source_summary_id'] as int) <= 0) {
+        throw const FormatException(
+          'rp_story_projection_revisions.source_summary_id 無效',
+        );
+      }
+      final operation = revision['operation']?.toString() ?? '';
+      if (!const <String>{'create', 'update'}.contains(operation)) {
+        throw const FormatException(
+          'rp_story_projection_revisions.operation 無效',
+        );
+      }
+      revision['operation'] = operation;
+      revision['snapshot_json'] = revision['snapshot_json']?.toString() ?? '';
+      if (operation == 'update') {
+        try {
+          if (jsonDecode(revision['snapshot_json']!.toString()) is! Map) {
+            throw const FormatException();
+          }
+        } catch (_) {
+          throw const FormatException(
+            'rp_story_projection_revisions.snapshot_json 無效',
+          );
+        }
+      }
+      revision['created_at'] =
+          _validIsoString(revision['created_at']) ?? fallbackTime;
+    }
+
+    const repairStatuses = <String>{
+      'pending',
+      'running',
+      'failed',
+      'completed',
+    };
+    for (final repair in tables['context_summary_repairs']!) {
+      if (repair['id'] is! int || (repair['id'] as int) <= 0) {
+        throw const FormatException('context_summary_repairs.id 必須是正整數');
+      }
+      if (repair['original_summary_id'] is! int ||
+          (repair['original_summary_id'] as int) <= 0) {
+        throw const FormatException(
+          'context_summary_repairs.original_summary_id 無效',
+        );
+      }
+      repair['character_id'] = _requiredId(
+        repair['character_id'],
+        'context_summary_repairs.character_id',
+      );
+      repair['context_mode'] = _normalizedContextMode(
+        repair['context_mode'],
+        field: 'context_summary_repairs.context_mode',
+        required: true,
+      );
+      repair['continuity_id'] = _normalizedContinuityId(
+        repair['continuity_id'],
+        field: 'context_summary_repairs.continuity_id',
+        required: true,
+      );
+      repair['source_conversation_id'] = _requiredId(
+        repair['source_conversation_id'],
+        'context_summary_repairs.source_conversation_id',
+      );
+      for (final field in const <String>[
+        'source_message_start_id',
+        'source_message_end_id',
+      ]) {
+        if (repair[field] is! int || (repair[field] as int) <= 0) {
+          throw FormatException('context_summary_repairs.$field 無效');
+        }
+      }
+      repair['status'] = repairStatuses.contains(repair['status'])
+          ? repair['status']
+          : 'pending';
+      repair['attempts'] = repair['attempts'] is int
+          ? (repair['attempts'] as int).clamp(0, 1000000)
+          : 0;
+      repair['last_error'] = repair['last_error']?.toString() ?? '';
+      repair['created_at'] =
+          _validIsoString(repair['created_at']) ?? fallbackTime;
+      repair['updated_at'] =
+          _validIsoString(repair['updated_at']) ?? fallbackTime;
+    }
+
+    const worldbookStatuses = <String>{'active', 'archived'};
+    for (final entry in tables['rp_worldbook_entries']!) {
+      entry['id'] = _requiredId(entry['id'], 'rp_worldbook_entries.id');
+      entry['entry_key'] = _requiredId(
+        entry['entry_key'],
+        'rp_worldbook_entries.entry_key',
+      );
+      entry['character_id'] = _requiredId(
+        entry['character_id'],
+        'rp_worldbook_entries.character_id',
+      );
+      entry['continuity_id'] = _normalizedContinuityId(
+        entry['continuity_id'],
+        field: 'rp_worldbook_entries.continuity_id',
+        required: true,
+      );
+      for (final field in const <String>[
+        'name',
+        'category',
+        'content',
+        'scope',
+        'visibility',
+        'ended_reason',
+        'triggers_json',
+        'source_summary_ids',
+      ]) {
+        entry[field] = entry[field]?.toString() ?? '';
+      }
+      entry['status'] = worldbookStatuses.contains(entry['status'])
+          ? entry['status']
+          : 'active';
+      entry['user_edited'] = _sqliteBool(entry['user_edited']);
+      entry['created_at'] =
+          _validIsoString(entry['created_at']) ?? fallbackTime;
+      entry['updated_at'] =
+          _validIsoString(entry['updated_at']) ?? fallbackTime;
+    }
+    for (final sync in tables['rp_worldbook_sync_state']!) {
+      sync['character_id'] = _requiredId(
+        sync['character_id'],
+        'rp_worldbook_sync_state.character_id',
+      );
+      sync['continuity_id'] = _normalizedContinuityId(
+        sync['continuity_id'],
+        field: 'rp_worldbook_sync_state.continuity_id',
+        required: true,
+      );
+      sync['last_processed_summary_id'] =
+          sync['last_processed_summary_id'] is int
+          ? sync['last_processed_summary_id']
+          : 0;
+      sync['updated_at'] = _validIsoString(sync['updated_at']) ?? fallbackTime;
+    }
+    for (final review in tables['rp_worldbook_review_items']!) {
+      review['id'] = _requiredId(review['id'], 'rp_worldbook_review_items.id');
+      review['character_id'] = _requiredId(
+        review['character_id'],
+        'rp_worldbook_review_items.character_id',
+      );
+      review['continuity_id'] = _normalizedContinuityId(
+        review['continuity_id'],
+        field: 'rp_worldbook_review_items.continuity_id',
+        required: true,
+      );
+      review['kind'] = review['kind'] == 'conflict'
+          ? 'conflict'
+          : 'possible_duplicate';
+      review['payload_json'] = review['payload_json']?.toString() ?? '{}';
+      review['status'] =
+          const <String>{
+            'pending',
+            'resolved',
+            'dismissed',
+          }.contains(review['status'])
+          ? review['status']
+          : 'pending';
+      review['created_at'] =
+          _validIsoString(review['created_at']) ?? fallbackTime;
+      review['updated_at'] =
+          _validIsoString(review['updated_at']) ?? fallbackTime;
+    }
+
+    for (final table in const <String>[
+      'rp_story_relationships',
+      'rp_story_relationship_events',
+    ]) {
+      for (final row in tables[table]!) {
+        row['id'] = _requiredId(row['id'], '$table.id');
+        row['character_id'] = _requiredId(
+          row['character_id'],
+          '$table.character_id',
+        );
+        row['continuity_id'] = _normalizedContinuityId(
+          row['continuity_id'],
+          field: '$table.continuity_id',
+          required: true,
+        );
+        for (final field in const <String>[
+          'source_conversation_id',
+          'source_message_ids',
+          'evidence',
+          'story_time',
+        ]) {
+          row[field] = row[field]?.toString() ?? '';
+        }
+        row['source_summary_id'] = row['source_summary_id'] is int
+            ? row['source_summary_id']
+            : null;
+        row['created_at'] = _validIsoString(row['created_at']) ?? fallbackTime;
+        if (table == 'rp_story_relationships') {
+          for (final field in const <String>[
+            'from_name',
+            'to_name',
+            'from_entity_key',
+            'to_entity_key',
+            'normalized_edge',
+            'direction',
+            'current_relation',
+            'origin',
+            'closeness_catalyst',
+            'forms_of_address_json',
+            'shared_secrets_json',
+            'conflicts_json',
+            'knowledge_scope_json',
+            'visibility',
+          ]) {
+            row[field] = row[field]?.toString() ?? '';
+          }
+          row['user_edited'] = _sqliteBool(row['user_edited']);
+          row['updated_at'] =
+              _validIsoString(row['updated_at']) ?? fallbackTime;
+        } else {
+          row['relationship_id'] = _requiredId(
+            row['relationship_id'],
+            '$table.relationship_id',
+          );
+          row['change_text'] = row['change_text']?.toString() ?? '';
+        }
+      }
+    }
+
+    final diaryScopes = <String>{};
+    for (final row in tables['character_diaries']!) {
+      if (row['id'] is! int || (row['id'] as int) <= 0) {
+        throw const FormatException('character_diaries.id 必須是正整數');
+      }
+      row['character_id'] = _requiredId(
+        row['character_id'],
+        'character_diaries.character_id',
+      );
+      final diaryDate = row['diary_date']?.toString().trim() ?? '';
+      if (!RegExp(r'^\d{4}-\d{2}-\d{2}$').hasMatch(diaryDate)) {
+        throw const FormatException('character_diaries.diary_date 無效');
+      }
+      final scope = '${row['character_id']}\u0000$diaryDate';
+      if (!diaryScopes.add(scope)) {
+        throw const FormatException('同一角色每天只能有一份日記');
+      }
+      row['diary_date'] = diaryDate;
+      row['title'] = String.fromCharCodes(
+        (row['title']?.toString().trim() ?? '').runes.take(80),
+      );
+      final body = String.fromCharCodes(
+        (row['body']?.toString().trim() ?? '').runes.take(6000),
+      );
+      if (body.isEmpty) {
+        throw const FormatException('character_diaries.body 不可為空');
+      }
+      row['body'] = body;
+      row['source_conversation_id'] =
+          row['source_conversation_id']?.toString() ?? '';
+      row['source_message_id'] = row['source_message_id'] is int
+          ? row['source_message_id']
+          : null;
+      row['created_at'] = _validIsoString(row['created_at']) ?? fallbackTime;
+      row['updated_at'] =
+          _validIsoString(row['updated_at']) ?? row['created_at'];
+    }
+
+    for (final row in tables['character_signatures']!) {
+      row['character_id'] = _requiredId(
+        row['character_id'],
+        'character_signatures.character_id',
+      );
+      row['conversation_id'] = _requiredId(
+        row['conversation_id'],
+        'character_signatures.conversation_id',
+      );
+      row['context_mode'] = _normalizedContextMode(
+        row['context_mode'],
+        field: 'character_signatures.context_mode',
+        required: true,
+      );
+      row['continuity_id'] = _normalizedContinuityId(
+        row['continuity_id'],
+        field: 'character_signatures.continuity_id',
+        required: true,
+      );
+      final phase = row['phase']?.toString().trim() ?? '';
+      if (phase != 'opening' && phase != 'closing') {
+        throw FormatException('character_signatures.phase 不合法：$phase');
+      }
+      row['phase'] = phase;
+      final signature = row['signature']?.toString().trim() ?? '';
+      if (signature.isEmpty) {
+        throw const FormatException('character_signatures.signature 不可為空');
+      }
+      final lines = signature
+          .split(RegExp(r'\r?\n'))
+          .map((line) => line.trim())
+          .where((line) => line.isNotEmpty)
+          .take(4)
+          .join('\n');
+      if (lines.isEmpty) {
+        throw const FormatException('character_signatures.signature 不可為空');
+      }
+      row['signature'] = String.fromCharCodes(lines.runes.take(64));
+      row['is_selected'] = _sqliteBool(row['is_selected'], defaultValue: 0);
+      row['created_at'] = _validIsoString(row['created_at']) ?? fallbackTime;
+      row['updated_at'] =
+          _validIsoString(row['updated_at']) ?? row['created_at'];
+    }
+
     // A forged or stale backup cursor must not skip messages that are present
     // in the restored conversation. Clamp it to that conversation's real id
     // range; old backups naturally remain at zero.
     final maxMessageIdByConversation = <String, int>{};
+    final messageConversationById = <int, String>{};
     for (final message in tables['messages']!) {
       final conversationId = message['conversation_id']?.toString() ?? '';
       final id = message['id'];
       if (conversationId.isEmpty || id is! int) continue;
+      messageConversationById[id] = conversationId;
       final previous = maxMessageIdByConversation[conversationId] ?? 0;
       if (id > previous) maxMessageIdByConversation[conversationId] = id;
     }
@@ -744,6 +1730,15 @@ class BackupService {
       final maxId = maxMessageIdByConversation[conversationId] ?? 0;
       final cursor = conversation['summary_cursor_message_id'] as int? ?? 0;
       conversation['summary_cursor_message_id'] = cursor.clamp(0, maxId);
+    }
+    for (final summary in tables['context_summaries']!) {
+      final anchor = summary['display_anchor_message_id'];
+      final sourceConversationId =
+          summary['source_conversation_id']?.toString() ?? '';
+      if (anchor is! int ||
+          messageConversationById[anchor] != sourceConversationId) {
+        summary['display_anchor_message_id'] = null;
+      }
     }
 
     for (final sticker in tables['stickers']!) {
@@ -769,6 +1764,82 @@ class BackupService {
       voice.remove('display_name');
       voice['file_path'] = _sanitizeImportPath(voice['file_path']);
     }
+  }
+
+  static String _normalizeMessageImagePaths(Object? raw, Object? legacy) {
+    Object? decoded = raw;
+    if (raw is String && raw.trim().isNotEmpty) {
+      try {
+        decoded = jsonDecode(raw);
+      } catch (_) {
+        decoded = const <Object?>[];
+      }
+    }
+    final paths = <String>[];
+    if (decoded is List) {
+      for (final value in decoded) {
+        final safePath = _sanitizeImportPath(value);
+        if (safePath != null && !paths.contains(safePath)) {
+          paths.add(safePath);
+        }
+      }
+    }
+    final safeLegacy = _sanitizeImportPath(legacy);
+    if (paths.isEmpty && safeLegacy != null) paths.add(safeLegacy);
+    return jsonEncode(paths);
+  }
+
+  static String _normalizeRpEntityKeyJsonList(
+    Object? raw, {
+    required String field,
+  }) {
+    if (raw == null || (raw is String && raw.trim().isEmpty)) return '[]';
+    Object? decoded = raw;
+    if (raw is String) {
+      try {
+        decoded = jsonDecode(raw);
+      } catch (_) {
+        throw FormatException('$field 必須是合法的 JSON 陣列');
+      }
+    }
+    if (decoded is! List) {
+      throw FormatException('$field 必須是 JSON 陣列');
+    }
+    final normalized = <String>{};
+    for (final value in decoded) {
+      if (value is! String || !RegExp(r'^P-\d{4,}$').hasMatch(value.trim())) {
+        throw FormatException('$field 包含不合法的人物 entity key');
+      }
+      normalized.add(value.trim());
+    }
+    return jsonEncode(normalized.toList(growable: false));
+  }
+
+  static String _normalizedContextMode(
+    Object? raw, {
+    required String field,
+    required bool required,
+  }) {
+    final value = raw?.toString().trim() ?? '';
+    if (value == 'daily' || value == 'rp') return value;
+    if (!required && value.isEmpty) return 'daily';
+    throw FormatException('$field 必須是 daily 或 rp');
+  }
+
+  static String _normalizedContinuityId(
+    Object? raw, {
+    required String field,
+    required bool required,
+  }) {
+    final value = raw?.toString().trim() ?? '';
+    if (value.isNotEmpty) return value;
+    if (!required) return 'main';
+    throw FormatException('$field 不可為空');
+  }
+
+  static String? _normalizedOptionalId(Object? raw) {
+    final value = raw?.toString().trim() ?? '';
+    return value.isEmpty ? null : value;
   }
 
   static void _remapLegacySavedMessages(
@@ -815,15 +1886,317 @@ class BackupService {
         link['character_id'],
         fallback: 'default',
       );
-      if (!seen.add('$characterId:$low:$high')) continue;
+      final relationType =
+          const <String>{
+            'related',
+            'same_event',
+            'temporal',
+            'duplicate_candidate',
+            'conflict_update',
+          }.contains(link['relation_type']?.toString())
+          ? link['relation_type']!.toString()
+          : 'related';
+      if (!seen.add('$characterId:$low:$high:$relationType')) continue;
       normalized.add(
         Map<String, Object?>.from(link)
           ..['character_id'] = characterId
           ..['memory_id_1'] = low
-          ..['memory_id_2'] = high,
+          ..['memory_id_2'] = high
+          ..['relation_type'] = relationType,
       );
     }
     tables['spider_web_links'] = normalized;
+  }
+
+  static void _normalizeMemoryEmbeddings(
+    Map<String, List<Map<String, Object?>>> tables,
+    String fallbackTime,
+  ) {
+    final memoryIds = tables['memories']!
+        .map((row) => row['id'])
+        .whereType<int>()
+        .toSet();
+    final normalized = <Map<String, Object?>>[];
+    final seen = <String>{};
+    for (final source in tables['memory_embeddings']!) {
+      final memoryId = source['memory_id'];
+      final provider = source['provider']?.toString().trim() ?? '';
+      final model = source['model']?.toString().trim() ?? '';
+      final contentHash = source['content_hash']?.toString().trim() ?? '';
+      final dimensions = source['dimensions'];
+      final rawVector = source['vector_json']?.toString() ?? '';
+      if (memoryId is! int ||
+          !memoryIds.contains(memoryId) ||
+          provider.isEmpty ||
+          model.isEmpty ||
+          contentHash.isEmpty ||
+          dimensions is! int ||
+          dimensions <= 0) {
+        throw const FormatException('memory_embeddings 資料無效');
+      }
+      late final Object? decoded;
+      try {
+        decoded = jsonDecode(rawVector);
+      } catch (_) {
+        throw const FormatException('memory_embeddings.vector_json 無效');
+      }
+      if (decoded is! List ||
+          decoded.length != dimensions ||
+          decoded.any((value) => value is! num)) {
+        throw const FormatException('memory_embeddings 向量維度不一致');
+      }
+      final key = '$memoryId\u0000$provider\u0000$model';
+      if (!seen.add(key)) {
+        throw const FormatException('memory_embeddings 含重複索引');
+      }
+      normalized.add(<String, Object?>{
+        'memory_id': memoryId,
+        'provider': provider,
+        'model': model,
+        'content_hash': contentHash,
+        'dimensions': dimensions,
+        'vector_json': jsonEncode(decoded),
+        'updated_at': _validIsoString(source['updated_at']) ?? fallbackTime,
+      });
+    }
+    tables['memory_embeddings'] = normalized;
+  }
+
+  static void _validateContextScopeLinks(
+    Map<String, List<Map<String, Object?>>> tables,
+  ) {
+    final characterIds = tables['characters']!
+        .map((row) => row['id']?.toString())
+        .whereType<String>()
+        .toSet();
+    final personas = <String, Map<String, Object?>>{
+      for (final row in tables['user_personas']!) row['id']!.toString(): row,
+    };
+    final conversations = <String, Map<String, Object?>>{
+      for (final row in tables['conversations']!) row['id']!.toString(): row,
+    };
+
+    for (final conversation in conversations.values) {
+      final personaId = conversation['user_persona_id']?.toString() ?? '';
+      if (!personas.containsKey(personaId)) {
+        throw FormatException('conversations 引用了不存在的 user persona：$personaId');
+      }
+      final snapshot = conversation['user_persona_snapshot']?.toString() ?? '';
+      if (snapshot.isEmpty) continue;
+      try {
+        final decoded = jsonDecode(snapshot);
+        if (decoded is! Map || decoded['id']?.toString() != personaId) {
+          throw const FormatException('persona snapshot id mismatch');
+        }
+      } on FormatException {
+        throw const FormatException('conversations 的 user persona snapshot 無效');
+      } on TypeError {
+        throw const FormatException('conversations 的 user persona snapshot 無效');
+      }
+    }
+
+    final storylineScopes = <String>{};
+    for (final storyline in tables['rp_storylines']!) {
+      final characterId = storyline['character_id']?.toString() ?? '';
+      final storylineId = storyline['id']?.toString() ?? '';
+      if (!characterIds.contains(characterId) || storylineId.isEmpty) {
+        throw const FormatException('rp_storylines 引用無效');
+      }
+      if (!storylineScopes.add('$characterId\u0000$storylineId')) {
+        throw const FormatException('rp_storylines 含重複故事線');
+      }
+    }
+
+    final entityKeys = <String>{
+      for (final entity in tables['rp_story_characters']!)
+        '${entity['character_id']}\u0000${entity['continuity_id']}\u0000${entity['entity_key']}',
+    };
+    for (final alias in tables['rp_story_entity_aliases']!) {
+      final key =
+          '${alias['character_id']}\u0000${alias['continuity_id']}\u0000${alias['entity_key']}';
+      if (!entityKeys.contains(key)) {
+        throw const FormatException('rp_story_entity_aliases 引用了不存在的人物');
+      }
+    }
+    for (final state in tables['rp_story_states']!) {
+      final scope = '${state['character_id']}\u0000${state['continuity_id']}';
+      if (!storylineScopes.contains(scope)) {
+        throw const FormatException('rp_story_states 引用了不存在的故事線');
+      }
+      for (final field in const <String>[
+        'subject_entity_key',
+        'object_entity_key',
+      ]) {
+        final entityKey = state[field]?.toString() ?? '';
+        if (entityKey.isNotEmpty &&
+            !entityKeys.contains('$scope\u0000$entityKey')) {
+          throw const FormatException('rp_story_states 引用了不存在的人物');
+        }
+      }
+    }
+    for (final table in const <String>[
+      'rp_worldbook_entries',
+      'rp_worldbook_sync_state',
+      'rp_worldbook_review_items',
+    ]) {
+      for (final row in tables[table]!) {
+        final scope = '${row['character_id']}\u0000${row['continuity_id']}';
+        if (!storylineScopes.contains(scope)) {
+          throw FormatException('$table 引用了不存在的故事線');
+        }
+      }
+    }
+
+    for (final revision in tables['message_revisions']!) {
+      final conversationId = revision['conversation_id']?.toString() ?? '';
+      if (!conversations.containsKey(conversationId)) {
+        throw const FormatException('message_revisions 引用了不存在的窗口');
+      }
+      try {
+        if (jsonDecode(revision['snapshot_json']!.toString()) is! Map) {
+          throw const FormatException('message_revisions.snapshot_json 無效');
+        }
+      } on FormatException {
+        throw const FormatException('message_revisions.snapshot_json 無效');
+      }
+    }
+
+    for (final tombstone in tables['memory_rejection_tombstones']!) {
+      if (!characterIds.contains(tombstone['character_id']?.toString())) {
+        throw const FormatException('memory_rejection_tombstones 引用無效');
+      }
+      try {
+        if (jsonDecode(tombstone['candidate_json']!.toString()) is! Map) {
+          throw const FormatException(
+            'memory_rejection_tombstones.candidate_json 無效',
+          );
+        }
+      } on FormatException {
+        throw const FormatException(
+          'memory_rejection_tombstones.candidate_json 無效',
+        );
+      }
+    }
+
+    final bindingScopes = <String>{};
+
+    final overrideScopes = <String>{};
+    for (final override in tables['user_persona_mode_overrides']!) {
+      final personaId = override['user_persona_id']?.toString() ?? '';
+      if (!personas.containsKey(personaId)) {
+        throw const FormatException(
+          'user_persona_mode_overrides 引用了不存在的 user persona',
+        );
+      }
+      final scope = '$personaId\u0000${override['context_mode']}';
+      if (!overrideScopes.add(scope)) {
+        throw const FormatException('user_persona_mode_overrides 含重複模式資料');
+      }
+    }
+
+    for (final binding in tables['character_persona_bindings']!) {
+      final characterId = binding['character_id']?.toString() ?? '';
+      final personaId = binding['user_persona_id']?.toString() ?? '';
+      final scope =
+          '$characterId\u0000${binding['context_mode']}'
+          '\u0000${binding['continuity_id']}';
+      if (!bindingScopes.add(scope)) {
+        throw const FormatException('character_persona_bindings 含重複綁定');
+      }
+      if (!characterIds.contains(characterId) ||
+          !personas.containsKey(personaId) ||
+          personas[personaId]!['is_archived'] == 1) {
+        throw const FormatException('character_persona_bindings 引用無效');
+      }
+    }
+
+    void validateRows(String table) {
+      for (final row in tables[table]!) {
+        final sourceId = row['source_conversation_id']?.toString().trim() ?? '';
+        if (sourceId.isEmpty) continue;
+        final conversation = conversations[sourceId];
+        if (conversation == null) continue;
+        final sameCharacter =
+            row['character_id']?.toString() ==
+            conversation['character_id']?.toString();
+        final sameMode =
+            row['context_mode']?.toString() ==
+            conversation['context_mode']?.toString();
+        final sameContinuity =
+            row['continuity_id']?.toString() ==
+            conversation['continuity_id']?.toString();
+        if (!sameCharacter || !sameMode || !sameContinuity) {
+          throw FormatException('$table 的來源窗口 context 不一致');
+        }
+      }
+    }
+
+    for (final table in const <String>[
+      'memories',
+      'context_summaries',
+      'context_summary_repairs',
+      'context_keywords',
+      'pending_memory_actions',
+    ]) {
+      validateRows(table);
+    }
+
+    for (final row in tables['rp_character_timeline']!) {
+      final sourceId = row['source_conversation_id']?.toString().trim() ?? '';
+      if (sourceId.isEmpty) continue;
+      final conversation = conversations[sourceId];
+      if (conversation == null) continue;
+      final valid =
+          conversation['context_mode'] == 'rp' &&
+          row['character_id']?.toString() ==
+              conversation['character_id']?.toString() &&
+          row['continuity_id']?.toString() ==
+              conversation['continuity_id']?.toString();
+      if (!valid) {
+        throw const FormatException('rp_character_timeline 的來源窗口 context 不一致');
+      }
+    }
+
+    final selectedSignatureCharacters = <String>{};
+    for (final row in tables['character_signatures']!) {
+      final conversation =
+          conversations[row['conversation_id']?.toString() ?? ''];
+      if (conversation == null) {
+        throw const FormatException('character_signatures 引用了不存在的窗口');
+      }
+      final valid =
+          row['character_id']?.toString() ==
+              conversation['character_id']?.toString() &&
+          row['context_mode']?.toString() ==
+              conversation['context_mode']?.toString() &&
+          row['continuity_id']?.toString() ==
+              conversation['continuity_id']?.toString();
+      if (!valid) {
+        throw const FormatException('character_signatures 的窗口 context 不一致');
+      }
+      if (row['is_selected'] == 1 &&
+          !selectedSignatureCharacters.add(
+            row['character_id']?.toString() ?? '',
+          )) {
+        throw const FormatException('同一角色只能選擇一條顯示中的個性簽名');
+      }
+    }
+
+    for (final row in tables['character_diaries']!) {
+      final characterId = row['character_id']?.toString() ?? '';
+      if (!characterIds.contains(characterId)) {
+        throw const FormatException('character_diaries 引用了不存在的角色');
+      }
+      final sourceConversationId =
+          row['source_conversation_id']?.toString() ?? '';
+      if (sourceConversationId.isEmpty) continue;
+      final conversation = conversations[sourceConversationId];
+      if (conversation == null ||
+          conversation['character_id']?.toString() != characterId ||
+          conversation['context_mode']?.toString() != 'daily') {
+        throw const FormatException('character_diaries 的來源窗口不是該角色的日常窗口');
+      }
+    }
   }
 
   static void _deduplicateSavedMessages(
@@ -928,6 +2301,11 @@ class BackupService {
     required bool strict,
   }) {
     for (final table in appTables) {
+      if (table == 'memory_embeddings' ||
+          table == 'character_persona_bindings' ||
+          table == 'user_persona_mode_overrides') {
+        continue;
+      }
       final seen = <Object?>{};
       for (final row in tables[table]!) {
         final id = row['id'];
@@ -1003,6 +2381,7 @@ class BackupService {
         };
         final pathColumn = switch (table) {
           'characters' || 'messages' || 'shop_items' => 'image_path',
+          'user_personas' => 'avatar_path',
           'stickers' || 'saved_voices' => 'file_path',
           _ => null,
         };
@@ -1159,6 +2538,10 @@ class BackupService {
       );
     }
   }
+
+  @visibleForTesting
+  static Future<void> verifyTableManifestForTesting(Database db) =>
+      _verifyTableManifest(db);
 
   static String? _sanitizeImportPath(dynamic value) {
     if (value is! String || value.isEmpty) return null;

@@ -48,6 +48,34 @@ void main() {
     },
   );
 
+  test('Gemini embedding discovery exposes only embedding models', () async {
+    final client = MockClient((request) async {
+      return http.Response(
+        jsonEncode(<String, Object?>{
+          'models': <Object?>[
+            <String, Object?>{
+              'name': 'models/gemini-3.6-flash',
+              'supportedGenerationMethods': <String>['generateContent'],
+            },
+            <String, Object?>{
+              'name': 'models/gemini-embedding-2',
+              'displayName': 'Gemini Embedding 2',
+              'supportedGenerationMethods': <String>['embedContent'],
+            },
+          ],
+        }),
+        200,
+      );
+    });
+
+    final models = await GeminiService.fetchEmbeddingModels(
+      'gemini-test-key',
+      client: client,
+    );
+
+    expect(models.map((model) => model.id), <String>['gemini-embedding-2']);
+  });
+
   test('xAI model discovery follows the language-models schema', () async {
     final client = MockClient((request) async {
       expect(request.url, Uri.parse('https://api.x.ai/v1/language-models'));
@@ -132,6 +160,36 @@ void main() {
     },
   );
 
+  test('OpenRouter embedding discovery uses its dedicated catalogue', () async {
+    final client = MockClient((request) async {
+      expect(
+        request.url,
+        Uri.parse('https://openrouter.ai/api/v1/embeddings/models'),
+      );
+      return http.Response(
+        jsonEncode(<String, Object?>{
+          'data': <Object?>[
+            <String, Object?>{
+              'id': 'openai/text-embedding-3-small',
+              'name': 'Text Embedding 3 Small',
+            },
+            <String, Object?>{'id': 'openai/gpt-5-mini', 'name': 'GPT 5 Mini'},
+          ],
+        }),
+        200,
+      );
+    });
+
+    final models = await OpenRouterService.fetchEmbeddingModels(
+      'openrouter-test-key',
+      client: client,
+    );
+
+    expect(models.map((model) => model.id), <String>[
+      'openai/text-embedding-3-small',
+    ]);
+  });
+
   test(
     'official OpenAI base URL falls back to the standard models API',
     () async {
@@ -158,4 +216,59 @@ void main() {
       expect(models.single.id, 'gpt-5-mini');
     },
   );
+
+  test('OpenAI-compatible 403 error exposes the relay reason safely', () {
+    final message = OpenAICompatibleService.httpErrorMessage(
+      403,
+      jsonEncode(<String, Object?>{
+        'error': <String, Object?>{
+          'message': 'The selected model is not enabled for this API key.',
+        },
+      }),
+    );
+
+    expect(message, contains('403'));
+    expect(message, contains('selected model is not enabled'));
+  });
+
+  test('OpenAI-compatible model discovery includes a 403 reason', () async {
+    final client = MockClient((request) async {
+      if (request.url.path == '/api/pricing') {
+        return http.Response('', 404);
+      }
+      return http.Response(
+        jsonEncode(<String, Object?>{
+          'error': <String, String>{
+            'message': 'Model listing is disabled for this token.',
+          },
+        }),
+        403,
+      );
+    });
+
+    await expectLater(
+      OpenAICompatibleService.fetchModels(
+        baseUrl: 'https://relay.example/v1',
+        apiKey: 'relay-test-key',
+        client: client,
+      ),
+      throwsA(
+        predicate<Object>(
+          (error) => error.toString().contains(
+            'Model listing is disabled for this token.',
+          ),
+        ),
+      ),
+    );
+  });
+
+  test('OpenAI-compatible HTML errors are not echoed into the UI', () {
+    final message = OpenAICompatibleService.httpErrorMessage(
+      403,
+      '<!doctype html><html><body>gateway diagnostics</body></html>',
+    );
+
+    expect(message, contains('403'));
+    expect(message, isNot(contains('gateway diagnostics')));
+  });
 }

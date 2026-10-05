@@ -7,10 +7,10 @@ import '../services/memory_guard_service.dart';
 class SpiderWebCore {
   static final Map<String, String> _pendingForceRecallByWindow = {};
 
-  /// 記憶半衰期（天），預設 7 天
+  /// 記憶半衰期（角色活躍日），預設 7 天
   static const double _halfLifeDays = 7.0;
 
-  /// 自我揭露類別的超長半衰期（天）
+  /// 自我揭露類別的超長半衰期（角色活躍日）
   static const double _selfDisclosureHalfLifeDays = 90.0;
 
   /// 恩典期基礎天數
@@ -19,25 +19,44 @@ class SpiderWebCore {
   /// 恩典期上限天數
   static const int _graceCapDays = 90;
 
-  /// 長時間沒有新聊天時，暫停孤島記憶的本地衰退。
-  static const Duration _idleDecayPauseAfter = Duration(days: 3);
-
   /// 計算當前記憶的衰減後清晰度 (Ebbinghaus Forgetting Curve)
-  /// clarity = 1.0 * (0.5) ^ (days / half_life)
-  /// 自我揭露類別使用 90 天半衰期，其他用 7 天
+  /// clarity = 1.0 * (0.5) ^ (active_days / half_life)
+  /// 自我揭露類別使用 90 個活躍日半衰期，其他用 7 個活躍日。
   static double calculateClarity(
     String? lastAccessedStr, {
     String category = '',
+    required Iterable<String> activeDateKeys,
   }) {
-    final lastAccessed =
-        DateTime.tryParse(lastAccessedStr ?? '') ?? DateTime.now();
-    final days = DateTime.now().difference(lastAccessed).inMinutes / 1440.0;
-    if (days <= 0) return 1.0;
+    final activeDays = countActiveDaysSince(
+      lastAccessedStr,
+      activeDateKeys: activeDateKeys,
+    );
+    if (activeDays <= 0) return 1.0;
 
     final halfLife = category == '自我揭露'
         ? _selfDisclosureHalfLifeDays
         : _halfLifeDays;
-    return pow(0.5, days / halfLife).toDouble();
+    return pow(0.5, activeDays / halfLife).toDouble();
+  }
+
+  /// Counts distinct active dates strictly after the last activation date.
+  /// The day on which a memory was created/mentioned is not counted against
+  /// that memory, even if more messages are sent later on the same day.
+  static int countActiveDaysSince(
+    String? lastAccessedStr, {
+    required Iterable<String> activeDateKeys,
+  }) {
+    final parsed = DateTime.tryParse(lastAccessedStr ?? '');
+    if (parsed == null) return 0;
+    final local = parsed.isUtc ? parsed.toLocal() : parsed;
+    final referenceKey =
+        '${local.year.toString().padLeft(4, '0')}-'
+        '${local.month.toString().padLeft(2, '0')}-'
+        '${local.day.toString().padLeft(2, '0')}';
+    return activeDateKeys
+        .toSet()
+        .where((date) => date.compareTo(referenceKey) > 0)
+        .length;
   }
 
   /// 計算兩條記憶的情緒共鳴距離 (Euclidean distance)
@@ -106,15 +125,13 @@ class SpiderWebCore {
   /// 恩典期 = f(mention_count)，被激活越多次的記憶恩典期越長
   /// 自我揭露類別永遠豁免封存
   static Future<int> runArchiveEngine({String characterId = 'default'}) async {
-    // 沒有聊天不代表記憶正在被遺忘：連續靜止滿三天後先停住衰退，
-    // 等下一次本地聊天活動重新建立時間錨點後再恢復計算。
-    final lastChatAt = await DatabaseHelper.getLastMessageTime(characterId);
-    if (lastChatAt == null ||
-        DateTime.now().difference(lastChatAt) >= _idleDecayPauseAfter) {
-      return 0;
-    }
-
     final db = await DatabaseHelper.database;
+    // Only daily user-chat dates consume daily spider-memory grace. RP days
+    // belong to a separate memory lane and must not age daily memories.
+    final activeDateKeys = await DatabaseHelper.getCharacterActiveDateKeys(
+      characterId,
+    );
+    if (activeDateKeys.isEmpty) return 0;
 
     // 找出所有孤立且活躍的非永久記憶（排除自我揭露）。
     // 孤島判定只計「對端仍 active」的連線：手動刪除是軟刪
@@ -143,21 +160,23 @@ class SpiderWebCore {
     );
 
     int archivedCount = 0;
-    final now = DateTime.now();
-
     for (final row in candidates) {
-      // 用 last_accessed 判定（若為空則用 created_at）
+      // 用 last_accessed 判定（若為空則用 created_at）。只有角色實際聊天
+      // 的日期會累積；離線日期完全凍結。
       final lastAccessedStr = (row['last_accessed'] as String?);
       final referenceTime =
           (lastAccessedStr != null && lastAccessedStr.isNotEmpty)
-          ? DateTime.tryParse(lastAccessedStr) ?? DateTime.now()
-          : DateTime.tryParse(row['created_at']?.toString() ?? '') ??
-                DateTime.now();
+          ? lastAccessedStr
+          : row['created_at']?.toString();
 
       final mentionCount = row['mention_count'] as int? ?? 0;
       final graceDays = calculateGraceDays(mentionCount);
+      final inactiveActiveDays = countActiveDaysSince(
+        referenceTime,
+        activeDateKeys: activeDateKeys,
+      );
 
-      if (now.difference(referenceTime).inDays >= graceDays) {
+      if (inactiveActiveDays >= graceDays) {
         final memId = row['id'] as int;
         // 走正規封存入口
         await DatabaseHelper.archiveMemory(
@@ -277,13 +296,18 @@ class SpiderWebCore {
     final ph = List.filled(oldIds.length, '?').join(',');
     final edges = await db.rawQuery(
       'SELECT * FROM spider_web_links '
-      'WHERE memory_id_1 IN ($ph) OR memory_id_2 IN ($ph)',
-      [...oldIds, ...oldIds],
+      'WHERE character_id = ? AND '
+      '(memory_id_1 IN ($ph) OR memory_id_2 IN ($ph))',
+      [characterId, ...oldIds, ...oldIds],
     );
     final oldSet = oldIds.toSet();
     final batch = db.batch();
     for (final e in edges) {
-      if (e['status']?.toString() != 'confirmed') continue;
+      final status = switch (e['status']?.toString()) {
+        'rejected' => 'rejected',
+        'suggested' => 'suggested',
+        _ => 'confirmed',
+      };
       final a = e['memory_id_1'] as int;
       final b = e['memory_id_2'] as int;
       // 另一端：不在舊集合裡的那個；兩端都是舊條 = 內部邊，丟
@@ -301,7 +325,7 @@ class SpiderWebCore {
           DateTime.now().toIso8601String(),
           e['relation_type']?.toString() ?? 'related',
           (e['strength'] as num?)?.toDouble() ?? 1.0,
-          'confirmed',
+          status,
           'merge_remap',
           e['reason']?.toString() ?? '',
           DateTime.now().toIso8601String(),
@@ -309,8 +333,9 @@ class SpiderWebCore {
       );
     }
     batch.rawDelete(
-      'DELETE FROM spider_web_links WHERE memory_id_1 IN ($ph) OR memory_id_2 IN ($ph)',
-      [...oldIds, ...oldIds],
+      'DELETE FROM spider_web_links WHERE character_id = ? AND '
+      '(memory_id_1 IN ($ph) OR memory_id_2 IN ($ph))',
+      [characterId, ...oldIds, ...oldIds],
     );
     await batch.commit(noResult: true);
   }

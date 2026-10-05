@@ -2,13 +2,19 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import '../memory/database.dart';
 import '../theme/app_theme.dart';
 import '../services/locale_strings.dart';
 import '../services/character_timeline_service.dart';
+import '../services/rp_character_timeline_service.dart';
+import '../services/settings/context_mode_settings.dart';
+import '../models/context_mode.dart';
 import '../services/scratch_service.dart';
+import '../services/tool_feature_settings.dart';
 import '../utils/latest_request_gate.dart';
 import 'shop_backpack_sheets.dart';
 import 'coin_amount_text.dart';
+import 'context_mode_pill.dart';
 
 /// 角色時間線 — 橫軸 + 上下交錯
 /// 一條橫線貫穿，節點圓點在線上，內容交替顯示在線的上方/下方
@@ -28,9 +34,16 @@ class _CharacterTimelinePanelState extends State<CharacterTimelinePanel> {
   DateTime _selectedDate = DateTime.now();
   final ScrollController _scrollCtrl = ScrollController();
   int _charCoins = 0;
+  bool _shellEconomyEnabled = true;
+  bool _shopEnabled = true;
   StreamSubscription<CharacterCoinsChanged>? _coinsSub;
   final LatestRequestGate _loadGate = LatestRequestGate();
   final LatestRequestGate _coinsGate = LatestRequestGate();
+  ContextMode _mode = ContextMode.daily;
+  bool _globalRpEnabled = false;
+  List<Map<String, Object?>> _rpStorylines = const <Map<String, Object?>>[];
+  String _rpContinuityId = 'main';
+  String _rpStorylineLabel = '';
 
   // 佈局常量
   static const double _nodeWidth = 76.0;
@@ -44,10 +57,16 @@ class _CharacterTimelinePanelState extends State<CharacterTimelinePanel> {
   @override
   void initState() {
     super.initState();
+    ContextModeSettings.revision.addListener(_handleContextModeChanged);
+    ToolFeatureSettings.state.addListener(_handleToolFeaturesChanged);
     _load();
     _loadCoins();
     _coinsSub = ScratchService.characterCoinsChanged.listen((event) {
-      if (!mounted || event.characterId != widget.characterId) return;
+      if (!mounted ||
+          !_shellEconomyEnabled ||
+          event.characterId != widget.characterId) {
+        return;
+      }
       setState(() => _charCoins = event.coins);
     });
   }
@@ -55,12 +74,37 @@ class _CharacterTimelinePanelState extends State<CharacterTimelinePanel> {
   Future<void> _loadCoins() async {
     final generation = _coinsGate.begin();
     final characterId = widget.characterId;
+    final features = await ToolFeatureSettings.load();
+    if (!features.shellEconomyEnabled) {
+      if (mounted && _coinsGate.isCurrent(generation)) {
+        setState(() {
+          _shellEconomyEnabled = false;
+          _shopEnabled = features.shopEnabled;
+          _charCoins = 0;
+        });
+      }
+      return;
+    }
     final coins = await ScratchService.getCoins(characterId);
     if (mounted &&
         characterId == widget.characterId &&
         _coinsGate.isCurrent(generation)) {
-      setState(() => _charCoins = coins);
+      setState(() {
+        _shellEconomyEnabled = true;
+        _shopEnabled = features.shopEnabled;
+        _charCoins = coins;
+      });
     }
+  }
+
+  void _handleToolFeaturesChanged() {
+    final features = ToolFeatureSettings.state.value;
+    if (!mounted) return;
+    setState(() {
+      _shellEconomyEnabled = features.shellEconomyEnabled;
+      _shopEnabled = features.shopEnabled;
+    });
+    if (features.shellEconomyEnabled) unawaited(_loadCoins());
   }
 
   @override
@@ -74,6 +118,8 @@ class _CharacterTimelinePanelState extends State<CharacterTimelinePanel> {
 
   @override
   void dispose() {
+    ContextModeSettings.revision.removeListener(_handleContextModeChanged);
+    ToolFeatureSettings.state.removeListener(_handleToolFeaturesChanged);
     _loadGate.invalidate();
     _coinsGate.invalidate();
     _coinsSub?.cancel();
@@ -81,21 +127,56 @@ class _CharacterTimelinePanelState extends State<CharacterTimelinePanel> {
     super.dispose();
   }
 
+  void _handleContextModeChanged() {
+    if (mounted) unawaited(_load());
+  }
+
   Future<void> _load() async {
     final generation = _loadGate.begin();
     final characterId = widget.characterId;
     setState(() => _loading = true);
 
-    final states = await CharacterTimelineService.getStates(characterId);
+    final globalRp = await ContextModeSettings.getGlobalRpEnabled();
+    final preferred = ContextModeSettings.preferredModeFromCharacter(
+      await DatabaseHelper.getCharacter(characterId),
+    );
+    final mode = globalRp ? ContextMode.rp : preferred;
+    var rpStorylines = const <Map<String, Object?>>[];
+    var rpContinuityId = _rpContinuityId;
+    var rpStorylineLabel = _rpStorylineLabel;
+    if (mode == ContextMode.rp) {
+      await DatabaseHelper.ensureDefaultRpStoryline(characterId);
+      rpStorylines = await DatabaseHelper.getRpStorylines(characterId);
+      if (rpStorylines.isNotEmpty) {
+        final selected = rpStorylines.firstWhere(
+          (row) => row['id']?.toString() == rpContinuityId,
+          orElse: () => rpStorylines.first,
+        );
+        rpContinuityId = selected['id']?.toString() ?? 'main';
+        final storedName = selected['name']?.toString().trim() ?? '';
+        rpStorylineLabel = storedName.isEmpty
+            ? L.pick(en: 'Main storyline', zhTW: '主要故事線', zhCN: '主要故事线')
+            : storedName;
+      }
+    }
+    final states = mode == ContextMode.daily
+        ? await CharacterTimelineService.getStates(characterId)
+        : <Map<String, dynamic>>[];
     final monthStart = DateTime(_selectedDate.year, _selectedDate.month);
     final monthEnd = DateTime(_selectedDate.year, _selectedDate.month + 1);
-    final events = await CharacterTimelineService.getEvents(
-      characterId,
-      from: monthStart,
-      until: monthEnd,
-      limit: 200,
-      ascending: true,
-    );
+    final events = mode == ContextMode.daily
+        ? await CharacterTimelineService.getEvents(
+            characterId,
+            from: monthStart,
+            until: monthEnd,
+            limit: 200,
+            ascending: true,
+          )
+        : await RpCharacterTimelineService.getEntries(
+            characterId,
+            continuityId: rpContinuityId,
+            limit: 200,
+          );
 
     final nodes = <_TimelineNode>[];
 
@@ -110,12 +191,16 @@ class _CharacterTimelinePanelState extends State<CharacterTimelinePanel> {
           key: s['key'] as String? ?? '',
           value: s['value'] as String? ?? '',
           date: dt,
+          sequenceOrder: s['id'] as int? ?? 0,
         ),
       );
     }
 
     for (final e in events) {
-      final parsed = DateTime.tryParse(e['created_at'] as String? ?? '');
+      final storyTime = e['story_time_text'] as String? ?? '';
+      final parsed =
+          DateTime.tryParse(storyTime) ??
+          DateTime.tryParse(e['created_at'] as String? ?? '');
       if (parsed == null) continue;
       final dt = parsed.isUtc ? parsed.toLocal() : parsed;
       nodes.add(
@@ -125,19 +210,27 @@ class _CharacterTimelinePanelState extends State<CharacterTimelinePanel> {
           key: '',
           value: e['value'] as String? ?? '',
           date: dt,
+          storyTimeText: storyTime,
+          sequenceOrder: e['sequence_order'] as int? ?? e['id'] as int? ?? 0,
         ),
       );
     }
 
     // 按月過濾
-    nodes.retainWhere(
-      (n) =>
-          n.date.year == _selectedDate.year &&
-          n.date.month == _selectedDate.month,
-    );
+    if (mode == ContextMode.daily) {
+      nodes.retainWhere(
+        (n) =>
+            n.date.year == _selectedDate.year &&
+            n.date.month == _selectedDate.month,
+      );
+    }
 
     // 左舊右新（升序）
-    nodes.sort((a, b) => a.date.compareTo(b.date));
+    nodes.sort(
+      mode == ContextMode.rp
+          ? (a, b) => a.sequenceOrder.compareTo(b.sequenceOrder)
+          : (a, b) => a.date.compareTo(b.date),
+    );
 
     if (!mounted ||
         characterId != widget.characterId ||
@@ -147,6 +240,11 @@ class _CharacterTimelinePanelState extends State<CharacterTimelinePanel> {
     setState(() {
       _nodes = nodes;
       _loading = false;
+      _globalRpEnabled = globalRp;
+      _mode = mode;
+      _rpStorylines = rpStorylines;
+      _rpContinuityId = rpContinuityId;
+      _rpStorylineLabel = rpStorylineLabel;
     });
 
     // 滾到最右（最新）
@@ -158,6 +256,55 @@ class _CharacterTimelinePanelState extends State<CharacterTimelinePanel> {
         _scrollCtrl.jumpTo(_scrollCtrl.position.maxScrollExtent);
       }
     });
+  }
+
+  Future<void> _setMode(ContextMode mode) async {
+    if (_globalRpEnabled) {
+      showContextModeNotice(
+        context,
+        L.pick(
+          en: 'Global RP mode currently controls this character.',
+          zhTW: '目前由全域 RP 模式控制該夥伴。',
+          zhCN: '目前由全局 RP 模式控制该伙伴。',
+        ),
+      );
+      return;
+    }
+    await ContextModeSettings.setCharacterPreferredMode(
+      widget.characterId,
+      mode,
+    );
+    final differs = await ContextModeSettings.latestWindowDiffers(
+      widget.characterId,
+      mode,
+    );
+    if (!mounted) return;
+    final base = mode == ContextMode.rp
+        ? L.pick(
+            en: 'This companion is now in RP mode.',
+            zhTW: '該夥伴已打開RP模式',
+            zhCN: '该伙伴已打开RP模式',
+          )
+        : L.pick(
+            en: 'This companion has returned to daily mode.',
+            zhTW: '該夥伴已回歸日常',
+            zhCN: '该伙伴已回归日常',
+          );
+    final next = !differs
+        ? ''
+        : mode == ContextMode.rp
+        ? L.pick(
+            en: ' Open a new window to begin RP.',
+            zhTW: ' 請開啟新窗口進行RP',
+            zhCN: ' 请开启新窗口进行RP',
+          )
+        : L.pick(
+            en: ' Open a new window to begin your daily life.',
+            zhTW: ' 請開啟新窗口開始你們的日常',
+            zhCN: ' 请开启新窗口开始你们的日常',
+          );
+    showContextModeNotice(context, '$base$next');
+    await _load();
   }
 
   // ═══════════════════════════════════
@@ -255,6 +402,64 @@ class _CharacterTimelinePanelState extends State<CharacterTimelinePanel> {
     }
   }
 
+  Future<void> _pickRpStoryline() async {
+    if (_rpStorylines.length < 2) return;
+    final selected = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: YanciTheme.surfacePanel,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 4, 20, 18),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                L.pick(
+                  en: 'View storyline timeline',
+                  zhTW: '查看哪一條故事線',
+                  zhCN: '查看哪一条故事线',
+                ),
+                style: YanciTheme.headingMedium,
+              ),
+              const SizedBox(height: 10),
+              for (var index = 0; index < _rpStorylines.length; index++)
+                ListTile(
+                  minTileHeight: 48,
+                  title: Text(
+                    (_rpStorylines[index]['name']?.toString().trim() ?? '')
+                            .isEmpty
+                        ? L.pick(
+                            en: 'Storyline ${index + 1}',
+                            zhTW: '故事線 ${index + 1}',
+                            zhCN: '故事线 ${index + 1}',
+                          )
+                        : _rpStorylines[index]['name'].toString(),
+                  ),
+                  trailing:
+                      _rpStorylines[index]['id']?.toString() == _rpContinuityId
+                      ? Icon(
+                          Icons.check_rounded,
+                          size: 18,
+                          color: YanciTheme.accent,
+                        )
+                      : null,
+                  onTap: () => Navigator.pop(
+                    sheetContext,
+                    _rpStorylines[index]['id']?.toString(),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (!mounted || selected == null || selected == _rpContinuityId) return;
+    setState(() => _rpContinuityId = selected);
+    await _load();
+  }
+
   // ═══════════════════════════════════
   // Build
   // ═══════════════════════════════════
@@ -268,65 +473,79 @@ class _CharacterTimelinePanelState extends State<CharacterTimelinePanel> {
       mainAxisSize: MainAxisSize.min,
       children: [
         // ═══ 角色貝殼餘額 ═══
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 24),
-          child: Row(
-            children: [
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 7),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Image.asset(
-                      'assets/images/shell_coin.png',
-                      width: 20,
-                      height: 20,
-                      filterQuality: FilterQuality.none,
+        if (_shellEconomyEnabled || _shopEnabled)
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 24),
+            child: Row(
+              children: [
+                if (_shellEconomyEnabled)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 4,
+                      vertical: 7,
                     ),
-                    const SizedBox(width: 6),
-                    CoinAmountText(_charCoins),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 8),
-              Tooltip(
-                message: L.pick(en: 'Backpack', zhTW: '背包'),
-                child: Semantics(
-                  button: true,
-                  label: L.pick(en: 'Backpack', zhTW: '背包'),
-                  child: GestureDetector(
-                    behavior: HitTestBehavior.opaque,
-                    onTap: () {
-                      showModalBottomSheet(
-                        context: context,
-                        isScrollControlled: true,
-                        backgroundColor: Colors.transparent,
-                        builder: (ctx) =>
-                            BackpackBottomSheet(ownerId: widget.characterId),
-                      );
-                    },
-                    child: SizedBox.square(
-                      dimension: 40,
-                      child: Center(
-                        child: Icon(
-                          Icons.backpack_outlined,
-                          size: 18,
-                          color: YanciTheme.accent,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Image.asset(
+                          'assets/images/shell_coin.png',
+                          width: 20,
+                          height: 20,
+                          filterQuality: FilterQuality.none,
+                        ),
+                        const SizedBox(width: 6),
+                        CoinAmountText(_charCoins),
+                      ],
+                    ),
+                  ),
+                if (_shellEconomyEnabled && _shopEnabled)
+                  const SizedBox(width: 8),
+                if (_shopEnabled)
+                  Tooltip(
+                    message: L.pick(en: 'Backpack', zhTW: '背包'),
+                    child: Semantics(
+                      button: true,
+                      label: L.pick(en: 'Backpack', zhTW: '背包'),
+                      child: GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onTap: () {
+                          showModalBottomSheet(
+                            context: context,
+                            isScrollControlled: true,
+                            backgroundColor: Colors.transparent,
+                            builder: (ctx) => BackpackBottomSheet(
+                              ownerId: widget.characterId,
+                            ),
+                          );
+                        },
+                        child: SizedBox.square(
+                          dimension: 40,
+                          child: Center(
+                            child: Icon(
+                              Icons.backpack_outlined,
+                              size: 18,
+                              color: YanciTheme.accent,
+                            ),
+                          ),
                         ),
                       ),
                     ),
                   ),
-                ),
-              ),
-            ],
+              ],
+            ),
           ),
-        ),
-        const SizedBox(height: 14),
+        if (_shellEconomyEnabled || _shopEnabled) const SizedBox(height: 14),
         // ═══ 標題行 ═══
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 24),
           child: Row(
             children: [
+              ContextModePill(
+                mode: _mode,
+                enabled: !_globalRpEnabled,
+                onChanged: (mode) => unawaited(_setMode(mode)),
+              ),
+              const SizedBox(width: 10),
               Icon(
                 Icons.timeline_rounded,
                 size: 14,
@@ -343,30 +562,66 @@ class _CharacterTimelinePanelState extends State<CharacterTimelinePanel> {
                 ),
               ),
               const Spacer(),
-              // 無邊框日期調節
-              GestureDetector(
-                onTap: _pickDate,
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      monthLabel,
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontFamily: YanciTheme.fontFamily,
-                        color: YanciTheme.accent.withValues(alpha: 0.7),
-                        fontWeight: FontWeight.w500,
+              if (_mode == ContextMode.rp)
+                GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: _rpStorylines.length > 1 ? _pickRpStoryline : null,
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(minHeight: 44),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        ConstrainedBox(
+                          constraints: const BoxConstraints(maxWidth: 116),
+                          child: Text(
+                            _rpStorylineLabel,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontFamily: YanciTheme.fontFamily,
+                              color: YanciTheme.accent.withValues(alpha: 0.72),
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ),
+                        if (_rpStorylines.length > 1) ...[
+                          const SizedBox(width: 3),
+                          Icon(
+                            Icons.unfold_more_rounded,
+                            size: 14,
+                            color: YanciTheme.accent.withValues(alpha: 0.5),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                )
+              else
+                // 無邊框日期調節
+                GestureDetector(
+                  onTap: _pickDate,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        monthLabel,
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontFamily: YanciTheme.fontFamily,
+                          color: YanciTheme.accent.withValues(alpha: 0.7),
+                          fontWeight: FontWeight.w500,
+                        ),
                       ),
-                    ),
-                    const SizedBox(width: 3),
-                    Icon(
-                      Icons.unfold_more_rounded,
-                      size: 14,
-                      color: YanciTheme.accent.withValues(alpha: 0.5),
-                    ),
-                  ],
+                      const SizedBox(width: 3),
+                      Icon(
+                        Icons.unfold_more_rounded,
+                        size: 14,
+                        color: YanciTheme.accent.withValues(alpha: 0.5),
+                      ),
+                    ],
+                  ),
                 ),
-              ),
             ],
           ),
         ),
@@ -390,7 +645,17 @@ class _CharacterTimelinePanelState extends State<CharacterTimelinePanel> {
               : _nodes.isEmpty
               ? Center(
                   child: Text(
-                    L.pick(en: 'Nothing this month yet', zhTW: '這個月還沒有足跡'),
+                    _mode == ContextMode.rp
+                        ? L.pick(
+                            en: 'No story events yet',
+                            zhTW: '這條故事線還沒有事件',
+                            zhCN: '这条故事线还没有事件',
+                          )
+                        : L.pick(
+                            en: 'Nothing this month yet',
+                            zhTW: '這個月還沒有足跡',
+                            zhCN: '这个月还没有足迹',
+                          ),
                     style: TextStyle(
                       fontSize: 12,
                       fontFamily: YanciTheme.fontFamily,
@@ -447,9 +712,16 @@ class _CharacterTimelinePanelState extends State<CharacterTimelinePanel> {
   void _showNodeDetail(_TimelineNode node) {
     HapticFeedback.selectionClick();
     final isState = node.type == _NodeType.state;
-    final dateStr =
-        '${node.date.year}.${node.date.month.toString().padLeft(2, '0')}.${node.date.day.toString().padLeft(2, '0')}  '
-        '${node.date.hour.toString().padLeft(2, '0')}:${node.date.minute.toString().padLeft(2, '0')}';
+    final dateStr = _mode == ContextMode.rp
+        ? node.storyTimeText.trim().isNotEmpty
+              ? node.storyTimeText.trim()
+              : L.pick(
+                  en: 'Story order ${node.sequenceOrder}',
+                  zhTW: '劇情順序 ${node.sequenceOrder}',
+                  zhCN: '剧情顺序 ${node.sequenceOrder}',
+                )
+        : '${node.date.year}.${node.date.month.toString().padLeft(2, '0')}.${node.date.day.toString().padLeft(2, '0')}  '
+              '${node.date.hour.toString().padLeft(2, '0')}:${node.date.minute.toString().padLeft(2, '0')}';
 
     showModalBottomSheet(
       context: context,
@@ -559,10 +831,18 @@ class _CharacterTimelinePanelState extends State<CharacterTimelinePanel> {
                       ),
                     );
                     if (confirmed != true || !mounted) return;
-                    await CharacterTimelineService.deleteEntry(
-                      characterId: widget.characterId,
-                      id: node.id,
-                    );
+                    if (_mode == ContextMode.rp) {
+                      await RpCharacterTimelineService.deleteEntry(
+                        characterId: widget.characterId,
+                        id: node.id,
+                        continuityId: _rpContinuityId,
+                      );
+                    } else {
+                      await CharacterTimelineService.deleteEntry(
+                        characterId: widget.characterId,
+                        id: node.id,
+                      );
+                    }
                     if (!mounted) return;
                     Navigator.of(context).pop();
                     _load();
@@ -612,7 +892,11 @@ class _CharacterTimelinePanelState extends State<CharacterTimelinePanel> {
     final node = _nodes[index];
     final isAbove = index.isEven; // 偶數在上，奇數在下
     final isState = node.type == _NodeType.state;
-    final dateStr = '${node.date.month}/${node.date.day}';
+    final dateStr = _mode == ContextMode.rp
+        ? node.storyTimeText.trim().isNotEmpty
+              ? node.storyTimeText.trim()
+              : '#${node.sequenceOrder}'
+        : '${node.date.month}/${node.date.day}';
 
     final left = index * (_nodeWidth + _lineGap);
 
@@ -643,6 +927,8 @@ class _CharacterTimelinePanelState extends State<CharacterTimelinePanel> {
             // 日期
             Text(
               dateStr,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
               style: TextStyle(
                 fontSize: 9,
                 fontFamily: YanciTheme.fontFamily,
@@ -793,6 +1079,8 @@ class _TimelineNode {
   final String key;
   final String value;
   final DateTime date;
+  final String storyTimeText;
+  final int sequenceOrder;
 
   _TimelineNode({
     required this.id,
@@ -800,5 +1088,7 @@ class _TimelineNode {
     required this.key,
     required this.value,
     required this.date,
+    this.storyTimeText = '',
+    required this.sequenceOrder,
   });
 }

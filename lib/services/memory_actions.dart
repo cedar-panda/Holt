@@ -2,6 +2,7 @@ import '../memory/database.dart';
 import '../memory/emotion_coordinates.dart';
 import '../memory/retriever.dart';
 import '../models/memory.dart';
+import '../models/context_mode.dart';
 import 'locale_strings.dart';
 import 'memory_guard_service.dart';
 
@@ -47,6 +48,9 @@ class MemoryActions {
   static String? lastSearchQueryFor(String windowId) =>
       _statesByWindow[windowId]?.lastSearchQuery;
 
+  static String lastSearchScopeFor(String windowId) =>
+      _statesByWindow[windowId]?.lastSearchScope ?? 'current';
+
   static void clearSearchQuery(String windowId) {
     _statesByWindow[windowId]?.lastSearchQuery = null;
   }
@@ -76,7 +80,7 @@ class MemoryActions {
     multiLine: true,
   );
   static final _searchRe = RegExp(
-    r'<search_chat>([\s\S]*?)</search_chat>',
+    r'''<search_chat(?:\s+scope=["']?(current|daily|rp|all)["']?)?>([\s\S]*?)</search_chat>''',
     multiLine: true,
     caseSensitive: false,
   );
@@ -121,6 +125,7 @@ class MemoryActions {
   static String abilityPrompt({
     String userNickname = '',
     String characterName = '',
+    ContextMode contextMode = ContextMode.daily,
   }) {
     final name = userNickname.isNotEmpty
         ? userNickname
@@ -128,6 +133,25 @@ class MemoryActions {
     final charName = characterName.isNotEmpty
         ? characterName
         : (L.locale == 'en' ? '[char name]' : '角色名');
+    if (contextMode == ContextMode.rp) {
+      return L.pick(
+        en: '''■ RP memory
+  <memo>[Category] Content @trigger1,trigger2</memo>
+  Keep only durable plot facts, relationship changes, promises, established setting facts, and unresolved threads supported by this RP window. Use third person, max 2 entries and 2 triggers each.
+  <search_chat scope="current|daily|rp|all">keyword</search_chat>
+  Search exact past context when needed. Prefer scope="rp" in RP; use all only when cross-mode context is genuinely useful. Never mention searching or hidden records.''',
+        zhTW: '''■ RP 記憶
+  <memo>[類別] 內容 @觸發詞1,觸發詞2</memo>
+  只記本 RP 窗口正文支持、對後續有持續價值的劇情事實、關係轉折、承諾、已確立設定與未完線索。使用第三人稱，每次最多 2 條，每條最多 2 個觸發詞。
+  <search_chat scope="current|daily|rp|all">關鍵詞</search_chat>
+  需要精確過往內容時才搜尋；RP 中優先選 rp，只有確實需要跨模式時才選 all。不得向使用者提及搜尋或隱藏記錄。''',
+        zhCN: '''■ RP 记忆
+  <memo>[类别] 内容 @触发词1,触发词2</memo>
+  只记本 RP 窗口正文支持、对后续有持续价值的剧情事实、关系转折、承诺、已确立设定与未完线索。使用第三人称，每次最多 2 条，每条最多 2 个触发词。
+  <search_chat scope="current|daily|rp|all">关键词</search_chat>
+  需要精确过往内容时才搜索；RP 中优先选择 rp，只有确实需要跨模式时才选 all。不得向用户提及搜索或隐藏记录。''',
+      );
+    }
     if (L.locale == 'en') {
       return '''■ Memory
   <memo>[Category] Content @trigger1,trigger2</memo>
@@ -144,8 +168,8 @@ class MemoryActions {
   <persona_note>one sentence</persona_note>
   Use when you form a new lasting understanding of yourself, your speech patterns, or how you interact with $name. You must record this inner monologue or character profile update.
 
-  <search_chat>keyword</search_chat>
-  Internal retrieval for past conversations. Use when you vaguely remember something but need exact context. The system will provide hidden results; never mention searching, records, keywords, or tools to $name. Max 1 per reply.''';
+  <search_chat scope="current|daily|rp|all">keyword</search_chat>
+  Internal retrieval for past conversations. Prefer daily here; choose rp or all only when genuinely useful. The system will provide hidden results; never mention searching, records, keywords, or tools to $name. Max 1 per reply.''';
     }
     return L.pick(
       en: '',
@@ -165,8 +189,8 @@ class MemoryActions {
   <persona_note>一句話</persona_note>
   當你對自己有新的認知，或是對$name有新的感覺時，可以記下來作為內心獨白。最多可記十二條，新進舊出。
 
-  <search_chat>關鍵詞</search_chat>
-  回想過去聊天內容時使用。一次最多 1 個。''',
+  <search_chat scope="current|daily|rp|all">關鍵詞</search_chat>
+  回想過去聊天內容時使用；日常模式優先選 daily，只有確實需要時才選 rp 或 all。一次最多 1 個。''',
     );
   }
 
@@ -178,6 +202,8 @@ class MemoryActions {
     required String windowId,
     bool emotionEnabled = true,
     bool resetState = true,
+    ContextMode contextMode = ContextMode.daily,
+    String continuityId = 'main',
   }) async {
     final state = resetState
         ? _resetState(windowId)
@@ -194,7 +220,7 @@ class MemoryActions {
     // memo → 入庫
     int memoCount = 0;
     for (final m in _memoRe.allMatches(text)) {
-      if (memoCount >= 4) break; // 防失控
+      if (memoCount >= 2) break; // RP／摘要模型每次最多提出兩條待確認記憶。
       final raw = m.group(1)!.trim();
       if (raw.isEmpty) continue;
       final parsed = _parseEntry(raw);
@@ -220,6 +246,8 @@ class MemoryActions {
       final result = await MemoryGuardService.guardNewMemory(
         candidate: Memory(
           characterId: characterId,
+          contextMode: contextMode,
+          continuityId: continuityId,
           mode: mode,
           category: parsed[0],
           content: finalContent,
@@ -254,11 +282,11 @@ class MemoryActions {
       }
       memoCount++;
     }
-    int memoStripCount = 0;
-    out = out.replaceAllMapped(
-      _memoRe,
-      (m) => memoStripCount++ < memoCount ? '' : m.group(0)!,
-    );
+    // The first two valid tags are the only ones allowed to reach storage,
+    // but every control tag is private protocol and must be removed from the
+    // visible reply. Leaving overflow tags on screen would both leak the
+    // protocol and make the hard limit look as if it had failed.
+    out = out.replaceAll(_memoRe, '');
 
     // persona_note → 角色自我註記
     int noteCount = 0;
@@ -295,6 +323,8 @@ class MemoryActions {
         mode: mode,
         sourceConversationId: windowId,
         targetIds: ids,
+        contextMode: contextMode,
+        continuityId: continuityId,
       );
       if (proposalId != null) {
         state.proposalIds.add(proposalId);
@@ -335,6 +365,8 @@ class MemoryActions {
         category: parsed[0],
         content: parsed[1],
         triggers: parsed[2],
+        contextMode: contextMode,
+        continuityId: continuityId,
       );
       if (proposalId != null) {
         state.proposalIds.add(proposalId);
@@ -352,10 +384,12 @@ class MemoryActions {
     // search_chat → 記錄查詢詞，由 chat_screen 觸發二次調用
     final searchMatch = _searchRe.firstMatch(out);
     if (searchMatch != null) {
-      final query = searchMatch.group(1)!.trim();
+      final scope = searchMatch.group(1)?.trim() ?? 'current';
+      final query = searchMatch.group(2)!.trim();
       if (query.isNotEmpty && state.lastSearchQuery == null) {
         // 只取第一個，防止模型一次發多個搜尋
         state.lastSearchQuery = query;
+        state.lastSearchScope = scope;
         state.actionLog.add('🔍 搜尋「$query」');
       }
       out = out.replaceFirst(_searchRe, '');
@@ -366,6 +400,7 @@ class MemoryActions {
       final query = _extractSearchQueryFromToolCall(m.group(0)!);
       if (query != null && query.isNotEmpty && state.lastSearchQuery == null) {
         state.lastSearchQuery = query;
+        state.lastSearchScope = _extractSearchScopeFromToolCall(m.group(0)!);
         state.actionLog.add('🔍 搜尋「$query」');
       }
     }
@@ -414,6 +449,14 @@ class MemoryActions {
     return query == null || query.isEmpty ? null : query;
   }
 
+  static String _extractSearchScopeFromToolCall(String block) {
+    final match = RegExp(
+      r'''(?:<parameter\s+name\s*=\s*["']scope["']\s*>\s*|["']scope["']\s*:\s*["'])(current|daily|rp|all)''',
+      caseSensitive: false,
+    ).firstMatch(block);
+    return match?.group(1)?.toLowerCase() ?? 'current';
+  }
+
   /// 解析 "[類別] 內容 @觸發詞" → [category, content, triggers]
   static String _canonicalCategory(String raw) {
     return switch (raw.trim().toLowerCase()) {
@@ -457,9 +500,10 @@ class MemoryActions {
     if (state.lastSearchQuery != null) return;
 
     final tagMatch = _searchRe.firstMatch(text);
-    final tagQuery = tagMatch?.group(1)?.trim();
+    final tagQuery = tagMatch?.group(2)?.trim();
     if (tagQuery != null && tagQuery.isNotEmpty) {
       state.lastSearchQuery = tagQuery;
+      state.lastSearchScope = tagMatch?.group(1)?.trim() ?? 'current';
       state.actionLog.add('🔍 搜尋「$tagQuery」');
       return;
     }
@@ -468,6 +512,9 @@ class MemoryActions {
       final query = _extractSearchQueryFromToolCall(match.group(0)!);
       if (query != null && query.isNotEmpty) {
         state.lastSearchQuery = query;
+        state.lastSearchScope = _extractSearchScopeFromToolCall(
+          match.group(0)!,
+        );
         state.actionLog.add('🔍 搜尋「$query」');
         return;
       }
@@ -480,4 +527,5 @@ class _MemoryActionState {
   final List<String> actionLog = [];
   final List<String> proposalIds = [];
   String? lastSearchQuery;
+  String lastSearchScope = 'current';
 }

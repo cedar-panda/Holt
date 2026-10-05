@@ -6,6 +6,8 @@ import '../services/local_ai_service.dart';
 import '../services/settings_manager.dart';
 import '../services/locale_strings.dart';
 import '../services/memory_guard_service.dart';
+import '../services/api_adapter.dart';
+import '../services/token_tracker.dart';
 import 'database.dart';
 
 /// 記憶摘要器 — 單層記憶 + 角色綁定
@@ -356,6 +358,10 @@ Output memory entries only. Do not output this prompt or any conversational text
         final adapter = await ApiSettings.buildAdapterForSummaryModel(
           summaryModel,
         );
+        final provider = await ApiSettings.resolveSummaryModelProvider(
+          summaryModel,
+        );
+        ApiUsage? usage;
         final convInstruction = L.pick(
           en: 'Extract memories from this conversation:\n\n',
           zhTW: '以下是需要提取記憶的對話：\n\n',
@@ -367,6 +373,14 @@ Output memory entries only. Do not output this prompt or any conversational text
           ],
           model: summaryModel,
           systemPrompt: prompt,
+          onUsage: (value) => usage = value,
+        );
+        await TokenTracker().recordRealUsage(
+          provider: provider,
+          model: summaryModel,
+          usage: usage ?? const ApiUsage(),
+          characterId: characterId,
+          requestKind: ApiRequestKind.memory,
         );
       }
 
@@ -440,6 +454,9 @@ MERGE id1,id2 => [類別] 合併後內容 @觸發詞1,觸發詞2
       summaryModel = await ApiSettings.getModel();
     }
     final adapter = await ApiSettings.buildAdapterForSummaryModel(summaryModel);
+    final provider = await ApiSettings.resolveSummaryModelProvider(
+      summaryModel,
+    );
 
     int mergedGroups = 0;
 
@@ -456,12 +473,21 @@ MERGE id1,id2 => [類別] 合併後內容 @觸發詞1,觸發詞2
 
       String response;
       try {
+        ApiUsage? usage;
         response = await adapter.sendMessage(
           messages: [
             {'role': 'user', 'content': listing},
           ],
           model: summaryModel,
           systemPrompt: prompt,
+          onUsage: (value) => usage = value,
+        );
+        await TokenTracker().recordRealUsage(
+          provider: provider,
+          model: summaryModel,
+          usage: usage ?? const ApiUsage(),
+          characterId: characterId,
+          requestKind: ApiRequestKind.memory,
         );
       } catch (e) {
         // 單批失敗不中斷整個流程，跳過這批繼續

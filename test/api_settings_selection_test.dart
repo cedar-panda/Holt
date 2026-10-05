@@ -18,6 +18,44 @@ void main() {
 
   tearDown(() => secureStorage.uninstall());
 
+  test(
+    'provider readiness follows each adapter minimum configuration',
+    () async {
+      expect(
+        await ApiSettings.hasUsableProviderConfiguration('openrouter'),
+        isFalse,
+      );
+      await ApiSettings.saveOpenRouterApiKey('sk-or-test');
+      expect(
+        await ApiSettings.hasUsableProviderConfiguration('openrouter'),
+        isTrue,
+      );
+
+      await ApiSettings.saveLocalApiBaseUrl('http://127.0.0.1:1234/v1');
+      expect(
+        await ApiSettings.hasUsableProviderConfiguration('local_api'),
+        isTrue,
+      );
+
+      await ApiSettings.saveOaiCompatBaseUrl('https://api.example.com/v1');
+      expect(
+        await ApiSettings.hasUsableProviderConfiguration('openai_compatible'),
+        isFalse,
+      );
+      await ApiSettings.saveOaiCompatApiKey('custom-test-key');
+      expect(
+        await ApiSettings.hasUsableProviderConfiguration('openai_compatible'),
+        isTrue,
+      );
+
+      expect(await ApiSettings.hasUsableProviderConfiguration('local'), isTrue);
+      expect(
+        await ApiSettings.hasUsableProviderConfiguration('unknown_gateway'),
+        isFalse,
+      );
+    },
+  );
+
   for (final provider in <String>[
     'openrouter',
     'xai',
@@ -146,6 +184,33 @@ void main() {
     expect(await ApiSettings.getStarredModelProvider(model), isNull);
   });
 
+  test('same model id can be favorited independently by provider', () async {
+    const model = 'shared/model-id';
+    await ApiSettings.toggleStarModel(model, provider: 'openrouter');
+    await ApiSettings.toggleStarModel(model, provider: 'openai_compatible');
+
+    final entries = await ApiSettings.getStarredModelEntries();
+    expect(
+      entries
+          .where((entry) => entry.modelId == model)
+          .map((entry) => entry.provider),
+      containsAll(<String>['openrouter', 'openai_compatible']),
+    );
+    expect(await ApiSettings.getStarredModels(), <String>[model]);
+    expect(await ApiSettings.isStarredModel(model, 'openrouter'), isTrue);
+    expect(
+      await ApiSettings.isStarredModel(model, 'openai_compatible'),
+      isTrue,
+    );
+
+    await ApiSettings.toggleStarModel(model, provider: 'openrouter');
+    expect(await ApiSettings.isStarredModel(model, 'openrouter'), isFalse);
+    expect(
+      await ApiSettings.isStarredModel(model, 'openai_compatible'),
+      isTrue,
+    );
+  });
+
   test(
     'starred model usage ranks cloud first and resumes after re-starring',
     () async {
@@ -177,9 +242,29 @@ void main() {
         cloudA,
         local,
       ]);
-      expect((await ApiSettings.getStarredModelUsageCounts())[cloudB], 2);
+      final cloudBIdentity = StarredModelEntry(
+        provider: 'openrouter',
+        modelId: cloudB,
+      ).identity;
+      expect(
+        (await ApiSettings.getStarredModelUsageCounts())[cloudBIdentity],
+        2,
+      );
     },
   );
+
+  test('manual favorite order overrides usage ranking', () async {
+    const first = 'google/gemini-3-flash';
+    const second = 'anthropic/claude-sonnet-4';
+    await ApiSettings.saveStarredModels(<String>[first, second]);
+    await ApiSettings.recordStarredModelUsage(second);
+    await ApiSettings.recordStarredModelUsage(second);
+    expect(await ApiSettings.getRankedStarredModels(), <String>[second, first]);
+
+    await ApiSettings.saveStarredModelOrder(<String>[first, second]);
+
+    expect(await ApiSettings.getRankedStarredModels(), <String>[first, second]);
+  });
 
   test('provider and model selection are saved together', () async {
     const model = '[A2-量]claude-opus-4-6-thinking';
@@ -189,6 +274,77 @@ void main() {
     expect(await ApiSettings.getModel(), model);
     expect(await ApiSettings.getModelForProvider('openai_compatible'), model);
   });
+
+  test(
+    'Thinking request state changes only when a sent value is recorded',
+    () async {
+      expect(
+        await ApiSettings.getLastSentThinkingState(
+          conversationId: 'window-a',
+          provider: 'openrouter',
+          model: 'anthropic/claude-sonnet-4',
+          cacheChannel: 'text',
+        ),
+        isNull,
+      );
+
+      await ApiSettings.saveThinkingChain(true);
+      expect(
+        await ApiSettings.getLastSentThinkingState(
+          conversationId: 'window-a',
+          provider: 'openrouter',
+          model: 'anthropic/claude-sonnet-4',
+          cacheChannel: 'text',
+        ),
+        isNull,
+        reason: 'UI selection alone must not establish a cache baseline',
+      );
+
+      await ApiSettings.recordSentThinkingState(
+        conversationId: 'window-a',
+        provider: 'openrouter',
+        model: 'anthropic/claude-sonnet-4',
+        cacheChannel: 'text',
+        enabled: true,
+      );
+      expect(
+        await ApiSettings.getLastSentThinkingState(
+          conversationId: 'window-a',
+          provider: 'openrouter',
+          model: 'anthropic/claude-sonnet-4',
+          cacheChannel: 'text',
+        ),
+        isTrue,
+      );
+      expect(
+        await ApiSettings.getLastSentThinkingState(
+          conversationId: 'window-a',
+          provider: 'openrouter',
+          model: 'different-model',
+          cacheChannel: 'text',
+        ),
+        isNull,
+        reason: 'provider/model cache identities must stay independent',
+      );
+
+      await ApiSettings.recordSentThinkingState(
+        conversationId: 'window-a',
+        provider: 'openrouter',
+        model: 'anthropic/claude-sonnet-4',
+        cacheChannel: 'text',
+        enabled: false,
+      );
+      expect(
+        await ApiSettings.getLastSentThinkingState(
+          conversationId: 'window-a',
+          provider: 'openrouter',
+          model: 'anthropic/claude-sonnet-4',
+          cacheChannel: 'text',
+        ),
+        isFalse,
+      );
+    },
+  );
 
   test('legacy stars gain provider when loaded from that source', () async {
     const model = '[A-zy-按量]claude-sonnet-4-6';
@@ -206,8 +362,10 @@ void main() {
 
   test('legacy custom model is inferred from configured gateway', () async {
     const model = '[A2-量]claude-opus-4-6-thinking';
-    await ApiSettings.saveStarredModels([model]);
-    await ApiSettings.saveOaiCompatBaseUrl('https://api.example.com/v1');
+    SharedPreferences.setMockInitialValues(<String, Object>{
+      'starred_models': <String>[model],
+      'oai_compat_base_url': 'https://api.example.com/v1',
+    });
 
     expect(
       await ApiSettings.resolveStarredModelProvider(model),
@@ -221,8 +379,10 @@ void main() {
 
   test('legacy OpenRouter-style model keeps OpenRouter source', () async {
     const model = 'anthropic/claude-sonnet-4';
-    await ApiSettings.saveStarredModels([model]);
-    await ApiSettings.saveOaiCompatBaseUrl('https://api.example.com/v1');
+    SharedPreferences.setMockInitialValues(<String, Object>{
+      'starred_models': <String>[model],
+      'oai_compat_base_url': 'https://api.example.com/v1',
+    });
 
     expect(await ApiSettings.resolveStarredModelProvider(model), 'openrouter');
   });
@@ -231,8 +391,11 @@ void main() {
     'plain legacy star stays on the current provider when ambiguous',
     () async {
       const model = 'gpt-5.5';
-      await ApiSettings.saveStarredModels([model]);
-      await ApiSettings.saveProviderModelSelection('gemini', 'gemini-3-flash');
+      SharedPreferences.setMockInitialValues(<String, Object>{
+        'starred_models': <String>[model],
+        'api_provider': 'gemini',
+        'gemini_model': 'gemini-3-flash',
+      });
 
       expect(await ApiSettings.resolveStarredModelProvider(model), 'gemini');
     },

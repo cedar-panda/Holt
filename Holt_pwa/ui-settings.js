@@ -1,234 +1,213 @@
-/**
- * Holt PWA — API 設定
- */
+/** Holt PWA — API、網搜、生圖與收藏模型設定。 */
 
 import { $, toast, registerTabHandler } from "./app.js";
-import { getSetting, setSetting, getStarredModels, toggleStarModel, isModelStarred } from "./db.js";
-import { PROVIDERS, fetchModels, isUsablePwaModelId, isLegacyPwaDefaultModel } from "./api.js";
+import { getSetting, setSetting, getStarredModels, getStarredModelProviders, toggleStarModel } from "./db.js";
+import { PROVIDERS, fetchModels, getProviderConfig, testProviderConnection, isUsablePwaModelId, isLegacyPwaDefaultModel } from "./api.js";
 import { getPromptCachingEnabled, setPromptCachingEnabled } from "./prompt-cache.js";
-
-// ═══ DOM refs ═══
+import { IMAGE_PROVIDERS, fetchImageModels } from "./image-generation.js";
+import { WEB_SEARCH_MODES, favoriteSearchModels, resolveWebSearchConfig } from "./web-search.js";
+import { openFavoriteModelsDialog } from "./favorite-models-dialog.js";
 
 const apiPageContent = $("#apiPageContent");
-
-// ═══ Tab registration ═══
+let renderVersion = 0;
 
 registerTabHandler(0, renderApiSettings);
 
-// ═══ API Settings ═══
+function esc(value) {
+  return String(value ?? "").replace(/[&<>"']/g, (character) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;",
+  })[character]);
+}
+
+function selectedValue(selector, fallback = "") {
+  return apiPageContent.querySelector(selector)?.value?.trim() || fallback;
+}
+
+function modelOption(model, label = model) {
+  return `<option value="${esc(model)}">${esc(label)}</option>`;
+}
+
+async function savedChatModel(providerId) {
+  const providerModel = await getSetting(`model_${providerId}`);
+  const legacyModel = await getSetting("model");
+  const legacyProvider = await getSetting("provider") || "openrouter";
+  return (isUsablePwaModelId(providerModel) && !isLegacyPwaDefaultModel(providerModel) ? providerModel : "") ||
+    (providerId === legacyProvider && isUsablePwaModelId(legacyModel) && !isLegacyPwaDefaultModel(legacyModel) ? legacyModel : "") || PROVIDERS[providerId]?.defaultModel || "";
+}
 
 async function renderApiSettings() {
-  const savedProviderId = (await getSetting("provider")) || "openrouter";
-  const providerId = PROVIDERS[savedProviderId] ? savedProviderId : "openrouter";
-  const apiKey = (await getSetting(`apiKey_${providerId}`)) || "";
-  const providerModel = (await getSetting(`model_${providerId}`)) || "";
-  const legacyModel = (await getSetting("model")) || "";
-  const model = (isUsablePwaModelId(providerModel) && !isLegacyPwaDefaultModel(providerModel) ? providerModel : "") || (
-    isUsablePwaModelId(legacyModel) && !isLegacyPwaDefaultModel(legacyModel) ? legacyModel : ""
-  ) || PROVIDERS[providerId]?.defaultModel || "";
-  const customEndpoint = (await getSetting("customEndpoint")) || "";
-  const promptCachingEnabled = await getPromptCachingEnabled();
-  const starred = (await getStarredModels()).filter(isUsablePwaModelId);
-
+  const thisRender = ++renderVersion;
+  const rawProvider = await getSetting("provider") || "openrouter";
+  const providerId = PROVIDERS[rawProvider] ? rawProvider : "openrouter";
+  const [apiKey, model, customEndpoint, promptCachingEnabled, starred, starredProviders] = await Promise.all([
+    getSetting(`apiKey_${providerId}`).then((value) => value || ""), savedChatModel(providerId),
+    getSetting("customEndpoint").then((value) => value || ""), getPromptCachingEnabled(), getStarredModels(), getStarredModelProviders(),
+  ]);
+  if (thisRender !== renderVersion) return;
+  const imageProviderSaved = await getSetting("imageGenerationProvider") || "openrouter";
+  const imageProvider = IMAGE_PROVIDERS[imageProviderSaved] ? imageProviderSaved : "openrouter";
+  const imageModel = await getSetting(`imageGenerationModel_${imageProvider}`) || IMAGE_PROVIDERS[imageProvider].defaultModel;
+  const webEnabled = await getSetting("webSearchEnabled") === true;
+  const webModeSaved = await getSetting("webSearchMode") || "auto";
+  const webMode = WEB_SEARCH_MODES[webModeSaved] ? webModeSaved : "auto";
+  const webMaxResults = Math.max(1, Math.min(8, Number(await getSetting("webSearchMaxResults")) || 5));
+  const resolvedSearch = await resolveWebSearchConfig({ mode: webMode, currentProvider: providerId });
+  const activeSearchProvider = webMode === "auto" ? resolvedSearch.providerId : webMode;
+  const searchModels = await favoriteSearchModels(activeSearchProvider);
+  const selectedSearchModel = await getSetting(`webSearchModel_${activeSearchProvider}`) || "";
+  const visibleStarred = starred.filter((item) => isUsablePwaModelId(item) && starredProviders[item] === providerId);
   const cacheDescription = providerId === "gemini"
     ? "Gemini 使用 Google cachedContents；達到模型門檻後建立 1 小時內容快取。"
-    : "Claude／支援 Anthropic 協議的中轉站使用 1 小時顯式快取；Grok 使用供應商的隱式前綴快取。其他模型會維持普通請求。";
+    : "Claude／相容中轉站使用顯式快取；Grok 使用供應商的隱式前綴快取。其他模型維持普通請求。";
 
   apiPageContent.innerHTML = `
-    <div class="settings-section">
-      <p class="field-label">Provider</p>
-      <div class="radio-group">
-        ${Object.entries(PROVIDERS).map(([key, p]) => `
-          <label class="radio-option">
-            <input type="radio" name="provider" value="${key}" ${key === providerId ? "checked" : ""}>
-            ${p.label}
-          </label>
-        `).join("")}
-      </div>
-    </div>
-
-    <div class="settings-section" id="customEndpointSection" ${providerId !== "custom" ? 'style="display:none"' : ""}>
-      <label class="field-label">自訂端點 URL</label>
-      <input class="field-input" id="customEndpointInput" type="url" value="${customEndpoint}" placeholder="https://your-relay.com/v1">
-    </div>
-
-    <div class="settings-section">
-      <label class="field-label">API Key</label>
-      <div class="settings-key-row">
-        <input class="field-input" id="apiKeyInput" type="password" value="${apiKey}" placeholder="${PROVIDERS[providerId]?.keyPlaceholder || "sk-…"}">
-        <button class="settings-eye btn-plain" id="toggleKeyVis" type="button" aria-label="顯示 API Key" aria-pressed="false"></button>
-      </div>
-    </div>
-
-    <div class="settings-section">
-      <label class="field-label">模型</label>
-      ${starred.length ? `
-        <div class="starred-models-chips" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px;">
-          ${starred.map((m) => `
-            <button type="button" class="starred-model-chip btn-plain" data-model="${m}" style="padding:4px 8px;font-size:11px;border-radius:8px;background:color-mix(in srgb,var(--accent) 12%,transparent);color:var(--accent);">⭐ ${m.split("/").pop()}</button>
-          `).join("")}
+    <section class="settings-block" aria-labelledby="providerSettingsTitle">
+      <h2 class="settings-block-title" id="providerSettingsTitle">API 設定</h2>
+      <div class="settings-section"><p class="field-label">來源</p><div class="radio-group">${Object.entries(PROVIDERS).map(([id, provider]) => `<label class="radio-option"><input type="radio" name="provider" value="${id}" ${id === providerId ? "checked" : ""}>${esc(provider.label)}</label>`).join("")}</div></div>
+      <div class="settings-section" id="customEndpointSection" ${providerId !== "custom" ? "hidden" : ""}><label class="field-label" for="customEndpointInput">自訂端點 URL</label><input class="field-input" id="customEndpointInput" type="url" value="${esc(customEndpoint)}" placeholder="https://your-relay.com/v1"></div>
+      <div class="settings-section"><label class="field-label" for="apiKeyInput">API Key</label><div class="settings-key-row"><input class="field-input" id="apiKeyInput" type="password" value="${esc(apiKey)}" placeholder="${esc(PROVIDERS[providerId]?.keyPlaceholder || "sk-…")}"><button class="settings-eye btn-plain" id="toggleKeyVis" type="button" aria-label="顯示 API Key" aria-pressed="false"></button></div><p class="settings-hint">Key 僅儲存在此瀏覽器，不會寫入備份；請只在可信裝置使用。</p></div>
+      <div class="settings-section model-settings-section">
+        <div class="model-section-header"><button type="button" class="model-section-toggle btn-plain" id="modelSectionToggle" aria-expanded="true"><span>模型</span><span class="model-section-chevron" aria-hidden="true">⌄</span></button><button type="button" class="favorite-models-entry btn-plain" id="favoriteModelsBtn"><span aria-hidden="true">☆</span> 收藏模型</button></div>
+        <div id="modelSectionBody">
+          ${visibleStarred.length ? `<div class="starred-models-chips">${visibleStarred.map((item) => `<button type="button" class="starred-model-chip btn-plain" data-model="${esc(item)}">★ ${esc(item.split("/").pop())}</button>`).join("")}</div>` : ""}
+          <div class="settings-model-row"><input class="field-input" id="modelInput" list="modelList" type="text" value="${esc(model)}" placeholder="輸入模型 ID"><datalist id="modelList"></datalist><button class="btn-plain compact-action" id="fetchModelsBtn" type="button">拉取列表</button></div>
+          <p class="settings-hint">填入模型 ID，或拉取列表後點擊星標收藏。</p><div id="fetchedModelsContainer" class="fetched-models-container" hidden></div>
         </div>
-      ` : ""}
-      <div class="settings-model-row">
-        <input class="field-input" id="modelInput" list="modelList" type="text" value="${model}" placeholder="輸入模型 ID">
-        <datalist id="modelList"></datalist>
-        <button class="btn-plain" id="fetchModelsBtn" type="button">拉取列表</button>
       </div>
-      <p class="settings-hint">填入模型 ID，或點拉取列表選擇與星標收藏。</p>
-      <div id="fetchedModelsContainer" style="margin-top:10px;display:none;max-height:220px;overflow-y:auto;border-radius:12px;background:color-mix(in srgb,var(--ink) 4%,transparent);padding:8px;"></div>
-    </div>
+      <div class="settings-section cache-settings"><label class="cache-toggle-row"><input id="promptCachingInput" type="checkbox" ${promptCachingEnabled ? "checked" : ""}><span><strong>提示詞快取</strong><small>沿用 Holt 原生的穩定前綴、滾動斷點與 request-only 狀態分層。</small></span></label><p class="settings-hint">${cacheDescription}</p></div>
+    </section>
+    <section class="settings-block" aria-labelledby="webSearchSettingsTitle"><div class="settings-glass-card">
+      <label class="settings-feature-toggle"><span><strong id="webSearchSettingsTitle">原生網搜</strong><small>只有明確要求搜尋時才會連線；證據只注入當次回合。</small></span><input id="webSearchEnabledInput" type="checkbox" ${webEnabled ? "checked" : ""}></label><div class="settings-card-divider"></div>
+      <div class="settings-feature-body" id="webSearchBody" ${webEnabled ? "" : "aria-disabled=\"true\""}><label class="field-label" for="webSearchModeInput">來源</label><select class="field-input field-select" id="webSearchModeInput">${Object.entries(WEB_SEARCH_MODES).map(([id, label]) => `<option value="${id}" ${id === webMode ? "selected" : ""}>${esc(label)}</option>`).join("")}</select>
+        <p class="settings-status-line" id="webSearchStatus"><span class="status-dot ${resolvedSearch.ready ? "is-ready" : ""}"></span>${webMode === "auto" ? `自動將使用 ${esc(WEB_SEARCH_MODES[resolvedSearch.providerId])}` : esc(WEB_SEARCH_MODES[activeSearchProvider])}${resolvedSearch.ready ? " · 已就緒" : " · 設定未完整"}</p>
+        <label class="field-label" for="webSearchModelInput">搜尋模型</label><select class="field-input field-select" id="webSearchModelInput"><option value="">${searchModels.length ? `自動 · ${esc(resolvedSearch.model || "目前模型")}` : "尚無此來源的收藏模型"}</option>${searchModels.map((item) => `<option value="${esc(item)}" ${item === selectedSearchModel ? "selected" : ""}>${esc(item)}</option>`).join("")}</select><p class="settings-hint">請先在上方替此來源模型加星標，再於此選擇；中轉站需返回 url_citation。</p>
+        <label class="settings-range-label" for="webSearchMaxResults"><span>最多來源數</span><output>${webMaxResults}</output></label><input id="webSearchMaxResults" class="settings-range" type="range" min="1" max="8" step="1" value="${webMaxResults}">
+      </div></div></section>
+    <section class="settings-block" aria-labelledby="imageSettingsTitle"><div class="settings-glass-card"><h2 class="feature-card-title" id="imageSettingsTitle">生成圖片</h2><p class="feature-card-subtitle">生圖來源與模型獨立於聊天模型，沿用該來源 API 憑證。</p><label class="field-label" for="imageProviderInput">生圖來源</label><select class="field-input field-select" id="imageProviderInput">${Object.entries(IMAGE_PROVIDERS).map(([id, provider]) => `<option value="${id}" ${id === imageProvider ? "selected" : ""}>${esc(provider.label)}</option>`).join("")}</select><label class="field-label image-model-label" for="imageModelInput">生圖模型</label><div class="settings-model-row"><input class="field-input" id="imageModelInput" list="imageModelList" value="${esc(imageModel)}"><datalist id="imageModelList"></datalist><button class="btn-plain icon-action" id="fetchImageModelsBtn" type="button" aria-label="重新整理生圖模型">↻</button></div><p class="settings-hint">PWA 支援 OpenRouter、Gemini、xAI 與 HTTPS OpenAI 相容中轉站；只顯示疑似生圖模型。</p></div></section>
+    <div class="settings-section settings-actions"><button class="btn-secondary" id="testConnectionBtn" type="button" title="會送出一次最小聊天請求，可能計入供應商用量">測試連線</button><button class="btn-primary" id="saveSettingsBtn" type="button">儲存設定</button></div>`;
+  bindSettingsEvents();
+}
 
-    <div class="settings-section cache-settings">
-      <label class="cache-toggle-row">
-        <input id="promptCachingInput" type="checkbox" ${promptCachingEnabled ? "checked" : ""}>
-        <span>
-          <strong>提示詞快取</strong>
-          <small>沿用 Holt 原生的穩定前綴、滾動斷點與 request-only 狀態分層。</small>
-        </span>
-      </label>
-      <p class="settings-hint">${cacheDescription}</p>
-    </div>
+function bindSettingsEvents() {
+  apiPageContent.querySelectorAll(".starred-model-chip").forEach((chip) => chip.addEventListener("click", () => { apiPageContent.querySelector("#modelInput").value = chip.dataset.model; toast(`已填入模型：${chip.dataset.model}`); }));
+  apiPageContent.querySelector("#favoriteModelsBtn").addEventListener("click", () => openFavoriteModelsDialog({ onChanged: () => renderApiSettings() }));
+  apiPageContent.querySelector("#modelSectionToggle").addEventListener("click", (event) => { const body = apiPageContent.querySelector("#modelSectionBody"); const expanded = event.currentTarget.getAttribute("aria-expanded") === "true"; event.currentTarget.setAttribute("aria-expanded", String(!expanded)); body.hidden = expanded; });
+  apiPageContent.querySelectorAll('input[name="provider"]').forEach((radio) => radio.addEventListener("change", async () => { const nextId = radio.value; apiPageContent.querySelector("#customEndpointSection").hidden = nextId !== "custom"; apiPageContent.querySelector("#apiKeyInput").value = await getSetting(`apiKey_${nextId}`) || ""; apiPageContent.querySelector("#apiKeyInput").placeholder = PROVIDERS[nextId]?.keyPlaceholder || "sk-…"; apiPageContent.querySelector("#modelInput").value = await savedChatModel(nextId); await refreshWebSearchPreview(); }));
+  const eye = apiPageContent.querySelector("#toggleKeyVis");
+  const updateEye = () => { const input = apiPageContent.querySelector("#apiKeyInput"); const visible = input.type === "text"; eye.textContent = visible ? "◉̸" : "◉"; eye.setAttribute("aria-label", visible ? "隱藏 API Key" : "顯示 API Key"); eye.setAttribute("aria-pressed", String(visible)); };
+  updateEye(); eye.addEventListener("click", () => { const input = apiPageContent.querySelector("#apiKeyInput"); input.type = input.type === "password" ? "text" : "password"; updateEye(); });
+  apiPageContent.querySelector("#fetchModelsBtn").addEventListener("click", fetchChatModelList);
+  apiPageContent.querySelector("#promptCachingInput").addEventListener("change", async (event) => { await setPromptCachingEnabled(event.target.checked); toast(event.target.checked ? "已開啟提示詞快取" : "已關閉提示詞快取"); });
+  apiPageContent.querySelector("#webSearchEnabledInput").addEventListener("change", (event) => apiPageContent.querySelector("#webSearchBody").toggleAttribute("aria-disabled", !event.target.checked));
+  apiPageContent.querySelector("#webSearchModeInput").addEventListener("change", refreshWebSearchPreview);
+  const range = apiPageContent.querySelector("#webSearchMaxResults"); range.addEventListener("input", () => { range.previousElementSibling.querySelector("output").textContent = range.value; });
+  apiPageContent.querySelector("#imageProviderInput").addEventListener("change", async (event) => { const providerId = event.target.value; apiPageContent.querySelector("#imageModelInput").value = await getSetting(`imageGenerationModel_${providerId}`) || IMAGE_PROVIDERS[providerId].defaultModel; });
+  apiPageContent.querySelector("#fetchImageModelsBtn").addEventListener("click", fetchImageModelList);
+  apiPageContent.querySelector("#testConnectionBtn").addEventListener("click", testCurrentConnection);
+  apiPageContent.querySelector("#saveSettingsBtn").addEventListener("click", () => saveSettings());
+}
 
-    <div class="settings-section settings-actions">
-      <button class="btn-primary" id="saveSettingsBtn" type="button">儲存設定</button>
-    </div>
-  `;
-
-  // Starred chip click
-  apiPageContent.querySelectorAll(".starred-model-chip").forEach((chip) => {
-    chip.addEventListener("click", () => {
-      const m = chip.dataset.model;
-      const modelInput = apiPageContent.querySelector("#modelInput");
-      if (modelInput) modelInput.value = m;
-      toast(`已填入模型：${m}`);
-    });
-  });
-
-  // Provider radio change
-  apiPageContent.querySelectorAll('input[name="provider"]').forEach((radio) => {
-    radio.addEventListener("change", async () => {
-      const custom = radio.value === "custom";
-      const sec = apiPageContent.querySelector("#customEndpointSection");
-      sec.style.display = custom ? "" : "none";
-      const nextProvider = PROVIDERS[radio.value];
-      const nextKey = (await getSetting(`apiKey_${radio.value}`)) || "";
-      const nextProviderModel = (await getSetting(`model_${radio.value}`)) || "";
-      const nextLegacyModel = (await getSetting("model")) || "";
-      const nextModel = (isUsablePwaModelId(nextProviderModel) && !isLegacyPwaDefaultModel(nextProviderModel) ? nextProviderModel : "") || (
-        isUsablePwaModelId(nextLegacyModel) && !isLegacyPwaDefaultModel(nextLegacyModel) ? nextLegacyModel : ""
-      ) || nextProvider?.defaultModel || "";
-      const keyInput = apiPageContent.querySelector("#apiKeyInput");
-      const modelInput = apiPageContent.querySelector("#modelInput");
-      keyInput.value = nextKey;
-      keyInput.placeholder = nextProvider?.keyPlaceholder || "sk-…";
-      modelInput.value = nextModel;
-      modelInput.placeholder = "輸入模型 ID";
-      const hint = apiPageContent.querySelector(".cache-settings .settings-hint");
-      hint.textContent = radio.value === "gemini"
-        ? "Gemini 使用 Google cachedContents；達到模型門檻後建立 1 小時內容快取。"
-        : "Claude／支援 Anthropic 協議的中轉站使用 1 小時顯式快取；Grok 使用供應商的隱式前綴快取。其他模型會維持普通請求。";
-    });
-  });
-
-  // Eye toggle
-  const eyeOpenIcon = '<svg class="eye-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M2.5 12s3.3-5 9.5-5 9.5 5 9.5 5-3.3 5-9.5 5-9.5-5-9.5-5Z"></path><circle cx="12" cy="12" r="2.5"></circle></svg>';
-  const eyeClosedIcon = '<svg class="eye-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3l18 18"></path><path d="M10.6 6.9A10.7 10.7 0 0 1 12 7c6.2 0 9.5 5 9.5 5a16.3 16.3 0 0 1-3.1 3.2M6.2 6.8C3.8 8.2 2.5 12 2.5 12s3.3 5 9.5 5c1 0 1.9-.1 2.7-.4"></path><path d="M9.7 9.7a3.2 3.2 0 0 0 4.6 4.6"></path></svg>';
-  const eyeButton = apiPageContent.querySelector("#toggleKeyVis");
-  const updateEyeIcon = () => {
-    const input = apiPageContent.querySelector("#apiKeyInput");
-    const isVisible = input.type === "text";
-    eyeButton.innerHTML = isVisible ? eyeClosedIcon : eyeOpenIcon;
-    eyeButton.setAttribute("aria-label", isVisible ? "隱藏 API Key" : "顯示 API Key");
-    eyeButton.setAttribute("aria-pressed", String(isVisible));
+function currentDraft() {
+  const providerId = apiPageContent.querySelector('input[name="provider"]:checked')?.value || "openrouter";
+  return {
+    providerId,
+    apiKey: selectedValue("#apiKeyInput"),
+    model: selectedValue("#modelInput"),
+    customEndpoint: selectedValue("#customEndpointInput"),
   };
-  updateEyeIcon();
-  eyeButton.addEventListener("click", () => {
-    const input = apiPageContent.querySelector("#apiKeyInput");
-    input.type = input.type === "password" ? "text" : "password";
-    updateEyeIcon();
-  });
+}
 
-  // Fetch models with star buttons
-  apiPageContent.querySelector("#fetchModelsBtn").addEventListener("click", async () => {
-    const btn = apiPageContent.querySelector("#fetchModelsBtn");
-    btn.textContent = "載入中…";
-    try {
-      const providerId = apiPageContent.querySelector('input[name="provider"]:checked')?.value || "openrouter";
-      const apiKey = apiPageContent.querySelector("#apiKeyInput")?.value.trim() || "";
-      const customEndpoint = apiPageContent.querySelector("#customEndpointInput")?.value.trim() || "";
-      const models = await fetchModels({ providerId, apiKey, customEndpoint });
-      const dl = apiPageContent.querySelector("#modelList");
-      dl.innerHTML = models.map((m) => `<option value="${m.id}">${m.name}</option>`).join("");
+async function validateCurrentDraft() {
+  const draft = currentDraft();
+  if (!draft.apiKey) throw new Error("請先輸入 API Key");
+  if (!draft.model) throw new Error("請先輸入或選擇模型 ID");
+  const config = await getProviderConfig(draft);
+  if (!config.endpoint) throw new Error("請先輸入 HTTPS 中轉站端點");
+  return draft;
+}
 
-      const container = apiPageContent.querySelector("#fetchedModelsContainer");
-      container.style.display = "block";
-      const currentStarred = await getStarredModels();
+async function refreshWebSearchPreview() {
+  const mode = selectedValue("#webSearchModeInput", "auto");
+  const draft = currentDraft();
+  let resolved;
+  try {
+    resolved = await resolveWebSearchConfig({ mode, currentProvider: draft.providerId, currentDraft: draft });
+  } catch (error) {
+    const status = apiPageContent.querySelector("#webSearchStatus");
+    if (status) status.innerHTML = `<span class="status-dot"></span>設定未完整 · ${esc(error.message)}`;
+    return;
+  }
+  const activeProvider = mode === "auto" ? resolved.providerId : mode;
+  const status = apiPageContent.querySelector("#webSearchStatus");
+  if (status) status.innerHTML = `<span class="status-dot ${resolved.ready ? "is-ready" : ""}"></span>${mode === "auto" ? `自動將使用 ${esc(WEB_SEARCH_MODES[resolved.providerId])}` : esc(WEB_SEARCH_MODES[activeProvider])}${resolved.ready ? " · 已就緒" : " · 設定未完整"}`;
+  const select = apiPageContent.querySelector("#webSearchModelInput");
+  if (!select) return;
+  const previous = select.value;
+  const models = await favoriteSearchModels(activeProvider);
+  select.innerHTML = `<option value="">${models.length ? `自動 · ${esc(resolved.model || "目前模型")}` : "尚無此來源的收藏模型"}</option>${models.map((item) => `<option value="${esc(item)}">${esc(item)}</option>`).join("")}`;
+  if (models.includes(previous)) select.value = previous;
+}
 
-      container.innerHTML = `
-        <div style="font-size:11px;color:var(--ink-faint);margin-bottom:6px;display:flex;justify-content:space-between;">
-          <span>共 ${models.length} 個模型（點擊填入，⭐ 加星收藏）</span>
-        </div>
-        ${models.map((m) => {
-          const isStarred = currentStarred.includes(m.id);
-          return `
-            <div class="fetched-model-row" style="display:flex;align-items:center;justify-content:space-between;padding:5px 8px;border-radius:8px;margin-bottom:2px;cursor:pointer;">
-              <span class="fetched-model-id" data-model="${m.id}" style="font-size:12px;color:var(--ink);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${m.name || m.id}</span>
-              <button type="button" class="fetch-model-star-btn btn-plain" data-model="${m.id}" style="color:${isStarred ? "#f5a623" : "var(--ink-faint)"};font-size:14px;padding:2px 6px;">
-                ${isStarred ? "★" : "☆"}
-              </button>
-            </div>
-          `;
-        }).join("")}
-      `;
+async function testCurrentConnection() {
+  const button = apiPageContent.querySelector("#testConnectionBtn");
+  button.disabled = true;
+  button.textContent = "測試中…";
+  try {
+    const draft = await validateCurrentDraft();
+    await testProviderConnection(draft);
+    toast("連線成功，模型可正常回覆");
+  } catch (error) {
+    toast(`連線失敗：${error.message}`, 6000);
+  } finally {
+    button.disabled = false;
+    button.textContent = "測試連線";
+  }
+}
 
-      container.querySelectorAll(".fetched-model-id").forEach((el) => {
-        el.addEventListener("click", () => {
-          const mid = el.dataset.model;
-          apiPageContent.querySelector("#modelInput").value = mid;
-          toast(`已選擇模型：${mid}`);
-        });
-      });
+async function fetchChatModelList() {
+  const button = apiPageContent.querySelector("#fetchModelsBtn"); const container = apiPageContent.querySelector("#fetchedModelsContainer"); button.disabled = true; button.textContent = "載入中…";
+  try {
+    const providerId = apiPageContent.querySelector('input[name="provider"]:checked')?.value || "openrouter";
+    const models = await fetchModels({ providerId, apiKey: selectedValue("#apiKeyInput"), customEndpoint: selectedValue("#customEndpointInput") }); const starred = await getStarredModels();
+    apiPageContent.querySelector("#modelList").innerHTML = models.map((item) => modelOption(item.id, item.name)).join(""); container.hidden = false;
+    container.innerHTML = `<p class="fetched-models-count">共 ${models.length} 個模型</p>${models.map((item) => `<div class="fetched-model-row"><button type="button" class="fetched-model-select btn-plain" data-model="${esc(item.id)}">${esc(item.name || item.id)}</button><button type="button" class="fetch-model-star-btn btn-plain ${starred.includes(item.id) ? "is-starred" : ""}" data-model="${esc(item.id)}" aria-label="收藏 ${esc(item.id)}">${starred.includes(item.id) ? "★" : "☆"}</button></div>`).join("")}`;
+    container.querySelectorAll(".fetched-model-select").forEach((item) => item.addEventListener("click", () => { apiPageContent.querySelector("#modelInput").value = item.dataset.model; }));
+    container.querySelectorAll(".fetch-model-star-btn").forEach((item) => item.addEventListener("click", async () => { const next = await toggleStarModel(item.dataset.model, providerId); const active = next.includes(item.dataset.model); item.classList.toggle("is-starred", active); item.textContent = active ? "★" : "☆"; }));
+    toast(`已載入 ${models.length} 個模型`);
+  } catch (error) { toast(`拉取失敗：${error.message}`); } finally { button.disabled = false; button.textContent = "拉取列表"; }
+}
 
-      container.querySelectorAll(".fetch-model-star-btn").forEach((sbtn) => {
-        sbtn.addEventListener("click", async (e) => {
-          e.stopPropagation();
-          const mid = sbtn.dataset.model;
-          const prov = apiPageContent.querySelector('input[name="provider"]:checked')?.value || "openrouter";
-          const updated = await toggleStarModel(mid, prov);
-          const nowStarred = updated.includes(mid);
-          sbtn.textContent = nowStarred ? "★" : "☆";
-          sbtn.style.color = nowStarred ? "#f5a623" : "var(--ink-faint)";
-          toast(nowStarred ? `已加星收藏：${mid}` : `已取消星標：${mid}`);
-        });
-      });
+async function fetchImageModelList() {
+  const button = apiPageContent.querySelector("#fetchImageModelsBtn"); button.disabled = true; button.textContent = "…";
+  try {
+    const providerId = selectedValue("#imageProviderInput", "openrouter"); const currentChatProvider = apiPageContent.querySelector('input[name="provider"]:checked')?.value;
+    const apiKey = providerId === currentChatProvider ? selectedValue("#apiKeyInput") : await getSetting(`apiKey_${providerId}`) || "";
+    const customEndpoint = providerId === "custom" ? selectedValue("#customEndpointInput") : await getSetting("customEndpoint") || "";
+    const models = await fetchImageModels({ providerId, apiKey, customEndpoint, model: selectedValue("#imageModelInput", IMAGE_PROVIDERS[providerId].defaultModel) });
+    apiPageContent.querySelector("#imageModelList").innerHTML = models.map((item) => modelOption(item.id, item.name)).join("");
+    toast(models.length ? `已載入 ${models.length} 個生圖模型` : "未找到疑似生圖模型，可直接輸入模型 ID");
+  } catch (error) { toast(`生圖模型拉取失敗：${error.message}`); } finally { button.disabled = false; button.textContent = "↻"; }
+}
 
-      toast(`已載入 ${models.length} 個模型`);
-    } catch (err) {
-      toast("拉取失敗：" + err.message);
-    } finally {
-      btn.textContent = "拉取列表";
-    }
-  });
-
-  // Prompt caching toggle
-  apiPageContent.querySelector("#promptCachingInput").addEventListener("change", async (event) => {
-    await setPromptCachingEnabled(event.target.checked);
-    toast(event.target.checked ? "已開啟提示詞快取" : "已關閉提示詞快取");
-  });
-
-  // Save
-  apiPageContent.querySelector("#saveSettingsBtn").addEventListener("click", async () => {
-    const prov = apiPageContent.querySelector('input[name="provider"]:checked')?.value || "openrouter";
-    const key = apiPageContent.querySelector("#apiKeyInput").value.trim();
-    const mdl = apiPageContent.querySelector("#modelInput").value.trim();
-    const ep = apiPageContent.querySelector("#customEndpointInput")?.value.trim() || "";
-
-    await setSetting("provider", prov);
-    await setSetting(`apiKey_${prov}`, key);
-    await setSetting(`model_${prov}`, mdl);
-    await setSetting("model", mdl);
-    if (ep) await setSetting("customEndpoint", ep);
-
-    toast("設定已儲存");
-  });
+async function saveSettings({ quiet = false } = {}) {
+  try {
+    const draft = await validateCurrentDraft();
+    const { providerId, apiKey, model, customEndpoint } = draft;
+    const imageProvider = selectedValue("#imageProviderInput", "openrouter");
+    const searchMode = selectedValue("#webSearchModeInput", "auto");
+    await Promise.all([
+      setSetting("provider", providerId), setSetting(`apiKey_${providerId}`, apiKey), setSetting(`model_${providerId}`, model), setSetting("model", model), setSetting("customEndpoint", customEndpoint),
+      setSetting("imageGenerationProvider", imageProvider), setSetting(`imageGenerationModel_${imageProvider}`, selectedValue("#imageModelInput")),
+    ]);
+    const resolvedSearch = await resolveWebSearchConfig({ mode: searchMode, currentProvider: providerId });
+    const activeSearchProvider = searchMode === "auto" ? resolvedSearch.providerId : searchMode;
+    await Promise.all([
+      setSetting("webSearchEnabled", apiPageContent.querySelector("#webSearchEnabledInput").checked), setSetting("webSearchMode", searchMode), setSetting("webSearchMaxResults", Number(selectedValue("#webSearchMaxResults", "5"))), setSetting(`webSearchModel_${activeSearchProvider}`, selectedValue("#webSearchModelInput")),
+    ]);
+    if (!quiet) toast("設定已儲存");
+    return true;
+  } catch (error) {
+    if (!quiet) toast(`無法儲存：${error.message}`, 6000);
+    return false;
+  }
 }

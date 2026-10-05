@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'context_mode.dart';
 
 class MemoryActionProposal {
   static const String actionCreate = 'create';
@@ -17,6 +18,8 @@ class MemoryActionProposal {
   final String id;
   final String characterId;
   final String mode;
+  final ContextMode contextMode;
+  final String continuityId;
   final String action;
   final String source;
   final String? sourceConversationId;
@@ -36,6 +39,8 @@ class MemoryActionProposal {
     required this.id,
     required this.characterId,
     required this.mode,
+    this.contextMode = ContextMode.daily,
+    this.continuityId = 'main',
     required this.action,
     required this.source,
     required this.sourceConversationId,
@@ -103,6 +108,8 @@ class MemoryActionProposal {
       id: map['id']?.toString() ?? '',
       characterId: map['character_id']?.toString() ?? 'default',
       mode: map['mode']?.toString() ?? 'romance',
+      contextMode: ContextMode.fromStorage(map['context_mode'] ?? 'daily'),
+      continuityId: map['continuity_id']?.toString() ?? 'main',
       action: map['action']?.toString() ?? '',
       source: map['source']?.toString() ?? '',
       sourceConversationId: map['source_conversation_id']?.toString(),

@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:project_yanci/memory/database.dart';
 import 'package:project_yanci/models/memory.dart';
+import 'package:project_yanci/models/context_mode.dart';
 import 'package:project_yanci/models/memory_action_proposal.dart';
 import 'package:project_yanci/services/memory_guard_service.dart';
 import 'package:project_yanci/services/locale_strings.dart';
@@ -87,6 +88,510 @@ void main() {
       expect(await _memoryStatus(db, memoryId), 'active');
     },
   );
+
+  test(
+    'rejected paraphrased model suggestion does not return to review',
+    () async {
+      final first = await MemoryGuardService.guardNewMemory(
+        candidate: Memory(
+          characterId: 'char-a',
+          mode: 'romance',
+          category: '偏好',
+          content: '昭昭喜歡在下雨天留在家裡看電影',
+          confidence: 'high',
+          triggers: '下雨天,電影',
+        ),
+        source: 'model',
+        sourceConversationId: 'conv-a',
+      );
+      expect(first.disposition, GuardedMemoryWriteDisposition.proposalCreated);
+      await MemoryGuardService.reject(first.proposalId!, 'char-a');
+      expect(await db.query('memory_rejection_tombstones'), hasLength(1));
+      await db.delete(
+        'pending_memory_actions',
+        where: 'id = ?',
+        whereArgs: <Object?>[first.proposalId],
+      );
+
+      final paraphrase = await MemoryGuardService.guardNewMemory(
+        candidate: Memory(
+          characterId: 'char-a',
+          mode: 'romance',
+          category: '偏好',
+          content: '昭昭喜歡下雨天留在家裡看電影',
+          confidence: 'high',
+          triggers: '下雨天,電影',
+        ),
+        source: 'model',
+        sourceConversationId: 'conv-b',
+      );
+
+      expect(
+        paraphrase.disposition,
+        GuardedMemoryWriteDisposition.skippedDuplicate,
+      );
+      expect(await MemoryGuardService.listForReview('char-a'), isEmpty);
+      expect(await _memoryCount(db), 0);
+    },
+  );
+
+  test(
+    'rejected Chinese fact stays rejected after aliases and expansion',
+    () async {
+      final first = await MemoryGuardService.guardNewMemory(
+        candidate: Memory(
+          characterId: 'char-a',
+          mode: 'romance',
+          category: '自我揭露',
+          content: '[9/25] 昭昭四歲時爸爸離開，現在聯繫但不親近，爸爸抱他時會想推開',
+          confidence: 'high',
+          triggers: '爸爸,推開,四歲',
+        ),
+        source: 'model',
+        sourceConversationId: 'conv-a',
+      );
+      await MemoryGuardService.reject(first.proposalId!, 'char-a');
+
+      final returned = await MemoryGuardService.guardNewMemory(
+        candidate: Memory(
+          characterId: 'char-a',
+          mode: 'romance',
+          category: '自我揭露',
+          content: '[9/25] 昭昭的爸在他四歲時離開，現在仍有聯繫但不親；他爸抱他時，他很不習慣並會想推開',
+          confidence: 'high',
+          triggers: '爸,四歲,推開',
+        ),
+        source: 'model',
+        sourceConversationId: 'conv-a',
+      );
+
+      expect(
+        returned.disposition,
+        GuardedMemoryWriteDisposition.skippedDuplicate,
+      );
+      expect(await MemoryGuardService.listForReview('char-a'), isEmpty);
+    },
+  );
+
+  test(
+    'added clarification does not turn a rejected paraphrase into conflict',
+    () async {
+      final first = await MemoryGuardService.guardNewMemory(
+        candidate: Memory(
+          characterId: 'char-a',
+          mode: 'romance',
+          category: '自我揭露',
+          content: '晏辭的爸爸很早離開，媽媽獨自養大她，不擁抱也不問感受',
+          confidence: 'high',
+          triggers: '晏辭媽媽,原生家庭',
+        ),
+        source: 'model',
+        sourceConversationId: 'conv-a',
+      );
+      await MemoryGuardService.reject(first.proposalId!, 'char-a');
+
+      final returned = await MemoryGuardService.guardNewMemory(
+        candidate: Memory(
+          characterId: 'char-a',
+          mode: 'romance',
+          category: '自我揭露',
+          content: '晏辭的爸走得早（離開，不是去世），媽媽一個人帶大她，從不擁抱，也不詢問她是否開心',
+          confidence: 'high',
+          triggers: '媽,安靜,家',
+        ),
+        source: 'model',
+        sourceConversationId: 'conv-a',
+      );
+
+      expect(
+        returned.disposition,
+        GuardedMemoryWriteDisposition.skippedDuplicate,
+      );
+    },
+  );
+
+  test('a genuinely opposite fact is not hidden by an old rejection', () async {
+    final first = await MemoryGuardService.guardNewMemory(
+      candidate: Memory(
+        characterId: 'char-a',
+        mode: 'romance',
+        category: '偏好',
+        content: '晏辭不喜歡榴槤味的甜點',
+        confidence: 'high',
+        triggers: '榴槤,甜點',
+      ),
+      source: 'model',
+      sourceConversationId: 'conv-a',
+    );
+    await MemoryGuardService.reject(first.proposalId!, 'char-a');
+
+    final changed = await MemoryGuardService.guardNewMemory(
+      candidate: Memory(
+        characterId: 'char-a',
+        mode: 'romance',
+        category: '偏好',
+        content: '晏辭現在喜歡榴槤味的甜點',
+        confidence: 'high',
+        triggers: '榴槤,甜點',
+      ),
+      source: 'model',
+      sourceConversationId: 'conv-a',
+    );
+
+    expect(changed.disposition, GuardedMemoryWriteDisposition.proposalCreated);
+    expect(await MemoryGuardService.listForReview('char-a'), hasLength(1));
+  });
+
+  test('open model suggestions are deduplicated before review', () async {
+    final first = await MemoryGuardService.guardNewMemory(
+      candidate: Memory(
+        characterId: 'char-a',
+        mode: 'romance',
+        category: '重要事件',
+        content: '中秋節昭昭帶月餅和花來，兩人談起各自的原生家庭',
+        confidence: 'high',
+        triggers: '中秋,月餅,原生家庭',
+      ),
+      source: 'model',
+      sourceConversationId: 'conv-a',
+    );
+    final rewritten = await MemoryGuardService.guardNewMemory(
+      candidate: Memory(
+        characterId: 'char-a',
+        mode: 'romance',
+        category: '重要事件',
+        content: '中秋那天，昭昭帶著冰皮月餅與花來找晏辭，之後兩人聊了雙方的原生家庭',
+        confidence: 'high',
+        triggers: '中秋,月餅,原生家庭',
+      ),
+      source: 'model',
+      sourceConversationId: 'conv-a',
+    );
+
+    expect(first.disposition, GuardedMemoryWriteDisposition.proposalCreated);
+    expect(
+      rewritten.disposition,
+      GuardedMemoryWriteDisposition.skippedDuplicate,
+    );
+    expect(await MemoryGuardService.listForReview('char-a'), hasLength(1));
+  });
+
+  test(
+    'rejection survives category drift and cleans an existing inbox item',
+    () async {
+      final first = await MemoryGuardService.guardNewMemory(
+        candidate: Memory(
+          characterId: 'char-a',
+          mode: 'romance',
+          category: '偏好',
+          content: '[9/20] 昭昭喜歡下雨天留在家裡看電影',
+          confidence: 'high',
+          triggers: '下雨天,電影',
+        ),
+        source: 'model',
+        sourceConversationId: 'conv-a',
+      );
+      await MemoryGuardService.reject(first.proposalId!, 'char-a');
+
+      final now = DateTime.now().toIso8601String();
+      await db.insert('pending_memory_actions', <String, Object?>{
+        'id': 'returned-suggestion',
+        'character_id': 'char-a',
+        'context_mode': 'daily',
+        'continuity_id': 'main',
+        'mode': 'romance',
+        'action': MemoryActionProposal.actionCreate,
+        'source': 'model',
+        'source_conversation_id': 'conv-b',
+        'source_message_id': null,
+        'target_ids_json': '[]',
+        'payload_json': jsonEncode(<String, Object?>{
+          'targets': const <Object?>[],
+          'candidate': <String, Object?>{
+            'mode': 'romance',
+            'category': '重要事件',
+            'content': '[9/21] 昭昭喜歡下雨天留在家裡看電影',
+            'triggers': '下雨天,電影',
+            'permanent': false,
+          },
+          'result': const <String, Object?>{},
+        }),
+        'base_versions_json': '{}',
+        'fingerprint': 'returned-suggestion-fingerprint',
+        'status': MemoryActionProposal.statusPending,
+        'created_at': now,
+        'seen_at': null,
+        'resolved_at': null,
+        'error': '',
+        'result_json': '{}',
+      });
+
+      expect(await MemoryGuardService.listForReview('char-a'), isEmpty);
+      final row = (await db.query(
+        'pending_memory_actions',
+        where: 'id = ?',
+        whereArgs: ['returned-suggestion'],
+      )).single;
+      expect(row['status'], MemoryActionProposal.statusRejected);
+    },
+  );
+
+  test('rejected paraphrase survives model category drift', () async {
+    final first = await MemoryGuardService.guardNewMemory(
+      candidate: Memory(
+        characterId: 'char-a',
+        mode: 'romance',
+        category: '自我揭露',
+        content: '[9/25] 昭昭的媽媽今天中秋節塞了他九顆大生蠔，媽媽不知道他來找晏辭',
+        confidence: 'high',
+        triggers: '生蠔,昭昭媽媽',
+      ),
+      source: 'model',
+      sourceConversationId: 'conv-a',
+    );
+    await MemoryGuardService.reject(first.proposalId!, 'char-a');
+
+    final returned = await MemoryGuardService.guardNewMemory(
+      candidate: Memory(
+        characterId: 'char-a',
+        mode: 'romance',
+        category: '偏好',
+        content: '[9/25] 昭昭今天來找晏辭之前被他媽塞了九顆大生蠔，晏辭拿來調侃並計算工作量',
+        confidence: 'high',
+        triggers: '生蠔,媽',
+      ),
+      source: 'model',
+      sourceConversationId: 'conv-a',
+    );
+
+    expect(
+      returned.disposition,
+      GuardedMemoryWriteDisposition.skippedDuplicate,
+    );
+  });
+
+  test('merge preview strips duplicate-processing narration', () async {
+    final firstId = await _insertMemory(db, 'char-a', '昭昭答應下次再來');
+    final secondId = await _insertMemory(db, 'char-a', '昭昭說下次還會再來');
+    final rows = await db.query(
+      'memories',
+      where: 'id IN (?, ?)',
+      whereArgs: [firstId, secondId],
+      orderBy: 'id ASC',
+    );
+    await MemoryGuardService.proposeExistingDuplicate(
+      characterId: 'char-a',
+      mode: 'romance',
+      first: Memory.fromMap(rows.first),
+      second: Memory.fromMap(rows.last),
+      score: 0.97,
+      reasons: const ['same promise'],
+      mergeResult: const <String, Object?>{
+        'category': '約定',
+        'content': '昭昭答應下次還會再來（重複記憶已合併）',
+        'triggers': '下次',
+      },
+    );
+
+    final proposal = (await MemoryGuardService.listForReview('char-a')).single;
+    expect(proposal.mergePreview['content'], '昭昭答應下次還會再來');
+  });
+
+  test(
+    'clear-all rejects only one character review items and suggested links',
+    () async {
+      final firstId = await _insertMemory(db, 'char-a', '昭昭喜歡雨天');
+      final secondId = await _insertMemory(db, 'char-a', '昭昭喜歡下雨天');
+      final thirdId = await _insertMemory(db, 'char-a', '昭昭會帶傘');
+      final otherId = await _insertMemory(db, 'char-b', '另一個角色的記憶');
+      final rows = await db.query(
+        'memories',
+        where: 'id IN (?, ?)',
+        whereArgs: [firstId, secondId],
+        orderBy: 'id ASC',
+      );
+      await DatabaseHelper.upsertSpiderWebRelation(
+        'char-a',
+        firstId,
+        secondId,
+        relationType: 'duplicate_candidate',
+        strength: 0.91,
+        status: 'suggested',
+        source: 'local_scan',
+        reason: 'test',
+      );
+      await DatabaseHelper.upsertSpiderWebRelation(
+        'char-a',
+        firstId,
+        thirdId,
+        relationType: 'related',
+        strength: 0.8,
+        status: 'confirmed',
+        source: 'user',
+        reason: 'keep',
+      );
+      await MemoryGuardService.proposeExistingDuplicate(
+        characterId: 'char-a',
+        mode: 'romance',
+        first: Memory.fromMap(rows.first),
+        second: Memory.fromMap(rows.last),
+        score: 0.91,
+        reasons: const ['content_similarity:91'],
+      );
+      await MemoryGuardService.proposeDelete(
+        characterId: 'char-a',
+        mode: 'romance',
+        sourceConversationId: 'conv-a',
+        targetIds: [thirdId],
+      );
+      await MemoryGuardService.proposeDelete(
+        characterId: 'char-b',
+        mode: 'romance',
+        sourceConversationId: 'conv-b',
+        targetIds: [otherId],
+      );
+
+      expect(await MemoryGuardService.rejectAllForReview('char-a'), 2);
+      expect(await MemoryGuardService.listForReview('char-a'), isEmpty);
+      expect(await MemoryGuardService.listForReview('char-b'), hasLength(1));
+      expect(await _memoryStatus(db, firstId), 'active');
+      expect(await _memoryStatus(db, secondId), 'active');
+      expect(await _memoryStatus(db, thirdId), 'active');
+
+      final links = await db.query(
+        'spider_web_links',
+        where: 'character_id = ?',
+        whereArgs: ['char-a'],
+        orderBy: 'memory_id_2 ASC',
+      );
+      final suggested = links.singleWhere(
+        (row) =>
+            row['memory_id_1'] == firstId && row['memory_id_2'] == secondId,
+      );
+      final confirmed = links.singleWhere(
+        (row) => row['memory_id_1'] == firstId && row['memory_id_2'] == thirdId,
+      );
+      expect(suggested['status'], 'rejected');
+      expect(confirmed['status'], 'confirmed');
+    },
+  );
+
+  test(
+    'clear relation suggestions preserves memories and confirmed links',
+    () async {
+      final firstId = await _insertMemory(db, 'char-a', '搬家前的約定');
+      final secondId = await _insertMemory(db, 'char-a', '搬家後的結果');
+      final thirdId = await _insertMemory(db, 'char-a', '共同挑選家具');
+      final otherFirst = await _insertMemory(db, 'char-b', '另一角色記憶一');
+      final otherSecond = await _insertMemory(db, 'char-b', '另一角色記憶二');
+      await DatabaseHelper.upsertSpiderWebRelation(
+        'char-a',
+        firstId,
+        secondId,
+        relationType: 'duplicate_candidate',
+        strength: 0.96,
+        status: 'suggested',
+        source: 'model',
+        reason: '待審核',
+      );
+      await DatabaseHelper.upsertSpiderWebRelation(
+        'char-a',
+        firstId,
+        thirdId,
+        relationType: 'temporal',
+        strength: 0.95,
+        status: 'confirmed',
+        source: 'user',
+        reason: '保留',
+      );
+      await DatabaseHelper.upsertSpiderWebRelation(
+        'char-b',
+        otherFirst,
+        otherSecond,
+        relationType: 'related',
+        strength: 0.94,
+        status: 'suggested',
+        source: 'model',
+        reason: '另一角色',
+      );
+      final rows = await db.query(
+        'memories',
+        where: 'id IN (?, ?)',
+        whereArgs: <Object?>[firstId, secondId],
+        orderBy: 'id ASC',
+      );
+      await MemoryGuardService.proposeExistingDuplicate(
+        characterId: 'char-a',
+        mode: 'romance',
+        first: Memory.fromMap(rows.first),
+        second: Memory.fromMap(rows.last),
+        score: 0.96,
+        reasons: const <String>['model_relation:96'],
+      );
+
+      expect(await MemoryGuardService.rejectAllSuggestedRelations('char-a'), 1);
+      expect(await MemoryGuardService.listForReview('char-a'), isEmpty);
+      expect(await _memoryStatus(db, firstId), 'active');
+      expect(await _memoryStatus(db, secondId), 'active');
+      expect(await _memoryStatus(db, thirdId), 'active');
+
+      final charALinks = await db.query(
+        'spider_web_links',
+        where: 'character_id = ?',
+        whereArgs: const <Object?>['char-a'],
+      );
+      expect(
+        charALinks.singleWhere(
+          (row) => row['relation_type'] == 'duplicate_candidate',
+        )['status'],
+        'rejected',
+      );
+      expect(
+        charALinks.singleWhere(
+          (row) => row['relation_type'] == 'temporal',
+        )['status'],
+        'confirmed',
+      );
+      final charBLinks = await DatabaseHelper.getSpiderWebLinks('char-b');
+      expect(charBLinks.single['status'], 'suggested');
+    },
+  );
+
+  test('model curation cannot revive a user-rejected relation', () async {
+    final firstId = await _insertMemory(db, 'char-a', '被拒絕的候選一');
+    final secondId = await _insertMemory(db, 'char-a', '被拒絕的候選二');
+    await DatabaseHelper.upsertSpiderWebRelation(
+      'char-a',
+      firstId,
+      secondId,
+      relationType: 'related',
+      strength: 0.93,
+      status: 'suggested',
+      source: 'model',
+      reason: '候選',
+    );
+    final link = (await db.query('spider_web_links')).single;
+    await DatabaseHelper.resolveSpiderWebRelation(
+      'char-a',
+      link['id'] as int,
+      confirmed: false,
+    );
+
+    expect(
+      await DatabaseHelper.upsertSpiderWebRelationDetailed(
+        'char-a',
+        firstId,
+        secondId,
+        relationType: 'related',
+        strength: 0.99,
+        status: 'confirmed',
+        source: 'user_curation',
+        reason: '模型再次提出',
+      ),
+      SpiderWebRelationWriteResult.protected,
+    );
+    expect((await db.query('spider_web_links')).single['status'], 'rejected');
+  });
 
   test(
     'reply review marks visible on-device duplicate proposals as seen',
@@ -181,6 +686,32 @@ void main() {
       final second = await _insertMemory(db, 'char-a', '重複片段 B');
       final neighbor = await _insertMemory(db, 'char-a', '關聯記憶');
       await DatabaseHelper.insertSpiderWebLink('char-a', first, neighbor);
+      expect(
+        await DatabaseHelper.upsertSpiderWebRelationDetailed(
+          'char-a',
+          first,
+          neighbor,
+          relationType: 'temporal',
+          strength: 0.6,
+          status: 'suggested',
+          source: 'local_scan',
+          reason: '同一時段',
+        ),
+        SpiderWebRelationWriteResult.inserted,
+      );
+      final temporalLink = (await db.query(
+        'spider_web_links',
+        where: 'relation_type = ?',
+        whereArgs: ['temporal'],
+      )).single;
+      expect(
+        await DatabaseHelper.resolveSpiderWebRelation(
+          'char-a',
+          temporalLink['id'] as int,
+          confirmed: false,
+        ),
+        isTrue,
+      );
 
       final beforeCount = await _memoryCount(db);
       final proposalId = await MemoryGuardService.proposeMerge(
@@ -211,17 +742,27 @@ void main() {
       final mergedId = mergedRows.single['id'] as int;
       expect(await _memoryStatus(db, first), 'deleted');
       expect(await _memoryStatus(db, second), 'deleted');
+      final remappedLinks = await db.query(
+        'spider_web_links',
+        where: 'character_id = ? AND memory_id_1 = ? AND memory_id_2 = ?',
+        whereArgs: [
+          'char-a',
+          mergedId < neighbor ? mergedId : neighbor,
+          mergedId < neighbor ? neighbor : mergedId,
+        ],
+      );
+      expect(remappedLinks, hasLength(2));
       expect(
-        await db.query(
-          'spider_web_links',
-          where: 'character_id = ? AND memory_id_1 = ? AND memory_id_2 = ?',
-          whereArgs: [
-            'char-a',
-            mergedId < neighbor ? mergedId : neighbor,
-            mergedId < neighbor ? neighbor : mergedId,
-          ],
-        ),
-        hasLength(1),
+        remappedLinks.firstWhere(
+          (row) => row['relation_type'] == 'related',
+        )['status'],
+        'confirmed',
+      );
+      expect(
+        remappedLinks.firstWhere(
+          (row) => row['relation_type'] == 'temporal',
+        )['status'],
+        'rejected',
       );
     },
   );
@@ -541,6 +1082,39 @@ void main() {
       MemoryActionProposal.statusCompleted,
     );
     expect(await _memoryCount(db), 1);
+  });
+
+  test('accepted RP proposal keeps its RP lane and continuity', () async {
+    final guarded = await MemoryGuardService.guardNewMemory(
+      candidate: Memory(
+        characterId: 'char-a',
+        contextMode: ContextMode.rp,
+        continuityId: 'route-red',
+        mode: 'story',
+        category: '伏筆',
+        content: '門後傳來第三個人的腳步聲',
+        confidence: 'high',
+      ),
+      source: 'model',
+      sourceConversationId: 'rp-window',
+    );
+    expect(guarded.disposition, GuardedMemoryWriteDisposition.proposalCreated);
+
+    expect(
+      await MemoryGuardService.execute(
+        guarded.proposalId!,
+        'char-a',
+        createDecision: MemoryGuardService.createDecisionUseNew,
+      ),
+      MemoryActionProposal.statusCompleted,
+    );
+    final row = (await db.query(
+      'memories',
+      where: 'content = ?',
+      whereArgs: ['門後傳來第三個人的腳步聲'],
+    )).single;
+    expect(row['context_mode'], 'rp');
+    expect(row['continuity_id'], 'route-red');
   });
 }
 

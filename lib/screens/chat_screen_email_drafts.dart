@@ -52,16 +52,13 @@ extension _ChatEmailDraftMethods on _ChatScreenState {
   Future<void> _openEmailDraft(EmailDraft draft) async {
     final opened = await EmailDraftLauncher.open(draft);
     if (!mounted || opened) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          L.pick(
-            en: 'No email app could open this draft.',
-            zhTW: '找不到可打開這份草稿的郵件 App。',
-            zhCN: '找不到可打开这份草稿的邮件 App。',
-          ),
-        ),
+    _showChatNotice(
+      L.pick(
+        en: 'No email app could open this draft.',
+        zhTW: '找不到可打開這份草稿的郵件 App。',
+        zhCN: '找不到可打开这份草稿的邮件 App。',
       ),
+      tone: ThemedNoticeTone.error,
     );
   }
 
@@ -105,16 +102,13 @@ extension _ChatEmailDraftMethods on _ChatScreenState {
   }
 
   void _showEmailDraftFailure() {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          L.pick(
-            en: 'Could not update the local draft.',
-            zhTW: '無法更新本機草稿。',
-            zhCN: '无法更新本机草稿。',
-          ),
-        ),
+    _showChatNotice(
+      L.pick(
+        en: 'Could not update the local draft.',
+        zhTW: '無法更新本機草稿。',
+        zhCN: '无法更新本机草稿。',
       ),
+      tone: ThemedNoticeTone.error,
     );
   }
 }

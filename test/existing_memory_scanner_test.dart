@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:project_yanci/memory/database.dart';
 import 'package:project_yanci/memory/spider_web_core.dart';
+import 'package:project_yanci/models/context_mode.dart';
 import 'package:project_yanci/models/memory.dart';
 import 'package:project_yanci/models/memory_action_proposal.dart';
 import 'package:project_yanci/services/existing_memory_scanner.dart';
@@ -197,10 +198,94 @@ void main() {
     );
 
     expect(result.duplicateProposals, 1);
-    final relation = (await DatabaseHelper.getSpiderWebLinks('char-a')).single;
-    expect(relation['relation_type'], 'duplicate_candidate');
-    expect(relation['source'], 'local_scan');
+    final relations = await DatabaseHelper.getSpiderWebLinks('char-a');
+    expect(relations, hasLength(2));
+    final duplicateRelation = relations.firstWhere(
+      (row) => row['relation_type'] == 'duplicate_candidate',
+    );
+    expect(duplicateRelation['source'], 'local_scan');
     expect(await MemoryGuardService.listForReview('char-a'), hasLength(1));
+  });
+
+  test('explicit selected-memory scan merges duplicates immediately', () async {
+    final memories = <Memory>[
+      await _insert(db, '昭昭喜歡在雨天窩在家裡看電影', triggers: '雨天,電影'),
+      await _insert(db, '昭昭喜歡雨天窩在家裡看電影', triggers: '雨天,電影'),
+    ];
+
+    final result = await ExistingMemoryScanner.scan(
+      characterId: 'char-a',
+      memories: memories,
+      applyImmediately: true,
+    );
+
+    expect(result.mergedGroups, 1);
+    expect(result.duplicateProposals, 0);
+    expect(await MemoryGuardService.listForReview('char-a'), isEmpty);
+    final active = await db.query(
+      'memories',
+      where: 'character_id = ? AND status = ?',
+      whereArgs: ['char-a', 'active'],
+    );
+    expect(active, hasLength(1));
+    expect(active.single['content'], isNot(contains('；')));
+  });
+
+  test('RP scan proposes duplicate merges without graph links', () async {
+    final memories = <Memory>[
+      await _insert(
+        db,
+        '沈昭嶼在渡口接過白鶴印信',
+        triggers: '渡口,白鶴印信',
+        contextMode: ContextMode.rp,
+        continuityId: 'route-a',
+      ),
+      await _insert(
+        db,
+        '沈昭嶼在渡口接過白鶴印信',
+        triggers: '渡口,白鶴印信',
+        contextMode: ContextMode.rp,
+        continuityId: 'route-a',
+      ),
+    ];
+
+    final result = await ExistingMemoryScanner.scan(
+      characterId: 'char-a',
+      memories: memories,
+    );
+
+    expect(result.duplicateProposals, 1);
+    expect(result.suggestedRelations, 0);
+    expect(await DatabaseHelper.getSpiderWebLinks('char-a'), isEmpty);
+    expect(await MemoryGuardService.listForReview('char-a'), hasLength(1));
+  });
+
+  test('RP scan ignores non-duplicate relation candidates', () async {
+    final memories = <Memory>[
+      await _insert(
+        db,
+        '一起照顧藥鋪裡的橘貓',
+        triggers: '橘貓',
+        contextMode: ContextMode.rp,
+        continuityId: 'route-a',
+      ),
+      await _insert(
+        db,
+        '記得替橘貓準備晚餐',
+        triggers: '橘貓',
+        contextMode: ContextMode.rp,
+        continuityId: 'route-a',
+      ),
+    ];
+
+    final result = await ExistingMemoryScanner.scan(
+      characterId: 'char-a',
+      memories: memories,
+    );
+
+    expect(result.suggestedRelations, 0);
+    expect(result.duplicateProposals, 0);
+    expect(await DatabaseHelper.getSpiderWebLinks('char-a'), isEmpty);
   });
 
   test(
@@ -226,40 +311,35 @@ void main() {
     },
   );
 
-  test(
-    'new dedupe policy revives a proposal hidden by an older scan',
-    () async {
-      final memories = <Memory>[
-        await _insert(db, '昭昭喜歡電影', triggers: '電影'),
-        await _insert(db, '昭昭喜歡影', triggers: '電影'),
-      ];
-      await ExistingMemoryScanner.scan(
-        characterId: 'char-a',
-        memories: memories,
-      );
-      final proposal = (await MemoryGuardService.listForReview(
-        'char-a',
-      )).single;
-      await MemoryGuardService.reject(proposal.id, 'char-a');
-      await db.update(
-        'pending_memory_actions',
-        <String, Object?>{'payload_json': '{"existing_duplicate_scan":true}'},
-        where: 'id = ?',
-        whereArgs: [proposal.id],
-      );
+  test('new dedupe policy never revives a rejected proposal', () async {
+    final memories = <Memory>[
+      await _insert(db, '昭昭喜歡電影', triggers: '電影'),
+      await _insert(db, '昭昭喜歡影', triggers: '電影'),
+    ];
+    await ExistingMemoryScanner.scan(characterId: 'char-a', memories: memories);
+    final proposal = (await MemoryGuardService.listForReview('char-a')).single;
+    await MemoryGuardService.reject(proposal.id, 'char-a');
+    await db.update(
+      'pending_memory_actions',
+      <String, Object?>{'payload_json': '{"existing_duplicate_scan":true}'},
+      where: 'id = ?',
+      whereArgs: [proposal.id],
+    );
 
-      final repeated = await ExistingMemoryScanner.scan(
-        characterId: 'char-a',
-        memories: memories,
-      );
+    final repeated = await ExistingMemoryScanner.scan(
+      characterId: 'char-a',
+      memories: memories,
+    );
 
-      expect(repeated.duplicateProposals, 1);
-      final revived = (await MemoryGuardService.listForReview('char-a')).single;
-      expect(revived.id, proposal.id);
-      expect(revived.status, MemoryActionProposal.statusPending);
-      expect(revived.duplicateScore, greaterThanOrEqualTo(0.83));
-    },
-  );
+    expect(repeated.duplicateProposals, 0);
+    expect(await MemoryGuardService.listForReview('char-a'), isEmpty);
+    final rejected = (await db.query(
+      'pending_memory_actions',
+      where: 'id = ?',
+      whereArgs: [proposal.id],
+    )).single;
+    expect(rejected['status'], MemoryActionProposal.statusRejected);
+  });
 
   test('suggested relation never participates in neural propagation', () async {
     final first = await _insert(db, '一起照顧家裡的橘貓', triggers: '橘貓');
@@ -306,10 +386,14 @@ Future<Memory> _insert(
   String content, {
   required String triggers,
   String category = '偏好',
+  ContextMode contextMode = ContextMode.daily,
+  String continuityId = 'main',
 }) async {
   final now = DateTime.utc(2026, 8, 6);
   final memory = Memory(
     characterId: 'char-a',
+    contextMode: contextMode,
+    continuityId: continuityId,
     mode: 'romance',
     category: category,
     content: content,

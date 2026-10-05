@@ -29,6 +29,8 @@ void main() {
     () async {
       final image = File(p.join(owned.path, 'chat image.png'));
       await image.writeAsBytes(<int>[1, 2, 3, 4, 5]);
+      final secondImage = File(p.join(owned.path, 'chat image 2.png'));
+      await secondImage.writeAsBytes(<int>[6, 7, 8, 9]);
       final outside = File(p.join(root.path, 'outside.png'));
       await outside.writeAsBytes(<int>[9, 9, 9]);
       final database = File(p.join(root.path, 'yanci.db'));
@@ -38,7 +40,13 @@ void main() {
       await PortableBackupBundle.create(
         backupData: <String, Object?>{
           'messages': <Object?>[
-            <String, Object?>{'image_path': image.path},
+            <String, Object?>{
+              'image_path': image.path,
+              'image_paths_json': jsonEncode(<String>[
+                image.path,
+                secondImage.path,
+              ]),
+            },
           ],
           'stickers': <Object?>[
             <String, Object?>{'file_path': image.path},
@@ -78,6 +86,16 @@ void main() {
       expect(messagePath, preferencePath);
       expect(p.isWithin(destination.path, messagePath), isTrue);
       expect(await File(messagePath).readAsBytes(), <int>[1, 2, 3, 4, 5]);
+      final messageRow = (extracted.data['messages'] as List).single as Map;
+      final restoredImages =
+          jsonDecode(messageRow['image_paths_json'] as String) as List<dynamic>;
+      expect(restoredImages, hasLength(2));
+      expect(await File(restoredImages[1] as String).readAsBytes(), <int>[
+        6,
+        7,
+        8,
+        9,
+      ]);
       expect(
         ((extracted.data['characters'] as List).single as Map)['avatar_path'],
         isNull,

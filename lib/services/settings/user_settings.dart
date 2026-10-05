@@ -269,6 +269,7 @@ class UserSettings {
   static const String _keyLocalModelPath = 'local_model_path';
   static const String _keyEnableVibration = 'enable_vibration';
   static const String _keyStickerVisionModel = 'sticker_vision_model';
+  static const String _keyStickerVisionProvider = 'sticker_vision_provider_v1';
   static const String _keyShowChatAvatar = 'show_chat_avatar';
 
   static Future<void> saveSendStyle(String style) async {
@@ -310,6 +311,20 @@ class UserSettings {
   static Future<String> getStickerVisionModel() async {
     final p = await SharedPreferences.getInstance();
     return p.getString(_keyStickerVisionModel) ?? '';
+  }
+
+  static Future<void> saveStickerVisionSelection({
+    required String provider,
+    required String model,
+  }) async {
+    final p = await SharedPreferences.getInstance();
+    await p.setString(_keyStickerVisionProvider, provider.trim());
+    await p.setString(_keyStickerVisionModel, model.trim());
+  }
+
+  static Future<String> getStickerVisionProvider() async {
+    final p = await SharedPreferences.getInstance();
+    return p.getString(_keyStickerVisionProvider) ?? '';
   }
 
   static Future<void> saveShowChatAvatar(bool v) async {

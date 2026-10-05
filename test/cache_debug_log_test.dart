@@ -116,4 +116,25 @@ void main() {
 
     expect(CacheDebugLog.previousComparableMain(0), isNull);
   });
+
+  test('fingerprint comparison does not cross daily and RP modes', () {
+    CacheDebugLog.add(<String, Object?>{
+      'session_id': 'conv-a',
+      'model': 'claude-sonnet-4',
+      'cache_channel': 'text',
+      'context_mode': 'daily',
+      'hash': 'daily-older',
+      'internal': false,
+    });
+    CacheDebugLog.add(<String, Object?>{
+      'session_id': 'conv-a',
+      'model': 'claude-sonnet-4',
+      'cache_channel': 'text',
+      'context_mode': 'rp',
+      'hash': 'rp-latest',
+      'internal': false,
+    });
+
+    expect(CacheDebugLog.previousComparableMain(0), isNull);
+  });
 }

@@ -9,6 +9,7 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Holt">
     <link rel="manifest" href="./manifest.webmanifest">
+    <link rel="icon" href="./assets/images/app_icon.png" type="image/png">
     <link rel="apple-touch-icon" href="./assets/images/app_icon.png">
     <style id="criticalShellStyle">
       /* Keep an update from exposing unstyled HTML while the shell CSS arrives. */
@@ -22,14 +23,8 @@
         visibility: visible; background: #faf9f6;
       }
     </style>
-    <link rel="stylesheet" href="./styles.css?v=84" onload="document.documentElement.classList.add('holt-css-ready'); window.dispatchEvent(new Event('holt:css-ready'))">
-    <script>
-      // Emergency escape only; normal exit is driven by the stylesheet load event.
-      window.setTimeout(function () {
-        document.documentElement.classList.add('holt-css-ready');
-        window.dispatchEvent(new Event('holt:css-ready'));
-      }, 8000);
-    </script>
+    <link id="holtStylesheet" rel="stylesheet" href="./styles.css?v=90">
+    <script src="./shell-ready.js?v=1" defer></script>
     <title>Holt</title>
   </head>
   <body>
@@ -94,6 +89,7 @@
       <section class="tab-page" id="tabHome">
         <!-- 首頁視圖 -->
         <div class="home-view" id="homeView">
+          <div class="home-shell-balance" id="homeShellBalance" aria-label="用戶貝殼餘額"><img src="./assets/images/shell_coin.png" alt="" width="17" height="17"><span id="homeShellBalanceValue">800</span></div>
           <button class="home-history-btn" id="homeHistoryBtn" type="button" aria-label="歷史對話" title="歷史對話">
             <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
@@ -135,7 +131,7 @@
               <button class="appbar-model-btn" id="chatModelBtn" type="button">… ⌄</button>
             </div>
             <div class="appbar-right">
-              <span class="privacy-pill">本機</span>
+              <span class="privacy-pill">本機儲存</span>
             </div>
           </header>
 
@@ -155,6 +151,14 @@
                   <input type="checkbox" id="chatThinkingToggle">
                   <span class="thinking-slider"></span>
                 </label>
+              </div>
+
+              <div class="model-picker-divider"></div>
+
+              <div class="chat-feature-controls" aria-label="回覆方式">
+                <label><span>精簡回覆</span><input type="checkbox" id="chatConciseReplyToggle"></label>
+                <label><span>拆分回覆</span><input type="checkbox" id="chatSplitReplyToggle"></label>
+                <label class="chat-reply-lines"><span>建議行數</span><input type="number" id="chatReplyLinesInput" min="2" max="20" inputmode="numeric" value="8"></label>
               </div>
 
               <div class="model-picker-divider"></div>
@@ -204,13 +208,27 @@
                   <button class="action-tile" type="button" data-action="image">
                     <span class="action-icon">▧</span><span>圖片</span>
                   </button>
+                  <button class="action-tile" type="button" data-action="draw">
+                    <span class="action-icon">✦</span><span>生成圖片</span>
+                  </button>
                   <button class="action-tile" type="button" data-action="sticker">
                     <span class="action-icon">☺</span><span>表情包</span>
+                  </button>
+                  <button class="action-tile" type="button" data-action="transfer">
+                    <span class="action-icon">◎</span><span>轉帳</span>
+                  </button>
+                  <button class="action-tile" type="button" data-action="scratch">
+                    <span class="action-icon">✣</span><span>刮刮卡</span>
+                  </button>
+                  <button class="action-tile" type="button" data-action="audio">
+                    <span class="action-icon">♫</span><span>聲音</span>
                   </button>
                 </div>
               </div>
             </div>
             <input id="imagePicker" class="sr-only" type="file" accept="image/*">
+            <input id="stickerPicker" class="sr-only" type="file" accept="image/png,image/jpeg,image/webp">
+            <input id="audioPicker" class="sr-only" type="file" accept="audio/*">
           </section>
         </div>
       </section>
@@ -293,6 +311,18 @@
               <span class="profile-action-icon"><svg class="line-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9c0-1.1-.9-2-2-2h-2.5a1.5 1.5 0 0 1-1.5-1.5V7a4 4 0 0 0-4-4Z"/><circle cx="7.5" cy="11" r="1"/><circle cx="10" cy="7.5" r="1"/><circle cx="7.5" cy="15" r="1"/></svg></span>
               <span class="profile-action-text"><strong>主題工坊</strong><small>主題、氣泡與介面氛圍</small></span><span class="profile-action-arrow">›</span>
             </button>
+            <a class="profile-action-card profile-action-secondary" href="./privacy.html">
+              <span class="profile-action-icon"><svg class="line-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 4.5 6v5.5c0 4.6 3.1 7.9 7.5 9.5 4.4-1.6 7.5-4.9 7.5-9.5V6L12 3Z"/><path d="M9.5 12.2 11 13.7l3.8-4"/></svg></span>
+              <span class="profile-action-text"><strong>隱私與資料</strong><small>查看本機儲存與 API 傳輸範圍</small></span><span class="profile-action-arrow">›</span>
+            </a>
+            <button class="profile-action-card profile-action-secondary" id="replayOnboardingBtn" type="button">
+              <span class="profile-action-icon"><svg class="line-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 1 0 2.3-5.7L4 8.6"/><path d="M4 4v4.6h4.6"/></svg></span>
+              <span class="profile-action-text"><strong>重新查看新手引導</strong><small>再次查看資料與設定說明</small></span><span class="profile-action-arrow">›</span>
+            </button>
+            <button class="profile-action-card profile-action-secondary profile-action-danger" id="clearLocalDataBtn" type="button">
+              <span class="profile-action-icon"><svg class="line-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18"/><path d="M19 6v14H5V6m3 0V4h8v2"/></svg></span>
+              <span class="profile-action-text"><strong>清除本機資料</strong><small>角色、對話、圖片、設定與 API Key</small></span>
+            </button>
           </section>
 
           <div class="profile-divider dots"><span>•••</span></div>
@@ -315,7 +345,7 @@
           <div class="profile-about">
             <img src="./assets/images/holt_logo.png" alt="" width="36" height="36" class="profile-about-logo">
             <p>Holt PWA · 本機優先</p>
-            <small>資料只存在你的裝置上</small>
+            <small>資料存於此裝置；請求直送你選擇的 API 來源</small>
           </div>
         </div>
         <input id="profileAvatarPicker" class="sr-only" type="file" accept="image/*">
@@ -357,7 +387,7 @@
               <circle cx="11" cy="11" r="8"></circle>
               <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
             </svg>
-            <input type="text" id="historySearchInput" class="history-search-input" placeholder="搜索……" autocomplete="off" spellcheck="false">
+            <input type="text" id="historySearchInput" class="history-search-input" placeholder="搜尋對話標題或訊息……" aria-label="跨窗口搜尋對話標題或訊息" autocomplete="off" spellcheck="false">
             <button class="history-search-clear" id="historySearchClear" type="button" aria-label="清除搜索" hidden>×</button>
           </div>
 
@@ -394,6 +424,15 @@
 
     <!-- 浮層 -->
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+    <div class="app-fatal" id="appFatal" role="alert" hidden>
+      <section class="app-fatal-card">
+        <p class="eyebrow">HOLT NEEDS A MOMENT</p>
+        <h2>無法完成啟動</h2>
+        <p id="appFatalMessage">請重新載入後再試。</p>
+        <button class="btn-primary" id="appFatalRetry" type="button">重新載入</button>
+      </section>
+    </div>
 
     <!-- 角色編輯（全屏，像素級複製 Flutter CharacterCardScreen）-->
     <div class="char-edit-page" id="charModal" hidden>
@@ -493,7 +532,7 @@
           <article class="ob-step is-active" data-step="0">
             <p class="eyebrow">WELCOME TO HOLT</p>
             <h2>這是你的本機優先對話空間</h2>
-            <p>所有資料留在這個裝置的瀏覽器裡，不會上傳。</p>
+            <p>角色、歷史與 API Key 儲存在本機；對話、網搜與生圖請求會直接傳送至你選擇的 API 來源。</p>
           </article>
           <article class="ob-step" data-step="1">
             <p class="eyebrow">SETUP</p>
@@ -515,6 +554,6 @@
     </div>
 
     <script src="./splash.js?v=4"></script>
-    <script type="module" src="./app.js?v=84"></script>
+    <script type="module" src="./app.js?v=90"></script>
   </body>
 </html>

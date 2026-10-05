@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
+import '../models/context_mode.dart';
+import '../services/context_compressor.dart';
 import '../services/locale_strings.dart';
 import '../services/model_cost_policy.dart';
 import '../services/settings_manager.dart';
@@ -33,11 +35,15 @@ class KeepAliveGuard {
 class ApiAdvancedSettings extends StatefulWidget {
   final bool cacheOnly;
   final bool showCacheSection;
+  final bool showKeepAliveSection;
+  final bool showContextSection;
 
   const ApiAdvancedSettings({
     super.key,
     this.cacheOnly = false,
     this.showCacheSection = true,
+    this.showKeepAliveSection = true,
+    this.showContextSection = true,
   });
 
   @override
@@ -48,6 +54,175 @@ class _ApiAdvancedSettingsState extends State<ApiAdvancedSettings> {
   bool _showCacheSection = false;
   bool _showKeepAliveSection = false;
   bool _showContextSection = false;
+
+  Future<void> _showCustomSummaryRulesDialog({required String entryKey}) async {
+    var selectedMode = ContextMode.daily;
+    final dailyController = TextEditingController(
+      text: await MemorySettings.getSummaryCustomRules(contextMode: 'daily'),
+    );
+    final rpController = TextEditingController(
+      text: await MemorySettings.getSummaryCustomRules(contextMode: 'rp'),
+    );
+    if (!mounted) {
+      dailyController.dispose();
+      rpController.dispose();
+      return;
+    }
+
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          final controller = selectedMode == ContextMode.rp
+              ? rpController
+              : dailyController;
+          final basePrompt = ContextCompressor.compressionPromptForMode(
+            selectedMode,
+          );
+          final baseTokens = TokenEstimator.estimate(basePrompt);
+          final customTokens = TokenEstimator.estimate(controller.text);
+          return AlertDialog(
+            key: ValueKey('custom_summary_rules_dialog_$entryKey'),
+            backgroundColor: YanciTheme.surfacePanel,
+            title: Text(
+              L.pick(
+                en: 'Custom summary preferences',
+                zhTW: '自定義摘要偏好',
+                zhCN: '自定义摘要偏好',
+              ),
+              style: YanciTheme.headingMedium.copyWith(fontSize: 16),
+            ),
+            content: SizedBox(
+              width: 420,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  SegmentedButton<ContextMode>(
+                    segments: [
+                      ButtonSegment(
+                        value: ContextMode.daily,
+                        label: Text(
+                          L.pick(en: 'Daily', zhTW: '日常', zhCN: '日常'),
+                        ),
+                      ),
+                      const ButtonSegment(
+                        value: ContextMode.rp,
+                        label: Text('RP'),
+                      ),
+                    ],
+                    selected: {selectedMode},
+                    onSelectionChanged: (value) =>
+                        setDialogState(() => selectedMode = value.first),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    key: ValueKey(
+                      selectedMode == ContextMode.rp
+                          ? 'custom_summary_rules_rp_field'
+                          : 'custom_summary_rules_daily_field',
+                    ),
+                    controller: controller,
+                    minLines: 5,
+                    maxLines: 9,
+                    onChanged: (_) => setDialogState(() {}),
+                    decoration: InputDecoration(
+                      hintText: L.pick(
+                        en: 'Optional. Describe what the summary should pay more attention to.',
+                        zhTW: '選填。描述摘要需要額外關注的內容。',
+                        zhCN: '选填。描述摘要需要额外关注的内容。',
+                      ),
+                      border: _thinInputBorder(),
+                      enabledBorder: _thinInputBorder(),
+                      focusedBorder: _thinInputBorder(
+                        color: YanciTheme.accent,
+                        width: 1,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    L.pick(
+                      en: 'Estimated prompt: ~$baseTokens base + $customTokens custom tokens. Required JSON, source range, storyline isolation and factual rules cannot be overridden.',
+                      zhTW:
+                          '預估 Prompt：約 $baseTokens 基礎 + $customTokens 自定義 tokens。必要 JSON、來源範圍、故事線隔離與事實規則不可覆蓋。',
+                      zhCN:
+                          '预估 Prompt：约 $baseTokens 基础 + $customTokens 自定义 tokens。必要 JSON、来源范围、故事线隔离与事实规则不可覆盖。',
+                    ),
+                    style: YanciTheme.bodySmall.copyWith(
+                      fontSize: 10,
+                      color: YanciTheme.textSecondary.withValues(alpha: 0.65),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: Text(L.pick(en: 'Cancel', zhTW: '取消', zhCN: '取消')),
+              ),
+              TextButton(
+                onPressed: () async {
+                  await MemorySettings.saveSummaryCustomRules(
+                    contextMode: 'daily',
+                    value: dailyController.text,
+                  );
+                  await MemorySettings.saveSummaryCustomRules(
+                    contextMode: 'rp',
+                    value: rpController.text,
+                  );
+                  if (dialogContext.mounted) Navigator.pop(dialogContext);
+                },
+                child: Text(L.pick(en: 'Save', zhTW: '儲存', zhCN: '保存')),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+    dailyController.dispose();
+    rpController.dispose();
+  }
+
+  Widget _buildCustomSummaryRulesEntry(String entryKey) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: InkWell(
+        key: ValueKey('custom_summary_rules_entry_$entryKey'),
+        borderRadius: BorderRadius.circular(YanciTheme.radiusSm),
+        onTap: () => _showCustomSummaryRulesDialog(entryKey: entryKey),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 7, horizontal: 8),
+          child: Row(
+            children: [
+              Icon(
+                Icons.edit_note_rounded,
+                size: 17,
+                color: YanciTheme.accent.withValues(alpha: 0.78),
+              ),
+              const SizedBox(width: 7),
+              Expanded(
+                child: Text(
+                  L.pick(
+                    en: 'Custom summary preferences · Daily / RP',
+                    zhTW: '自定義摘要偏好 · 日常 / RP',
+                    zhCN: '自定义摘要偏好 · 日常 / RP',
+                  ),
+                  style: YanciTheme.bodySmall.copyWith(fontSize: 12),
+                ),
+              ),
+              Icon(
+                Icons.chevron_right_rounded,
+                size: 17,
+                color: YanciTheme.textSecondary.withValues(alpha: 0.45),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 
   Future<KeepAliveGuard> _loadKeepAliveGuard() async {
     final cacheOn = await MemorySettings.getEnablePromptCaching();
@@ -116,7 +291,7 @@ class _ApiAdvancedSettingsState extends State<ApiAdvancedSettings> {
         color: Colors.transparent,
         borderRadius: BorderRadius.circular(YanciTheme.radiusMd),
         border: bordered
-            ? Border.all(color: _settingsBorderColor, width: 0.75)
+            ? Border.all(color: _settingsBorderColor, width: 1)
             : null,
       ),
       child: child,
@@ -146,13 +321,76 @@ class _ApiAdvancedSettingsState extends State<ApiAdvancedSettings> {
     );
   }
 
-  OutlineInputBorder _thinInputBorder({Color? color, double width = 0.75}) {
+  OutlineInputBorder _thinInputBorder({Color? color, double width = 1}) {
     return OutlineInputBorder(
       borderRadius: BorderRadius.circular(YanciTheme.radiusSm),
       borderSide: BorderSide(
         color: color ?? _settingsBorderColor,
         width: width,
       ),
+    );
+  }
+
+  Widget _buildSummaryTriggerEditor(int summaryTrigger) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Text(
+              L.pick(en: 'Trigger after', zhTW: '累積至', zhCN: '累积至'),
+              style: YanciTheme.bodySmall.copyWith(fontSize: 12),
+            ),
+            const Spacer(),
+            SizedBox(
+              width: 92,
+              child: TextField(
+                keyboardType: TextInputType.number,
+                textAlign: TextAlign.center,
+                style: YanciTheme.bodyText.copyWith(
+                  fontSize: 14,
+                  color: YanciTheme.accent,
+                ),
+                decoration: InputDecoration(
+                  isDense: true,
+                  suffixText: 't',
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 6,
+                  ),
+                  border: _thinInputBorder(),
+                  enabledBorder: _thinInputBorder(),
+                  focusedBorder: _thinInputBorder(
+                    color: YanciTheme.accent.withValues(alpha: 0.85),
+                    width: 1,
+                  ),
+                ),
+                controller: TextEditingController(text: '$summaryTrigger'),
+                onChanged: (value) {
+                  final tokens = int.tryParse(value);
+                  if (tokens != null &&
+                      tokens >= MemorySettings.windowSummaryTriggerMinTokens &&
+                      tokens <= MemorySettings.windowSummaryTriggerMaxTokens) {
+                    MemorySettings.saveWindowSummaryTriggerTokens(tokens);
+                  }
+                },
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 4),
+        Text(
+          L.pick(
+            en: 'A summary runs whenever new unsummarized content reaches this token count. A whole message is never split.',
+            zhTW: '未摘要內容每次累積到此 Token 數即觸發；單則消息不會被切開。',
+            zhCN: '未摘要内容每次累积到此 Token 数即触发；单条消息不会被切开。',
+          ),
+          style: YanciTheme.bodySmall.copyWith(
+            fontSize: 10,
+            color: YanciTheme.textSecondary.withValues(alpha: 0.45),
+          ),
+        ),
+      ],
     );
   }
 
@@ -186,6 +424,34 @@ class _ApiAdvancedSettingsState extends State<ApiAdvancedSettings> {
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCollapsibleBody({
+    required bool expanded,
+    required Widget child,
+  }) {
+    final reduceMotion = MediaQuery.disableAnimationsOf(context);
+    return TweenAnimationBuilder<double>(
+      tween: Tween<double>(end: expanded ? 1 : 0),
+      duration: reduceMotion
+          ? Duration.zero
+          : const Duration(milliseconds: 200),
+      curve: Curves.easeOutCubic,
+      child: child,
+      builder: (context, progress, stableChild) => ClipRect(
+        child: Align(
+          alignment: Alignment.topCenter,
+          heightFactor: progress,
+          child: ExcludeSemantics(
+            excluding: !expanded,
+            child: IgnorePointer(
+              ignoring: !expanded,
+              child: Opacity(opacity: progress, child: stableChild),
+            ),
+          ),
         ),
       ),
     );
@@ -339,29 +605,53 @@ class _ApiAdvancedSettingsState extends State<ApiAdvancedSettings> {
                 const SizedBox(height: 10),
                 _buildFadeDivider(),
                 const SizedBox(height: 8),
-                FutureBuilder<bool>(
-                  future: MemorySettings.getCacheWindowSummaryEnabled(),
+                FutureBuilder<List<dynamic>>(
+                  future: Future.wait(<Future<dynamic>>[
+                    MemorySettings.getCacheWindowSummaryEnabled(),
+                    MemorySettings.getWindowSummaryTriggerTokens(),
+                  ]),
                   builder: (ctx, summarySnap) {
-                    final summaryEnabled = summarySnap.data ?? false;
-                    return _buildCheckOption(
-                      indent: 32,
-                      leadingMarker: '—',
-                      title: L.pick(
-                        en: 'Dedicated window summary',
-                        zhTW: '專用窗口摘要',
-                      ),
-                      description: L.pick(
-                        en: 'Pins a window summary into the cacheable prompt for new windows.',
-                        zhTW: '新窗口把窗口摘要釘入可緩存提示。',
-                      ),
-                      value: summaryEnabled,
-                      onChanged: (value) {
-                        MemorySettings.saveCacheWindowSummaryEnabled(
-                          value ?? false,
-                        );
-                        setState(() {});
-                        StaticTokenEstimator.showAfterToggle(context);
-                      },
+                    final summaryEnabled =
+                        (summarySnap.data?[0] as bool?) ?? false;
+                    final summaryTrigger =
+                        (summarySnap.data?[1] as int?) ?? 6000;
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _buildCheckOption(
+                          indent: 32,
+                          leadingMarker: '—',
+                          title: L.pick(
+                            en: 'Dedicated window summary',
+                            zhTW: '專用窗口摘要',
+                            zhCN: '专用窗口摘要',
+                          ),
+                          description: L.pick(
+                            en: 'Pins a window summary into the cacheable prompt for new windows.',
+                            zhTW: '新窗口把窗口摘要釘入可緩存提示。',
+                            zhCN: '新窗口把窗口摘要钉入可缓存提示。',
+                          ),
+                          value: summaryEnabled,
+                          onChanged: (value) {
+                            MemorySettings.saveCacheWindowSummaryEnabled(
+                              value ?? false,
+                            );
+                            setState(() {});
+                            StaticTokenEstimator.showAfterToggle(context);
+                          },
+                        ),
+                        if (summaryEnabled) ...[
+                          const SizedBox(height: 8),
+                          Padding(
+                            padding: const EdgeInsets.only(left: 40),
+                            child: _buildSummaryTriggerEditor(summaryTrigger),
+                          ),
+                          Padding(
+                            padding: const EdgeInsets.only(left: 32),
+                            child: _buildCustomSummaryRulesEntry('cache'),
+                          ),
+                        ],
+                      ],
                     );
                   },
                 ),
@@ -386,387 +676,374 @@ class _ApiAdvancedSettingsState extends State<ApiAdvancedSettings> {
             _showCacheSection,
             () => setState(() => _showCacheSection = !_showCacheSection),
           ),
-          if (_showCacheSection) ...[
-            const SizedBox(height: YanciTheme.spacingSm),
-            _buildCacheCard(),
-          ],
+          _buildCollapsibleBody(
+            expanded: _showCacheSection,
+            child: Padding(
+              padding: const EdgeInsets.only(top: YanciTheme.spacingSm),
+              child: _buildCacheCard(),
+            ),
+          ),
+          const SizedBox(height: YanciTheme.spacingLg),
         ],
 
-        const SizedBox(height: YanciTheme.spacingLg),
-
-        _buildCollapsibleTitle(
-          L.pick(en: 'Auto Cache Renewal', zhTW: '自動延續命中 (Keep-Alive Guard)'),
-          _showKeepAliveSection,
-          () => setState(() => _showKeepAliveSection = !_showKeepAliveSection),
-        ),
-        if (_showKeepAliveSection) ...[
-          const SizedBox(height: YanciTheme.spacingSm),
-          _buildGlassCard(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
+        if (widget.showKeepAliveSection) ...[
+          _buildCollapsibleTitle(
+            L.pick(en: 'Auto Cache Renewal', zhTW: '自動延續命中 (Keep-Alive Guard)'),
+            _showKeepAliveSection,
+            () =>
+                setState(() => _showKeepAliveSection = !_showKeepAliveSection),
+          ),
+          _buildCollapsibleBody(
+            expanded: _showKeepAliveSection,
+            child: Padding(
+              padding: const EdgeInsets.only(top: YanciTheme.spacingSm),
+              child: _buildGlassCard(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            L.pick(en: 'Enable auto renewal', zhTW: '啟用自動延續'),
-                            style: YanciTheme.bodyText.copyWith(fontSize: 14),
-                          ),
-                          const SizedBox(height: 2),
-                          Text(
-                            L.pick(
-                              en: 'Keeps cache alive by pinging every ~50 min. Incurs extra API cost.',
-                              zhTW: '開啟後會增加保持窗口緩存命中的費用，每50分鐘自動延續',
-                            ),
-                            style: YanciTheme.bodySmall.copyWith(
-                              fontSize: 11,
-                              color: YanciTheme.textSecondary.withValues(
-                                alpha: 0.5,
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                L.pick(
+                                  en: 'Enable auto renewal',
+                                  zhTW: '啟用自動延續',
+                                ),
+                                style: YanciTheme.bodyText.copyWith(
+                                  fontSize: 14,
+                                ),
                               ),
-                            ),
+                              const SizedBox(height: 2),
+                              Text(
+                                L.pick(
+                                  en: 'Keeps cache alive by pinging every ~50 min. Incurs extra API cost.',
+                                  zhTW: '開啟後會增加保持窗口緩存命中的費用，每50分鐘自動延續',
+                                ),
+                                style: YanciTheme.bodySmall.copyWith(
+                                  fontSize: 11,
+                                  color: YanciTheme.textSecondary.withValues(
+                                    alpha: 0.5,
+                                  ),
+                                ),
+                              ),
+                            ],
                           ),
-                        ],
-                      ),
+                        ),
+                        FutureBuilder<KeepAliveGuard>(
+                          future: _loadKeepAliveGuard(),
+                          builder: (ctx, snap) {
+                            final guard = snap.data;
+                            final enabled = guard?.enabled ?? false;
+                            final canEnable = guard?.canEnable ?? false;
+                            return Switch(
+                              value: enabled,
+                              activeThumbColor: YanciTheme.accent,
+                              onChanged: canEnable
+                                  ? (v) async {
+                                      await MemorySettings.saveKeepAliveEnabled(
+                                        v,
+                                      );
+                                      if (mounted) setState(() {});
+                                    }
+                                  : null,
+                            );
+                          },
+                        ),
+                      ],
                     ),
                     FutureBuilder<KeepAliveGuard>(
                       future: _loadKeepAliveGuard(),
                       builder: (ctx, snap) {
                         final guard = snap.data;
-                        final enabled = guard?.enabled ?? false;
-                        final canEnable = guard?.canEnable ?? false;
-                        return Switch(
-                          value: enabled,
-                          activeThumbColor: YanciTheme.accent,
-                          onChanged: canEnable
-                              ? (v) async {
-                                  await MemorySettings.saveKeepAliveEnabled(v);
-                                  if (mounted) setState(() {});
-                                }
-                              : null,
+                        final hint = guard == null ? '' : guard.hintText();
+                        if (hint.isEmpty) return const SizedBox.shrink();
+                        return Padding(
+                          padding: const EdgeInsets.only(top: 6),
+                          child: Text(
+                            hint,
+                            style: YanciTheme.bodySmall.copyWith(
+                              fontSize: 11,
+                              color: (guard?.canEnable ?? false)
+                                  ? YanciTheme.textSecondary.withValues(
+                                      alpha: 0.55,
+                                    )
+                                  : Colors.orange.withValues(alpha: 0.75),
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      L.pick(en: 'Renewal duration (hours)', zhTW: '延續時長（小時）'),
+                      style: YanciTheme.bodyText.copyWith(fontSize: 13),
+                    ),
+                    const SizedBox(height: 6),
+                    FutureBuilder<int>(
+                      future: MemorySettings.getKeepAliveDurationHours(),
+                      builder: (ctx, snap) {
+                        final hours = snap.data ?? 2;
+                        return Row(
+                          children: [
+                            Expanded(
+                              child: Slider(
+                                value: hours.toDouble(),
+                                min: 1,
+                                max: 12,
+                                divisions: 11,
+                                activeColor: YanciTheme.accent,
+                                label: '${hours}h',
+                                onChanged: (v) {
+                                  MemorySettings.saveKeepAliveDurationHours(
+                                    v.round(),
+                                  );
+                                  setState(() {});
+                                },
+                              ),
+                            ),
+                            SizedBox(
+                              width: 36,
+                              child: Text(
+                                '${hours}h',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  fontFamily: YanciTheme.fontFamily,
+                                  fontWeight: FontWeight.w500,
+                                  color: YanciTheme.accent,
+                                ),
+                              ),
+                            ),
+                          ],
+                        );
+                      },
+                    ),
+                    Text(
+                      L.pick(
+                        en: 'How long to keep the last message\'s cache alive after leaving chat.',
+                        zhTW: '離開聊天後，最後一條消息的緩存延續多久。',
+                      ),
+                      style: YanciTheme.bodySmall.copyWith(
+                        fontSize: 11,
+                        color: YanciTheme.textSecondary.withValues(alpha: 0.4),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    Text(
+                      L.pick(
+                        en: 'Quiet hours (no pings)',
+                        zhTW: '安靜時段（不發延續請求）',
+                      ),
+                      style: YanciTheme.bodyText.copyWith(fontSize: 13),
+                    ),
+                    const SizedBox(height: 6),
+                    FutureBuilder<List<int>>(
+                      future: Future.wait([
+                        MemorySettings.getQuietStartHour(),
+                        MemorySettings.getQuietEndHour(),
+                      ]),
+                      builder: (ctx, snap) {
+                        final start = snap.data?[0] ?? 23;
+                        final end = snap.data?[1] ?? 7;
+                        return Row(
+                          children: [
+                            _buildHourPicker(
+                              label: L.pick(en: 'From', zhTW: '從'),
+                              value: start,
+                              onChanged: (v) {
+                                MemorySettings.saveQuietStartHour(v);
+                                setState(() {});
+                              },
+                            ),
+                            Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                              ),
+                              child: Text(
+                                '→',
+                                style: TextStyle(
+                                  color: YanciTheme.textSecondary.withValues(
+                                    alpha: 0.4,
+                                  ),
+                                ),
+                              ),
+                            ),
+                            _buildHourPicker(
+                              label: L.pick(en: 'To', zhTW: '至'),
+                              value: end,
+                              onChanged: (v) {
+                                MemorySettings.saveQuietEndHour(v);
+                                setState(() {});
+                              },
+                            ),
+                          ],
                         );
                       },
                     ),
                   ],
                 ),
-                FutureBuilder<KeepAliveGuard>(
-                  future: _loadKeepAliveGuard(),
+              ),
+            ),
+          ),
+          const SizedBox(height: YanciTheme.spacingLg),
+        ],
+
+        if (widget.showContextSection) ...[
+          _buildCollapsibleTitle(
+            L.get('settings_context_title'),
+            _showContextSection,
+            () => setState(() => _showContextSection = !_showContextSection),
+          ),
+          _buildCollapsibleBody(
+            expanded: _showContextSection,
+            child: Padding(
+              padding: const EdgeInsets.only(top: YanciTheme.spacingSm),
+              child: _buildGlassCard(
+                bordered: false,
+                child: FutureBuilder<List<dynamic>>(
+                  future: Future.wait([
+                    MemorySettings.getContextLimitEnabled(),
+                    MemorySettings.getContextTokenLimit(),
+                    MemorySettings.getContextWindowSummaryEnabled(),
+                    MemorySettings.getWindowSummaryTriggerTokens(),
+                    MemorySettings.getEnablePromptCaching(),
+                  ]),
                   builder: (ctx, snap) {
-                    final guard = snap.data;
-                    final hint = guard == null ? '' : guard.hintText();
-                    if (hint.isEmpty) return const SizedBox.shrink();
-                    return Padding(
-                      padding: const EdgeInsets.only(top: 6),
-                      child: Text(
-                        hint,
-                        style: YanciTheme.bodySmall.copyWith(
-                          fontSize: 11,
-                          color: (guard?.canEnable ?? false)
-                              ? YanciTheme.textSecondary.withValues(alpha: 0.55)
-                              : Colors.orange.withValues(alpha: 0.75),
-                        ),
-                      ),
-                    );
-                  },
-                ),
-                const SizedBox(height: 12),
-                Text(
-                  L.pick(en: 'Renewal duration (hours)', zhTW: '延續時長（小時）'),
-                  style: YanciTheme.bodyText.copyWith(fontSize: 13),
-                ),
-                const SizedBox(height: 6),
-                FutureBuilder<int>(
-                  future: MemorySettings.getKeepAliveDurationHours(),
-                  builder: (ctx, snap) {
-                    final hours = snap.data ?? 2;
-                    return Row(
+                    final storedEnabled = (snap.data?[0] as bool?) ?? false;
+                    final rawLimit = (snap.data?[1] as int?) ?? 5000;
+                    final limit = rawLimit < 1000 ? 5000 : rawLimit;
+                    final summaryEnabled = (snap.data?[2] as bool?) ?? false;
+                    final summaryTrigger = (snap.data?[3] as int?) ?? 6000;
+                    final cacheOn = (snap.data?[4] as bool?) ?? false;
+                    final enabled = storedEnabled && !cacheOn;
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Expanded(
-                          child: Slider(
-                            value: hours.toDouble(),
-                            min: 1,
-                            max: 12,
-                            divisions: 11,
-                            activeColor: YanciTheme.accent,
-                            label: '${hours}h',
+                        _buildCheckOption(
+                          title: L.get('settings_context_desc'),
+                          description: L.get('settings_context_detail'),
+                          value: enabled,
+                          onChanged: cacheOn
+                              ? null
+                              : (v) => _handleContextLimitChanged(
+                                  v ?? false,
+                                  limit,
+                                ),
+                        ),
+                        if (enabled) ...[
+                          const SizedBox(height: 10),
+                          _buildFadeDivider(),
+                          const SizedBox(height: 8),
+                          Row(
+                            children: [
+                              Text(
+                                L.pick(en: 'Max tokens', zhTW: '上限'),
+                                style: YanciTheme.bodySmall.copyWith(
+                                  fontSize: 12,
+                                ),
+                              ),
+                              const Spacer(),
+                              SizedBox(
+                                width: 80,
+                                child: TextField(
+                                  keyboardType: TextInputType.number,
+                                  textAlign: TextAlign.center,
+                                  style: YanciTheme.bodyText.copyWith(
+                                    fontSize: 14,
+                                    color: YanciTheme.accent,
+                                  ),
+                                  decoration: InputDecoration(
+                                    isDense: true,
+                                    suffixText: 't',
+                                    contentPadding: const EdgeInsets.symmetric(
+                                      horizontal: 8,
+                                      vertical: 6,
+                                    ),
+                                    border: _thinInputBorder(),
+                                    enabledBorder: _thinInputBorder(),
+                                    focusedBorder: _thinInputBorder(
+                                      color: YanciTheme.accent.withValues(
+                                        alpha: 0.85,
+                                      ),
+                                      width: 1,
+                                    ),
+                                  ),
+                                  controller: TextEditingController(
+                                    text: '$limit',
+                                  ),
+                                  onChanged: (v) {
+                                    final n = int.tryParse(v);
+                                    if (n != null && n >= 1000) {
+                                      MemorySettings.saveContextTokenLimit(n);
+                                    }
+                                  },
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            L.pick(
+                              en: 'Minimum 1000t. Use the switch above to turn the limit off.',
+                              zhTW: '最低 1000t；要關閉限制請直接關上方開關。',
+                            ),
+                            style: YanciTheme.bodySmall.copyWith(
+                              fontSize: 10,
+                              color: YanciTheme.textSecondary.withValues(
+                                alpha: 0.45,
+                              ),
+                            ),
+                          ),
+                        ],
+                        if (cacheOn) ...[
+                          const SizedBox(height: 4),
+                          Text(
+                            L.pick(
+                              en: 'Turn off cache hits before using context send limit.',
+                              zhTW: '已開啟緩存命中；需先關閉緩存命中才能使用上下文發送限制。',
+                            ),
+                            style: YanciTheme.bodySmall.copyWith(
+                              fontSize: 11,
+                              color: Colors.orange.withValues(alpha: 0.7),
+                            ),
+                          ),
+                        ],
+                        if (enabled) ...[
+                          const SizedBox(height: 10),
+                          _buildFadeDivider(),
+                          const SizedBox(height: 8),
+                          _buildCheckOption(
+                            indent: 32,
+                            title: L.pick(
+                              en: '— Dynamic window summary',
+                              zhTW: '— 動態窗口摘要',
+                            ),
+                            description: L.pick(
+                              en: 'For non-cache models. Sends recent summaries through dynamic context.',
+                              zhTW: '給無緩存模型使用，摘要走動態上下文。',
+                            ),
+                            value: summaryEnabled,
                             onChanged: (v) {
-                              MemorySettings.saveKeepAliveDurationHours(
-                                v.round(),
+                              MemorySettings.saveContextWindowSummaryEnabled(
+                                v ?? false,
                               );
                               setState(() {});
                             },
                           ),
-                        ),
-                        SizedBox(
-                          width: 36,
-                          child: Text(
-                            '${hours}h',
-                            textAlign: TextAlign.center,
-                            style: TextStyle(
-                              fontSize: 13,
-                              fontFamily: YanciTheme.fontFamily,
-                              fontWeight: FontWeight.w500,
-                              color: YanciTheme.accent,
-                            ),
-                          ),
-                        ),
+                        ],
+                        if (enabled && summaryEnabled) ...[
+                          const SizedBox(height: 10),
+                          _buildSummaryTriggerEditor(summaryTrigger),
+                          _buildCustomSummaryRulesEntry('context'),
+                        ],
                       ],
                     );
                   },
                 ),
-                Text(
-                  L.pick(
-                    en: 'How long to keep the last message\'s cache alive after leaving chat.',
-                    zhTW: '離開聊天後，最後一條消息的緩存延續多久。',
-                  ),
-                  style: YanciTheme.bodySmall.copyWith(
-                    fontSize: 11,
-                    color: YanciTheme.textSecondary.withValues(alpha: 0.4),
-                  ),
-                ),
-                const SizedBox(height: 16),
-                Text(
-                  L.pick(en: 'Quiet hours (no pings)', zhTW: '安靜時段（不發延續請求）'),
-                  style: YanciTheme.bodyText.copyWith(fontSize: 13),
-                ),
-                const SizedBox(height: 6),
-                FutureBuilder<List<int>>(
-                  future: Future.wait([
-                    MemorySettings.getQuietStartHour(),
-                    MemorySettings.getQuietEndHour(),
-                  ]),
-                  builder: (ctx, snap) {
-                    final start = snap.data?[0] ?? 23;
-                    final end = snap.data?[1] ?? 7;
-                    return Row(
-                      children: [
-                        _buildHourPicker(
-                          label: L.pick(en: 'From', zhTW: '從'),
-                          value: start,
-                          onChanged: (v) {
-                            MemorySettings.saveQuietStartHour(v);
-                            setState(() {});
-                          },
-                        ),
-                        Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 8),
-                          child: Text(
-                            '→',
-                            style: TextStyle(
-                              color: YanciTheme.textSecondary.withValues(
-                                alpha: 0.4,
-                              ),
-                            ),
-                          ),
-                        ),
-                        _buildHourPicker(
-                          label: L.pick(en: 'To', zhTW: '至'),
-                          value: end,
-                          onChanged: (v) {
-                            MemorySettings.saveQuietEndHour(v);
-                            setState(() {});
-                          },
-                        ),
-                      ],
-                    );
-                  },
-                ),
-              ],
-            ),
-          ),
-        ],
-
-        const SizedBox(height: YanciTheme.spacingLg),
-
-        _buildCollapsibleTitle(
-          L.get('settings_context_title'),
-          _showContextSection,
-          () => setState(() => _showContextSection = !_showContextSection),
-        ),
-        if (_showContextSection) ...[
-          const SizedBox(height: YanciTheme.spacingSm),
-          _buildGlassCard(
-            bordered: false,
-            child: FutureBuilder<List<dynamic>>(
-              future: Future.wait([
-                MemorySettings.getContextLimitEnabled(),
-                MemorySettings.getContextTokenLimit(),
-                MemorySettings.getContextWindowSummaryEnabled(),
-                MemorySettings.getContextWindowSummaryTriggerTokens(),
-                MemorySettings.getEnablePromptCaching(),
-              ]),
-              builder: (ctx, snap) {
-                final storedEnabled = (snap.data?[0] as bool?) ?? false;
-                final rawLimit = (snap.data?[1] as int?) ?? 5000;
-                final limit = rawLimit < 1000 ? 5000 : rawLimit;
-                final summaryEnabled = (snap.data?[2] as bool?) ?? false;
-                final summaryTrigger = (snap.data?[3] as int?) ?? 6000;
-                final cacheOn = (snap.data?[4] as bool?) ?? false;
-                final enabled = storedEnabled && !cacheOn;
-                return Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    _buildCheckOption(
-                      title: L.get('settings_context_desc'),
-                      description: L.get('settings_context_detail'),
-                      value: enabled,
-                      onChanged: cacheOn
-                          ? null
-                          : (v) =>
-                                _handleContextLimitChanged(v ?? false, limit),
-                    ),
-                    if (enabled) ...[
-                      const SizedBox(height: 10),
-                      _buildFadeDivider(),
-                      const SizedBox(height: 8),
-                      Row(
-                        children: [
-                          Text(
-                            L.pick(en: 'Max tokens', zhTW: '上限'),
-                            style: YanciTheme.bodySmall.copyWith(fontSize: 12),
-                          ),
-                          const Spacer(),
-                          SizedBox(
-                            width: 80,
-                            child: TextField(
-                              keyboardType: TextInputType.number,
-                              textAlign: TextAlign.center,
-                              style: YanciTheme.bodyText.copyWith(
-                                fontSize: 14,
-                                color: YanciTheme.accent,
-                              ),
-                              decoration: InputDecoration(
-                                isDense: true,
-                                suffixText: 't',
-                                contentPadding: const EdgeInsets.symmetric(
-                                  horizontal: 8,
-                                  vertical: 6,
-                                ),
-                                border: _thinInputBorder(),
-                                enabledBorder: _thinInputBorder(),
-                                focusedBorder: _thinInputBorder(
-                                  color: YanciTheme.accent.withValues(
-                                    alpha: 0.85,
-                                  ),
-                                  width: 1,
-                                ),
-                              ),
-                              controller: TextEditingController(text: '$limit'),
-                              onChanged: (v) {
-                                final n = int.tryParse(v);
-                                if (n != null && n >= 1000) {
-                                  MemorySettings.saveContextTokenLimit(n);
-                                }
-                              },
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        L.pick(
-                          en: 'Minimum 1000t. Use the switch above to turn the limit off.',
-                          zhTW: '最低 1000t；要關閉限制請直接關上方開關。',
-                        ),
-                        style: YanciTheme.bodySmall.copyWith(
-                          fontSize: 10,
-                          color: YanciTheme.textSecondary.withValues(
-                            alpha: 0.45,
-                          ),
-                        ),
-                      ),
-                    ],
-                    if (cacheOn) ...[
-                      const SizedBox(height: 4),
-                      Text(
-                        L.pick(
-                          en: 'Turn off cache hits before using context send limit.',
-                          zhTW: '已開啟緩存命中；需先關閉緩存命中才能使用上下文發送限制。',
-                        ),
-                        style: YanciTheme.bodySmall.copyWith(
-                          fontSize: 11,
-                          color: Colors.orange.withValues(alpha: 0.7),
-                        ),
-                      ),
-                    ],
-                    if (enabled) ...[
-                      const SizedBox(height: 10),
-                      _buildFadeDivider(),
-                      const SizedBox(height: 8),
-                      _buildCheckOption(
-                        indent: 32,
-                        title: L.pick(
-                          en: '— Dynamic window summary',
-                          zhTW: '— 動態窗口摘要',
-                        ),
-                        description: L.pick(
-                          en: 'For non-cache models. Sends recent summaries through dynamic context.',
-                          zhTW: '給無緩存模型使用，摘要走動態上下文。',
-                        ),
-                        value: summaryEnabled,
-                        onChanged: (v) {
-                          MemorySettings.saveContextWindowSummaryEnabled(
-                            v ?? false,
-                          );
-                          setState(() {});
-                        },
-                      ),
-                    ],
-                    if (enabled && summaryEnabled) ...[
-                      const SizedBox(height: 10),
-                      Row(
-                        children: [
-                          Text(
-                            L.pick(en: 'Summary trigger', zhTW: '摘要觸發'),
-                            style: YanciTheme.bodySmall.copyWith(fontSize: 12),
-                          ),
-                          const Spacer(),
-                          SizedBox(
-                            width: 86,
-                            child: TextField(
-                              keyboardType: TextInputType.number,
-                              textAlign: TextAlign.center,
-                              style: YanciTheme.bodyText.copyWith(
-                                fontSize: 14,
-                                color: YanciTheme.accent,
-                              ),
-                              decoration: InputDecoration(
-                                isDense: true,
-                                suffixText: 't',
-                                contentPadding: const EdgeInsets.symmetric(
-                                  horizontal: 8,
-                                  vertical: 6,
-                                ),
-                                border: _thinInputBorder(),
-                                enabledBorder: _thinInputBorder(),
-                                focusedBorder: _thinInputBorder(
-                                  color: YanciTheme.accent.withValues(
-                                    alpha: 0.85,
-                                  ),
-                                  width: 1,
-                                ),
-                              ),
-                              controller: TextEditingController(
-                                text: '$summaryTrigger',
-                              ),
-                              onChanged: (v) {
-                                final n = int.tryParse(v);
-                                if (n != null && n >= 1000) {
-                                  MemorySettings.saveContextWindowSummaryTriggerTokens(
-                                    n,
-                                  );
-                                }
-                              },
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ],
-                );
-              },
+              ),
             ),
           ),
         ],

@@ -9,11 +9,17 @@ import '../utils/text_safety.dart';
 class CharacterSignaturePanel extends StatelessWidget {
   final bool compact;
   final String? signature;
+  final VoidCallback? onShowHistory;
+  final Color? foregroundColor;
+  final Color? ruleColor;
 
   const CharacterSignaturePanel({
     super.key,
     this.compact = false,
     this.signature,
+    this.onShowHistory,
+    this.foregroundColor,
+    this.ruleColor,
   });
 
   String _displayText() {
@@ -24,47 +30,84 @@ class CharacterSignaturePanel extends StatelessWidget {
     );
     final value = signature?.trim();
     if (value == null || value.isEmpty) return fallback;
-    return truncateGraphemes(
-      value,
-      compact
-          ? CharacterSignaturePrompt.compactMaxCharacters
-          : CharacterSignaturePrompt.maxCharacters,
-    );
+    return truncateGraphemes(value, CharacterSignaturePrompt.maxCharacters);
   }
 
   @override
   Widget build(BuildContext context) {
+    final child = _buildPanel(context);
+    if (onShowHistory == null) return child;
+    return Semantics(
+      button: true,
+      label: L.pick(
+        en: 'View signature history',
+        zhTW: '查看個性簽名歷史',
+        zhCN: '查看个性签名历史',
+      ),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: onShowHistory,
+        child: child,
+      ),
+    );
+  }
+
+  Widget _buildPanel(BuildContext context) {
     if (compact) {
-      return CustomPaint(
-        painter: _SignatureRulePainter(
-          color: YanciTheme.accent.withValues(
-            alpha: YanciTheme.isDark ? 0.14 : 0.10,
-          ),
-          lineCount: 1,
-        ),
-        child: SizedBox(
-          height: 24,
-          width: double.infinity,
-          child: Align(
-            alignment: Alignment.topLeft,
-            child: Padding(
-              padding: const EdgeInsets.only(top: 3, right: 4),
-              child: Text(
-                _displayText(),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontSize: 10,
-                  height: 1.45,
-                  color: YanciTheme.characterResourceLabel.withValues(
-                    alpha: 0.72,
+      final text = _displayText();
+      final textStyle = TextStyle(
+        fontSize: 10,
+        height: 1.45,
+        color:
+            foregroundColor ??
+            YanciTheme.characterResourceLabel.withValues(alpha: 0.72),
+        fontFamily: YanciTheme.fontFamily,
+      );
+      return LayoutBuilder(
+        builder: (context, constraints) {
+          final maxWidth = constraints.maxWidth.isFinite
+              ? (constraints.maxWidth - 4).clamp(1.0, double.infinity)
+              : 240.0;
+          final measure = TextPainter(
+            text: TextSpan(text: text, style: textStyle),
+            textDirection: Directionality.of(context),
+            textScaler: MediaQuery.textScalerOf(context),
+            maxLines: 2,
+            ellipsis: '…',
+          )..layout(maxWidth: maxWidth);
+          final lineCount = measure.computeLineMetrics().length.clamp(1, 2);
+          final height = (measure.preferredLineHeight * lineCount + 8)
+              .clamp(32.0, 46.0)
+              .toDouble();
+
+          return CustomPaint(
+            painter: _SignatureRulePainter(
+              color:
+                  ruleColor?.withValues(alpha: 0.42) ??
+                  YanciTheme.accent.withValues(
+                    alpha: YanciTheme.isDark ? 0.14 : 0.10,
                   ),
-                  fontFamily: YanciTheme.fontFamily,
+              lineCount: lineCount,
+              verticalOffset: 8,
+            ),
+            child: SizedBox(
+              height: height,
+              width: double.infinity,
+              child: Align(
+                alignment: Alignment.topLeft,
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(0, 2, 4, 3),
+                  child: Text(
+                    text,
+                    maxLines: lineCount,
+                    overflow: TextOverflow.ellipsis,
+                    style: textStyle,
+                  ),
                 ),
               ),
             ),
-          ),
-        ),
+          );
+        },
       );
     }
 
@@ -78,7 +121,9 @@ class CharacterSignaturePanel extends StatelessWidget {
             style: TextStyle(
               fontSize: 13,
               fontWeight: FontWeight.w500,
-              color: YanciTheme.textPrimary.withValues(alpha: 0.7),
+              color:
+                  foregroundColor ??
+                  YanciTheme.textPrimary.withValues(alpha: 0.7),
               fontFamily: YanciTheme.fontFamily,
             ),
           ),
@@ -86,9 +131,11 @@ class CharacterSignaturePanel extends StatelessWidget {
         const SizedBox(height: 2),
         CustomPaint(
           painter: _SignatureRulePainter(
-            color: YanciTheme.accent.withValues(
-              alpha: YanciTheme.isDark ? 0.14 : 0.10,
-            ),
+            color:
+                ruleColor?.withValues(alpha: 0.42) ??
+                YanciTheme.accent.withValues(
+                  alpha: YanciTheme.isDark ? 0.14 : 0.10,
+                ),
             lineCount: CharacterSignaturePrompt.maxLines,
           ),
           child: SizedBox(
@@ -105,9 +152,11 @@ class CharacterSignaturePanel extends StatelessWidget {
                   style: TextStyle(
                     fontSize: 10.5,
                     height: 1.55,
-                    color: YanciTheme.characterResourceLabel.withValues(
-                      alpha: 0.72,
-                    ),
+                    color:
+                        foregroundColor ??
+                        YanciTheme.characterResourceLabel.withValues(
+                          alpha: 0.72,
+                        ),
                     fontFamily: YanciTheme.fontFamily,
                   ),
                 ),
@@ -123,8 +172,13 @@ class CharacterSignaturePanel extends StatelessWidget {
 class _SignatureRulePainter extends CustomPainter {
   final Color color;
   final int lineCount;
+  final double verticalOffset;
 
-  const _SignatureRulePainter({required this.color, required this.lineCount});
+  const _SignatureRulePainter({
+    required this.color,
+    required this.lineCount,
+    this.verticalOffset = 0,
+  });
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -133,9 +187,10 @@ class _SignatureRulePainter extends CustomPainter {
       ..color = color
       ..strokeWidth = 0.75
       ..strokeCap = StrokeCap.round;
-    final spacing = size.height / lineCount;
+    final drawableHeight = size.height - verticalOffset;
+    final spacing = drawableHeight / lineCount;
     for (var line = 0; line < lineCount; line++) {
-      final baseline = spacing * (line + 1) - 2;
+      final baseline = verticalOffset + spacing * (line + 1) - 5;
       var x = 0.0;
       var dash = 0;
       while (x < size.width) {
@@ -164,5 +219,7 @@ class _SignatureRulePainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _SignatureRulePainter oldDelegate) =>
-      oldDelegate.color != color || oldDelegate.lineCount != lineCount;
+      oldDelegate.color != color ||
+      oldDelegate.lineCount != lineCount ||
+      oldDelegate.verticalOffset != verticalOffset;
 }

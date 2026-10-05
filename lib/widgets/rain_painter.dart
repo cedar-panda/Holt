@@ -120,8 +120,8 @@ class _RainPainter extends CustomPainter {
       final edgeFade = yProgress < 0.05
           ? yProgress / 0.05
           : yProgress > 0.95
-              ? (1.0 - yProgress) / 0.05
-              : 1.0;
+          ? (1.0 - yProgress) / 0.05
+          : 1.0;
 
       final paint = Paint()
         ..color = baseColor.withValues(alpha: drop.opacity * edgeFade)

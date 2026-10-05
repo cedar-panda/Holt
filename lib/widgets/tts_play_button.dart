@@ -16,12 +16,14 @@ class TtsPlayButton extends StatefulWidget {
   final String? messageId;
   final VoidCallback onTap;
   final double size;
+  final Color? idleColor;
 
   const TtsPlayButton({
     super.key,
     required this.messageId,
     required this.onTap,
     this.size = 13,
+    this.idleColor,
   });
 
   @override
@@ -144,7 +146,9 @@ class _TtsPlayButtonState extends State<TtsPlayButton>
     return Center(
       child: BubbleActionGlyph(
         type: BubbleActionGlyphType.soundWave,
-        color: YanciTheme.textSecondary.withValues(alpha: 0.45),
+        color:
+            widget.idleColor ??
+            YanciTheme.textSecondary.withValues(alpha: 0.45),
       ),
     );
   }

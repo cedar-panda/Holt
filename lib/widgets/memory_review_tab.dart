@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../models/memory_action_proposal.dart';
+import '../models/context_mode.dart';
 import '../memory/database.dart';
 import '../services/locale_strings.dart';
 import '../services/memory_guard_service.dart';
@@ -9,12 +10,16 @@ import '../theme/app_theme.dart';
 class MemoryReviewTab extends StatefulWidget {
   final String characterId;
   final int? sourceMessageId;
+  final ContextMode? contextMode;
+  final String continuityId;
   final VoidCallback? onChanged;
 
   const MemoryReviewTab({
     super.key,
     required this.characterId,
     this.sourceMessageId,
+    this.contextMode,
+    this.continuityId = 'main',
     this.onChanged,
   });
 
@@ -29,6 +34,17 @@ class MemoryReviewTab extends StatefulWidget {
       proposal.sourceMessageId == sourceMessageId ||
       proposal.isExistingDuplicateScan;
 
+  static String clearConfirmationWord() {
+    // The confirmation token is part of the app copy, not an IME command.
+    // Keep it explicit so a Chinese locale never falls back to the English
+    // safety word when the dialog is opened before a locale rebuild.
+    return switch (L.locale) {
+      'zh_TW' => '刪除',
+      'zh_CN' => '删除',
+      _ => 'DELETE',
+    };
+  }
+
   @override
   State<MemoryReviewTab> createState() => _MemoryReviewTabState();
 }
@@ -37,6 +53,7 @@ class _MemoryReviewTabState extends State<MemoryReviewTab> {
   List<MemoryActionProposal> _proposals = const [];
   bool _loading = true;
   bool _showOnlySource = true;
+  bool _bulkDeleting = false;
   String? _busyId;
   final Map<String, Map<String, Object?>> _editedMergePreviews = {};
 
@@ -61,7 +78,9 @@ class _MemoryReviewTabState extends State<MemoryReviewTab> {
   void didUpdateWidget(covariant MemoryReviewTab oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.characterId != widget.characterId ||
-        oldWidget.sourceMessageId != widget.sourceMessageId) {
+        oldWidget.sourceMessageId != widget.sourceMessageId ||
+        oldWidget.contextMode != widget.contextMode ||
+        oldWidget.continuityId != widget.continuityId) {
       _showOnlySource = true;
       _reload(markSeen: true);
     }
@@ -77,10 +96,14 @@ class _MemoryReviewTabState extends State<MemoryReviewTab> {
         widget.characterId,
         sourceMessageId: widget.sourceMessageId,
         includeLocalScan: widget.sourceMessageId != null,
+        contextMode: widget.contextMode,
+        continuityId: widget.continuityId,
       );
     }
     final proposals = await MemoryGuardService.listForReview(
       widget.characterId,
+      contextMode: widget.contextMode,
+      continuityId: widget.continuityId,
     );
     if (!mounted) return;
     setState(() {
@@ -631,7 +654,7 @@ class _MemoryReviewTabState extends State<MemoryReviewTab> {
   }
 
   Future<void> _run(String id, Future<void> Function() operation) async {
-    if (_busyId != null) return;
+    if (_busyId != null || _bulkDeleting) return;
     setState(() => _busyId = id);
     try {
       await operation();
@@ -650,6 +673,117 @@ class _MemoryReviewTabState extends State<MemoryReviewTab> {
     }
   }
 
+  Future<void> _confirmAndClearAll() async {
+    if (_bulkDeleting || _busyId != null || _proposals.isEmpty) return;
+    final count = _proposals.length;
+    final expected = MemoryReviewTab.clearConfirmationWord();
+    final controller = TextEditingController();
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setDialogState) {
+          final canDelete = controller.text.trim() == expected;
+          return AlertDialog(
+            backgroundColor: YanciTheme.surfacePanel,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(18),
+            ),
+            title: Text(
+              L.pick(
+                en: 'Clear all pending items?',
+                zhTW: '清空全部待確認？',
+                zhCN: '清空全部待确认？',
+              ),
+              style: YanciTheme.headingMedium,
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  L.pick(
+                    en: widget.contextMode == ContextMode.rp
+                        ? 'This will remove all $count pending items in this storyline and discard their unconfirmed links. Existing memories will not be deleted or changed. Type "$expected" to continue.'
+                        : 'This will remove all $count pending items for this character and discard their unconfirmed links. Existing memories will not be deleted or changed. Type "$expected" to continue.',
+                    zhTW: widget.contextMode == ContextMode.rp
+                        ? '這會移除目前故事線的 $count 則待確認提案，並捨棄其未確認連線。既有記憶不會被刪除或變更。請輸入「$expected」繼續。'
+                        : '這會移除目前角色的 $count 則待確認提案，並捨棄其未確認連線。既有記憶不會被刪除或變更。請輸入「$expected」繼續。',
+                    zhCN: widget.contextMode == ContextMode.rp
+                        ? '这会移除当前故事线的 $count 条待确认提案，并舍弃其未确认连线。已有记忆不会被删除或更改。请输入“$expected”继续。'
+                        : '这会移除当前角色的 $count 条待确认提案，并舍弃其未确认连线。已有记忆不会被删除或更改。请输入“$expected”继续。',
+                  ),
+                  style: YanciTheme.bodyText,
+                ),
+                const SizedBox(height: 14),
+                TextField(
+                  controller: controller,
+                  autofocus: true,
+                  keyboardType: TextInputType.text,
+                  textCapitalization: TextCapitalization.none,
+                  textInputAction: TextInputAction.done,
+                  onChanged: (_) => setDialogState(() {}),
+                  onSubmitted: (_) {
+                    if (!canDelete) return;
+                    FocusManager.instance.primaryFocus?.unfocus();
+                    Navigator.pop(dialogContext, true);
+                  },
+                  decoration: InputDecoration(hintText: expected),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext, false),
+                child: Text(L.pick(en: 'Cancel', zhTW: '取消', zhCN: '取消')),
+              ),
+              FilledButton(
+                onPressed: canDelete
+                    ? () {
+                        FocusManager.instance.primaryFocus?.unfocus();
+                        Navigator.pop(dialogContext, true);
+                      }
+                    : null,
+                style: FilledButton.styleFrom(
+                  backgroundColor: Colors.red.shade400,
+                  foregroundColor: Colors.white,
+                  disabledBackgroundColor: Colors.red.shade400.withValues(
+                    alpha: 0.18,
+                  ),
+                ),
+                child: Text(
+                  L.pick(en: 'Clear all', zhTW: '全部刪除', zhCN: '全部删除'),
+                ),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 250));
+    controller.dispose();
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _bulkDeleting = true);
+    try {
+      await MemoryGuardService.rejectAllForReview(
+        widget.characterId,
+        contextMode: widget.contextMode,
+        continuityId: widget.continuityId,
+      );
+      await _reload();
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(error.toString().replaceFirst('Bad state: ', '')),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _bulkDeleting = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_loading) {
@@ -662,12 +796,43 @@ class _MemoryReviewTabState extends State<MemoryReviewTab> {
         physics: const AlwaysScrollableScrollPhysics(),
         padding: const EdgeInsets.fromLTRB(16, 10, 16, 92),
         children: [
+          if (_proposals.isNotEmpty) _buildClearAllButton(),
           if (widget.sourceMessageId != null) _buildSourceFilter(),
           if (visible.isEmpty)
             _buildEmptyState(sourceFiltered: _showOnlySource)
           else
             for (final proposal in visible) _buildProposalCard(proposal),
         ],
+      ),
+    );
+  }
+
+  Widget _buildClearAllButton() {
+    final label = L.pick(en: 'Clear pending', zhTW: '清空待確認', zhCN: '清空待确认');
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Align(
+        alignment: Alignment.centerRight,
+        child: Semantics(
+          button: true,
+          label: label,
+          child: TextButton.icon(
+            onPressed: _bulkDeleting || _busyId != null
+                ? null
+                : _confirmAndClearAll,
+            style: TextButton.styleFrom(
+              minimumSize: const Size(0, 44),
+              foregroundColor: Colors.red.shade300,
+            ),
+            icon: _bulkDeleting
+                ? const SizedBox.square(
+                    dimension: 16,
+                    child: CircularProgressIndicator(strokeWidth: 1.8),
+                  )
+                : const Icon(Icons.delete_sweep_outlined, size: 18),
+            label: Text('$label (${_proposals.length})'),
+          ),
+        ),
       ),
     );
   }
@@ -752,7 +917,7 @@ class _MemoryReviewTabState extends State<MemoryReviewTab> {
     final isNewModelSuggestion = isCreate && proposal.targetIds.isEmpty;
     final isMerge = proposal.action == MemoryActionProposal.actionMerge;
     final isLink = proposal.action == MemoryActionProposal.actionLink;
-    final disabled = isBusy || !proposal.canExecute;
+    final disabled = isBusy || _bulkDeleting || !proposal.canExecute;
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
       color: YanciTheme.surfacePanel.withValues(alpha: 0.82),

@@ -1,10 +1,10 @@
 /**
  * Holt PWA — IndexedDB 存儲層
- * 對話、角色卡、設定、表情包，全部本地不上傳。
+ * 對話、角色卡、設定與本機索引的 IndexedDB 存儲層。
  */
 
 const DB_NAME = "holt_pwa";
-const DB_VERSION = 3;
+const DB_VERSION = 5;
 
 let _db = null;
 
@@ -35,6 +35,22 @@ function openDB() {
         ms.createIndex("by_conv_time", ["conversationId", "createdAt"]);
       }
 
+      // 跨窗口搜尋只讀取純文字投影，避免每次搜尋載入 Base64 圖片。
+      if (!db.objectStoreNames.contains("message_search")) {
+        const search = db.createObjectStore("message_search", { keyPath: "id" });
+        search.createIndex("by_conv", "conversationId");
+        if (db.objectStoreNames.contains("messages")) {
+          const source = e.target.transaction.objectStore("messages");
+          source.openCursor().onsuccess = (event) => {
+            const cursor = event.target.result;
+            if (!cursor) return;
+            const message = cursor.value;
+            search.put(searchProjection(message));
+            cursor.continue();
+          };
+        }
+      }
+
       // 設定（key-value）
       if (!db.objectStoreNames.contains("settings")) {
         db.createObjectStore("settings", { keyPath: "key" });
@@ -53,14 +69,34 @@ function openDB() {
         tl.createIndex("by_char_date", ["characterId", "date"]);
       }
 
+      // PWA companion features: memories, summaries, emotion points,
+      // bio-clock habits, notes, balances, saved text and audio resources.
+      // A typed store keeps these features independently queryable without
+      // multiplying stores for every optional module.
+      if (!db.objectStoreNames.contains("feature_records")) {
+        const features = db.createObjectStore("feature_records", { keyPath: "id" });
+        features.createIndex("by_char", "characterId");
+        features.createIndex("by_char_kind", ["characterId", "kind"]);
+        features.createIndex("by_kind", "kind");
+      }
+
       // 用量記錄
       if (!db.objectStoreNames.contains("usage_logs")) {
         const ul = db.createObjectStore("usage_logs", { keyPath: "id", autoIncrement: true });
         ul.createIndex("by_timestamp", "timestamp");
       }
     };
-    req.onsuccess = (e) => { _db = e.target.result; resolve(_db); };
+    req.onsuccess = (e) => {
+      _db = e.target.result;
+      _db.onversionchange = () => {
+        _db?.close();
+        _db = null;
+        globalThis.dispatchEvent?.(new Event("holt:db-versionchange"));
+      };
+      resolve(_db);
+    };
     req.onerror = (e) => reject(e.target.error);
+    req.onblocked = () => reject(new Error("資料庫正在其他 Holt 視窗使用，請關閉舊視窗後重新載入"));
   });
 }
 
@@ -151,7 +187,33 @@ function newCharacter(overrides = {}) {
 
 const saveCharacter = (c) => _put("characters", { ...c, updatedAt: new Date().toISOString() });
 const getCharacter = (id) => _get("characters", id);
-const deleteCharacter = (id) => _del("characters", id);
+async function deleteCharacter(id) {
+  const conversations = await _getAll("conversations", "by_char", id);
+  const messages = (await Promise.all(conversations.map((conversation) =>
+    _getAll("messages", "by_conv", conversation.id)
+  ))).flat();
+  const timeline = await _getAll("timeline", "by_char", id);
+  const featureRecords = await _getAll("feature_records", "by_char", id);
+  const stickers = (await _getAll("stickers")).filter((sticker) => sticker.characterId === id);
+  const usageLogs = (await _getAll("usage_logs")).filter((entry) => entry.characterId === id);
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(["characters", "conversations", "messages", "message_search", "stickers", "timeline", "feature_records", "usage_logs"], "readwrite");
+    tx.objectStore("characters").delete(id);
+    for (const conversation of conversations) tx.objectStore("conversations").delete(conversation.id);
+    for (const message of messages) {
+      tx.objectStore("messages").delete(message.id);
+      tx.objectStore("message_search").delete(message.id);
+    }
+    for (const entry of timeline) tx.objectStore("timeline").delete(entry.id);
+    for (const entry of featureRecords) tx.objectStore("feature_records").delete(entry.id);
+    for (const sticker of stickers) tx.objectStore("stickers").delete(sticker.id);
+    for (const entry of usageLogs) tx.objectStore("usage_logs").delete(entry.id);
+    tx.oncomplete = () => resolve();
+    tx.onerror = (event) => reject(event.target.error);
+    tx.onabort = () => reject(tx.error || new Error("刪除角色失敗"));
+  });
+}
 async function listCharacters() {
   const all = await _getAll("characters");
   return all.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
@@ -179,10 +241,14 @@ const deleteConversation = async (id) => {
   const msgs = await getMessagesByConversation(id);
   const db = await openDB();
   return new Promise((resolve, reject) => {
-    const tx = db.transaction(["conversations", "messages"], "readwrite");
+    const tx = db.transaction(["conversations", "messages", "message_search"], "readwrite");
     tx.objectStore("conversations").delete(id);
     const ms = tx.objectStore("messages");
-    for (const m of msgs) ms.delete(m.id);
+    const search = tx.objectStore("message_search");
+    for (const m of msgs) {
+      ms.delete(m.id);
+      search.delete(m.id);
+    }
     tx.oncomplete = () => resolve();
     tx.onerror = (e) => reject(e.target.error);
   });
@@ -218,9 +284,50 @@ async function listConversations(characterId) {
 
 async function searchConversations(query, characterId) {
   const all = await listConversations(characterId);
-  const q = (query || "").trim().toLowerCase();
+  const q = normalizeSearchText(query);
   if (!q) return all;
-  return all.filter((c) => (c.title || "").toLowerCase().includes(q));
+  const projections = await _getAll("message_search");
+  return filterConversationsByMessages(all, projections, q);
+}
+
+function filterConversationsByMessages(conversations, messages, query) {
+  const q = normalizeSearchText(query);
+  if (!q) return [...conversations];
+  const conversationIds = new Set(conversations.map((conversation) => conversation.id));
+  const matchedConversationIds = new Set();
+  for (const message of messages) {
+    if (!conversationIds.has(message.conversationId)) continue;
+    const searchable = message.searchText ?? messageSearchText(message);
+    if (normalizeSearchText(searchable).includes(q)) {
+      matchedConversationIds.add(message.conversationId);
+    }
+  }
+  return conversations.filter((conversation) =>
+    normalizeSearchText(conversation.title).includes(q) ||
+    matchedConversationIds.has(conversation.id)
+  );
+}
+
+function normalizeSearchText(value) {
+  return String(value ?? "").trim().toLocaleLowerCase();
+}
+
+function messageSearchText(message) {
+  const content = message?.content;
+  if (typeof content === "string") return normalizeSearchText(content);
+  if (!Array.isArray(content)) return "";
+  return normalizeSearchText(content
+    .filter((part) => part?.type === "text")
+    .map((part) => part.text || "")
+    .join(" "));
+}
+
+function searchProjection(message) {
+  return {
+    id: message.id,
+    conversationId: message.conversationId,
+    searchText: messageSearchText(message),
+  };
 }
 
 // ═══ 消息 ═══
@@ -236,19 +343,44 @@ function newMessage(conversationId, role, content, extra = {}) {
   };
 }
 
-const saveMessage = (m) => _put("messages", m);
+async function saveMessage(message) {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(["messages", "message_search", "conversations"], "readwrite");
+    tx.objectStore("messages").put(message);
+    tx.objectStore("message_search").put(searchProjection(message));
+    const conversations = tx.objectStore("conversations");
+    const request = conversations.get(message.conversationId);
+    request.onsuccess = () => {
+      if (!request.result) return;
+      conversations.put({ ...request.result, updatedAt: new Date().toISOString() });
+    };
+    tx.oncomplete = () => resolve(message);
+    tx.onerror = (event) => reject(event.target.error);
+    tx.onabort = () => reject(tx.error || new Error("儲存訊息失敗"));
+  });
+}
 
 async function getMessagesByConversation(conversationId) {
   const all = await _getAll("messages", "by_conv", conversationId);
   return all.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
 }
 
-async function deleteMessage(id) { return _del("messages", id); }
+async function deleteMessage(id) {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(["messages", "message_search"], "readwrite");
+    tx.objectStore("messages").delete(id);
+    tx.objectStore("message_search").delete(id);
+    tx.oncomplete = () => resolve();
+    tx.onerror = (event) => reject(event.target.error);
+  });
+}
 
 // 更新消息內容（流式追加完成後寫回）
 async function updateMessageContent(id, content) {
   const msg = await _get("messages", id);
-  if (msg) { msg.content = content; await _put("messages", msg); }
+  if (msg) { msg.content = content; await saveMessage(msg); }
 }
 
 // ═══ 表情包 ═══
@@ -284,6 +416,87 @@ async function listTimelineEntries(characterId, year, month) {
     return d.getFullYear() === year && d.getMonth() + 1 === month;
   });
   return filtered.sort((a, b) => a.date.localeCompare(b.date));
+}
+
+const listTimelineEntriesForCharacter = (characterId) => _getAll("timeline", "by_char", characterId);
+const listAllTimelineEntries = () => _getAll("timeline");
+
+// ═══ 陪伴功能資料 ═══
+
+function newFeatureRecord(characterId, kind, value = {}, overrides = {}) {
+  const now = new Date().toISOString();
+  return {
+    id: crypto.randomUUID(),
+    characterId: characterId || "default",
+    kind,
+    value,
+    createdAt: now,
+    updatedAt: now,
+    ...overrides,
+  };
+}
+
+const saveFeatureRecord = (record) => _put("feature_records", {
+  ...record,
+  updatedAt: new Date().toISOString(),
+});
+const getFeatureRecord = (id) => _get("feature_records", id);
+const deleteFeatureRecord = (id) => _del("feature_records", id);
+async function listFeatureRecords(characterId, kind = "") {
+  const rows = kind
+    ? await _getAll("feature_records", "by_char_kind", IDBKeyRange.only([characterId || "default", kind]))
+    : await _getAll("feature_records", "by_char", characterId || "default");
+  return rows.sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
+}
+const listAllFeatureRecords = () => _getAll("feature_records");
+
+async function applyBalanceDeltas(deltas, { defaultBalance = 800 } = {}) {
+  const entries = Object.entries(deltas || {})
+    .map(([accountId, delta]) => [String(accountId), Number(delta)])
+    .filter(([accountId, delta]) => accountId && Number.isInteger(delta) && delta !== 0);
+  if (!entries.length) return {};
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction("feature_records", "readwrite");
+    const store = tx.objectStore("feature_records");
+    const next = {};
+    let pending = entries.length;
+    let rejected = false;
+    for (const [accountId, delta] of entries) {
+      const id = `balance:${accountId}`;
+      const request = store.get(id);
+      request.onerror = () => { rejected = true; tx.abort(); };
+      request.onsuccess = () => {
+        if (rejected) return;
+        const current = Number(request.result?.value?.coins ?? defaultBalance);
+        const balance = current + delta;
+        if (!Number.isSafeInteger(balance) || balance < 0) {
+          rejected = true;
+          tx.abort();
+          return;
+        }
+        next[accountId] = balance;
+        store.put({
+          id,
+          characterId: accountId === "_user" ? "default" : accountId,
+          kind: "balance",
+          value: { coins: balance },
+          createdAt: request.result?.createdAt || new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        });
+        pending -= 1;
+      };
+    }
+    tx.oncomplete = () => resolve(next);
+    tx.onerror = () => reject(tx.error || new Error("貝殼餘額更新失敗"));
+    tx.onabort = () => reject(rejected ? new Error("貝殼餘額不足") : tx.error || new Error("貝殼餘額更新失敗"));
+  });
+}
+
+async function getBalance(accountId, defaultBalance = 800) {
+  const row = await getFeatureRecord(`balance:${accountId}`);
+  const value = Number(row?.value?.coins ?? defaultBalance);
+  return Number.isSafeInteger(value) && value >= 0 ? value : defaultBalance;
 }
 
 // ═══ 用量記錄 ═══
@@ -384,6 +597,52 @@ async function _getUsageInRange(from, to) {
   });
 }
 
+const listAllUsageLogs = () => _getAll("usage_logs");
+
+// ═══ 備份還原與清除 ═══
+
+const RESTORABLE_STORES = ["characters", "conversations", "messages", "message_search", "stickers", "timeline", "feature_records", "usage_logs"];
+
+async function replacePwaData({ characters = [], conversations = [], messages = [], stickers = [], timeline = [], featureRecords = [], usageLogs = [], settings = {}, settingKeys = [] }) {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction([...RESTORABLE_STORES, "settings"], "readwrite");
+    for (const storeName of RESTORABLE_STORES) tx.objectStore(storeName).clear();
+    for (const row of characters) tx.objectStore("characters").put(row);
+    for (const row of conversations) tx.objectStore("conversations").put(row);
+    for (const row of messages) {
+      tx.objectStore("messages").put(row);
+      tx.objectStore("message_search").put(searchProjection(row));
+    }
+    for (const row of stickers) tx.objectStore("stickers").put(row);
+    for (const row of timeline) tx.objectStore("timeline").put(row);
+    for (const row of featureRecords) tx.objectStore("feature_records").put(row);
+    for (const row of usageLogs) {
+      const normalized = { ...row };
+      if (normalized.id == null) delete normalized.id;
+      tx.objectStore("usage_logs").put(normalized);
+    }
+    const settingStore = tx.objectStore("settings");
+    for (const key of settingKeys) settingStore.delete(key);
+    for (const [key, value] of Object.entries(settings)) settingStore.put({ key, value });
+    tx.oncomplete = () => resolve();
+    tx.onerror = (event) => reject(event.target.error);
+    tx.onabort = () => reject(tx.error || new Error("匯入交易失敗"));
+  });
+}
+
+async function clearAllPwaData() {
+  const db = await openDB();
+  const stores = Array.from(db.objectStoreNames);
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(stores, "readwrite");
+    for (const storeName of stores) tx.objectStore(storeName).clear();
+    tx.oncomplete = () => resolve();
+    tx.onerror = (event) => reject(event.target.error);
+    tx.onabort = () => reject(tx.error || new Error("清除本機資料失敗"));
+  });
+}
+
 // ═══ 星標模型與思考鏈 ═══
 
 async function getStarredModels() {
@@ -392,7 +651,27 @@ async function getStarredModels() {
 }
 
 async function saveStarredModels(models) {
-  await setSetting("starredModels", Array.isArray(models) ? models : []);
+  const unique = [];
+  const seen = new Set();
+  for (const rawModel of Array.isArray(models) ? models : []) {
+    const model = String(rawModel || "").trim();
+    if (!model || seen.has(model)) continue;
+    seen.add(model);
+    unique.push(model);
+  }
+  await setSetting("starredModels", unique);
+  return unique;
+}
+
+async function removeStarredModel(modelId) {
+  const target = String(modelId || "").trim();
+  const current = await getStarredModels();
+  const next = current.filter((model) => model !== target);
+  const providers = await getStarredModelProviders();
+  delete providers[target];
+  await saveStarredModels(next);
+  await setSetting("starredModelProviders", providers);
+  return next;
 }
 
 async function getStarredModelProviders() {
@@ -439,10 +718,14 @@ export {
   getSetting, setSetting,
   newCharacter, saveCharacter, getCharacter, deleteCharacter, listCharacters,
   newConversation, saveConversation, getConversation, deleteConversation, listConversations, toggleStarConversation, updateConversationTitle, searchConversations,
+  normalizeSearchText, messageSearchText, filterConversationsByMessages,
   newMessage, saveMessage, getMessagesByConversation, deleteMessage, updateMessageContent,
-  getStarredModels, saveStarredModels, toggleStarModel, isModelStarred, getStarredModelProviders,
+  getStarredModels, saveStarredModels, removeStarredModel, toggleStarModel, isModelStarred, getStarredModelProviders,
   getThinkingChainEnabled, setThinkingChainEnabled,
   saveSticker, deleteSticker, listStickers,
-  newTimelineEntry, saveTimelineEntry, deleteTimelineEntry, listTimelineEntries,
-  logUsage, getUsageSummary, getDailyUsage, getUsageByModel, estimateCost,
+  newTimelineEntry, saveTimelineEntry, deleteTimelineEntry, listTimelineEntries, listTimelineEntriesForCharacter, listAllTimelineEntries,
+  newFeatureRecord, saveFeatureRecord, getFeatureRecord, deleteFeatureRecord, listFeatureRecords, listAllFeatureRecords,
+  getBalance, applyBalanceDeltas,
+  logUsage, getUsageSummary, getDailyUsage, getUsageByModel, listAllUsageLogs, estimateCost,
+  replacePwaData, clearAllPwaData,
 };

@@ -218,18 +218,19 @@ class GrokContextLedger {
   static Map<String, dynamic> _toApiMessage(Map<String, String> source) {
     final role = source['role'] ?? 'user';
     final content = source['content'] ?? '';
-    final image = source['image_data_url'];
-    if (role == 'user' && image != null && image.isNotEmpty) {
+    final images = ApiMessageMedia.imageDataUrls(source);
+    if (role == 'user' && images.isNotEmpty) {
       return <String, dynamic>{
         'role': role,
         'content': <Map<String, dynamic>>[
-          <String, dynamic>{
-            'type': 'image_url',
-            'image_url': <String, dynamic>{'url': image},
-          },
+          for (final image in images)
+            <String, dynamic>{
+              'type': 'image_url',
+              'image_url': <String, dynamic>{'url': image},
+            },
           <String, dynamic>{
             'type': 'text',
-            'text': content.isEmpty ? '（用戶發送了一張圖片）' : content,
+            'text': content.isEmpty ? '（用戶發送了${images.length}張圖片）' : content,
           },
         ],
       };
@@ -273,7 +274,7 @@ class GrokContextLedger {
       jsonEncode(<String>[
         message['role'] ?? 'user',
         message['content'] ?? '',
-        _hash(message['image_data_url'] ?? ''),
+        _hash(message['image_data_urls'] ?? message['image_data_url'] ?? ''),
       ]),
     );
     target.write('\n');

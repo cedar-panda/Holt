@@ -3,6 +3,7 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 
 import '../services/locale_strings.dart';
+import '../services/background_foreground_service.dart';
 import '../theme/app_theme.dart';
 import '../theme/theme_presets.dart';
 
@@ -17,6 +18,7 @@ class YanciBottomNavBar extends StatelessWidget {
     this.reduceMotion = false,
     this.compact = false,
     this.themePreset,
+    this.backgroundPalette,
   });
 
   final int activeIndex;
@@ -24,6 +26,7 @@ class YanciBottomNavBar extends StatelessWidget {
   final bool reduceMotion;
   final bool compact;
   final ThemePreset? themePreset;
+  final BackgroundForegroundPalette? backgroundPalette;
 
   static const _icons = [
     Icons.key_rounded,
@@ -43,9 +46,22 @@ class YanciBottomNavBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final radius = compact ? 19.0 : 28.0;
+    final radius = compact ? 27.0 : 33.0;
     final navHeight = compact ? 54.0 : 66.0;
     final theme = themePreset ?? YanciTheme.preset;
+    final imageColor = backgroundPalette?.dominant;
+    final imageIsDark =
+        imageColor != null && imageColor.computeLuminance() < 0.4;
+    final imageSurface = imageColor == null
+        ? null
+        : Color.lerp(
+            imageIsDark ? const Color(0xFF171719) : const Color(0xFFFAFAF8),
+            imageColor,
+            0.14,
+          )!;
+    final imageForeground = imageSurface == null
+        ? null
+        : BackgroundForegroundService.forColor(imageSurface);
     final horizontalPadding = compact ? 0.0 : 24.0;
     final bottomPadding = compact
         ? 0.0
@@ -98,14 +114,18 @@ class YanciBottomNavBar extends StatelessWidget {
                 filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
                 child: DecoratedBox(
                   decoration: BoxDecoration(
-                    color: theme.isDark
-                        ? Colors.white.withValues(alpha: 0.04)
-                        : Colors.white.withValues(alpha: 0.35),
+                    color:
+                        imageSurface ??
+                        (theme.isDark
+                            ? Colors.white.withValues(alpha: 0.04)
+                            : Colors.white.withValues(alpha: 0.35)),
                     borderRadius: BorderRadius.circular(radius),
                     border: Border.all(
-                      color: Colors.white.withValues(
-                        alpha: theme.isDark ? 0.08 : 0.5,
-                      ),
+                      color:
+                          imageForeground?.secondary.withValues(alpha: 0.18) ??
+                          Colors.white.withValues(
+                            alpha: theme.isDark ? 0.08 : 0.5,
+                          ),
                       width: 0.5,
                     ),
                   ),
@@ -125,8 +145,9 @@ class YanciBottomNavBar extends StatelessWidget {
                     selected: index == activeIndex,
                     reduceMotion: reduceMotion,
                     compact: compact,
-                    accent: theme.accent,
-                    inactiveColor: theme.navInactive,
+                    accent: imageForeground?.primary ?? theme.accent,
+                    inactiveColor:
+                        imageForeground?.secondary ?? theme.navInactive,
                     onTap: onTap == null ? null : () => onTap!(index),
                   ),
               ],
@@ -198,7 +219,7 @@ class _YanciNavItem extends StatelessWidget {
               decoration: BoxDecoration(
                 color: accent.withValues(alpha: 0.12 * progress),
                 borderRadius: BorderRadius.circular(
-                  (compact ? 12 : 16) + 2 * progress,
+                  (compact ? 21 : 24).toDouble(),
                 ),
               ),
               child: Column(

@@ -35,7 +35,9 @@ ThinkingContextLogParts parseThinkingContextLog(
     if (line.startsWith('🎨')) {
       continue;
     }
-    if (line.startsWith('情緒座標')) {
+    if (line.startsWith('情緒座標') ||
+        line.startsWith('情绪坐标') ||
+        line.toLowerCase().startsWith('emotion coordinates')) {
       emotionCoordinate = line;
     } else if (_isEmotionLogLine(line)) {
       emotionLines.add(line);
@@ -58,8 +60,13 @@ bool _isEmotionLogLine(String line) {
       trimmed.startsWith('🌊') ||
       trimmed.startsWith('🔒') ||
       trimmed.startsWith('情緒') ||
+      trimmed.startsWith('情绪') ||
+      trimmed.startsWith('Emotion') ||
       trimmed.contains('打點 ') ||
-      trimmed.contains('消解 ');
+      trimmed.contains('打点 ') ||
+      trimmed.contains('消解 ') ||
+      trimmed.contains('Recorded ') ||
+      trimmed.contains('Resolved ');
 }
 
 class ThinkingSheetLauncher extends StatelessWidget {

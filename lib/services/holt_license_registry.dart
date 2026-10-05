@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
@@ -12,6 +14,12 @@ class HoltLicenseRegistry {
     'LICENSE': ['Holt'],
     'third_party/licenses/lora/OFL.txt': ['Lora'],
     'third_party/licenses/lxgw-wenkai-tc/OFL.txt': ['LXGW WenKai TC'],
+    'third_party/licenses/cormorant-garamond/OFL.txt': [
+      'Cormorant Garamond',
+    ],
+    'third_party/licenses/asr_zh/Apache-2.0.txt': [
+      'Chinese ASR Zipformer 14M model',
+    ],
     'third_party/licenses/native/llamadart-native-b9829-LICENSE.txt': [
       'llamadart-native',
     ],
@@ -62,6 +70,15 @@ class HoltLicenseRegistry {
     _registered = true;
     LicenseRegistry.addLicense(() async* {
       for (final entry in _assets.entries) {
+        if (Platform.isIOS &&
+            (entry.key.startsWith('third_party/licenses/android/') ||
+                entry.key.startsWith('third_party/licenses/native/llama') ||
+                entry.key.startsWith('third_party/licenses/native/llamadart') ||
+                entry.key.startsWith(
+                  'third_party/licenses/native/LiteRT-LM',
+                ))) {
+          continue;
+        }
         try {
           final text = await rootBundle.loadString(entry.key);
           yield LicenseEntryWithLineBreaks(entry.value, text);

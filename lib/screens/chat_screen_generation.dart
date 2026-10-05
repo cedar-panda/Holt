@@ -1,12 +1,47 @@
 part of 'chat_screen.dart';
 
 extension _ChatGenerationMethods on _ChatScreenState {
+  Future<String> _processScopedMemoryReply(
+    String text, {
+    required bool emotionEnabled,
+    bool resetState = true,
+  }) async {
+    final identity = _requiredSessionIdentity;
+    final bucket = await _memoryBucket();
+    if (identity.contextMode == ContextMode.rp) {
+      return RpMemoryService.processReply(
+        text,
+        characterId: _activeCharacterId,
+        mode: bucket,
+        windowId: widget.conversationId,
+        continuityId: identity.continuityId,
+        emotionEnabled: emotionEnabled,
+        resetState: resetState,
+      );
+    }
+    return MemoryActions.processReply(
+      text,
+      characterId: _activeCharacterId,
+      mode: bucket,
+      windowId: widget.conversationId,
+      emotionEnabled: emotionEnabled,
+      resetState: resetState,
+      contextMode: ContextMode.daily,
+      continuityId: identity.continuityId,
+    );
+  }
+
   /// 生成態統一入口：熄屏/退後台會凍結流式回覆，
   /// 生成期間掛前台服務保護（GenerationForegroundGuard），結束即撤
   void _setGenerating(bool v) {
     if (_isGenerating == v) return;
     _isGenerating = v;
     if (v) {
+      _streamRevealDelayTimer?.cancel();
+      _streamRevealTimer?.cancel();
+      _streamRevealDelayTimer = null;
+      _streamRevealTimer = null;
+      _streamFirstChunkAt = null;
       _streamSurfaceDelayTimer?.cancel();
       _streamSurfaceVisible = false;
       // Let the sent user bubble settle before revealing the assistant
@@ -19,7 +54,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
         _streamSurfaceVisible = true;
         _refreshChatState(() {});
         _scrollToBottom();
-        _startStreamPopTimer();
+        _scheduleStreamDrain();
       });
       _generationForegroundEndTimer?.cancel();
       _generationForegroundStartTimer?.cancel();
@@ -46,51 +81,91 @@ extension _ChatGenerationMethods on _ChatScreenState {
   }
 
   void _onStreamChunk(String chunk) {
-    if (!mounted) return;
-    _streamChunkCount++;
-    if (_streamChunkCount >= 3) _streamTextUnlocked = true;
-    for (int i = 0; i < chunk.length; i++) {
-      _streamCharQueue.add(chunk[i]);
-    }
-    _startStreamPopTimer();
+    if (!mounted || chunk.isEmpty) return;
+    _streamFirstChunkAt ??= DateTime.now();
+    _streamCharQueue.addAll(chunk.characters);
+    _scheduleStreamDrain();
   }
 
-  void _startStreamPopTimer() {
-    if (!_streamSurfaceVisible || !_streamTextUnlocked) return;
-    if (_streamPopTimer?.isActive == true) return;
-    _streamPopTimer = Timer.periodic(const Duration(milliseconds: 30), (timer) {
-      if (!mounted || _streamCharQueue.isEmpty) {
-        timer.cancel();
-        return;
-      }
-      int popCount = 1;
-      if (_streamCharQueue.length > 20) popCount = 2;
-      if (_streamCharQueue.length > 50) popCount = 4;
-      if (_streamCharQueue.length > 100) popCount = 8;
+  void _scheduleStreamDrain() {
+    if (!_streamSurfaceVisible) return;
+    if (_streamCharQueue.isEmpty || _streamRevealTimer != null) return;
 
-      final buf = StringBuffer();
-      for (int i = 0; i < popCount && _streamCharQueue.isNotEmpty; i++) {
-        buf.write(_streamCharQueue.removeAt(0));
+    // Native providers use half of the relay reading buffer. Both still reveal
+    // from a character queue, preventing provider-sized chunks from appearing
+    // as visible paragraphs.
+    final firstChunkAt = _streamFirstChunkAt ?? DateTime.now();
+    final remainingDelay =
+        StreamPresentationPolicy.initialDelay(_streamPresentationMode) -
+        DateTime.now().difference(firstChunkAt);
+    if (remainingDelay > Duration.zero) {
+      if (_streamRevealDelayTimer == null ||
+          !_streamRevealDelayTimer!.isActive) {
+        _streamRevealDelayTimer = Timer(remainingDelay, () {
+          _streamRevealDelayTimer = null;
+          _scheduleStreamDrain();
+        });
       }
-      _streamingText += buf.toString();
-      // Keep the same avatar + Thinking surface between search completion and
-      // the first streamed response. Remove it in the same frame that real
-      // response content appears, so the generic atom loader never flashes.
-      if (_webSearchActivity?.status == WebSearchActivityStatus.completed ||
-          _webSearchActivity?.status == WebSearchActivityStatus.failed) {
-        _webSearchActivity = null;
-      }
-      _refreshChatState(() {});
-      _scrollToBottom();
-    });
+      return;
+    }
+    _streamRevealTimer = Timer.periodic(
+      StreamPresentationPolicy.characterInterval(_streamPresentationMode),
+      (_) => _revealOneStreamCharacter(),
+    );
+  }
+
+  void _revealOneStreamCharacter() {
+    if (!mounted || !_isGenerating || !_streamSurfaceVisible) {
+      _streamRevealTimer?.cancel();
+      _streamRevealTimer = null;
+      return;
+    }
+    if (_streamCharQueue.isEmpty) {
+      _streamRevealTimer?.cancel();
+      _streamRevealTimer = null;
+      return;
+    }
+
+    _streamingText += _streamCharQueue.removeFirst();
+    // Keep the same avatar + Thinking surface between search completion and
+    // the first streamed response. Remove it with the first visible character
+    // so the generic atom loader never flashes over the reply.
+    if (_webSearchActivity?.status == WebSearchActivityStatus.completed ||
+        _webSearchActivity?.status == WebSearchActivityStatus.failed) {
+      _webSearchActivity = null;
+    }
+    _streamRevision.value++;
+    _scheduleStreamScrollFollow();
+    if (_streamCharQueue.isEmpty) {
+      _streamRevealTimer?.cancel();
+      _streamRevealTimer = null;
+    }
   }
 
   void _clearStreamQueue() {
+    _streamRevealDelayTimer?.cancel();
+    _streamRevealTimer?.cancel();
+    _streamRevealDelayTimer = null;
+    _streamRevealTimer = null;
+    _streamFirstChunkAt = null;
     _streamCharQueue.clear();
-    _streamPopTimer?.cancel();
     _streamingText = '';
-    _streamChunkCount = 0;
-    _streamTextUnlocked = false;
+  }
+
+  Future<void> _finishStreamPresentation() async {
+    if (_streamCharQueue.isEmpty) return;
+    _scheduleStreamDrain();
+    while (mounted &&
+        _isGenerating &&
+        !_stopGenerationRequested &&
+        _streamCharQueue.isNotEmpty) {
+      await Future<void>.delayed(const Duration(milliseconds: 32));
+      _scheduleStreamDrain();
+    }
+  }
+
+  void _configureStreamPresentation(String provider) {
+    _streamPresentationMode = StreamPresentationPolicy.forProvider(provider);
   }
 
   String _computeDisplayStreamingText() {
@@ -121,7 +196,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
     }
     return ThinkingModePolicy.sanitizeVisibleReply(
       ThinkingModePolicy.moveProtocolTagsOutsideThinking(text.trim()),
-      enabled: _generationThinkingEnabled,
+      enabled: _activeRequestThinkingEnabled ?? _generationThinkingEnabled,
     );
   }
 
@@ -157,19 +232,19 @@ extension _ChatGenerationMethods on _ChatScreenState {
 
   Future<ApiAdapter?> _prepareAdapterForGeneration({
     required int generationSerial,
-    required Future<void> Function() retry,
+    required int sourceMessageId,
   }) async {
     try {
       return await ApiSettings.buildAdapter();
     } on ApiConfigException catch (error) {
       if (!_isCurrentGeneration(generationSerial)) return null;
       _finishFailedGeneration();
-      _showApiConfigFailure(error);
+      await _persistApiFailure(error, sourceMessageId: sourceMessageId);
       return null;
     } catch (error) {
       if (!_isCurrentGeneration(generationSerial)) return null;
       _finishFailedGeneration();
-      _showRetryableFailure(error, () => _runMessageRetry(retry));
+      await _persistApiFailure(error, sourceMessageId: sourceMessageId);
       return null;
     }
   }
@@ -208,6 +283,22 @@ extension _ChatGenerationMethods on _ChatScreenState {
     return _stripInternalToolCalls(text);
   }
 
+  Future<String> _extractDiaryAndStore(
+    String text, {
+    required int? sourceMessageId,
+    required bool diaryEnabled,
+  }) async {
+    final result = await CharacterDiaryService.processReply(
+      text: text,
+      characterId: _activeCharacterId,
+      conversationId: widget.conversationId,
+      sourceMessageId: sourceMessageId,
+      contextMode: _requiredSessionIdentity.contextMode,
+      enabled: diaryEnabled,
+    );
+    return result.visibleText;
+  }
+
   /// 發推流程：限額/連接檢查 → 確認卡（承諾過「先過目」）→ 發送。
   Future<void> _handleXPost() async {
     final content = _pendingXPost;
@@ -218,18 +309,12 @@ extension _ChatGenerationMethods on _ChatScreenState {
     if (!mounted) return;
     if (!await XPostService.isConnected(charId)) {
       if (!mounted) return; // await 後 context 需重新確認
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            L.pick(
-              en: '$_characterName wanted to post, but the X account is not connected.',
-              zhTW: '【$_characterName】起念發了條推文，但 X 帳號尚未連接',
-            ),
-          ),
-          backgroundColor: YanciTheme.accent,
-          behavior: SnackBarBehavior.floating,
-          duration: const Duration(seconds: 2),
+      _showChatNotice(
+        L.pick(
+          en: '$_characterName wanted to post, but the X account is not connected.',
+          zhTW: '【$_characterName】起念發了條推文，但 X 帳號尚未連接',
         ),
+        duration: const Duration(seconds: 2),
       );
       return;
     }
@@ -265,13 +350,10 @@ extension _ChatGenerationMethods on _ChatScreenState {
     final err = await XPostService.postTweet(charId, content);
     if (err == null) await XPostSettings.incrementToday(charId);
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(err ?? L.pick(en: 'Posted to X 🦦', zhTW: '已發布到 X 🦦')),
-        backgroundColor: YanciTheme.accent,
-        behavior: SnackBarBehavior.floating,
-        duration: const Duration(seconds: 3),
-      ),
+    _showChatNotice(
+      err ?? L.pick(en: 'Posted to X 🦦', zhTW: '已發布到 X 🦦'),
+      tone: err == null ? ThemedNoticeTone.neutral : ThemedNoticeTone.error,
+      duration: const Duration(seconds: 3),
     );
   }
 
@@ -301,6 +383,14 @@ extension _ChatGenerationMethods on _ChatScreenState {
     TransferData? transfer,
     ScratchData? scratch,
   ) {
+    if (text.trimLeft().startsWith(Message.rpChapterContinuationPrefix)) {
+      final isRp = _requiredSessionIdentity.contextMode == ContextMode.rp;
+      return L.pick(
+        en: isRp ? 'Continue this chapter' : 'Continue this conversation',
+        zhTW: isRp ? '繼續這一篇章' : '繼續這段對話',
+        zhCN: isRp ? '继续这一篇章' : '继续这段对话',
+      );
+    }
     final trimmed = MarriageService.stripHiddenCertMetadata(text);
     if (trimmed.isNotEmpty) return trimmed;
     if (scratch != null) {
@@ -327,24 +417,43 @@ extension _ChatGenerationMethods on _ChatScreenState {
     return '${L.pick(en: '', zhTW: '【刮刮卡禮物】用戶買了一張刮刮卡讓你刮。App 已在本地完成刮卡，結果：')}$resultsZh${L.pick(en: '', zhTW: '。若中了貝殼，已經加到你目前餘額。請自然回應「對方讓你刮」這件事，以及這次刮出的結果。')}';
   }
 
+  Future<void> _ensureCoinSnapshot(String characterId) async {
+    if (_coinSnapshotChar != null && _coinSnapshotUser != null) return;
+
+    var snapshot = await DatabaseHelper.getConversationPinnedCoinSnapshot(
+      widget.conversationId,
+    );
+    if (snapshot == null) {
+      final characterCoins = await ScratchService.getCoins(characterId);
+      final userCoins = await ScratchService.getUserCoins();
+      snapshot = await DatabaseHelper.setConversationPinnedCoinSnapshotIfAbsent(
+        widget.conversationId,
+        characterCoins: characterCoins,
+        userCoins: userCoins,
+      );
+    }
+    _coinSnapshotChar = snapshot.characterCoins;
+    _coinSnapshotUser = snapshot.userCoins;
+  }
+
   Future<String> _coinStaticPrompt(String characterId) async {
-    _coinSnapshotChar ??= await ScratchService.getCoins(characterId);
-    _coinSnapshotUser ??= await ScratchService.getUserCoins();
+    await _ensureCoinSnapshot(characterId);
 
     if (L.locale == 'en') {
-      return '【Shell Balance Snapshot】At the start of this chat window: your balance is $_coinSnapshotChar shells; the user balance is $_coinSnapshotUser shells. This static snapshot is kept stable for prompt caching. Later transfer/scratch changes are provided as deltas in dynamic context; always follow the latest delta when present.';
+      return '【Shell Balance Snapshot】At the start of this chat window: your balance is $_coinSnapshotChar shells; the user balance is $_coinSnapshotUser shells. This static snapshot is kept stable for prompt caching. Later daily grants, transfers, and scratch-card changes are provided as deltas in dynamic context; always follow the latest delta when present.';
     }
 
     return L.pick(
       en: '',
       zhTW:
-          '【貝殼餘額快照】本聊天窗口開篇時：你的餘額 $_coinSnapshotChar 貝殼；用戶餘額 $_coinSnapshotUser 貝殼。此靜態快照為了穩定 prompt cache 不再改動；後續轉帳/刮刮卡變動會在動態上下文以增減量補充，有變動時以最新增減量為準。',
+          '【貝殼餘額快照】本聊天窗口開篇時：你的餘額 $_coinSnapshotChar 貝殼；用戶餘額 $_coinSnapshotUser 貝殼。此靜態快照為了穩定 prompt cache 不再改動；後續每日發放、轉帳與刮刮卡變動會在動態上下文以增減量補充，有變動時以最新增減量為準。',
+      zhCN:
+          '【贝壳余额快照】本聊天窗口开篇时：你的余额 $_coinSnapshotChar 贝壳；用户余额 $_coinSnapshotUser 贝壳。此静态快照为了稳定 prompt cache 不再改动；后续每日发放、转账与刮刮卡变动会在动态上下文以增减量补充，有变动时以最新增减量为准。',
     );
   }
 
   Future<String> _coinDeltaPrompt(String characterId) async {
-    _coinSnapshotChar ??= await ScratchService.getCoins(characterId);
-    _coinSnapshotUser ??= await ScratchService.getUserCoins();
+    await _ensureCoinSnapshot(characterId);
 
     final currentChar = await ScratchService.getCoins(characterId);
     final currentUser = await ScratchService.getUserCoins();
@@ -361,6 +470,8 @@ extension _ChatGenerationMethods on _ChatScreenState {
       en: '',
       zhTW:
           '【貝殼餘額變動】自本窗口開篇後：你的餘額 ${signed(charDelta)}，目前 $currentChar 貝殼；用戶餘額 ${signed(userDelta)}，目前 $currentUser 貝殼。轉帳與刮刮卡判斷請以目前餘額為準。',
+      zhCN:
+          '【贝壳余额变动】自本窗口开篇后：你的余额 ${signed(charDelta)}，目前 $currentChar 贝壳；用户余额 ${signed(userDelta)}，目前 $currentUser 贝壳。转账与刮刮卡判断请以目前余额为准。',
     );
   }
 
@@ -423,15 +534,10 @@ extension _ChatGenerationMethods on _ChatScreenState {
           _scrollToBottom();
         }
       } else if (r['success'] == '0' && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              '【$_characterName】想買「${r['name']}」沒成功：${r['reason']}',
-            ),
-            backgroundColor: YanciTheme.accent,
-            behavior: SnackBarBehavior.floating,
-            duration: const Duration(seconds: 2),
-          ),
+        _showChatNotice(
+          '【$_characterName】想買「${r['name']}」沒成功：${r['reason']}',
+          tone: ThemedNoticeTone.error,
+          duration: const Duration(seconds: 2),
         );
       }
     }
@@ -454,13 +560,19 @@ extension _ChatGenerationMethods on _ChatScreenState {
     required bool whisperModelOverrideEnabled,
     required String providerName,
     required String staticWindowSummary,
+    required ContextMode contextMode,
+    required ToolFeatureState toolFeatures,
   }) async {
-    if (bioclockEnabled &&
+    final toolPromptsEnabled = toolFeatures.toolPromptsEnabled;
+    if (toolPromptsEnabled &&
+        bioclockEnabled &&
         (_habitSnapshotIds == null || _habitListSnapshot == null)) {
       _habitSnapshotIds = await BioClockService.habitIds(characterId);
       _habitListSnapshot = await BioClockService.habitListPrompt(characterId);
     }
-    final habitList = bioclockEnabled ? (_habitListSnapshot ?? '') : '';
+    final habitList = toolPromptsEnabled && bioclockEnabled
+        ? (_habitListSnapshot ?? '')
+        : '';
 
     if (selfNotes.isNotEmpty &&
         (_selfNotesSnapshot == null || _selfNotesSnapshotLines == null)) {
@@ -476,11 +588,15 @@ extension _ChatGenerationMethods on _ChatScreenState {
           : pinned.split('\n').toSet();
     }
 
-    _stickerPromptSnapshot ??= await StickerService.buildStickerPrompt(
-      characterId: characterId,
-    );
+    if (toolPromptsEnabled) {
+      _stickerPromptSnapshot ??= await StickerService.buildStickerPrompt(
+        characterId: characterId,
+      );
+    }
     // 背包窗內快照（delta 基準），與其他快照同點初始化
-    _packQtySnapshot ??= await ShopService.packQtySnapshot(characterId);
+    if (toolPromptsEnabled && toolFeatures.shopEnabled) {
+      _packQtySnapshot ??= await ShopService.packQtySnapshot(characterId);
+    }
 
     final staticParts = <String>[];
     final windowParts = <String>[];
@@ -509,13 +625,17 @@ extension _ChatGenerationMethods on _ChatScreenState {
     // 簽署瞬間變一次＝一次性重建，之後永久命中）
     final marriageNote = await MarriageService.staticPrompt(characterId);
     if (marriageNote.isNotEmpty) windowParts.add(marriageNote);
-    windowParts.add(await _coinStaticPrompt(characterId));
+    if (toolPromptsEnabled &&
+        toolFeatures.shellEconomyEnabled &&
+        toolFeatures.coinSnapshotEnabled) {
+      windowParts.add(await _coinStaticPrompt(characterId));
+    }
     if (staticWindowSummary.isNotEmpty) {
       windowParts.add(staticWindowSummary);
     }
 
     final toolSections = <String>[];
-    if (isSpiderWebEnabled) {
+    if (toolPromptsEnabled && isSpiderWebEnabled) {
       toolSections.add(
         await SpiderWebService.abilityPrompt(
           userNickname: userNickname,
@@ -525,13 +645,18 @@ extension _ChatGenerationMethods on _ChatScreenState {
           bioclockEnabled: bioclockEnabled,
         ),
       );
-    } else {
+    } else if (toolPromptsEnabled) {
       if (memoryWriteEnabled) {
         toolSections.add(
-          MemoryActions.abilityPrompt(
-            userNickname: userNickname,
-            characterName: characterName,
-          ),
+          contextMode == ContextMode.rp
+              ? RpMemoryService.abilityPrompt(
+                  userNickname: userNickname,
+                  characterName: characterName,
+                )
+              : MemoryActions.abilityPrompt(
+                  userNickname: userNickname,
+                  characterName: characterName,
+                ),
         );
       }
       if (emotionEnabled) {
@@ -541,34 +666,45 @@ extension _ChatGenerationMethods on _ChatScreenState {
         toolSections.add(BioClockService.abilityPrompt());
       }
     }
-    if (providerName == 'openrouter' && imagegenEnabled) {
+    if (toolPromptsEnabled &&
+        toolFeatures.imageGenerationEnabled &&
+        imagegenEnabled &&
+        await ImageGenService.isConfigured()) {
       toolSections.add(ImageGenService.abilityPrompt());
     }
-    if (webSearchEnabled) {
+    if (toolPromptsEnabled && webSearchEnabled) {
       toolSections.add(ToolPrompts.webSearch());
     }
     // 商店（全語言/全模式；固定文本零緩存污染；清單走 two-pass 按需查詢）
-    if (await ShopService.isEnabled()) {
+    if (toolPromptsEnabled && toolFeatures.shopEnabled) {
       toolSections.add(ToolPrompts.shop());
     }
-    toolSections.add(ToolPrompts.homeNote());
-    if (whisperModelOverrideEnabled) {
+    if (toolPromptsEnabled) toolSections.add(ToolPrompts.homeNote());
+    if (toolPromptsEnabled && whisperModelOverrideEnabled) {
       toolSections.add(ToolPrompts.whisper());
     }
-    toolSections.add(ToolPrompts.scratchCard());
-    toolSections.add(ToolPrompts.transfer());
-    toolSections.add(ToolPrompts.voiceCall());
+    if (toolPromptsEnabled && toolFeatures.scratchEnabled) {
+      toolSections.add(ToolPrompts.scratchCard());
+    }
+    if (toolPromptsEnabled && toolFeatures.transferEnabled) {
+      toolSections.add(ToolPrompts.transfer());
+    }
+    if (toolPromptsEnabled && contextMode == ContextMode.daily) {
+      toolSections.add(ToolPrompts.voiceCall());
+    }
     // X 發文（開關開啟才注入說明；剩餘條數等動態信息走 dynamicParts）
-    if (await XPostSettings.isEnabled(characterId)) {
+    if (toolPromptsEnabled && await XPostSettings.isEnabled(characterId)) {
       toolSections.add(ToolPrompts.xPost());
     }
-    if (_stickerPromptSnapshot!.isNotEmpty) {
+    if (toolPromptsEnabled && _stickerPromptSnapshot?.isNotEmpty == true) {
       windowParts.add(_stickerPromptSnapshot!);
     }
 
-    staticParts.add(
-      '${ToolPrompts.toolHeader()}\n\n${toolSections.join('\n\n')}',
-    );
+    if (toolSections.isNotEmpty) {
+      staticParts.add(
+        '${ToolPrompts.toolHeader()}\n\n${toolSections.join('\n\n')}',
+      );
+    }
 
     if (habitList.isNotEmpty) windowParts.add(habitList);
 
@@ -611,18 +747,16 @@ extension _ChatGenerationMethods on _ChatScreenState {
 
   Future<void> _claimVisibleKeepAliveWindow() async {
     if (!mounted || !_isChatReady) return;
-    final convId = widget.conversationId;
-    CacheSession.conversationId = convId;
+    final sessionIdentity = _requiredSessionIdentity;
+    CacheSession.bind(sessionIdentity);
 
-    final charId = _activeCharacterId;
     final history = _messages
         .where((m) => m.text.trim().isNotEmpty)
         .map((m) => m.toPromptHistoryEntry())
         .toList();
 
     await KeepAliveService.instance.claimVisibleWindow(
-      conversationId: convId,
-      characterId: charId,
+      sessionIdentity: sessionIdentity,
       messages: history,
     );
   }
@@ -695,6 +829,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
     int messageId,
     String prompt,
     String baseLog,
+    String characterId,
   ) async {
     if (mounted) {
       _refreshChatState(() {
@@ -729,6 +864,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
         userAnchor: anchors.user,
         charAnchor: anchors.char,
         style: anchors.style,
+        characterId: characterId,
       );
       note = '🎨 生成圖片 ✓';
     } catch (e) {
@@ -810,10 +946,24 @@ extension _ChatGenerationMethods on _ChatScreenState {
       messages: recentMsgs,
       characterId: charId,
       conversationId: convId,
+      contextMode: _requiredSessionIdentity.contextMode,
+      continuityId: _requiredSessionIdentity.continuityId,
     );
     if (result > 0) {
       await _refreshWindowSummaryStateAfterCompression(convId);
       debugPrint('窗口摘要完成：$result tokens');
+      if (mounted && convId == widget.conversationId) {
+        final summaryAnchors = await DatabaseHelper.getSummaryRecordedAnchors(
+          convId,
+        );
+        if (!mounted || convId != widget.conversationId) return result;
+        _refreshChatState(() {
+          _summaryRecordedSummaryIds
+            ..clear()
+            ..addAll(summaryAnchors);
+        });
+        _scrollToBottom();
+      }
     }
     return result;
   }
@@ -864,6 +1014,8 @@ extension _ChatGenerationMethods on _ChatScreenState {
         characterId,
         excludeWindowId: windowId,
         limit: 1,
+        contextMode: _requiredSessionIdentity.contextMode,
+        continuityId: _requiredSessionIdentity.continuityId,
       );
       final text = rows.isNotEmpty
           ? (rows.first['content'] as String? ?? '')
@@ -904,6 +1056,8 @@ extension _ChatGenerationMethods on _ChatScreenState {
       excludeWindowId: windowId,
       includeLatestSummaries: useContextDynamic,
       includeKeywordRecall: useCacheKeywordRecall || useContextDynamic,
+      contextMode: _requiredSessionIdentity.contextMode,
+      continuityId: _requiredSessionIdentity.continuityId,
     );
     final summary = (pack['summary'] ?? '').trim();
     final keywordSummaries = (pack['keywordSummaries'] ?? '').trim();
@@ -920,46 +1074,45 @@ extension _ChatGenerationMethods on _ChatScreenState {
     final trimmedSummary = summary.trim();
     final trimmedKeyword = keywordSummary.trim();
     if (trimmedSummary.isEmpty && trimmedKeyword.isEmpty) return '';
+    final isRp = _requiredSessionIdentity.contextMode == ContextMode.rp;
 
     if (L.locale == 'en') {
       final parts = <String>[];
       if (trimmedSummary.isNotEmpty) {
-        parts.add('Recent summaries:\n$trimmedSummary');
+        parts.add(
+          '${isRp ? 'Recent RP summaries' : 'Recent summaries'}:\n$trimmedSummary',
+        );
       }
       if (trimmedKeyword.isNotEmpty) {
-        parts.add('Keyword-matched old summary:\n$trimmedKeyword');
+        parts.add(
+          '${isRp ? 'Keyword-matched old RP summary' : 'Keyword-matched old summary'}:\n$trimmedKeyword',
+        );
       }
-      return '【Window Summary】\n${parts.join('\n\n')}';
+      return '${isRp ? '【RP Window Summary】' : '【Window Summary】'}\n${parts.join('\n\n')}';
     }
 
     final parts = <String>[];
     if (trimmedSummary.isNotEmpty) {
-      parts.add('${L.pick(en: '', zhTW: '最近窗口摘要：')}\n$trimmedSummary');
+      parts.add(
+        '${L.pick(en: '', zhTW: isRp ? '最近 RP 窗口摘要：' : '最近窗口摘要：', zhCN: isRp ? '最近 RP 窗口摘要：' : '最近窗口摘要：')}\n$trimmedSummary',
+      );
     }
     if (trimmedKeyword.isNotEmpty) {
-      parts.add('${L.pick(en: '', zhTW: '命中關鍵詞召回的舊摘要：')}\n$trimmedKeyword');
+      parts.add(
+        '${L.pick(en: '', zhTW: isRp ? '命中關鍵詞召回的舊 RP 摘要：' : '命中關鍵詞召回的舊摘要：', zhCN: isRp ? '命中关键词召回的旧 RP 摘要：' : '命中关键词召回的旧摘要：')}\n$trimmedKeyword',
+      );
     }
-    return '${L.pick(en: '', zhTW: '【窗口摘要】')}\n${parts.join('\n\n')}';
+    return '${L.pick(en: '', zhTW: isRp ? '【RP 窗口摘要】' : '【窗口摘要】', zhCN: isRp ? '【RP 窗口摘要】' : '【窗口摘要】')}\n${parts.join('\n\n')}';
   }
 
   Future<int> _windowSummaryTriggerTokenLimit() async {
-    final cacheEnabled = await MemorySettings.getEnablePromptCaching();
-    final contextLimitEnabled = await MemorySettings.getContextLimitEnabled();
-    final contextSummaryEnabled =
-        await MemorySettings.getContextWindowSummaryEnabled();
-    if (!cacheEnabled && contextLimitEnabled && contextSummaryEnabled) {
-      return MemorySettings.getContextWindowSummaryTriggerTokens();
-    }
-    return ContextCompressor.triggerTokens;
+    // 摘要門檻是使用者設定，與 cache、上下文限制是否開啟無關。
+    return MemorySettings.getWindowSummaryTriggerTokens();
   }
 
   Future<int> _windowSummaryCloseMinTokenThreshold() async {
-    final cacheEnabled = await MemorySettings.getEnablePromptCaching();
-    final cacheSummaryEnabled =
-        await MemorySettings.getCacheWindowSummaryEnabled();
-    if (cacheEnabled && cacheSummaryEnabled) {
-      return ContextCompressor.minCompressTokens;
-    }
+    // 退出窗口不清零累積量，也不因 cache 狀態改變門檻；達到使用者
+    // 設定值時才摘要，未達時保留計數供下次進入繼續累積。
     return _windowSummaryTriggerTokenLimit();
   }
 
@@ -974,7 +1127,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
     required String provider,
   }) async {
     try {
-      await ApiSettings.recordStarredModelUsage(model);
+      await ApiSettings.recordStarredModelUsage(model, provider: provider);
     } catch (_) {
       // 常用度只影響排序，不能讓偏好寫入失敗打斷已完成的聊天。
     }
@@ -1003,8 +1156,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
     _lastKeepAliveModel = model;
     _lastKeepAliveProvider = provider;
     await KeepAliveService.instance.rememberActiveWindow(
-      conversationId: conversationId,
-      characterId: _activeCharacterId,
+      sessionIdentity: _requiredSessionIdentity,
       messages: keepAliveMessages,
       structuredPrompt: structuredPrompt,
       adapter: adapter,
@@ -1024,16 +1176,26 @@ extension _ChatGenerationMethods on _ChatScreenState {
       characterId: _activeCharacterId,
     );
 
-    // ═══ 做夢整理：對話累積後自動梳理記憶（不阻塞主流程）═══
+    // ═══ 做夢整理：只整理目前日常/RP、故事線與記憶模式（不阻塞）═══
     unawaited(
-      DreamCurationService.maybeTrigger(characterId: _activeCharacterId),
+      DreamCurationService.maybeTrigger(
+        characterId: _activeCharacterId,
+        contextMode: _requiredSessionIdentity.contextMode,
+        continuityId: _requiredSessionIdentity.continuityId,
+        memoryMode: await _memoryBucket(),
+      ),
     );
 
-    // 簽名使用獨立請求，不進聊天歷史、StructuredPrompt 或 cache 前綴。
+    // 每個窗口只允許一條 opening 簽名；服務會先查本地窗口記錄，
+    // 因此後續回合不會再建立額外 provider 請求。
     final signatureCharacterId = _activeCharacterId;
     unawaited(
-      CharacterSignatureService.generateAndSave(
+      CharacterSignatureService.generateForWindow(
         characterId: signatureCharacterId,
+        conversationId: widget.conversationId,
+        phase: CharacterSignatureService.openingPhase,
+        contextMode: _requiredSessionIdentity.contextMode,
+        continuityId: _requiredSessionIdentity.continuityId,
         latestUserMessage: userText,
         latestAssistantReply: assistantText,
         model: model,
@@ -1190,59 +1352,96 @@ extension _ChatGenerationMethods on _ChatScreenState {
     });
   }
 
-  String _apiErrorSummary(Object error) {
-    var message = error.toString().replaceFirst(RegExp(r'^Exception:\s*'), '');
-    message = message.replaceAll(RegExp(r'\s+'), ' ').trim();
-    if (message.length > 180) message = '${message.substring(0, 180)}…';
-    return message.isEmpty
-        ? L.pick(en: 'The request failed', zhTW: '請求失敗')
-        : message;
+  Future<void> _persistApiFailure(
+    Object error, {
+    required int sourceMessageId,
+    int? anchorMessageId,
+    String? provider,
+    String? model,
+  }) async {
+    debugPrint('[API request failed] $error');
+    final diagnosis = ApiErrorLocalizer.diagnose(error);
+    final resolvedProvider = provider ?? await ApiSettings.getApiProvider();
+    final resolvedModel = model ?? await ApiSettings.getModel();
+    final saved = await DatabaseHelper.upsertChatDiagnostic(
+      ChatDiagnosticEvent(
+        conversationId: widget.conversationId,
+        sourceMessageId: sourceMessageId,
+        anchorMessageId: anchorMessageId ?? sourceMessageId,
+        category: diagnosis.category,
+        statusCode: diagnosis.statusCode,
+        provider:
+            diagnosis.provider ?? _chatModelProviderLabel(resolvedProvider),
+        model: resolvedModel,
+        rawLog: diagnosis.rawLog,
+        createdAt: DateTime.now(),
+      ),
+    );
+    if (!mounted) return;
+    _refreshChatState(() {
+      _chatDiagnostics.removeWhere(
+        (event) => event.sourceMessageId == sourceMessageId,
+      );
+      _chatDiagnostics.add(saved);
+    });
+    _scrollToBottom();
   }
 
-  EdgeInsets _failureSnackBarMargin() =>
-      EdgeInsets.fromLTRB(16, 0, 16, MediaQuery.paddingOf(context).bottom + 88);
-
-  void _showApiConfigFailure(ApiConfigException error) {
+  Future<void> _clearChatDiagnosticForSource(int sourceMessageId) async {
+    await DatabaseHelper.deleteChatDiagnosticsForMessages(<int>[
+      sourceMessageId,
+    ]);
     if (!mounted) return;
-    final messenger = ScaffoldMessenger.of(context);
-    messenger.hideCurrentSnackBar();
-    messenger.showSnackBar(
-      SnackBar(
-        content: Text(error.message),
-        behavior: SnackBarBehavior.floating,
-        margin: _failureSnackBarMargin(),
-        showCloseIcon: true,
-        duration: const Duration(seconds: 8),
-        action: SnackBarAction(
-          label: L.pick(en: 'Settings', zhTW: '去設定'),
-          onPressed: () {
-            if (mounted) Navigator.of(context).pushNamed('/api_settings');
-          },
-        ),
+    _refreshChatState(
+      () => _chatDiagnostics.removeWhere(
+        (event) => event.sourceMessageId == sourceMessageId,
       ),
     );
   }
 
-  void _showRetryableFailure(Object error, Future<void> Function() retry) {
-    if (!mounted) return;
-    final messenger = ScaffoldMessenger.of(context);
-    messenger.hideCurrentSnackBar();
-    messenger.showSnackBar(
-      SnackBar(
-        content: Text(_apiErrorSummary(error)),
-        behavior: SnackBarBehavior.floating,
-        margin: _failureSnackBarMargin(),
-        showCloseIcon: true,
-        duration: const Duration(seconds: 8),
-        action: SnackBarAction(
-          label: L.pick(en: 'Retry', zhTW: '重試'),
-          onPressed: () => unawaited(retry()),
-        ),
-      ),
-    );
+  Future<void> _retryChatDiagnostic(ChatDiagnosticEvent event) async {
+    final id = event.id;
+    if (id != null) await DatabaseHelper.deleteChatDiagnostic(id);
+    if (mounted) {
+      _refreshChatState(
+        () => _chatDiagnostics.removeWhere((item) => item.id == id),
+      );
+    }
+
+    if (event.anchorMessageId != event.sourceMessageId) {
+      final anchor = await DatabaseHelper.getMessageById(event.anchorMessageId);
+      if (anchor?.isIncomplete == true && anchor!.id != null) {
+        await _retryIncompleteMessage(anchor.id!);
+        return;
+      }
+    }
+
+    final source = await DatabaseHelper.getMessageById(event.sourceMessageId);
+    if (source == null || !source.isUser) return;
+    await _runMessageRetry(() async {
+      if (source.imagePath != null) {
+        await _sendImageLocked(
+          source.imagePath!,
+          caption: source.text,
+          composerDraft: '',
+          clearComposerOnAccept: false,
+          retryUserMessage: source,
+        );
+      } else {
+        await _sendMessageLocked(
+          source.text,
+          composerDraft: '',
+          clearComposerOnAccept: false,
+          retryUserMessage: source,
+        );
+      }
+    }, sourceMessageId: source.id);
   }
 
-  Future<void> _runMessageRetry(Future<void> Function() retry) async {
+  Future<void> _runMessageRetry(
+    Future<void> Function() retry, {
+    int? sourceMessageId,
+  }) async {
     if (!_isChatReady ||
         _sendSubmissionInProgress ||
         _isGenerating ||
@@ -1258,10 +1457,10 @@ extension _ChatGenerationMethods on _ChatScreenState {
     try {
       await retry();
     } catch (error) {
-      _recoverEscapedGenerationFailure(
+      await _recoverEscapedGenerationFailure(
         error,
         generationSerialBefore: generationSerialBefore,
-        retry: retry,
+        sourceMessageId: sourceMessageId,
       );
     } finally {
       if (mounted) {
@@ -1272,11 +1471,11 @@ extension _ChatGenerationMethods on _ChatScreenState {
     }
   }
 
-  void _recoverEscapedGenerationFailure(
+  Future<void> _recoverEscapedGenerationFailure(
     Object error, {
     required int generationSerialBefore,
-    required Future<void> Function() retry,
-  }) {
+    int? sourceMessageId,
+  }) async {
     // A send either fails before _beginGeneration or during that one new
     // generation. If the serial moved further, edit/stop/dispose already
     // invalidated this work and it must not reset a newer turn.
@@ -1284,8 +1483,8 @@ extension _ChatGenerationMethods on _ChatScreenState {
     if (serialDelta < 0 || serialDelta > 1) return;
     final wasStopped = _stopGenerationRequested;
     _finishFailedGeneration();
-    if (!wasStopped) {
-      _showRetryableFailure(error, () => _runMessageRetry(retry));
+    if (!wasStopped && sourceMessageId != null) {
+      await _persistApiFailure(error, sourceMessageId: sourceMessageId);
     }
   }
 
@@ -1675,35 +1874,10 @@ extension _ChatGenerationMethods on _ChatScreenState {
         }
       }
 
-      final Future<void> Function() retry;
-      if (acceptedUserMessage?.imagePath != null) {
-        final accepted = acceptedUserMessage!;
-        retry = () => _sendImageLocked(
-          accepted.imagePath!,
-          caption: accepted.text,
-          composerDraft: '',
-          clearComposerOnAccept: false,
-          retryUserMessage: accepted,
-        );
-      } else if (acceptedUserMessage != null) {
-        final accepted = acceptedUserMessage;
-        retry = () => _sendMessageLocked(
-          accepted.text,
-          composerDraft: '',
-          clearComposerOnAccept: false,
-          retryUserMessage: accepted,
-        );
-      } else {
-        retry = () => _sendMessageLocked(
-          text,
-          composerDraft: text,
-          clearComposerOnAccept: clearComposerOnAccept,
-        );
-      }
-      _recoverEscapedGenerationFailure(
+      await _recoverEscapedGenerationFailure(
         error,
         generationSerialBefore: generationSerialBefore,
-        retry: retry,
+        sourceMessageId: acceptedUserMessage?.id,
       );
     } finally {
       if (mounted) {
@@ -1713,6 +1887,626 @@ extension _ChatGenerationMethods on _ChatScreenState {
       }
     }
   }
+
+  bool _isVisibleRpContinuationSourceMessage(Message message) =>
+      message.status == Message.statusComplete &&
+      message.text.trim().isNotEmpty &&
+      !message.isRpChapterContinuation &&
+      !_ChatScreenState._callActionRe.hasMatch(message.text.trim());
+
+  List<Message> _rpContinuationTail(List<Message> messages) {
+    final visible = messages
+        .where(_isVisibleRpContinuationSourceMessage)
+        .toList(growable: false);
+    return visible.skip(max(0, visible.length - 2)).toList(growable: false);
+  }
+
+  void _applyRpContinuationSource(
+    RpChapterContinuationSource source, {
+    required bool notify,
+  }) {
+    void update() {
+      _previousWindowTurnsFuture = Future<List<Message>>.value(source.messages);
+      _rpContinuationSummaryPrompt = source.summaries.join('\n\n---\n\n');
+      _rpContinuationSourceConversationId = source.conversation.id;
+      _rpContinuationSourceTitle = _rpContinuationWindowTitle(source);
+      _rpContinuationDisplayMessages = _rpContinuationTail(source.messages);
+      _rpContinuationSourceAnchorMessageId = source.messages.isEmpty
+          ? null
+          : source.messages.last.id;
+      _rpContinuationSourceExpanded = false;
+      _rpContinuationSourceLoading = false;
+      _rpContinuationSourceHasMore = false;
+      _rpContinuationOldestLoadedMessageId = null;
+    }
+
+    if (notify && mounted) {
+      _refreshChatState(update);
+    } else {
+      update();
+    }
+  }
+
+  Future<void> _restoreRpContinuationBridge(
+    ChatSessionIdentity identity,
+  ) async {
+    final action = await DatabaseHelper.getLatestRpChapterContinuationAction(
+      widget.conversationId,
+    );
+    if (action == null) return;
+
+    final sourceId = action.rpChapterContinuationSourceId;
+    final anchorMessageId = action.rpChapterContinuationAnchorMessageId;
+    RpChapterContinuationSource? source;
+    if (sourceId != null) {
+      source = await DatabaseHelper.getRpChapterContinuationSource(
+        sourceConversationId: sourceId,
+        currentConversationId: widget.conversationId,
+        characterId: identity.characterId,
+        continuityId: identity.continuityId,
+        contextMode: identity.contextMode,
+        throughMessageId: anchorMessageId,
+        summariesThrough: action.createdAt,
+      );
+      // A persisted exact source must fail closed. Falling back to the latest
+      // window here would show and inject the wrong chapter after deletion.
+      if (source == null) {
+        _previousWindowTurnsFuture = Future<List<Message>>.value(
+          const <Message>[],
+        );
+        return;
+      }
+    } else {
+      // Compatibility for continuation actions created before source IDs were
+      // persisted. Their previous behavior was to use the newest eligible RP
+      // window, so preserve that only for these legacy rows.
+      final sources = await (_rpChapterContinuationSourcesFuture ??=
+          DatabaseHelper.getRpChapterContinuationSources(
+            currentConversationId: widget.conversationId,
+            characterId: identity.characterId,
+            continuityId: identity.continuityId,
+            contextMode: identity.contextMode,
+          ));
+      if (sources.isNotEmpty) source = sources.first;
+    }
+    if (source != null) {
+      _applyRpContinuationSource(source, notify: false);
+    }
+  }
+
+  Future<void> _toggleRpContinuationSourceHistory() async {
+    final sourceId = _rpContinuationSourceConversationId;
+    if (sourceId == null || _rpContinuationSourceLoading) return;
+    if (_rpContinuationSourceExpanded) {
+      final bridge = await DatabaseHelper.getRpChapterContinuationSource(
+        sourceConversationId: sourceId,
+        currentConversationId: widget.conversationId,
+        characterId: _activeCharacterId,
+        continuityId: _requiredSessionIdentity.continuityId,
+        contextMode: _requiredSessionIdentity.contextMode,
+        throughMessageId: _rpContinuationSourceAnchorMessageId,
+      );
+      if (!mounted || bridge == null) return;
+      _refreshChatState(() {
+        _rpContinuationDisplayMessages = _rpContinuationTail(bridge.messages);
+        _rpContinuationSourceExpanded = false;
+        _rpContinuationSourceHasMore = false;
+        _rpContinuationOldestLoadedMessageId = null;
+      });
+      return;
+    }
+
+    _refreshChatState(() => _rpContinuationSourceLoading = true);
+    try {
+      final anchorMessageId = _rpContinuationSourceAnchorMessageId;
+      final raw = anchorMessageId == null
+          ? await DatabaseHelper.getMessages(sourceId, limit: 50)
+          : await DatabaseHelper.getMessagesUpToId(
+              sourceId,
+              anchorMessageId,
+              limit: 50,
+            );
+      final visible = raw
+          .where(_isVisibleRpContinuationSourceMessage)
+          .toList(growable: false);
+      final oldestId = raw.isEmpty ? null : raw.first.id;
+      final hasMore = oldestId == null
+          ? false
+          : await DatabaseHelper.hasMessagesBefore(sourceId, oldestId);
+      if (!mounted) return;
+      _refreshChatState(() {
+        _rpContinuationDisplayMessages = visible;
+        _rpContinuationSourceExpanded = true;
+        _rpContinuationSourceHasMore = hasMore;
+        _rpContinuationOldestLoadedMessageId = oldestId;
+      });
+    } finally {
+      if (mounted) {
+        _refreshChatState(() => _rpContinuationSourceLoading = false);
+      }
+    }
+  }
+
+  Future<void> _loadEarlierRpContinuationSourceHistory() async {
+    final sourceId = _rpContinuationSourceConversationId;
+    final beforeId = _rpContinuationOldestLoadedMessageId;
+    if (sourceId == null ||
+        beforeId == null ||
+        _rpContinuationSourceLoading ||
+        !_rpContinuationSourceHasMore) {
+      return;
+    }
+    _refreshChatState(() => _rpContinuationSourceLoading = true);
+    try {
+      final raw = await DatabaseHelper.getMessagesBeforeId(
+        sourceId,
+        beforeId,
+        limit: 50,
+      );
+      final visible = raw
+          .where(_isVisibleRpContinuationSourceMessage)
+          .toList(growable: false);
+      final oldestId = raw.isEmpty ? beforeId : raw.first.id ?? beforeId;
+      final hasMore =
+          raw.isNotEmpty &&
+          await DatabaseHelper.hasMessagesBefore(sourceId, oldestId);
+      if (!mounted) return;
+      _refreshChatState(() {
+        _rpContinuationDisplayMessages.insertAll(0, visible);
+        _rpContinuationSourceHasMore = hasMore;
+        _rpContinuationOldestLoadedMessageId = oldestId;
+      });
+    } finally {
+      if (mounted) {
+        _refreshChatState(() => _rpContinuationSourceLoading = false);
+      }
+    }
+  }
+
+  Future<bool> _switchEmptyRpStoryline(String storylineId) async {
+    if (_messages.isNotEmpty ||
+        _requiredSessionIdentity.contextMode != ContextMode.rp) {
+      return false;
+    }
+    final resolvedPersona = await UserPersonaService.resolveForNewWindow(
+      characterId: _activeCharacterId,
+      contextMode: ContextMode.rp,
+      continuityId: storylineId,
+    );
+    final rebound = await DatabaseHelper.rebindEmptyRpConversation(
+      conversationId: widget.conversationId,
+      characterId: _activeCharacterId,
+      storylineId: storylineId,
+      userPersonaId: resolvedPersona.persona.id,
+      userPersonaSnapshot: resolvedPersona.promptSnapshot,
+    );
+    if (!rebound) return false;
+
+    final conversation = await DatabaseHelper.getConversation(
+      widget.conversationId,
+    );
+    final identity = ChatSessionIdentity.fromConversation(
+      expectedConversationId: widget.conversationId,
+      conversation: conversation,
+    );
+    final sourcesFuture = DatabaseHelper.getRpChapterContinuationSources(
+      currentConversationId: widget.conversationId,
+      characterId: _activeCharacterId,
+      continuityId: storylineId,
+      contextMode: ContextMode.rp,
+    );
+    final sources = await sourcesFuture;
+    final storylines = await DatabaseHelper.getRpStorylines(_activeCharacterId);
+    if (!mounted) return false;
+
+    Retriever.releaseWindowIds(widget.conversationId);
+    Retriever.resetWindowIds(widget.conversationId);
+    _sessionIdentity = identity;
+    _userPersona = resolvedPersona.persona;
+    final avatarPath = resolvedPersona.persona.avatarPath.trim();
+    _userAvatarPath = avatarPath.isEmpty ? null : avatarPath;
+    _userNameCache = resolvedPersona.persona.displayName;
+    _rpChapterContinuationSourcesFuture = sourcesFuture;
+    _previousWindowTurnsFuture = Future<List<Message>>.value(
+      sources.isEmpty ? const <Message>[] : sources.first.messages,
+    );
+    _cacheWindowSummaryStaticSnapshot = null;
+    _rpContinuationSummaryPrompt = '';
+    _rpContinuationSourceConversationId = null;
+    _rpContinuationSourceTitle = '';
+    _rpContinuationDisplayMessages = <Message>[];
+    _rpContinuationSourceExpanded = false;
+    _rpContinuationSourceHasMore = false;
+    _rpContinuationSourceAnchorMessageId = null;
+    _rpContinuationOldestLoadedMessageId = null;
+    _refreshChatState(() {
+      _rpStorylines = storylines;
+      _canContinuePreviousRpChapter = sources.isNotEmpty;
+    });
+    return true;
+  }
+
+  Future<void> _selectCurrentRpChapter() async {
+    final selected = await showRpStorylinePicker(
+      context,
+      characterId: _activeCharacterId,
+    );
+    if (selected == null || !mounted) return;
+    final switched = await _switchEmptyRpStoryline(selected);
+    if (!switched || !mounted) {
+      _showChatNotice(
+        L.pick(
+          en: 'This empty window could not switch storylines',
+          zhTW: '這個空窗口無法切換故事線',
+          zhCN: '这个空窗口无法切换故事线',
+        ),
+      );
+      return;
+    }
+    await _continuePreviousRpChapter();
+  }
+
+  Future<String?> _askNewRpChapterName() async {
+    final controller = TextEditingController();
+    final result = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: YanciTheme.surfacePanel,
+        title: Text(
+          L.pick(en: 'Open a new chapter', zhTW: '開啟新篇章', zhCN: '开启新篇章'),
+        ),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          maxLength: 30,
+          textInputAction: TextInputAction.done,
+          decoration: InputDecoration(
+            hintText: L.pick(en: 'Chapter name', zhTW: '篇章名稱', zhCN: '篇章名称'),
+          ),
+          onSubmitted: (value) {
+            final name = value.trim();
+            if (name.isNotEmpty) Navigator.pop(dialogContext, name);
+          },
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: Text(L.pick(en: 'Cancel', zhTW: '取消', zhCN: '取消')),
+          ),
+          TextButton(
+            onPressed: () {
+              final name = controller.text.trim();
+              if (name.isNotEmpty) Navigator.pop(dialogContext, name);
+            },
+            child: Text(L.pick(en: 'Create', zhTW: '建立', zhCN: '创建')),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    return result;
+  }
+
+  Future<void> _openNewRpChapter() async {
+    if (_messages.isNotEmpty ||
+        _requiredSessionIdentity.contextMode != ContextMode.rp) {
+      return;
+    }
+    if (_rpStorylines.length >= 3) {
+      _showChatNotice(
+        L.pick(
+          en: 'Each character can keep up to three active storylines',
+          zhTW: '每個角色最多保留三條進行中的故事線',
+          zhCN: '每个角色最多保留三条进行中的故事线',
+        ),
+      );
+      return;
+    }
+    final name = await _askNewRpChapterName();
+    if (name == null || !mounted) return;
+    try {
+      final storylineId = await DatabaseHelper.createRpStoryline(
+        characterId: _activeCharacterId,
+        name: name,
+      );
+      final switched = await _switchEmptyRpStoryline(storylineId);
+      if (!switched || !mounted) return;
+      _refreshChatState(() => _rpStartChoiceResolved = true);
+      _showChatNotice(
+        L.pick(en: 'New chapter opened', zhTW: '已開啟新篇章', zhCN: '已开启新篇章'),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      _showChatNotice(
+        L.pick(
+          en: 'Could not open a new chapter',
+          zhTW: '無法開啟新篇章',
+          zhCN: '无法开启新篇章',
+        ),
+        tone: ThemedNoticeTone.error,
+      );
+    }
+  }
+
+  Future<void> _continuePreviousRpChapter() async {
+    final isRp = _requiredSessionIdentity.contextMode == ContextMode.rp;
+    if (!_canContinuePreviousRpChapter ||
+        _messages.isNotEmpty ||
+        _isGenerating ||
+        _isGeneratingImage ||
+        _sendSubmissionInProgress) {
+      return;
+    }
+    final sources = await (_rpChapterContinuationSourcesFuture ??=
+        DatabaseHelper.getRpChapterContinuationSources(
+          currentConversationId: widget.conversationId,
+          characterId: _activeCharacterId,
+          continuityId: _requiredSessionIdentity.continuityId,
+          contextMode: _requiredSessionIdentity.contextMode,
+        ));
+    if (!mounted) return;
+    if (sources.isEmpty) {
+      _showChatNotice(
+        L.pick(
+          en: isRp
+              ? 'No earlier RP window is available to continue'
+              : 'No earlier daily window is available to continue',
+          zhTW: isRp ? '目前沒有可續接的 RP 窗口' : '目前沒有可續接的日常窗口',
+          zhCN: isRp ? '目前没有可续接的 RP 窗口' : '目前没有可续接的日常窗口',
+        ),
+      );
+      return;
+    }
+    var selected = sources.first;
+    final source = await showModalBottomSheet<RpChapterContinuationSource>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) => StatefulBuilder(
+        builder: (sheetContext, setSheetState) => FractionallySizedBox(
+          heightFactor: 0.82,
+          child: Container(
+            decoration: BoxDecoration(
+              color: YanciTheme.surfacePanel,
+              borderRadius: const BorderRadius.vertical(
+                top: Radius.circular(22),
+              ),
+            ),
+            child: SafeArea(
+              top: false,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: <Widget>[
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 16, 12, 8),
+                    child: Row(
+                      children: <Widget>[
+                        Expanded(
+                          child: Text(
+                            L.pick(
+                              en: isRp
+                                  ? 'Continue this chapter'
+                                  : 'Continue this conversation',
+                              zhTW: isRp ? '繼續這一篇章' : '繼續這段對話',
+                              zhCN: isRp ? '继续这一篇章' : '继续这段对话',
+                            ),
+                            style: YanciTheme.headingMedium,
+                          ),
+                        ),
+                        IconButton(
+                          tooltip: MaterialLocalizations.of(
+                            sheetContext,
+                          ).closeButtonTooltip,
+                          onPressed: () => Navigator.pop(sheetContext),
+                          icon: Icon(
+                            Icons.close_rounded,
+                            color: YanciTheme.textSecondary,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 20),
+                    child: DropdownButtonFormField<String>(
+                      initialValue: selected.conversation.id,
+                      isExpanded: true,
+                      decoration: InputDecoration(
+                        labelText: L.pick(
+                          en: 'Chapter window',
+                          zhTW: '續接窗口',
+                          zhCN: '续接窗口',
+                        ),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                      ),
+                      items: sources
+                          .map(
+                            (item) => DropdownMenuItem<String>(
+                              value: item.conversation.id,
+                              child: Text(
+                                '${_rpContinuationWindowTitle(item)} · ${_rpContinuationTime(item.lastMessageAt)}',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          )
+                          .toList(growable: false),
+                      onChanged: (id) {
+                        if (id == null) return;
+                        setSheetState(() {
+                          selected = sources.firstWhere(
+                            (item) => item.conversation.id == id,
+                          );
+                        });
+                      },
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Expanded(
+                    child: ListView(
+                      padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
+                      children: <Widget>[
+                        _rpContinuationSectionTitle(
+                          L.pick(
+                            en: 'Last four messages',
+                            zhTW: '最近四條原文',
+                            zhCN: '最近四条原文',
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        for (final message in selected.messages)
+                          _rpContinuationMessagePreview(message),
+                        const SizedBox(height: 16),
+                        _rpContinuationSectionTitle(
+                          L.pick(
+                            en: 'Latest two summaries',
+                            zhTW: '最後兩條摘要',
+                            zhCN: '最后两条摘要',
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        if (selected.summaries.isEmpty)
+                          Text(
+                            L.pick(
+                              en: 'No summary has been recorded for this window yet',
+                              zhTW: '這個窗口尚未記錄摘要',
+                              zhCN: '这个窗口尚未记录摘要',
+                            ),
+                            style: YanciTheme.bodySmall,
+                          )
+                        else
+                          for (var i = 0; i < selected.summaries.length; i++)
+                            _rpContinuationSummaryPreview(
+                              selected.summaries[i],
+                              i + 1,
+                            ),
+                      ],
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 10, 20, 18),
+                    child: FilledButton(
+                      onPressed: () => Navigator.pop(sheetContext, selected),
+                      style: FilledButton.styleFrom(
+                        minimumSize: const Size.fromHeight(48),
+                        backgroundColor: YanciTheme.accent,
+                      ),
+                      child: Text(
+                        L.pick(
+                          en: 'Let them continue',
+                          zhTW: '讓 TA 接續',
+                          zhCN: '让 TA 接续',
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    if (source == null || !mounted) return;
+    _applyRpContinuationSource(source, notify: true);
+    // 手動續接舊窗口時，不讓「最近窗口」摘要被釘進靜態 cache。
+    // 指定來源的兩條摘要固定走 request-only 動態區。
+    await DatabaseHelper.setConversationPinnedSummaryIfAbsent(
+      widget.conversationId,
+      '',
+    );
+    _cacheWindowSummaryStaticSnapshot = null;
+    final sourceMarker = Message.rpChapterContinuationSourceMarker(
+      source.conversation.id,
+    );
+    final sourceAnchorId = source.messages.isEmpty
+        ? null
+        : source.messages.last.id;
+    final sourceAnchorMarker = sourceAnchorId == null
+        ? ''
+        : '${Message.rpChapterContinuationAnchorMarker(sourceAnchorId)}\n';
+    final continuationInstruction = isRp
+        ? L.pick(
+            en: 'Continue naturally from the exact handoff point in the previous window and write first. Respond to any unfinished action or dialogue before advancing the scene. Preserve the established plot, relationships, time, setting, narrative perspective, and tense. Do not restart the scene, repeat the final line, recap, add a chapter heading, force a time jump, or mention this action.',
+            zhTW:
+                '請從上一窗口最後停下的動作或對白精確承接，由你先自然寫下接續內容；若有尚未得到回應的動作或話語，先承接它再推進。沿用既有劇情、人物關係、時間、場景、敘事視角與時態。不要重新開場、重複末句、重述摘要、添加章節標題、擅自跳時，或提及這項操作。',
+            zhCN:
+                '请从上一窗口最后停下的动作或对白精确承接，由你先自然写下接续内容；若有尚未得到回应的动作或话语，先承接它再推进。沿用既有剧情、人物关系、时间、场景、叙事视角与时态。不要重新开场、重复末句、复述摘要、添加章节标题、擅自跳时，或提及这项操作。',
+          )
+        : L.pick(
+            en: 'Continue naturally from the exact handoff point in the previous conversation and write first. Respond to any unfinished question or topic before moving on. Preserve the established relationship, current subject, emotional tone, and conversational context. Do not greet as if meeting again for the first time, repeat the final line, recap, force a topic change, or mention this action.',
+            zhTW:
+                '請從上一窗口最後停下的對話精確承接，由你先自然回應；若有尚未回答的問題或未完話題，先接住它再往下聊。沿用既有關係、當前話題、情緒語氣與對話脈絡。不要像重新見面般寒暄、重複末句、重述摘要、強行換話題，或提及這項操作。',
+            zhCN:
+                '请从上一窗口最后停下的对话精确承接，由你先自然回应；若有尚未回答的问题或未完话题，先接住它再往下聊。沿用既有关系、当前话题、情绪语气与对话脉络。不要像重新见面般寒暄、重复末句、复述摘要、强行换话题，或提及这项操作。',
+          );
+    final request =
+        '${Message.rpChapterContinuationPrefix}\n$sourceMarker\n'
+        '$sourceAnchorMarker$continuationInstruction';
+    await _onSendMessage(request);
+  }
+
+  String _rpContinuationWindowTitle(RpChapterContinuationSource source) {
+    final title = source.conversation.title?.trim() ?? '';
+    return title.isEmpty
+        ? L.pick(en: 'Untitled window', zhTW: '未命名窗口', zhCN: '未命名窗口')
+        : title;
+  }
+
+  String _rpContinuationTime(DateTime value) {
+    String two(int number) => number.toString().padLeft(2, '0');
+    return '${value.year}/${two(value.month)}/${two(value.day)} '
+        '${two(value.hour)}:${two(value.minute)}';
+  }
+
+  Widget _rpContinuationSectionTitle(String text) => Text(
+    text,
+    style: YanciTheme.bodyText.copyWith(
+      fontSize: 13,
+      fontWeight: FontWeight.w600,
+      color: YanciTheme.textSecondary,
+    ),
+  );
+
+  Widget _rpContinuationMessagePreview(Message message) {
+    final speaker = message.isUser
+        ? (_userPersonaName.isEmpty
+              ? L.pick(en: 'You', zhTW: '你', zhCN: '你')
+              : _userPersonaName)
+        : (_characterName.isEmpty
+              ? L.pick(en: 'Character', zhTW: '對方', zhCN: '对方')
+              : _characterName);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Text.rich(
+        TextSpan(
+          children: <InlineSpan>[
+            TextSpan(
+              text: '$speaker  ',
+              style: TextStyle(
+                fontWeight: FontWeight.w600,
+                color: message.isUser
+                    ? YanciTheme.accent
+                    : YanciTheme.textSecondary,
+              ),
+            ),
+            TextSpan(text: message.text),
+          ],
+        ),
+        style: YanciTheme.bodyText.copyWith(fontSize: 13, height: 1.45),
+      ),
+    );
+  }
+
+  Widget _rpContinuationSummaryPreview(String summary, int index) => Padding(
+    padding: const EdgeInsets.only(bottom: 12),
+    child: Text(
+      '$index. $summary',
+      style: YanciTheme.bodySmall.copyWith(height: 1.5),
+    ),
+  );
 
   Future<void> _sendMessageLocked(
     String text, {
@@ -1726,7 +2520,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
     if (_messages.where((m) => m.isUser).isEmpty) {
       await _stopKeepAliveBeforeFirstMessage();
       if (!mounted) return;
-      CacheSession.conversationId = conversationId;
+      CacheSession.bind(_requiredSessionIdentity);
     }
     // 情緒衰減 tick（冪等：未到刷新間隔的點不會被動）
     EmotionCoordinates.tickDecay(_activeCharacterId);
@@ -1734,29 +2528,25 @@ extension _ChatGenerationMethods on _ChatScreenState {
     if (_isGeneratingImage) return; // 圖片生成中不允許發送
     // 本地模型還在加載中 → 提示用戶稍候
     if (_localModelLoading) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            L.pick(
-              en: 'Local model is loading, please wait...',
-              zhTW: '本地模型加載中，請稍候……',
-            ),
-          ),
-          behavior: SnackBarBehavior.floating,
-          duration: const Duration(seconds: 1200),
-          margin: const EdgeInsets.only(bottom: 80, left: 16, right: 16),
+      _showChatNotice(
+        L.pick(
+          en: 'Local model is loading, please wait...',
+          zhTW: '本地模型加載中，請稍候……',
         ),
+        duration: const Duration(milliseconds: 1200),
       );
       return;
     }
     _userScrolledUp = false; // 新消息 → 重新跟隨
 
     // 有待發圖片 → 圖文一起送
-    if (retryUserMessage == null && _pendingImagePath != null) {
-      final imgPath = _pendingImagePath!;
-      _refreshChatState(() => _pendingImagePath = null);
+    if (retryUserMessage == null && _pendingImagePaths.isNotEmpty) {
+      final imagePaths = List<String>.from(_pendingImagePaths);
+      final imgPath = imagePaths.first;
+      _refreshChatState(() => _pendingImagePaths.clear());
       return _sendImageLocked(
         imgPath,
+        imagePaths: imagePaths,
         caption: text,
         composerDraft: composerDraft,
         clearComposerOnAccept: clearComposerOnAccept,
@@ -1869,6 +2659,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
         createdAt: userMsg.createdAt,
       );
     }
+    final promptVisibleOutboundText = userMsgWithId.promptVisibleText;
     final workingMessages = retryUserMessage == null
         ? <Message>[..._messages, userMsgWithId]
         : <Message>[..._messages];
@@ -1902,12 +2693,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
 
     final adapter = await _prepareAdapterForGeneration(
       generationSerial: generationSerial,
-      retry: () => _sendMessageLocked(
-        userMsgWithId.text,
-        composerDraft: '',
-        clearComposerOnAccept: false,
-        retryUserMessage: userMsgWithId,
-      ),
+      sourceMessageId: userMsgWithId.id!,
     );
     if (adapter == null) {
       if (mounted) _scrollToBottom();
@@ -1917,19 +2703,33 @@ extension _ChatGenerationMethods on _ChatScreenState {
 
     // ═══ 並行化：一次發射所有獨立的異步調用，大幅減少等待 ═══
     final charId = _activeCharacterId;
-    final systemPromptF = ApiSettings.getSystemPrompt();
+    final sessionIdentity = _requiredSessionIdentity;
+    final previousWindowTurnsF = _previousWindowTurnsFuture ??=
+        DatabaseHelper.getPreviousConversationTurns(
+          currentConversationId: widget.conversationId,
+          characterId: charId,
+          contextMode: sessionIdentity.contextMode,
+          continuityId: sessionIdentity.continuityId,
+        );
+    final systemPromptF = Future<String>.value(
+      _userPersona?.promptContent ?? '',
+    );
     final modelF = ApiSettings.getModel();
     final bucketF = _memoryBucket();
     final userProfileF = _buildUserProfilePrompt();
-    final selfNotesEnabledF = MemorySettings.getSelfNotesEnabled();
+    final selfNotesEnabledF = sessionIdentity.contextMode == ContextMode.rp
+        ? Future<bool>.value(false)
+        : MemorySettings.getSelfNotesEnabled();
     final selfNotesF = selfNotesEnabledF.then<String>(
       (enabled) async =>
           enabled ? await DatabaseHelper.getSelfNotes(charId) : '',
     );
-    final userNicknameF = UserSettings.getUserName();
+    final userNicknameF = Future<String>.value(_userPersonaName);
     final emotionEnabledF = MemorySettings.isAbilityEnabled('emotion');
     final imagegenEnabledF = MemorySettings.isAbilityEnabled('imagegen');
-    final bioclockEnabledF = MemorySettings.isAbilityEnabled('bioclock');
+    final bioclockEnabledF = sessionIdentity.contextMode == ContextMode.daily
+        ? MemorySettings.isAbilityEnabled('bioclock')
+        : Future<bool>.value(false);
     final timelineEnabledF = MemorySettings.getTimelineEnabled();
     final memoryWriteEnabledF = MemorySettings.getMemoryWriteEnabled();
     final providerNameF = ApiSettings.getApiProviderName();
@@ -1937,39 +2737,82 @@ extension _ChatGenerationMethods on _ChatScreenState {
     final freeformOnF = ApiSettings.getFreeformMode();
     final thinkingEnabledF = ApiSettings.getThinkingChain();
     final webSearchEnabledF = WebSearchSettings.getEnabled();
+    final toolFeaturesF = ToolFeatureSettings.load();
     final enableVibrationF = UserSettings.getEnableVibration();
     final charDataF = DatabaseHelper.getCharacter(charId);
     final isSpiderWebEnabledF = charDataF.then(
-      (c) => (c?['is_spider_web_enabled'] as int? ?? 0) == 1,
+      (c) =>
+          sessionIdentity.contextMode == ContextMode.daily &&
+          (c?['is_spider_web_enabled'] as int? ?? 0) == 1,
     );
     final staticWindowSummaryF = _buildStaticWindowSummaryPrompt(charId);
     final dynamicWindowSummaryF = _buildDynamicWindowSummaryPrompt(
       charId,
-      currentMessage: outboundText,
+      currentMessage: promptVisibleOutboundText,
     );
 
     // 記憶注入依賴 bucket，先 await bucket 再發射
     final bucket = await bucketF;
-    final memoryPromptF = emotionEnabledF.then(
-      (emotionEnabled) => Retriever.buildMemoryPrompt(
+    final memoryPromptF = emotionEnabledF.then((emotionEnabled) {
+      if (sessionIdentity.contextMode == ContextMode.rp) {
+        return RpMemoryService.buildPrompt(
+          mode: bucket,
+          currentMessage: promptVisibleOutboundText,
+          characterId: charId,
+          windowId: widget.conversationId,
+          continuityId: sessionIdentity.continuityId,
+          emotionEnabled: emotionEnabled,
+        );
+      }
+      return Retriever.buildMemoryPrompt(
         mode: bucket,
-        currentMessage: outboundText,
+        currentMessage: promptVisibleOutboundText,
         characterId: charId,
         windowId: widget.conversationId,
         emotionEnabled: emotionEnabled,
-      ),
-    );
+        contextMode: sessionIdentity.contextMode,
+        continuityId: sessionIdentity.continuityId,
+      );
+    });
 
     // 動態部分：也提前發射
     final emoStateF = emotionEnabledF.then(
       (enabled) async =>
           enabled ? await EmotionCoordinates.statePrompt(charId) : '',
     );
-    final recallPromptF = timelineEnabledF.then<String>(
-      (enabled) async => enabled
-          ? await CharacterTimelineService.recallPrompt(charId, text)
-          : '',
-    );
+    final recallPromptF = timelineEnabledF.then<String>((enabled) async {
+      if (!enabled) return '';
+      return sessionIdentity.contextMode == ContextMode.rp
+          ? RpCharacterTimelineService.recallPrompt(
+              charId,
+              promptVisibleOutboundText,
+              continuityId: sessionIdentity.continuityId,
+            )
+          : CharacterTimelineService.recallPrompt(
+              charId,
+              promptVisibleOutboundText,
+            );
+    });
+    final rpStoryContextF = sessionIdentity.contextMode == ContextMode.rp
+        ? Future.wait<String>(<Future<String>>[
+            RpStoryService.recallPrompt(
+              charId,
+              promptVisibleOutboundText,
+              continuityId: sessionIdentity.continuityId,
+            ),
+            RpStoryStateService.recallPrompt(
+              charId,
+              continuityId: sessionIdentity.continuityId,
+            ),
+            RpWorldbookService.recallPrompt(
+              characterId: charId,
+              continuityId: sessionIdentity.continuityId,
+              query: promptVisibleOutboundText,
+            ),
+          ]).then(
+            (parts) => parts.where((part) => part.isNotEmpty).join('\n\n'),
+          )
+        : Future<String>.value('');
     final fatiguePromptF = bioclockEnabledF.then(
       (enabled) async =>
           enabled ? await BioClockService.fatiguePrompt(charId) : '',
@@ -1993,11 +2836,13 @@ extension _ChatGenerationMethods on _ChatScreenState {
     final timelineEnabled = await timelineEnabledF;
     final memoryWriteEnabled = await memoryWriteEnabledF;
     final providerName = await providerNameF;
+    _configureStreamPresentation(providerName);
     final conciseOn = await conciseOnF;
     final freeformOn = await freeformOnF;
     final thinkingEnabled = await thinkingEnabledF;
     _generationThinkingEnabled = thinkingEnabled;
     final webSearchEnabled = await webSearchEnabledF;
+    final toolFeatures = await toolFeaturesF;
 
     final staticBundle = await _buildCommonStaticParts(
       characterId: charId,
@@ -2017,12 +2862,35 @@ extension _ChatGenerationMethods on _ChatScreenState {
           (charData?['whisper_model_override'] as int? ?? 1) == 1,
       providerName: providerName,
       staticWindowSummary: await staticWindowSummaryF,
+      contextMode: sessionIdentity.contextMode,
+      toolFeatures: toolFeatures,
     );
 
     final dynamicParts = <String>[];
     final controlParts = <String>[];
     final turnEffects = DeferredPromptBatch()..add(memoryPrompt);
     final now = DateTime.now();
+    final diaryPrompt = await CharacterDiaryService.buildNightPrompt(
+      characterId: charId,
+      conversationId: widget.conversationId,
+      sourceMessageId: userMsgWithId.id!,
+      userName: userNicknameStr,
+      currentUserContent: promptVisibleOutboundText,
+      contextMode: sessionIdentity.contextMode,
+      enabled: toolFeatures.toolPromptsEnabled && toolFeatures.diaryEnabled,
+      now: now,
+    );
+    if (diaryPrompt.isNotEmpty) {
+      dynamicParts.add(
+        SystemContextMarkdown.section(
+          enTitle: 'Evening Diary',
+          zhTWTitle: '晚間日記',
+          zhCNTitle: '晚间日记',
+          content: diaryPrompt.text,
+        ),
+      );
+      turnEffects.add(diaryPrompt);
+    }
     if (memoryPrompt.isNotEmpty) {
       dynamicParts.add(
         SystemContextMarkdown.section(
@@ -2044,11 +2912,41 @@ extension _ChatGenerationMethods on _ChatScreenState {
         ),
       );
     }
+    if (_rpContinuationSummaryPrompt.isNotEmpty) {
+      final isRpContinuation = sessionIdentity.contextMode == ContextMode.rp;
+      dynamicParts.add(
+        SystemContextMarkdown.section(
+          enTitle: isRpContinuation
+              ? 'Selected Chapter Summaries'
+              : 'Selected Window Summaries',
+          zhTWTitle: isRpContinuation ? '所選篇章摘要' : '所選窗口摘要',
+          zhCNTitle: isRpContinuation ? '所选篇章摘要' : '所选窗口摘要',
+          content: _rpContinuationSummaryPrompt,
+        ),
+      );
+    }
+    final rpStoryContext = await rpStoryContextF;
+    if (rpStoryContext.isNotEmpty) {
+      dynamicParts.add(
+        SystemContextMarkdown.section(
+          enTitle: 'Story Reference',
+          zhTWTitle: '劇情參考',
+          zhCNTitle: '剧情参考',
+          content: rpStoryContext,
+        ),
+      );
+    }
 
-    final coinDelta = await _coinDeltaPrompt(charId);
-    if (coinDelta.isNotEmpty) dynamicParts.add(coinDelta);
+    if (toolFeatures.toolPromptsEnabled &&
+        toolFeatures.shellEconomyEnabled &&
+        toolFeatures.coinSnapshotEnabled) {
+      final coinDelta = await _coinDeltaPrompt(charId);
+      if (coinDelta.isNotEmpty) dynamicParts.add(coinDelta);
+    }
     // 背包窗內變動（「杯子+1（昭昭送的）」式增減量）
-    if (_packQtySnapshot != null) {
+    if (toolFeatures.toolPromptsEnabled &&
+        toolFeatures.shopEnabled &&
+        _packQtySnapshot != null) {
       final packDelta = await ShopService.buildPackDelta(
         charId,
         _packQtySnapshot!,
@@ -2059,49 +2957,65 @@ extension _ChatGenerationMethods on _ChatScreenState {
         );
       }
     }
-    final scratchGiftPrompt = _scratchGiftDynamicPrompt(pendingScratchGift);
-    if (scratchGiftPrompt.isNotEmpty) dynamicParts.add(scratchGiftPrompt);
+    if (toolFeatures.toolPromptsEnabled && toolFeatures.scratchEnabled) {
+      final scratchGiftPrompt = _scratchGiftDynamicPrompt(pendingScratchGift);
+      if (scratchGiftPrompt.isNotEmpty) dynamicParts.add(scratchGiftPrompt);
+    }
 
     // 上輪購買失敗回饋（消費即清，防止她以為禮物送出去了）
-    final buyFailPrompt = _pendingBuyFailurePrompt();
+    final buyFailPrompt =
+        toolFeatures.toolPromptsEnabled && toolFeatures.shopEnabled
+        ? _pendingBuyFailurePrompt()
+        : DeferredPrompt.empty();
     if (buyFailPrompt.isNotEmpty) {
       dynamicParts.add(buyFailPrompt.text);
       turnEffects.add(buyFailPrompt);
     }
 
     // 同逛商店：邀請後清單跟隨 3 輪（動態注入不入庫）
-    final browsePrompt = await _shopBrowsePrompt();
+    final browsePrompt =
+        toolFeatures.toolPromptsEnabled && toolFeatures.shopEnabled
+        ? await _shopBrowsePrompt()
+        : DeferredPrompt.empty();
     if (browsePrompt.isNotEmpty) {
       dynamicParts.add(browsePrompt.text);
       turnEffects.add(browsePrompt);
     }
 
     // 結婚證：解鎖後她也可主動遞（未簽＋未遞過才注入）
-    final proposeHint = await MarriageService.proposeHintPrompt(charId);
-    if (proposeHint.isNotEmpty) dynamicParts.add(proposeHint);
+    if (toolFeatures.toolPromptsEnabled) {
+      final proposeHint = await MarriageService.proposeHintPrompt(charId);
+      if (proposeHint.isNotEmpty) dynamicParts.add(proposeHint);
+    }
 
     // X 發文動態狀態（剩餘條數每日變，不能進靜態）
-    final xHint = await XPostSettings.promptHint(charId);
-    if (xHint.isNotEmpty) {
-      dynamicParts.add(
-        '${L.pick(en: '【X Posting Status】', zhTW: '【X 發文狀態】')}$xHint',
-      );
+    if (toolFeatures.toolPromptsEnabled) {
+      final xHint = await XPostSettings.promptHint(charId);
+      if (xHint.isNotEmpty) {
+        dynamicParts.add(
+          '${L.pick(en: '【X Posting Status】', zhTW: '【X 發文狀態】')}$xHint',
+        );
+      }
     }
 
     // 每輪動態注入，避免改動角色靜態 prompt 與既有 provider cache。
-    dynamicParts.add(EmailDraftTool.runtimeInstruction());
+    if (toolFeatures.toolPromptsEnabled) {
+      dynamicParts.add(EmailDraftTool.runtimeInstruction());
+    }
     final whisperState = CharacterWhisperState.fromCharacter(charData);
-    if (whisperState.modelOverrideEnabled) {
+    if (toolFeatures.toolPromptsEnabled && whisperState.modelOverrideEnabled) {
       dynamicParts.add(WhisperService.runtimeInstruction(whisperState));
     }
 
     // 情緒狀態（已提前發射）
     final emoState = await emoStateF;
-    if (emoState.isNotEmpty) dynamicParts.add(emoState);
+    if (toolFeatures.toolPromptsEnabled && emoState.isNotEmpty) {
+      dynamicParts.add(emoState);
+    }
 
     // 生物鐘單一路徑：當前時段提醒 > 去重（帶冷卻） > 校準 > 構建／飯點。
     // 所有帶冷卻或時段消費的提示都在模型成功返回後才提交。
-    if (bioclockEnabled) {
+    if (toolFeatures.toolPromptsEnabled && bioclockEnabled) {
       final clockPrompt = await BioClockService.turnPrompt(charId);
       if (clockPrompt.isNotEmpty) {
         dynamicParts.add(
@@ -2117,7 +3031,9 @@ extension _ChatGenerationMethods on _ChatScreenState {
     }
 
     // 本窗口新記的習慣（相對開窗快照的增量，靜態快照不動保緩存）
-    if (bioclockEnabled && _habitSnapshotIds != null) {
+    if (toolFeatures.toolPromptsEnabled &&
+        bioclockEnabled &&
+        _habitSnapshotIds != null) {
       final habitDelta = await BioClockService.habitDeltaPrompt(
         charId,
         _habitSnapshotIds!,
@@ -2150,11 +3066,11 @@ extension _ChatGenerationMethods on _ChatScreenState {
     // 角色生活化（每個對話框第一條注入狀態快照）
     if (_isFirstRoundInWindow) {
       // 背包：有新增→全量+請重標星；無新增→只注星標（隨歷史進緩存前綴）
-      if (await ShopService.isEnabled()) {
+      if (toolFeatures.toolPromptsEnabled && toolFeatures.shopEnabled) {
         final packPrompt = await ShopService.buildPackPrompt(charId);
         if (packPrompt.isNotEmpty) dynamicParts.add(packPrompt);
       }
-      if (timelineEnabled) {
+      if (timelineEnabled && sessionIdentity.contextMode == ContextMode.daily) {
         final snapshot = await CharacterTimelineService.stateSnapshotPrompt(
           charId,
         );
@@ -2177,7 +3093,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
 
     // 疲勞提示（已提前發射）
     final fatiguePrompt = await fatiguePromptF;
-    if (fatiguePrompt.isNotEmpty) {
+    if (toolFeatures.toolPromptsEnabled && fatiguePrompt.isNotEmpty) {
       dynamicParts.add(
         SystemContextMarkdown.section(
           enTitle: 'Bio Clock',
@@ -2249,6 +3165,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
 
     final liveDynamicPart = SystemContextMarkdown.join(dynamicParts);
     var structured = StructuredPrompt(
+      sessionIdentity: _requiredSessionIdentity,
       staticPart: staticBundle.staticPart,
       profilePart: staticBundle.profilePart,
       windowPart: staticBundle.windowPart,
@@ -2331,7 +3248,11 @@ extension _ChatGenerationMethods on _ChatScreenState {
       final enableVibration = await enableVibrationF;
 
       final nonEmpty = workingMessages.where((m) => m.text.isNotEmpty).toList();
-      var history = nonEmpty.map((m) => m.toPromptHistoryEntry()).toList();
+      final previousWindowTurns = await previousWindowTurnsF;
+      var history = <Map<String, String>>[
+        ...previousWindowTurns.map((m) => m.toPromptHistoryEntry()),
+        ...nonEmpty.map((m) => m.toPromptHistoryEntry()),
+      ];
 
       // ═══ B4 滯後截斷（保護前綴緩存）═══
       final keepFrom = await _hysteresisKeepFrom(
@@ -2347,7 +3268,11 @@ extension _ChatGenerationMethods on _ChatScreenState {
         }
         // 砍頭點同步為窗口錨點：重開窗按同一起點載入，
         // 砍頭與重開窗的炸點合併成同一次
-        final anchorMsgId = start < nonEmpty.length ? nonEmpty[start].id : null;
+        final currentWindowStart = start - previousWindowTurns.length;
+        final anchorMsgId =
+            currentWindowStart >= 0 && currentWindowStart < nonEmpty.length
+            ? nonEmpty[currentWindowStart].id
+            : null;
         if (anchorMsgId != null) {
           unawaited(_persistContextAnchor(anchorMsgId));
         }
@@ -2357,6 +3282,27 @@ extension _ChatGenerationMethods on _ChatScreenState {
       if (!_isCurrentGeneration(generationSerial) || _stopGenerationRequested) {
         _finishFailedGeneration();
         return;
+      }
+      _activeRequestThinkingEnabled = thinkingEnabled;
+      _activeRequestThinkingGeneration = generationSerial;
+      final cacheMode = await Future.wait<bool>(<Future<bool>>[
+        MemorySettings.getEnablePromptCaching(),
+        MemorySettings.getContextLimitEnabled(),
+      ]);
+      if (cacheMode[0] &&
+          !cacheMode[1] &&
+          TokenEstimator.cacheThresholdInfoForModel(
+                provider: providerName,
+                model: model,
+              ).kind !=
+              CacheThresholdKind.unavailable) {
+        await ApiSettings.recordSentThinkingState(
+          conversationId: widget.conversationId,
+          provider: providerName,
+          model: model,
+          cacheChannel: PromptCacheChannel.text,
+          enabled: thinkingEnabled,
+        );
       }
       await for (final chunk in adapter.sendMessageStream(
         messages: history,
@@ -2375,7 +3321,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
       await turnEffects.commit();
       final replyText = ThinkingModePolicy.sanitizeVisibleReply(
         ThinkingModePolicy.moveProtocolTagsOutsideThinking(rawReply.toString()),
-        enabled: _generationThinkingEnabled,
+        enabled: thinkingEnabled,
       );
       if (!_isCurrentGeneration(generationSerial)) return;
       final webSearchIntent = WebSearchIntentParser.parse(replyText);
@@ -2383,6 +3329,15 @@ extension _ChatGenerationMethods on _ChatScreenState {
       final visibleInitialText = webSearchIntent.query == null
           ? replyTextWithoutWebSearch
           : '';
+      if (_streamPresentationMode == StreamPresentationMode.nativeBuffered &&
+          visibleInitialText.isNotEmpty) {
+        await _finishStreamPresentation();
+        if (!_isCurrentGeneration(generationSerial) ||
+            _stopGenerationRequested) {
+          _finishFailedGeneration();
+          return;
+        }
+      }
       if (mounted) {
         _refreshChatState(() {
           _clearStreamQueue();
@@ -2399,6 +3354,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
         model: model,
         usage: requestUsage,
         characterId: _activeCharacterId,
+        requestKind: ApiRequestKind.chat,
       );
 
       // 檢查本次是否命中緩存
@@ -2409,11 +3365,8 @@ extension _ChatGenerationMethods on _ChatScreenState {
 
       // ═══ 模型自主記憶：開啟時才執行 <memo>/<persona_note> 落庫 ═══
       var processedText = (memoryWriteEnabled || isSpiderWebEnabled)
-          ? await MemoryActions.processReply(
+          ? await _processScopedMemoryReply(
               replyTextWithoutWebSearch,
-              characterId: _activeCharacterId,
-              mode: await _memoryBucket(),
-              windowId: widget.conversationId,
               emotionEnabled: emotionEnabled,
             )
           : MemoryActions.stripReply(
@@ -2452,7 +3405,8 @@ extension _ChatGenerationMethods on _ChatScreenState {
             )
           : EmotionCoordinates.stripReply(processedText);
       // ═══ 生物鐘：<clock> 標籤入庫並剝離 ═══
-      if (await MemorySettings.isAbilityEnabled('bioclock')) {
+      if (sessionIdentity.contextMode == ContextMode.daily &&
+          await MemorySettings.isAbilityEnabled('bioclock')) {
         processedText = await BioClockService.processReply(
           processedText,
           characterId: _activeCharacterId,
@@ -2461,12 +3415,15 @@ extension _ChatGenerationMethods on _ChatScreenState {
       // ═══ 角色生活化：只處理明確 <life_fix>；事件由摘要模型候選
       //     經本地驗證後寫入，不再掃回覆關鍵詞。═══
       if (await MemorySettings.getTimelineEnabled()) {
-        processedText = await CharacterTimelineService.processLifeFix(
-          _activeCharacterId,
-          processedText,
-        );
+        processedText = sessionIdentity.contextMode == ContextMode.daily
+            ? await CharacterTimelineService.processLifeFix(
+                _activeCharacterId,
+                processedText,
+              )
+            : CharacterTimelineService.stripLifeFix(processedText);
       }
-      if (await MemorySettings.isAbilityEnabled('bioclock')) {
+      if (sessionIdentity.contextMode == ContextMode.daily &&
+          await MemorySettings.isAbilityEnabled('bioclock')) {
         await BioClockService.recordLastChatTime(_activeCharacterId);
       }
       _isFirstRoundInWindow = false;
@@ -2502,33 +3459,27 @@ extension _ChatGenerationMethods on _ChatScreenState {
         processedText = processedText
             .replaceAll(RegExp(r'<scratch\s+[^>]*/>'), '')
             .trim();
-        final who = scratchMatch.group(1) ?? 'char';
-        // AI 觸發 → 扣角色的幣
-        final ok = await ScratchService.spend(
-          _activeCharacterId,
-          ScratchService.ticketCost,
-        );
-        if (ok) {
-          pendingScratch = ScratchData(
-            cost: ScratchService.ticketCost,
-            who: who,
-            prizes: ScratchService.rollPrizes(),
-            scratched: false,
+        if (toolFeatures.scratchEnabled) {
+          final who = scratchMatch.group(1) ?? 'char';
+          // AI 觸發 → 扣角色的幣
+          final ok = await ScratchService.spend(
+            _activeCharacterId,
+            ScratchService.ticketCost,
           );
-        } else {
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text(
-                  L.pick(
-                    en: '$_characterName does not have enough shells to send a scratch card.',
-                    zhTW: '【$_characterName】貝殼不足，無法送出刮刮樂',
-                  ),
-                ),
-                backgroundColor: YanciTheme.accent,
-                behavior: SnackBarBehavior.floating,
-                duration: const Duration(seconds: 2),
+          if (ok) {
+            pendingScratch = ScratchData(
+              cost: ScratchService.ticketCost,
+              who: who,
+              prizes: ScratchService.rollPrizes(),
+              scratched: false,
+            );
+          } else if (mounted) {
+            _showChatNotice(
+              L.pick(
+                en: '$_characterName does not have enough shells to send a scratch card.',
+                zhTW: '【$_characterName】貝殼不足，無法送出刮刮樂',
               ),
+              duration: const Duration(seconds: 2),
             );
           }
         }
@@ -2537,10 +3488,12 @@ extension _ChatGenerationMethods on _ChatScreenState {
       String? drawPrompt;
       final drawEventMatch = RegExp(r'<draw\s*/>').firstMatch(processedText);
       if (drawEventMatch != null) {
-        drawPrompt = L.pick(
-          en: '(reference image uploaded manually by the user / or retained by the system)',
-          zhTW: '(由用戶手動上傳參考圖 / 或系統保留)',
-        );
+        if (toolFeatures.imageGenerationEnabled) {
+          drawPrompt = L.pick(
+            en: '(reference image uploaded manually by the user / or retained by the system)',
+            zhTW: '(由用戶手動上傳參考圖 / 或系統保留)',
+          );
+        }
         processedText = processedText
             .replaceAll(RegExp(r'<draw\s*/>'), '')
             .trim();
@@ -2555,7 +3508,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
             .replaceAll(RegExp(r'<transfer\s+[^>]*/>'), '')
             .trim();
         final amount = int.tryParse(transferMatch.group(1) ?? '') ?? 0;
-        if (amount > 0) {
+        if (toolFeatures.transferEnabled && amount > 0) {
           pendingTransfer = TransferData(
             amount: amount,
             direction: 'toUser', // AI 觸發 → 角色轉給 user
@@ -2575,6 +3528,8 @@ extension _ChatGenerationMethods on _ChatScreenState {
             .replaceAll(RegExp(r'<transfer_accept\s*/>'), '')
             .replaceAll(RegExp(r'<transfer_decline\s*/>'), '')
             .trim();
+      }
+      if (toolFeatures.transferEnabled && (hasAccept || hasDecline)) {
         // 找到最近一條 pending 的 toChar 轉帳
         final pendingKey = _findPendingToCharTransfer();
         if (pendingKey != null) {
@@ -2615,7 +3570,9 @@ extension _ChatGenerationMethods on _ChatScreenState {
         r'<call>([\s\S]*?)</call>|<call\s*/>',
       ).firstMatch(processedText);
       if (callMatch != null) {
-        pendingCallOpening = (callMatch.group(1) ?? '').trim();
+        if (sessionIdentity.contextMode == ContextMode.daily) {
+          pendingCallOpening = (callMatch.group(1) ?? '').trim();
+        }
         processedText = processedText
             .replaceAll(RegExp(r'<call>[\s\S]*?</call>'), '')
             .replaceAll(RegExp(r'<call\s*/>'), '')
@@ -2629,13 +3586,18 @@ extension _ChatGenerationMethods on _ChatScreenState {
         processedText = processedText
             .replaceAll(RegExp(r'<draw>[\s\S]*?</draw>'), '')
             .trim();
-        drawPrompt = drawMatch.group(1)!.trim();
+        if (toolFeatures.imageGenerationEnabled) {
+          drawPrompt = drawMatch.group(1)!.trim();
+        }
       }
       // ═══ 歷史搜尋：<search_chat> 觸發可視化搜索 + 自動追加回覆 ═══
       final searchQuery = MemoryActions.lastSearchQueryFor(
         widget.conversationId,
       );
       if (searchQuery != null) {
+        final searchScope = MemoryActions.lastSearchScopeFor(
+          widget.conversationId,
+        );
         if (!_isCurrentGeneration(generationSerial)) return;
         if (_stopGenerationRequested) {
           _finishFailedGeneration();
@@ -2654,13 +3616,19 @@ extension _ChatGenerationMethods on _ChatScreenState {
         final searchResult = await _toolRunner.run(
           call: ToolCall.create(
             name: _chatSearchToolName,
-            arguments: <String, Object?>{'query': searchQuery},
+            arguments: <String, Object?>{
+              'query': searchQuery,
+              'scope': searchScope,
+            },
           ),
           context: ToolContext(
             conversationId: widget.conversationId,
             characterId: _activeCharacterId,
             mode: ToolRunMode.local,
-            metadata: <String, Object?>{'generation_serial': generationSerial},
+            metadata: <String, Object?>{
+              'generation_serial': generationSerial,
+              'current_context_mode': sessionIdentity.contextMode.storageValue,
+            },
           ),
         );
         if (!_isCurrentGeneration(generationSerial)) return;
@@ -2695,13 +3663,18 @@ extension _ChatGenerationMethods on _ChatScreenState {
                     : rawDate;
                 var t = r['text']?.toString() ?? '';
                 if (t.length > 200) t = '${t.substring(0, 200)}…';
-                return '[$date] $who${L.pick(en: ': ', zhTW: '：')}$t';
+                final rowMode = ContextMode.fromStorage(r['context_mode']);
+                final modeLabel = rowMode == ContextMode.rp
+                    ? 'RP'
+                    : L.pick(en: 'Daily', zhTW: '日常', zhCN: '日常');
+                return '[$modeLabel][$date] $who${L.pick(en: ': ', zhTW: '：')}$t';
               })
               .toList(growable: false);
           final retrievalContext = ChatSearchFollowUp.context(
             query: searchQuery,
             excerpts: resultLines,
             failed: searchFailed,
+            scope: searchScope,
           );
           // Phase 3: 二次流式生成
           final buf = StringBuffer();
@@ -2736,16 +3709,14 @@ extension _ChatGenerationMethods on _ChatScreenState {
             model: model,
             usage: followUsage,
             characterId: _activeCharacterId,
+            requestKind: ApiRequestKind.chat,
           );
           if (followUsage.cacheReadTokens > 0) {
             CacheSession.markCacheHit(widget.conversationId);
           }
           var followUp = memoryWriteEnabled
-              ? await MemoryActions.processReply(
+              ? await _processScopedMemoryReply(
                   buf.toString(),
-                  characterId: _activeCharacterId,
-                  mode: await _memoryBucket(),
-                  windowId: widget.conversationId,
                   emotionEnabled: emotionEnabled,
                   resetState: false,
                 )
@@ -2833,6 +3804,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
             model: model,
             usage: followUsage,
             characterId: _activeCharacterId,
+            requestKind: ApiRequestKind.chat,
           );
           if (followUsage.cacheReadTokens > 0) {
             CacheSession.markCacheHit(widget.conversationId);
@@ -2864,6 +3836,11 @@ extension _ChatGenerationMethods on _ChatScreenState {
         }
       }
 
+      processedText = await _extractDiaryAndStore(
+        processedText,
+        sourceMessageId: userMsgWithId.id,
+        diaryEnabled: toolFeatures.diaryEnabled,
+      );
       var emailDraftExtraction = EmailDraftTool.extract(processedText);
       EmailDraft? pendingEmailDraft = emailDraftExtraction.draft;
       processedText = emailDraftExtraction.visibleText;
@@ -2906,6 +3883,11 @@ extension _ChatGenerationMethods on _ChatScreenState {
       }
 
       // 搜尋後的二次回覆也可產生草稿，並保證協議標籤不進聊天文字。
+      processedText = await _extractDiaryAndStore(
+        processedText,
+        sourceMessageId: userMsgWithId.id,
+        diaryEnabled: toolFeatures.diaryEnabled,
+      );
       emailDraftExtraction = EmailDraftTool.extract(processedText);
       pendingEmailDraft = emailDraftExtraction.draft ?? pendingEmailDraft;
       processedText = emailDraftExtraction.visibleText;
@@ -2915,12 +3897,17 @@ extension _ChatGenerationMethods on _ChatScreenState {
       final memLogLines = <String>[
         ...MemoryActions.lastActionLogFor(widget.conversationId),
         ...EmotionCoordinates.lastPointLog,
-        ...BioClockService.lastActionLog,
+        ...BioClockService.consumeLastActionLog(),
         if (drawPrompt != null) '🎨 生成中…',
       ];
       final memLog = memLogLines.isEmpty
           ? ''
           : '${memLogLines.join('\n')}\nDone';
+      if (!_isCurrentGeneration(generationSerial) || _stopGenerationRequested) {
+        _finishFailedGeneration();
+        return;
+      }
+      await _finishStreamPresentation();
       if (!_isCurrentGeneration(generationSerial) || _stopGenerationRequested) {
         _finishFailedGeneration();
         return;
@@ -2940,6 +3927,15 @@ extension _ChatGenerationMethods on _ChatScreenState {
         emailDraft: pendingEmailDraft,
       );
       final insertedId = await DatabaseHelper.insertMessage(aiMsg);
+      final repairIdentity = _requiredSessionIdentity;
+      unawaited(
+        ContextSummaryRepairService.processScope(
+          characterId: repairIdentity.characterId,
+          contextMode: repairIdentity.contextMode,
+          continuityId: repairIdentity.continuityId,
+        ),
+      );
+      await _clearChatDiagnosticForSource(userMsgWithId.id!);
       await _bindMemoryProposalsToMessage(insertedId);
       unawaited(
         MarriageService.scanMessage(
@@ -2989,7 +3985,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
         _setGenerating(false);
       }
       if (drawPrompt != null && aiMsgWithId.id != null) {
-        _runDrawAsync(aiMsgWithId.id!, drawPrompt, memLog);
+        _runDrawAsync(aiMsgWithId.id!, drawPrompt, memLog, _activeCharacterId);
       }
 
       // ═══ 商店：消費本輪 <buy> 結果（送禮系統訊息即時上屏 + 失敗提示）═══
@@ -3047,7 +4043,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
 
       await _recordCompletedRound(
         conversationId: conversationId,
-        userText: outboundText,
+        userText: promptVisibleOutboundText,
         assistantText: aiMsgWithId.text,
         heartbeatHistory: history,
         structuredPrompt: structured,
@@ -3068,7 +4064,12 @@ extension _ChatGenerationMethods on _ChatScreenState {
     } on ApiConfigException catch (e) {
       if (!_isCurrentGeneration(generationSerial)) return;
       _finishFailedGeneration();
-      _showApiConfigFailure(e);
+      await _persistApiFailure(
+        e,
+        sourceMessageId: userMsgWithId.id!,
+        provider: providerName,
+        model: model,
+      );
     } catch (e) {
       if (!_isCurrentGeneration(generationSerial)) return;
       final incomplete = streamCompleted
@@ -3076,20 +4077,18 @@ extension _ChatGenerationMethods on _ChatScreenState {
           : await _persistIncompleteReply(rawReply.toString());
       _finishFailedGeneration();
       if (_stopGenerationRequested) return;
-      _showRetryableFailure(
+      await _persistApiFailure(
         e,
-        incomplete?.id != null
-            ? () => _retryIncompleteMessage(incomplete!.id!)
-            : () => _runMessageRetry(
-                () => _sendMessageLocked(
-                  userMsgWithId.text,
-                  composerDraft: '',
-                  clearComposerOnAccept: false,
-                  retryUserMessage: userMsgWithId,
-                ),
-              ),
+        sourceMessageId: userMsgWithId.id!,
+        anchorMessageId: incomplete?.id,
+        provider: providerName,
+        model: model,
       );
     } finally {
+      if (_activeRequestThinkingGeneration == generationSerial) {
+        _activeRequestThinkingEnabled = null;
+        _activeRequestThinkingGeneration = null;
+      }
       if (identical(_activeGenerationAdapter, adapter)) {
         _activeGenerationAdapter = null;
       }
@@ -3100,6 +4099,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
   /// 發送圖片（相冊 or 表情包）
   Future<void> _sendImageLocked(
     String path, {
+    List<String>? imagePaths,
     String caption = '',
     required String composerDraft,
     required bool clearComposerOnAccept,
@@ -3110,31 +4110,30 @@ extension _ChatGenerationMethods on _ChatScreenState {
     if (_messages.where((m) => m.isUser).isEmpty) {
       await _stopKeepAliveBeforeFirstMessage();
       if (!mounted) return;
-      CacheSession.conversationId = conversationId;
+      CacheSession.bind(_requiredSessionIdentity);
     }
     if (_isGenerating) return;
     if (_isGeneratingImage) return;
     if (_localModelLoading) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            L.pick(
-              en: 'Local model is loading, please wait...',
-              zhTW: '本地模型加載中，請稍候……',
-            ),
-          ),
-          behavior: SnackBarBehavior.floating,
-          duration: const Duration(milliseconds: 1200),
-          margin: const EdgeInsets.only(bottom: 80, left: 16, right: 16),
+      _showChatNotice(
+        L.pick(
+          en: 'Local model is loading, please wait...',
+          zhTW: '本地模型加載中，請稍候……',
         ),
+        duration: const Duration(milliseconds: 1200),
       );
       return;
     }
 
     // 首次發送才複製圖片；重試沿用已入庫的原消息與 app 內路徑。
-    final saved =
-        retryUserMessage?.imagePath ?? await ImageService.copyToAppDir(path);
-    if (saved.isEmpty) return;
+    final sourcePaths = imagePaths ?? <String>[path];
+    final savedPaths = retryUserMessage != null
+        ? retryUserMessage.imagePaths
+        : (await Future.wait(
+            sourcePaths.map(ImageService.copyToAppDir),
+          )).where((value) => value.isNotEmpty).toList(growable: false);
+    if (savedPaths.isEmpty) return;
+    final saved = savedPaths.first;
     final pendingTransfer = retryUserMessage == null
         ? _pendingUserTransfer
         : null;
@@ -3179,6 +4178,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
         text: outboundCaption,
         isUser: true,
         imagePath: saved,
+        imagePaths: savedPaths,
       );
       final imgUserId = await DatabaseHelper.insertMessage(userMsg);
       unawaited(MarriageService.scanMessage(userMsg.text, _activeCharacterId));
@@ -3203,6 +4203,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
         text: userMsg.text,
         isUser: true,
         imagePath: userMsg.imagePath,
+        imagePaths: userMsg.imagePaths,
         createdAt: userMsg.createdAt,
       );
     }
@@ -3224,13 +4225,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
 
     final adapter = await _prepareAdapterForGeneration(
       generationSerial: generationSerial,
-      retry: () => _sendImageLocked(
-        userMsgWithId.imagePath ?? path,
-        caption: userMsgWithId.text,
-        composerDraft: '',
-        clearComposerOnAccept: false,
-        retryUserMessage: userMsgWithId,
-      ),
+      sourceMessageId: userMsgWithId.id!,
     );
     if (adapter == null) {
       MemoryActions.clearSearchQuery(widget.conversationId);
@@ -3240,39 +4235,95 @@ extension _ChatGenerationMethods on _ChatScreenState {
     _activeGenerationAdapter = adapter;
 
     // ── 構建 API 消息 ──
-    final systemPrompt = await ApiSettings.getSystemPrompt();
+    final sessionIdentity = _requiredSessionIdentity;
+    final previousWindowTurnsF = _previousWindowTurnsFuture ??=
+        DatabaseHelper.getPreviousConversationTurns(
+          currentConversationId: widget.conversationId,
+          characterId: _activeCharacterId,
+          contextMode: sessionIdentity.contextMode,
+          continuityId: sessionIdentity.continuityId,
+        );
+    final systemPrompt = _userPersona?.promptContent ?? '';
     final model = await ApiSettings.getModel();
     _currentModel = model;
     final imgMemoryWriteEnabled = await MemorySettings.getMemoryWriteEnabled();
     final emotionEnabled = await MemorySettings.isAbilityEnabled('emotion');
 
-    final memoryPrompt = await Retriever.buildMemoryPrompt(
-      mode: await _memoryBucket(),
-      currentMessage: outboundCaption.isNotEmpty
-          ? outboundCaption
-          : '（用戶發送了一張圖片）',
-      characterId: _activeCharacterId,
-      windowId: widget.conversationId,
-      emotionEnabled: emotionEnabled,
-    );
+    final imageMemoryMessage = outboundCaption.isNotEmpty
+        ? outboundCaption
+        : '（用戶發送了一張圖片）';
+    final imgTimelineEnabled = await MemorySettings.getTimelineEnabled();
+    final imgRecallPrompt = imgTimelineEnabled
+        ? sessionIdentity.contextMode == ContextMode.rp
+              ? await RpCharacterTimelineService.recallPrompt(
+                  _activeCharacterId,
+                  imageMemoryMessage,
+                  continuityId: sessionIdentity.continuityId,
+                )
+              : await CharacterTimelineService.recallPrompt(
+                  _activeCharacterId,
+                  imageMemoryMessage,
+                )
+        : '';
+    final imgRpStoryContext = sessionIdentity.contextMode == ContextMode.rp
+        ? (await Future.wait<String>(<Future<String>>[
+            RpStoryService.recallPrompt(
+              _activeCharacterId,
+              imageMemoryMessage,
+              continuityId: sessionIdentity.continuityId,
+            ),
+            RpStoryStateService.recallPrompt(
+              _activeCharacterId,
+              continuityId: sessionIdentity.continuityId,
+            ),
+            RpWorldbookService.recallPrompt(
+              characterId: _activeCharacterId,
+              continuityId: sessionIdentity.continuityId,
+              query: imageMemoryMessage,
+            ),
+          ])).where((part) => part.isNotEmpty).join('\n\n')
+        : '';
+    final memoryPrompt = sessionIdentity.contextMode == ContextMode.rp
+        ? await RpMemoryService.buildPrompt(
+            mode: await _memoryBucket(),
+            currentMessage: imageMemoryMessage,
+            characterId: _activeCharacterId,
+            windowId: widget.conversationId,
+            continuityId: sessionIdentity.continuityId,
+            emotionEnabled: emotionEnabled,
+          )
+        : await Retriever.buildMemoryPrompt(
+            mode: await _memoryBucket(),
+            currentMessage: imageMemoryMessage,
+            characterId: _activeCharacterId,
+            windowId: widget.conversationId,
+            emotionEnabled: emotionEnabled,
+            contextMode: ContextMode.daily,
+            continuityId: sessionIdentity.continuityId,
+          );
     final imgUserProfile = await _buildUserProfilePrompt();
-    final imgSelfNotesEnabled = await MemorySettings.getSelfNotesEnabled();
+    final imgSelfNotesEnabled =
+        sessionIdentity.contextMode == ContextMode.daily &&
+        await MemorySettings.getSelfNotesEnabled();
     final imgSelfNotes = imgSelfNotesEnabled
         ? await DatabaseHelper.getSelfNotes(_activeCharacterId)
         : '';
-    final userNickname = await UserSettings.getUserName();
+    final userNickname = _userPersonaName;
     final charDataImg = await DatabaseHelper.getCharacter(_activeCharacterId);
     final imgCharDesc = charDataImg?['description'] as String? ?? '';
     final imgCharName = charDataImg?['name'] as String? ?? '';
     final isSpiderWebEnabledImg =
+        sessionIdentity.contextMode == ContextMode.daily &&
         (charDataImg?['is_spider_web_enabled'] as int? ?? 0) == 1;
-    final imgBioclockEnabled = await MemorySettings.isAbilityEnabled(
-      'bioclock',
-    );
+    final imgBioclockEnabled =
+        sessionIdentity.contextMode == ContextMode.daily &&
+        await MemorySettings.isAbilityEnabled('bioclock');
     final imgImagegenEnabled = await MemorySettings.isAbilityEnabled(
       'imagegen',
     );
+    final imgToolFeatures = await ToolFeatureSettings.load();
     final imgProviderName = await ApiSettings.getApiProviderName();
+    _configureStreamPresentation(imgProviderName);
     // Keep the image path's stable prompt prefix identical to the text path.
     // The image request itself still does not execute web.search here; this
     // flag only keeps the cacheable capability contract from drifting.
@@ -3297,6 +4348,8 @@ extension _ChatGenerationMethods on _ChatScreenState {
       staticWindowSummary: await _buildStaticWindowSummaryPrompt(
         _activeCharacterId,
       ),
+      contextMode: sessionIdentity.contextMode,
+      toolFeatures: imgToolFeatures,
     );
 
     final now = DateTime.now();
@@ -3308,13 +4361,38 @@ extension _ChatGenerationMethods on _ChatScreenState {
         content: _timePrompt(now),
       ),
     ];
-    dynamicParts.add(EmailDraftTool.runtimeInstruction());
+    if (imgToolFeatures.toolPromptsEnabled) {
+      dynamicParts.add(EmailDraftTool.runtimeInstruction());
+    }
     final imgWhisperState = CharacterWhisperState.fromCharacter(charDataImg);
-    if (imgWhisperState.modelOverrideEnabled) {
+    if (imgToolFeatures.toolPromptsEnabled &&
+        imgWhisperState.modelOverrideEnabled) {
       dynamicParts.add(WhisperService.runtimeInstruction(imgWhisperState));
     }
     final controlParts = <String>[];
     final turnEffects = DeferredPromptBatch()..add(memoryPrompt);
+    final imgDiaryPrompt = await CharacterDiaryService.buildNightPrompt(
+      characterId: _activeCharacterId,
+      conversationId: widget.conversationId,
+      sourceMessageId: userMsgWithId.id!,
+      userName: userNickname,
+      currentUserContent: imageMemoryMessage,
+      contextMode: sessionIdentity.contextMode,
+      enabled:
+          imgToolFeatures.toolPromptsEnabled && imgToolFeatures.diaryEnabled,
+      now: now,
+    );
+    if (imgDiaryPrompt.isNotEmpty) {
+      dynamicParts.add(
+        SystemContextMarkdown.section(
+          enTitle: 'Evening Diary',
+          zhTWTitle: '晚間日記',
+          zhCNTitle: '晚间日记',
+          content: imgDiaryPrompt.text,
+        ),
+      );
+      turnEffects.add(imgDiaryPrompt);
+    }
     if (memoryPrompt.isNotEmpty) {
       dynamicParts.add(
         SystemContextMarkdown.section(
@@ -3341,10 +4419,49 @@ extension _ChatGenerationMethods on _ChatScreenState {
         ),
       );
     }
-    final imgCoinDelta = await _coinDeltaPrompt(_activeCharacterId);
-    if (imgCoinDelta.isNotEmpty) dynamicParts.add(imgCoinDelta);
+    if (imgRpStoryContext.isNotEmpty) {
+      dynamicParts.add(
+        SystemContextMarkdown.section(
+          enTitle: 'Story Reference',
+          zhTWTitle: '劇情參考',
+          zhCNTitle: '剧情参考',
+          content: imgRpStoryContext,
+        ),
+      );
+    }
+    if (_rpContinuationSummaryPrompt.isNotEmpty) {
+      final isRpContinuation = sessionIdentity.contextMode == ContextMode.rp;
+      dynamicParts.add(
+        SystemContextMarkdown.section(
+          enTitle: isRpContinuation
+              ? 'Selected Chapter Summaries'
+              : 'Selected Window Summaries',
+          zhTWTitle: isRpContinuation ? '所選篇章摘要' : '所選窗口摘要',
+          zhCNTitle: isRpContinuation ? '所选篇章摘要' : '所选窗口摘要',
+          content: _rpContinuationSummaryPrompt,
+        ),
+      );
+    }
+    if (imgRecallPrompt.isNotEmpty) {
+      dynamicParts.add(
+        SystemContextMarkdown.section(
+          enTitle: 'Recall',
+          zhTWTitle: '回憶觸發',
+          zhCNTitle: '回忆触发',
+          content: imgRecallPrompt,
+        ),
+      );
+    }
+    if (imgToolFeatures.toolPromptsEnabled &&
+        imgToolFeatures.shellEconomyEnabled &&
+        imgToolFeatures.coinSnapshotEnabled) {
+      final imgCoinDelta = await _coinDeltaPrompt(_activeCharacterId);
+      if (imgCoinDelta.isNotEmpty) dynamicParts.add(imgCoinDelta);
+    }
     // 背包窗內變動（與 text path 同步）
-    if (_packQtySnapshot != null) {
+    if (imgToolFeatures.toolPromptsEnabled &&
+        imgToolFeatures.shopEnabled &&
+        _packQtySnapshot != null) {
       final imgPackDelta = await ShopService.buildPackDelta(
         _activeCharacterId,
         _packQtySnapshot!,
@@ -3355,42 +4472,56 @@ extension _ChatGenerationMethods on _ChatScreenState {
         );
       }
     }
-    final imgScratchGiftPrompt = _scratchGiftDynamicPrompt(pendingScratchGift);
-    if (imgScratchGiftPrompt.isNotEmpty) {
-      dynamicParts.add(imgScratchGiftPrompt);
+    if (imgToolFeatures.toolPromptsEnabled && imgToolFeatures.scratchEnabled) {
+      final imgScratchGiftPrompt = _scratchGiftDynamicPrompt(
+        pendingScratchGift,
+      );
+      if (imgScratchGiftPrompt.isNotEmpty) {
+        dynamicParts.add(imgScratchGiftPrompt);
+      }
     }
     // 上輪購買失敗回饋（與 text path 同步）
-    final imgBuyFailPrompt = _pendingBuyFailurePrompt();
+    final imgBuyFailPrompt =
+        imgToolFeatures.toolPromptsEnabled && imgToolFeatures.shopEnabled
+        ? _pendingBuyFailurePrompt()
+        : DeferredPrompt.empty();
     if (imgBuyFailPrompt.isNotEmpty) {
       dynamicParts.add(imgBuyFailPrompt.text);
       turnEffects.add(imgBuyFailPrompt);
     }
     // 同逛商店清單跟隨（與 text path 同步）
-    final imgBrowsePrompt = await _shopBrowsePrompt();
+    final imgBrowsePrompt =
+        imgToolFeatures.toolPromptsEnabled && imgToolFeatures.shopEnabled
+        ? await _shopBrowsePrompt()
+        : DeferredPrompt.empty();
     if (imgBrowsePrompt.isNotEmpty) {
       dynamicParts.add(imgBrowsePrompt.text);
       turnEffects.add(imgBrowsePrompt);
     }
     // 結婚證主動遞提示（與 text path 同步）
-    final imgProposeHint = await MarriageService.proposeHintPrompt(
-      _activeCharacterId,
-    );
-    if (imgProposeHint.isNotEmpty) dynamicParts.add(imgProposeHint);
-    // X 發文動態狀態（與 text path 同步）
-    final imgXHint = await XPostSettings.promptHint(_activeCharacterId);
-    if (imgXHint.isNotEmpty) {
-      dynamicParts.add(
-        '${L.pick(en: '【X Posting Status】', zhTW: '【X 發文狀態】')}$imgXHint',
+    if (imgToolFeatures.toolPromptsEnabled) {
+      final imgProposeHint = await MarriageService.proposeHintPrompt(
+        _activeCharacterId,
       );
+      if (imgProposeHint.isNotEmpty) dynamicParts.add(imgProposeHint);
+    }
+    // X 發文動態狀態（與 text path 同步）
+    if (imgToolFeatures.toolPromptsEnabled) {
+      final imgXHint = await XPostSettings.promptHint(_activeCharacterId);
+      if (imgXHint.isNotEmpty) {
+        dynamicParts.add(
+          '${L.pick(en: '【X Posting Status】', zhTW: '【X 發文狀態】')}$imgXHint',
+        );
+      }
     }
     // 情緒狀態回饋（餵狀態不餵機制，空狀態零開銷）
-    if (emotionEnabled) {
+    if (imgToolFeatures.toolPromptsEnabled && emotionEnabled) {
       final emoState = await EmotionCoordinates.statePrompt(_activeCharacterId);
       if (emoState.isNotEmpty) dynamicParts.add(emoState);
     }
 
     // 生物鐘：與文字路徑使用相同優先級與送達後提交機制。
-    if (imgBioclockEnabled) {
+    if (imgToolFeatures.toolPromptsEnabled && imgBioclockEnabled) {
       final imgClockPrompt = await BioClockService.turnPrompt(
         _activeCharacterId,
       );
@@ -3496,6 +4627,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
 
     final liveDynamicPart = SystemContextMarkdown.join(dynamicParts);
     final structured = StructuredPrompt(
+      sessionIdentity: _requiredSessionIdentity,
       staticPart: staticBundle.staticPart,
       profilePart: staticBundle.profilePart,
       windowPart: staticBundle.windowPart,
@@ -3518,31 +4650,39 @@ extension _ChatGenerationMethods on _ChatScreenState {
     var streamCompleted = false;
     try {
       // 構建歷史消息（文字部分）
-      // ═══ 歷史圖片降級：只有最新一張真實上傳 ═══
+      // ═══ 歷史圖片降級：只有最新一則 user 圖片消息真實上傳 ═══
       // 舊版每輪把全部歷史圖片重新 base64 上傳，
       // token 成本隨圖片數量線性暴漲（一張圖 ≈ 上千 tokens × 每輪）。
       // 更早的圖片降級為文字佔位，內容靠記憶系統承接。
       final filtered = workingMessages
-          .where((m) => m.text.isNotEmpty || m.imagePath != null)
+          .where((m) => m.text.isNotEmpty || m.imagePaths.isNotEmpty)
           .toList();
+      final previousWindowTurns = await previousWindowTurnsF;
       int lastImageIdx = -1;
       for (int i = filtered.length - 1; i >= 0; i--) {
-        if (filtered[i].imagePath != null) {
+        if (filtered[i].isUser && filtered[i].imagePaths.isNotEmpty) {
           lastImageIdx = i;
           break;
         }
       }
-      var history = <Map<String, dynamic>>[];
+      var history = <Map<String, dynamic>>[
+        for (final message in previousWindowTurns)
+          <String, dynamic>{
+            'role': message.isUser ? 'user' : 'assistant',
+            'content': message.text,
+          },
+      ];
       for (int i = 0; i < filtered.length; i++) {
         final m = filtered[i];
-        final degraded = m.imagePath != null && i != lastImageIdx;
+        final degraded = m.imagePaths.isNotEmpty && i != lastImageIdx;
+        final imageCount = m.imagePaths.length;
         history.add(<String, dynamic>{
           'role': m.isUser ? 'user' : 'assistant',
           'content': degraded
-              ? '（這裡曾發送一張圖片${m.text.isNotEmpty ? '：${m.text}' : ''}）'
-              : (m.text.isNotEmpty ? m.text : '（圖片）'),
-          if (m.imagePath != null && i == lastImageIdx)
-            'imagePath': m.imagePath,
+              ? '（這裡曾發送$imageCount張圖片${m.text.isNotEmpty ? '：${m.text}' : ''}）'
+              : (m.text.isNotEmpty ? m.text : '（$imageCount張圖片）'),
+          if (m.imagePaths.isNotEmpty && i == lastImageIdx)
+            'imagePaths': List<String>.from(m.imagePaths),
         });
       }
 
@@ -3558,8 +4698,10 @@ extension _ChatGenerationMethods on _ChatScreenState {
           start2++;
         }
         // 砍頭點同步窗口錨點（同 text path）
-        final anchorMsgId2 = start2 < filtered.length
-            ? filtered[start2].id
+        final currentWindowStart = start2 - previousWindowTurns.length;
+        final anchorMsgId2 =
+            currentWindowStart >= 0 && currentWindowStart < filtered.length
+            ? filtered[currentWindowStart].id
             : null;
         if (anchorMsgId2 != null) {
           unawaited(_persistContextAnchor(anchorMsgId2));
@@ -3571,16 +4713,25 @@ extension _ChatGenerationMethods on _ChatScreenState {
       for (final m in history) {
         final role = m['role'] as String;
         final content = m['content'] as String;
-        final imgPath = m['imagePath'] as String?;
+        final imagePaths =
+            (m['imagePaths'] as List<dynamic>?)?.whereType<String>().toList(
+              growable: false,
+            ) ??
+            const <String>[];
 
-        if (imgPath != null && role == 'user') {
-          final dataUrl = await ImageService.toBase64DataUrl(imgPath);
-          if (dataUrl != null) {
+        if (imagePaths.isNotEmpty && role == 'user') {
+          final dataUrls = <String>[];
+          for (final imagePath in imagePaths) {
+            final dataUrl = await ImageService.toBase64DataUrl(imagePath);
+            if (dataUrl != null) dataUrls.add(dataUrl);
+          }
+          if (dataUrls.isNotEmpty) {
             // 用特殊標記讓 adapter 識別多模態
             apiMessages.add({
               'role': role,
               'content': content,
-              'image_data_url': dataUrl,
+              'image_data_url': dataUrls.first,
+              'image_data_urls': jsonEncode(dataUrls),
             });
             continue;
           }
@@ -3592,6 +4743,27 @@ extension _ChatGenerationMethods on _ChatScreenState {
       if (!_isCurrentGeneration(generationSerial) || _stopGenerationRequested) {
         _finishFailedGeneration();
         return;
+      }
+      _activeRequestThinkingEnabled = thinkingOn;
+      _activeRequestThinkingGeneration = generationSerial;
+      final imgCacheMode = await Future.wait<bool>(<Future<bool>>[
+        MemorySettings.getEnablePromptCaching(),
+        MemorySettings.getContextLimitEnabled(),
+      ]);
+      if (imgCacheMode[0] &&
+          !imgCacheMode[1] &&
+          TokenEstimator.cacheThresholdInfoForModel(
+                provider: imgProviderName,
+                model: model,
+              ).kind !=
+              CacheThresholdKind.unavailable) {
+        await ApiSettings.recordSentThinkingState(
+          conversationId: widget.conversationId,
+          provider: imgProviderName,
+          model: model,
+          cacheChannel: PromptCacheChannel.text,
+          enabled: thinkingOn,
+        );
       }
       await for (final chunk in adapter.sendMessageStream(
         messages: apiMessages,
@@ -3621,6 +4793,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
         model: model,
         usage: requestUsage,
         characterId: _activeCharacterId,
+        requestKind: ApiRequestKind.chat,
       );
 
       final imgCacheRead = requestUsage.cacheReadTokens;
@@ -3630,11 +4803,8 @@ extension _ChatGenerationMethods on _ChatScreenState {
 
       // ═══ 模型自主記憶：開啟時才執行 <memo>/<persona_note> 落庫 ═══
       var processedText = (imgMemoryWriteEnabled || isSpiderWebEnabledImg)
-          ? await MemoryActions.processReply(
+          ? await _processScopedMemoryReply(
               replyText,
-              characterId: _activeCharacterId,
-              mode: await _memoryBucket(),
-              windowId: widget.conversationId,
               emotionEnabled: emotionEnabled,
             )
           : MemoryActions.stripReply(
@@ -3669,7 +4839,8 @@ extension _ChatGenerationMethods on _ChatScreenState {
             )
           : EmotionCoordinates.stripReply(processedText);
       // ═══ 生物鐘：<clock> 標籤入庫並剝離 ═══
-      if (await MemorySettings.isAbilityEnabled('bioclock')) {
+      if (sessionIdentity.contextMode == ContextMode.daily &&
+          await MemorySettings.isAbilityEnabled('bioclock')) {
         processedText = await BioClockService.processReply(
           processedText,
           characterId: _activeCharacterId,
@@ -3677,12 +4848,15 @@ extension _ChatGenerationMethods on _ChatScreenState {
       }
       // ═══ 角色生活化：只處理明確 <life_fix>；時間線事件不掃關鍵詞。═══
       if (await MemorySettings.getTimelineEnabled()) {
-        processedText = await CharacterTimelineService.processLifeFix(
-          _activeCharacterId,
-          processedText,
-        );
+        processedText = sessionIdentity.contextMode == ContextMode.daily
+            ? await CharacterTimelineService.processLifeFix(
+                _activeCharacterId,
+                processedText,
+              )
+            : CharacterTimelineService.stripLifeFix(processedText);
       }
-      if (await MemorySettings.isAbilityEnabled('bioclock')) {
+      if (sessionIdentity.contextMode == ContextMode.daily &&
+          await MemorySettings.isAbilityEnabled('bioclock')) {
         await BioClockService.recordLastChatTime(_activeCharacterId);
       }
       _isFirstRoundInWindow = false;
@@ -3722,33 +4896,27 @@ extension _ChatGenerationMethods on _ChatScreenState {
         processedText = processedText
             .replaceAll(RegExp(r'<scratch\s+[^>]*/>'), '')
             .trim();
-        final who = scratchMatch.group(1) ?? 'char';
-        // AI 觸發 → 扣角色的幣
-        final ok = await ScratchService.spend(
-          _activeCharacterId,
-          ScratchService.ticketCost,
-        );
-        if (ok) {
-          pendingScratch = ScratchData(
-            cost: ScratchService.ticketCost,
-            who: who,
-            prizes: ScratchService.rollPrizes(),
-            scratched: false,
+        if (imgToolFeatures.scratchEnabled) {
+          final who = scratchMatch.group(1) ?? 'char';
+          // AI 觸發 → 扣角色的幣
+          final ok = await ScratchService.spend(
+            _activeCharacterId,
+            ScratchService.ticketCost,
           );
-        } else {
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text(
-                  L.pick(
-                    en: '$_characterName does not have enough shells to send a scratch card.',
-                    zhTW: '【$_characterName】貝殼不足，無法送出刮刮樂',
-                  ),
-                ),
-                backgroundColor: YanciTheme.accent,
-                behavior: SnackBarBehavior.floating,
-                duration: const Duration(seconds: 2),
+          if (ok) {
+            pendingScratch = ScratchData(
+              cost: ScratchService.ticketCost,
+              who: who,
+              prizes: ScratchService.rollPrizes(),
+              scratched: false,
+            );
+          } else if (mounted) {
+            _showChatNotice(
+              L.pick(
+                en: '$_characterName does not have enough shells to send a scratch card.',
+                zhTW: '【$_characterName】貝殼不足，無法送出刮刮樂',
               ),
+              duration: const Duration(seconds: 2),
             );
           }
         }
@@ -3763,7 +4931,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
             .replaceAll(RegExp(r'<transfer\s+[^>]*/>'), '')
             .trim();
         final amount = int.tryParse(transferMatch.group(1) ?? '') ?? 0;
-        if (amount > 0) {
+        if (imgToolFeatures.transferEnabled && amount > 0) {
           pendingTransfer = TransferData(amount: amount, direction: 'toUser');
         }
       }
@@ -3779,6 +4947,8 @@ extension _ChatGenerationMethods on _ChatScreenState {
             .replaceAll(RegExp(r'<transfer_accept\s*/>'), '')
             .replaceAll(RegExp(r'<transfer_decline\s*/>'), '')
             .trim();
+      }
+      if (imgToolFeatures.transferEnabled && (hasAcceptImg || hasDeclineImg)) {
         final pendingKey = _findPendingToCharTransfer();
         if (pendingKey != null) {
           if (hasAcceptImg) {
@@ -3818,7 +4988,9 @@ extension _ChatGenerationMethods on _ChatScreenState {
         r'<call>([\s\S]*?)</call>|<call\s*/>',
       ).firstMatch(processedText);
       if (callMatch != null) {
-        pendingCallOpening = (callMatch.group(1) ?? '').trim();
+        if (sessionIdentity.contextMode == ContextMode.daily) {
+          pendingCallOpening = (callMatch.group(1) ?? '').trim();
+        }
         processedText = processedText
             .replaceAll(RegExp(r'<call>[\s\S]*?</call>'), '')
             .replaceAll(RegExp(r'<call\s*/>'), '')
@@ -3833,9 +5005,16 @@ extension _ChatGenerationMethods on _ChatScreenState {
         processedText = processedText
             .replaceAll(RegExp(r'<draw>[\s\S]*?</draw>'), '')
             .trim();
-        drawPrompt = drawMatch.group(1)!.trim();
+        if (imgToolFeatures.imageGenerationEnabled) {
+          drawPrompt = drawMatch.group(1)!.trim();
+        }
       }
 
+      processedText = await _extractDiaryAndStore(
+        processedText,
+        sourceMessageId: userMsgWithId.id,
+        diaryEnabled: imgToolFeatures.diaryEnabled,
+      );
       final emailDraftExtraction = EmailDraftTool.extract(processedText);
       final pendingEmailDraft = emailDraftExtraction.draft;
       processedText = emailDraftExtraction.visibleText;
@@ -3846,13 +5025,21 @@ extension _ChatGenerationMethods on _ChatScreenState {
       final memLogLines = <String>[
         ...MemoryActions.lastActionLogFor(widget.conversationId),
         ...EmotionCoordinates.lastPointLog,
-        ...BioClockService.lastActionLog,
+        ...BioClockService.consumeLastActionLog(),
         if (drawPrompt != null) '🎨 生成中…',
       ];
       final memLog = memLogLines.isEmpty
           ? ''
           : '${memLogLines.join('\n')}\nDone';
       if (!_isCurrentGeneration(generationSerial)) return;
+      if (_streamPresentationMode == StreamPresentationMode.nativeBuffered) {
+        await _finishStreamPresentation();
+        if (!_isCurrentGeneration(generationSerial) ||
+            _stopGenerationRequested) {
+          _finishFailedGeneration();
+          return;
+        }
+      }
       final aiMsg = Message(
         conversationId: conversationId,
         characterId: _activeCharacterId,
@@ -3864,6 +5051,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
         emailDraft: pendingEmailDraft,
       );
       final imgAiId = await DatabaseHelper.insertMessage(aiMsg);
+      await _clearChatDiagnosticForSource(userMsgWithId.id!);
       await _bindMemoryProposalsToMessage(imgAiId);
       unawaited(
         MarriageService.scanMessage(
@@ -3901,7 +5089,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
         _setGenerating(false);
       }
       if (drawPrompt != null && aiMsgWithId.id != null) {
-        _runDrawAsync(aiMsgWithId.id!, drawPrompt, memLog);
+        _runDrawAsync(aiMsgWithId.id!, drawPrompt, memLog, _activeCharacterId);
       }
 
       // ═══ 商店：消費本輪 <buy> 結果（送禮系統訊息即時上屏 + 失敗提示）═══
@@ -3958,7 +5146,12 @@ extension _ChatGenerationMethods on _ChatScreenState {
     } on ApiConfigException catch (e) {
       if (!_isCurrentGeneration(generationSerial)) return;
       _finishFailedGeneration();
-      _showApiConfigFailure(e);
+      await _persistApiFailure(
+        e,
+        sourceMessageId: userMsgWithId.id!,
+        provider: imgProviderName,
+        model: model,
+      );
     } catch (e) {
       if (!_isCurrentGeneration(generationSerial)) return;
       final incomplete = streamCompleted
@@ -3966,21 +5159,18 @@ extension _ChatGenerationMethods on _ChatScreenState {
           : await _persistIncompleteReply(rawReply.toString());
       _finishFailedGeneration();
       if (_stopGenerationRequested) return;
-      _showRetryableFailure(
+      await _persistApiFailure(
         e,
-        incomplete?.id != null
-            ? () => _retryIncompleteMessage(incomplete!.id!)
-            : () => _runMessageRetry(
-                () => _sendImageLocked(
-                  userMsgWithId.imagePath ?? path,
-                  caption: userMsgWithId.text,
-                  composerDraft: '',
-                  clearComposerOnAccept: false,
-                  retryUserMessage: userMsgWithId,
-                ),
-              ),
+        sourceMessageId: userMsgWithId.id!,
+        anchorMessageId: incomplete?.id,
+        provider: imgProviderName,
+        model: model,
       );
     } finally {
+      if (_activeRequestThinkingGeneration == generationSerial) {
+        _activeRequestThinkingEnabled = null;
+        _activeRequestThinkingGeneration = null;
+      }
       if (identical(_activeGenerationAdapter, adapter)) {
         _activeGenerationAdapter = null;
       }
@@ -3991,28 +5181,10 @@ extension _ChatGenerationMethods on _ChatScreenState {
 
   /// 構建用戶檔案 prompt
   Future<String> _buildUserProfilePrompt() async {
-    final nickname = await UserSettings.getUserName();
-    final pronouns = await UserSettings.getUserPronouns();
-    final bio = await UserSettings.getUserBio();
-    if (nickname.isEmpty && pronouns.isEmpty && bio.isEmpty) return '';
-    final parts = <String>[];
-    if (L.locale == 'en') {
-      if (nickname.isNotEmpty) parts.add('Name: $nickname');
-      if (pronouns.isNotEmpty) parts.add('Pronouns: $pronouns');
-      if (bio.isNotEmpty) parts.add('About: $bio');
-      return '【User Profile】${parts.join(', ')}';
-    } else {
-      if (nickname.isNotEmpty) {
-        parts.add('${L.pick(en: '', zhTW: '暱稱：')}$nickname');
-      }
-      if (pronouns.isNotEmpty) {
-        parts.add('${L.pick(en: '', zhTW: '稱謂：')}$pronouns');
-      }
-      if (bio.isNotEmpty) {
-        parts.add('${L.pick(en: '', zhTW: '自我介紹：')}$bio');
-      }
-      return '${L.pick(en: '', zhTW: '【用戶檔案】')}${parts.join(L.pick(en: '', zhTW: '，'))}';
-    }
+    final persona = _userPersona;
+    return persona == null
+        ? ''
+        : UserPersonaService.buildIdentityPrompt(persona);
   }
 
   /// AI 自動命名（異步，不阻塞聊天）
@@ -4025,6 +5197,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
       final convId = conversationId ?? widget.conversationId;
       final adapter = await ApiSettings.buildAdapter();
       final model = await ApiSettings.getModel();
+      final provider = await ApiSettings.getApiProvider();
       final char = await DatabaseHelper.getCharacter(_activeCharacterId);
       final characterName = (char?['name'] as String? ?? _characterName).trim();
       final relationship = (char?['relationship'] as String? ?? '').trim();
@@ -4032,10 +5205,11 @@ extension _ChatGenerationMethods on _ChatScreenState {
         (char?['description'] as String? ?? '').trim(),
         500,
       );
-      final userName = (await UserSettings.getUserName()).trim();
+      final userName = _userPersonaName;
       final dialogueUser = truncateGraphemes(userText.trim(), 160);
       final dialogueCharacter = truncateGraphemes(aiText.trim(), 160);
 
+      ApiUsage? usage;
       final response = await adapter.sendMessage(
         messages: [
           {
@@ -4055,6 +5229,14 @@ extension _ChatGenerationMethods on _ChatScreenState {
           zhTW:
               '用角色本人的語氣替這段對話取名。參照角色的說話方式、對對方的稱呼與兩人關係，像角色自己自然取出的名字，不要寫成中性的分類標籤，也不必每次都硬塞對方姓名。控制在 4～12 字；只輸出標題，不加外層引號或解釋。',
         ),
+        onUsage: (value) => usage = value,
+      );
+      await _tokenTracker.recordRealUsage(
+        provider: provider,
+        model: model,
+        usage: usage ?? const ApiUsage(),
+        characterId: _activeCharacterId,
+        requestKind: ApiRequestKind.conversationTitle,
       );
 
       var title = response.trim().split('\n').first.trim();

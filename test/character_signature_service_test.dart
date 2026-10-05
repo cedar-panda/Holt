@@ -72,6 +72,72 @@ void main() {
       lessThanOrEqualTo(CharacterSignaturePrompt.maxCharacters),
     );
   });
+
+  test('normalizer never persists visible thinking content', () {
+    expect(
+      CharacterSignatureService.normalizeResponse(
+        '<think>I should explain the mood first.</think>雨停了，燕子還沒回來。',
+      ),
+      '雨停了，燕子還沒回來。',
+    );
+    expect(
+      CharacterSignatureService.normalizeResponse(
+        '[analysis] The user sounds wistful.\nFinal: 雨停了，燕子還沒回來。',
+      ),
+      '雨停了，燕子還沒回來。',
+    );
+    expect(
+      CharacterSignatureService.normalizeResponse(
+        'Thinking: I should write a short signature.',
+      ),
+      isEmpty,
+    );
+  });
+
+  test('history entry can be selected as the displayed signature', () async {
+    await db.insert('conversations', <String, Object?>{
+      'id': 'signature-window',
+      'character_id': 'char-signature',
+      'context_mode': 'daily',
+      'continuity_id': 'main',
+      'title': '第一個窗口',
+      'created_at': '2026-09-23T00:00:00.000',
+      'updated_at': '2026-09-23T00:00:00.000',
+    });
+    final id = await db.insert('character_signatures', <String, Object?>{
+      'character_id': 'char-signature',
+      'conversation_id': 'signature-window',
+      'context_mode': 'daily',
+      'continuity_id': 'main',
+      'phase': 'opening',
+      'signature': '風從舊窗口吹回來。',
+      'created_at': '2026-09-23T00:00:01.000',
+      'updated_at': '2026-09-23T00:00:01.000',
+    });
+
+    final selected = await CharacterSignatureService.selectDisplayedSignature(
+      characterId: 'char-signature',
+      signatureId: id,
+    );
+
+    expect(selected, '風從舊窗口吹回來。');
+    final character = await DatabaseHelper.getCharacter('char-signature');
+    expect(character?['signature'], selected);
+    final history = await CharacterSignatureService.historyForCharacter(
+      'char-signature',
+    );
+    expect(history.single['is_selected'], 1);
+
+    final latest = await CharacterSignatureService.followLatestSignature(
+      'char-signature',
+    );
+    expect(latest, selected);
+    final resetHistory = await CharacterSignatureService.historyForCharacter(
+      'char-signature',
+    );
+    expect(resetHistory.single['is_selected'], 0);
+    expect(resetHistory.single['is_displayed'], 1);
+  });
 }
 
 class _SignatureAdapter implements ApiAdapter {

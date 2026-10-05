@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:project_yanci/memory/database.dart';
 import 'package:project_yanci/memory/emotion_coordinates.dart';
+import 'package:project_yanci/models/context_mode.dart';
 import 'package:project_yanci/models/message.dart';
 import 'package:project_yanci/services/sticker_service.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
@@ -32,15 +33,35 @@ void main() {
     () async {
       await DatabaseHelper.createSchemaForTesting(db);
 
-      expect(DatabaseHelper.schemaVersionForTesting, 47);
+      expect(DatabaseHelper.schemaVersionForTesting, 77);
+      expect(
+        await _columnNames(db, 'character_diaries'),
+        containsAll(<String>[
+          'character_id',
+          'diary_date',
+          'title',
+          'body',
+          'source_conversation_id',
+          'source_message_id',
+        ]),
+      );
       expect(await _columnNames(db, 'messages'), contains('status'));
       expect(
         await _columnNames(db, 'messages'),
         contains('web_search_trace_json'),
       );
       expect(await _columnNames(db, 'messages'), contains('email_draft_json'));
+      expect(await _columnNames(db, 'messages'), contains('summary_recorded'));
+      expect(
+        await _columnNames(db, 'context_summaries'),
+        contains('source_span_status'),
+      );
       expect(await _columnNames(db, 'characters'), contains('bio_clock'));
       expect(await _columnNames(db, 'characters'), contains('signature'));
+      expect(
+        await _columnNames(db, 'character_signatures'),
+        containsAll(<String>['phase', 'signature', 'is_selected']),
+      );
       expect(
         await _columnNames(db, 'characters'),
         containsAll([
@@ -53,11 +74,25 @@ void main() {
       expect(await _columnNames(db, 'sticky_notes'), contains('character_id'));
       expect(
         await _columnNames(db, 'conversations'),
-        contains('pinned_static_self_notes'),
+        containsAll(<String>[
+          'pinned_static_self_notes',
+          'pinned_coin_snapshot_char',
+          'pinned_coin_snapshot_user',
+        ]),
       );
       expect(
         await _columnNames(db, 'conversations'),
         contains('summary_cursor_message_id'),
+      );
+      expect(
+        await _columnNames(db, 'conversations'),
+        containsAll(<String>[
+          'context_mode',
+          'continuity_id',
+          'user_persona_id',
+          'user_persona_snapshot',
+          'worldbook_set_id',
+        ]),
       );
       expect(
         await _columnNames(db, 'character_timeline'),
@@ -68,6 +103,18 @@ void main() {
         ]),
       );
       expect(await _columnNames(db, 'archive'), contains('character_id'));
+      expect(
+        await _columnNames(db, 'rp_character_timeline'),
+        containsAll(<String>[
+          'event_key',
+          'narrative_layer',
+          'subject_entity_ids',
+        ]),
+      );
+      expect(
+        await _columnNames(db, 'usage_logs'),
+        containsAll(<String>['request_kind', 'cost_known']),
+      );
 
       final tables = await _objectNames(db, 'table');
       expect(
@@ -76,8 +123,21 @@ void main() {
           'emotion_points',
           'grudge_seals',
           'character_timeline',
+          'rp_character_timeline',
+          'rp_story_characters',
+          'rp_story_relationships',
+          'rp_story_relationship_events',
+          'rp_story_entity_aliases',
+          'rp_story_states',
+          'rp_story_projection_revisions',
+          'context_summary_repairs',
           'pending_memory_actions',
           'web_search_usage_logs',
+          'user_personas',
+          'user_persona_mode_overrides',
+          'character_persona_bindings',
+          'character_signatures',
+          'memory_embeddings',
         ]),
       );
 
@@ -87,6 +147,7 @@ void main() {
         containsAll(<String>[
           'idx_messages_conv_time',
           'idx_mem_char_mode_time',
+          'idx_mem_char_context_time',
           'idx_spider_web_memory_1',
           'idx_spider_web_memory_2',
           'idx_archive_original_unique',
@@ -96,11 +157,18 @@ void main() {
           'idx_voice_conversation',
           'idx_context_summary_char_time',
           'idx_context_keyword_char_time',
+          'idx_context_summary_scope_time',
+          'idx_context_keyword_scope_time',
           'idx_emo_memory',
           'idx_emo_char_type_time',
           'idx_timeline_memory',
           'idx_timeline_event_daily_unique',
           'idx_timeline_source_message',
+          'idx_rp_timeline_state',
+          'idx_rp_timeline_event_lookup',
+          'idx_rp_timeline_conversation',
+          'idx_rp_projection_revision_summary',
+          'idx_context_summary_repair_scope',
           'idx_saved_message_unique',
           'idx_pending_memory_character_status',
           'idx_pending_memory_source_message',
@@ -110,6 +178,10 @@ void main() {
           'idx_web_search_budget_status',
           'idx_web_search_reservation',
           'idx_web_search_char_time',
+          'idx_persona_binding_persona',
+          'idx_character_signature_history',
+          'idx_character_signature_selected',
+          'idx_usage_kind_ts',
         ]),
       );
       expect(
@@ -143,6 +215,111 @@ void main() {
         }),
         throwsA(isA<DatabaseException>()),
       );
+    },
+  );
+
+  test('v77 upgrade adds the one-entry-per-day diary table', () async {
+    await DatabaseHelper.upgradeSchemaForTesting(db, 76);
+
+    expect(
+      await _columnNames(db, 'character_diaries'),
+      containsAll(<String>['character_id', 'diary_date', 'title', 'body']),
+    );
+    final indexes = await db.rawQuery(
+      "SELECT name FROM sqlite_master WHERE type = 'index' "
+      "AND tbl_name = 'character_diaries'",
+    );
+    expect(
+      indexes.map((row) => row['name']),
+      contains('idx_character_diaries_character_date'),
+    );
+  });
+
+  test('v73 upgrade creates RP projection history and repair queue', () async {
+    await DatabaseHelper.createSchemaForTesting(db);
+    await db.execute('DROP TABLE rp_story_projection_revisions');
+    await db.execute('DROP TABLE context_summary_repairs');
+
+    await DatabaseHelper.upgradeSchemaForTesting(db, 72);
+
+    final tables = await _objectNames(db, 'table');
+    expect(tables, contains('rp_story_projection_revisions'));
+    expect(tables, contains('context_summary_repairs'));
+    expect(
+      await _columnNames(db, 'context_summary_repairs'),
+      containsAll(<String>[
+        'original_summary_id',
+        'continuity_id',
+        'source_message_start_id',
+        'source_message_end_id',
+        'status',
+      ]),
+    );
+  });
+
+  test('v74 upgrade adds request kind and trusted cost markers', () async {
+    await DatabaseHelper.createSchemaForTesting(db);
+    await db.execute('ALTER TABLE usage_logs RENAME TO usage_logs_v73');
+    await db.execute('''
+      CREATE TABLE usage_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        timestamp TEXT NOT NULL,
+        provider TEXT NOT NULL,
+        model TEXT NOT NULL,
+        character_id TEXT DEFAULT 'default',
+        prompt_tokens INTEGER DEFAULT 0,
+        completion_tokens INTEGER DEFAULT 0,
+        cache_hit_tokens INTEGER DEFAULT 0,
+        cache_creation_tokens INTEGER DEFAULT 0,
+        estimated_cost REAL DEFAULT 0.0
+      )
+    ''');
+    await db.execute('DROP TABLE usage_logs_v73');
+
+    await DatabaseHelper.upgradeSchemaForTesting(db, 73);
+
+    expect(
+      await _columnNames(db, 'usage_logs'),
+      containsAll(<String>['request_kind', 'cost_known']),
+    );
+    expect(await _objectNames(db, 'index'), contains('idx_usage_kind_ts'));
+  });
+
+  test(
+    'v52 repairs Daily-labelled memories with an RP source window',
+    () async {
+      await DatabaseHelper.createSchemaForTesting(db);
+      const now = '2026-09-19T00:00:00.000Z';
+      await db.insert('conversations', <String, Object?>{
+        'id': 'rp-source-window',
+        'character_id': 'char-a',
+        'title': 'RP',
+        'context_mode': 'rp',
+        'continuity_id': 'route-red',
+        'created_at': now,
+        'updated_at': now,
+      });
+      await db.insert('memories', <String, Object?>{
+        'character_id': 'char-a',
+        'context_mode': 'daily',
+        'continuity_id': 'main',
+        'mode': 'story',
+        'category': '伏筆',
+        'content': '錯標的 RP 記憶',
+        'source_conversation_id': 'rp-source-window',
+        'created_at': now,
+        'updated_at': now,
+      });
+
+      await DatabaseHelper.upgradeSchemaForTesting(db, 51);
+
+      final row = (await db.query(
+        'memories',
+        where: 'content = ?',
+        whereArgs: ['錯標的 RP 記憶'],
+      )).single;
+      expect(row['context_mode'], 'rp');
+      expect(row['continuity_id'], 'route-red');
     },
   );
 
@@ -185,6 +362,77 @@ void main() {
         ['recoverable'],
       );
       expect(rows, hasLength(1));
+    },
+  );
+
+  test(
+    'v66 replaces legacy FTS5 with trigram and rebuilds only active rows',
+    () async {
+      await DatabaseHelper.createSchemaForTesting(db);
+      for (final trigger in const <String>[
+        'memories_fts_ai',
+        'memories_fts_au_deactivate',
+        'memories_fts_au_activate',
+        'memories_fts_au_content',
+        'memories_fts_ad',
+      ]) {
+        await db.execute('DROP TRIGGER IF EXISTS $trigger');
+      }
+      await db.execute('DROP TABLE memories_fts');
+      await db.execute('''
+      CREATE VIRTUAL TABLE memories_fts
+      USING fts5(content, triggers, content='', tokenize='unicode61')
+    ''');
+      final memoryId = await db.insert('memories', <String, Object?>{
+        'character_id': 'char-a',
+        'context_mode': 'rp',
+        'continuity_id': 'route-red',
+        'mode': 'story',
+        'category': '伏筆',
+        'content': '沈昭嶼收起了琥珀吊墜',
+        'created_at': '2026-09-24T00:00:00.000Z',
+        'updated_at': '2026-09-24T00:00:00.000Z',
+        'status': 'active',
+        'triggers': '琥珀吊墜',
+      });
+      await db.insert('memories_fts', <String, Object?>{
+        'rowid': memoryId,
+        'content': '沈昭嶼收起了琥珀吊墜',
+        'triggers': '琥珀吊墜',
+      });
+      await db.insert('memories', <String, Object?>{
+        'character_id': 'char-a',
+        'context_mode': 'rp',
+        'continuity_id': 'route-red',
+        'mode': 'story',
+        'category': '廢棄',
+        'content': '不應重建的軟刪除記憶',
+        'created_at': '2026-09-24T00:00:00.000Z',
+        'updated_at': '2026-09-24T00:00:00.000Z',
+        'status': 'rejected',
+        'triggers': '軟刪除',
+      });
+
+      await DatabaseHelper.upgradeSchemaForTesting(db, 65);
+
+      final sql = (await db.rawQuery(
+        "SELECT sql FROM sqlite_master WHERE name = 'memories_fts'",
+      )).single['sql']!.toString().toLowerCase();
+      expect(sql, allOf(contains('fts5'), contains('trigram')));
+      expect(
+        (await db.rawQuery(
+          'SELECT count(*) AS count FROM memories_fts',
+        )).single['count'],
+        1,
+      );
+      final results = await DatabaseHelper.searchMemoriesByText(
+        '他是在什麼時候收起了琥珀吊墜的',
+        mode: 'story',
+        characterId: 'char-a',
+        contextMode: ContextMode.rp,
+        continuityId: 'route-red',
+      );
+      expect(results.map((memory) => memory.id), contains(memoryId));
     },
   );
 
@@ -248,6 +496,75 @@ void main() {
       contains('昭昭曾和 tata 一起去海邊散步'),
     );
   });
+
+  test('Chinese long sentence finds a keyword in the middle section', () async {
+    await DatabaseHelper.createSchemaForTesting(db);
+    final now = DateTime(2026, 9, 24).toIso8601String();
+    await db.insert('memories', <String, Object?>{
+      'character_id': 'char-a',
+      'context_mode': 'rp',
+      'continuity_id': 'route-blue',
+      'mode': 'story',
+      'category': '物品',
+      'content': '晏辭把琥珀吊墜交給了昭昭保管',
+      'created_at': now,
+      'updated_at': now,
+      'status': 'active',
+      'triggers': '琥珀吊墜',
+    });
+
+    final results = await DatabaseHelper.searchMemoriesByText(
+      '我想起他們先在雨夜談到書院的往事，中間曾經提到琥珀吊墜，後來才去渡口追查船夫的下落',
+      mode: 'story',
+      characterId: 'char-a',
+      contextMode: ContextMode.rp,
+      continuityId: 'route-blue',
+    );
+
+    expect(results.map((memory) => memory.content), contains('晏辭把琥珀吊墜交給了昭昭保管'));
+  });
+
+  test(
+    'FTS4-compatible fallback keeps Chinese substrings searchable',
+    () async {
+      await DatabaseHelper.createSchemaForTesting(db);
+      for (final trigger in const <String>[
+        'memories_fts_ai',
+        'memories_fts_au_deactivate',
+        'memories_fts_au_activate',
+        'memories_fts_au_content',
+        'memories_fts_ad',
+      ]) {
+        await db.execute('DROP TRIGGER IF EXISTS $trigger');
+      }
+      await db.execute('DROP TABLE memories_fts');
+      // FTS4 unicode61 cannot segment a Chinese sentence into useful terms.
+      // Removing the derived table forces the same bounded substring fallback
+      // that runs after an empty FTS4 result, without requiring this desktop
+      // SQLite build to compile the optional FTS4 module.
+      final now = DateTime(2026, 9, 24).toIso8601String();
+      await db.insert('memories', <String, Object?>{
+        'character_id': 'char-a',
+        'context_mode': 'daily',
+        'continuity_id': 'main',
+        'mode': 'normal',
+        'category': '偏好',
+        'content': '昭昭喜歡桂花烏龍茶',
+        'created_at': now,
+        'updated_at': now,
+        'status': 'active',
+        'triggers': '桂花烏龍',
+      });
+
+      final results = await DatabaseHelper.searchMemoriesByText(
+        '記得他喜歡桂花烏龍茶',
+        mode: 'normal',
+        characterId: 'char-a',
+      );
+
+      expect(results.map((memory) => memory.content), contains('昭昭喜歡桂花烏龍茶'));
+    },
+  );
 
   test('BM25 search remains responsive with a few thousand memories', () async {
     await DatabaseHelper.createSchemaForTesting(db);
@@ -529,6 +846,14 @@ void main() {
       'created_at': '2026-07-18T09:00:00.000',
       'updated_at': '2026-07-18T09:00:00.000',
     });
+    await db.insert('messages', {
+      'id': 72,
+      'conversation_id': 'conv-a',
+      'character_id': 'char-a',
+      'text': 'covered message',
+      'is_user': 0,
+      'created_at': '2026-07-18T09:01:00.000',
+    });
 
     final summaryId = await DatabaseHelper.insertContextSummaryAndAdvanceCursor(
       characterId: 'char-a',
@@ -548,6 +873,169 @@ void main() {
     );
     expect(rows.single['source_conversation_id'], 'conv-a');
     expect(rows.single['source_window_id'], 'ABC');
+    expect(rows.single['display_anchor_message_id'], 72);
+    expect(await DatabaseHelper.getSummaryRecordedMessageIds('conv-a'), <int>{
+      72,
+    });
+  });
+
+  test(
+    'summary cursor and visible shortcut may use different messages',
+    () async {
+      await DatabaseHelper.createSchemaForTesting(db);
+      await db.insert('conversations', {
+        'id': 'conv-late-summary',
+        'character_id': 'char-a',
+        'created_at': '2026-09-26T09:00:00.000',
+        'updated_at': '2026-09-26T09:00:00.000',
+      });
+      for (final id in <int>[91, 92]) {
+        await db.insert('messages', {
+          'id': id,
+          'conversation_id': 'conv-late-summary',
+          'character_id': 'char-a',
+          'text': 'message $id',
+          'is_user': id.isOdd ? 1 : 0,
+          'created_at': '2026-09-26T09:0${id - 90}:00.000',
+        });
+      }
+
+      final summaryId =
+          await DatabaseHelper.insertContextSummaryAndAdvanceCursor(
+            characterId: 'char-a',
+            content: 'summary created after another reply arrived',
+            tokenCount: 12,
+            conversationId: 'conv-late-summary',
+            cursorMessageId: 91,
+            displayAnchorMessageId: 92,
+            sourceWindowId: 'W-LATE',
+          );
+
+      expect(
+        await DatabaseHelper.getConversationSummaryCursor('conv-late-summary'),
+        91,
+      );
+      expect(
+        await DatabaseHelper.getSummaryRecordedAnchors('conv-late-summary'),
+        <int, int>{92: summaryId},
+      );
+    },
+  );
+
+  test('legacy summary marker follows summary completion time', () async {
+    await DatabaseHelper.createSchemaForTesting(db);
+    await db.insert('conversations', {
+      'id': 'conv-legacy-summary',
+      'character_id': 'char-a',
+      'created_at': '2026-09-26T09:00:00.000',
+      'updated_at': '2026-09-26T09:00:00.000',
+    });
+    for (final entry in <(int, String)>[
+      (101, '2026-09-26T09:01:00.000'),
+      (102, '2026-09-26T09:02:00.000'),
+    ]) {
+      await db.insert('messages', {
+        'id': entry.$1,
+        'conversation_id': 'conv-legacy-summary',
+        'character_id': 'char-a',
+        'text': 'message ${entry.$1}',
+        'is_user': entry.$1.isOdd ? 1 : 0,
+        'summary_recorded': entry.$1 == 101 ? 1 : 0,
+        'created_at': entry.$2,
+      });
+    }
+    final summaryId = await db.insert('context_summaries', {
+      'character_id': 'char-a',
+      'source_window_id': 'LEGACY',
+      'source_conversation_id': 'conv-legacy-summary',
+      'context_mode': 'daily',
+      'continuity_id': 'main',
+      'content': 'legacy summary',
+      'token_count': 10,
+      'created_at': '2026-09-26T09:03:00.000',
+    });
+
+    expect(
+      await DatabaseHelper.getSummaryRecordedAnchors('conv-legacy-summary'),
+      <int, int>{102: summaryId},
+    );
+  });
+
+  test('one conversation can persist more than one rolling summary', () async {
+    await DatabaseHelper.createSchemaForTesting(db);
+    await db.insert('conversations', {
+      'id': 'conv-repeat',
+      'character_id': 'char-a',
+      'created_at': '2026-09-26T09:00:00.000',
+      'updated_at': '2026-09-26T09:00:00.000',
+    });
+    for (final id in <int>[81, 82]) {
+      await db.insert('messages', {
+        'id': id,
+        'conversation_id': 'conv-repeat',
+        'character_id': 'char-a',
+        'text': 'batch $id',
+        'is_user': id.isOdd ? 1 : 0,
+        'created_at': '2026-09-26T09:0${id - 80}:00.000',
+      });
+    }
+
+    await DatabaseHelper.insertContextSummaryAndAdvanceCursor(
+      characterId: 'char-a',
+      content: 'first summary',
+      tokenCount: 10,
+      conversationId: 'conv-repeat',
+      cursorMessageId: 81,
+      sourceWindowId: 'W1',
+    );
+    await DatabaseHelper.insertContextSummaryAndAdvanceCursor(
+      characterId: 'char-a',
+      content: 'second summary',
+      tokenCount: 11,
+      conversationId: 'conv-repeat',
+      cursorMessageId: 82,
+      sourceWindowId: 'W2',
+    );
+
+    expect(
+      await DatabaseHelper.getConversationSummaryCursor('conv-repeat'),
+      82,
+    );
+    expect(
+      await db.query(
+        'context_summaries',
+        where: 'source_conversation_id = ?',
+        whereArgs: <Object?>['conv-repeat'],
+      ),
+      hasLength(2),
+    );
+    expect(
+      await DatabaseHelper.getSummaryRecordedMessageIds('conv-repeat'),
+      <int>{81, 82},
+    );
+  });
+
+  test('v58 adds summary marker column without marking old messages', () async {
+    await db.execute('''
+      CREATE TABLE messages (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        conversation_id TEXT NOT NULL,
+        text TEXT NOT NULL,
+        is_user INTEGER NOT NULL,
+        created_at TEXT NOT NULL
+      )
+    ''');
+    await db.insert('messages', <String, Object?>{
+      'conversation_id': 'legacy-conv',
+      'text': 'legacy message',
+      'is_user': 1,
+      'created_at': '2026-07-18T09:00:00.000',
+    });
+
+    await DatabaseHelper.upgradeSchemaForTesting(db, 57);
+
+    expect(await _columnNames(db, 'messages'), contains('summary_recorded'));
+    expect((await db.query('messages')).single['summary_recorded'], 0);
   });
 
   test(
@@ -758,6 +1246,56 @@ void main() {
   });
 
   test(
+    'conversation search finds an early window by message keyword',
+    () async {
+      await DatabaseHelper.createSchemaForTesting(db);
+      await db.insert('conversations', <String, Object?>{
+        'id': 'conv-early',
+        'character_id': 'char-a',
+        'title': '最早的普通窗口',
+        'created_at': '2024-01-01T00:00:00.000',
+        'updated_at': '2024-01-01T00:00:00.000',
+      });
+      await db.insert('conversations', <String, Object?>{
+        'id': 'conv-other-character',
+        'character_id': 'char-b',
+        'title': '另一個角色',
+        'created_at': '2026-08-20T00:00:00.000',
+        'updated_at': '2026-08-20T00:00:00.000',
+      });
+      for (final conversationId in <String>[
+        'conv-early',
+        'conv-other-character',
+      ]) {
+        await db.insert('messages', <String, Object?>{
+          'conversation_id': conversationId,
+          'character_id': conversationId == 'conv-early' ? 'char-a' : 'char-b',
+          'text': '只有消息正文包含琥珀耳墜這個線索。',
+          'is_user': 0,
+          'created_at': '2024-01-01T00:01:00.000',
+        });
+      }
+      // 同一窗口多次命中也只能返回一個窗口。
+      await db.insert('messages', <String, Object?>{
+        'conversation_id': 'conv-early',
+        'character_id': 'char-a',
+        'text': '後來又提到琥珀耳墜。',
+        'is_user': 1,
+        'created_at': '2024-01-01T00:02:00.000',
+      });
+
+      final results = await DatabaseHelper.searchConversations(
+        '琥珀耳墜',
+        characterId: 'char-a',
+      );
+
+      expect(results.map((conversation) => conversation.id), <String>[
+        'conv-early',
+      ]);
+    },
+  );
+
+  test(
     'v34 migration adds message delivery status without changing text',
     () async {
       await db.execute('''
@@ -900,6 +1438,139 @@ void main() {
       await DatabaseHelper.getConversationPinnedSelfNotes('conv-notes'),
       'old note',
     );
+  });
+
+  test('conversation coin snapshot is pinned only once', () async {
+    await DatabaseHelper.createSchemaForTesting(db);
+    await DatabaseHelper.createConversation(
+      Conversation(id: 'conv-coins', characterId: 'char-a'),
+    );
+
+    final first =
+        await DatabaseHelper.setConversationPinnedCoinSnapshotIfAbsent(
+          'conv-coins',
+          characterCoins: 800,
+          userCoins: 900,
+        );
+    final second =
+        await DatabaseHelper.setConversationPinnedCoinSnapshotIfAbsent(
+          'conv-coins',
+          characterCoins: 830,
+          userCoins: 930,
+        );
+
+    expect(first, (characterCoins: 800, userCoins: 900));
+    expect(second, first);
+    expect(
+      await DatabaseHelper.getConversationPinnedCoinSnapshot('conv-coins'),
+      first,
+    );
+  });
+
+  test('v53 adds nullable conversation coin snapshots', () async {
+    await db.execute('''
+      CREATE TABLE conversations (
+        id TEXT PRIMARY KEY,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )
+    ''');
+    await db.insert('conversations', <String, Object?>{
+      'id': 'existing-conv',
+      'created_at': '2026-09-20T00:00:00.000Z',
+      'updated_at': '2026-09-20T00:00:00.000Z',
+    });
+
+    await DatabaseHelper.upgradeSchemaForTesting(db, 52);
+
+    expect(
+      await _columnNames(db, 'conversations'),
+      containsAll(<String>[
+        'pinned_coin_snapshot_char',
+        'pinned_coin_snapshot_user',
+      ]),
+    );
+    final row = (await db.query('conversations')).single;
+    expect(row['pinned_coin_snapshot_char'], isNull);
+    expect(row['pinned_coin_snapshot_user'], isNull);
+  });
+
+  test('v55 removes legacy thinking-only character signatures', () async {
+    await DatabaseHelper.createSchemaForTesting(db);
+    await db.insert('characters', <String, Object?>{
+      'id': 'char-thinking-signature',
+      'name': '小澈',
+      'signature': '<think>I should explain this signature.</think>',
+      'created_at': '2026-09-22T00:00:00.000Z',
+      'updated_at': '2026-09-22T00:00:00.000Z',
+    });
+    await db.insert('conversations', <String, Object?>{
+      'id': 'conv-thinking-signature',
+      'character_id': 'char-thinking-signature',
+      'context_mode': 'daily',
+      'continuity_id': 'main',
+      'created_at': '2026-09-22T00:00:00.000Z',
+      'updated_at': '2026-09-22T00:00:00.000Z',
+    });
+    await db.insert('character_signatures', <String, Object?>{
+      'character_id': 'char-thinking-signature',
+      'conversation_id': 'conv-thinking-signature',
+      'context_mode': 'daily',
+      'continuity_id': 'main',
+      'phase': 'opening',
+      'signature': '<think>I should explain this signature.</think>',
+      'is_selected': 1,
+      'created_at': '2026-09-22T00:00:01.000Z',
+      'updated_at': '2026-09-22T00:00:01.000Z',
+    });
+
+    await DatabaseHelper.upgradeSchemaForTesting(db, 54);
+
+    expect(await db.query('character_signatures'), isEmpty);
+    final character = await DatabaseHelper.getCharacter(
+      'char-thinking-signature',
+    );
+    expect(character?['signature'], '');
+  });
+
+  test('v56 backfills the legacy card signature into window history', () async {
+    await DatabaseHelper.createSchemaForTesting(db);
+    await db.insert('characters', <String, Object?>{
+      'id': 'char-legacy-signature',
+      'name': '小澈',
+      'signature': '風從舊窗口吹回來。',
+      'created_at': '2026-09-20T00:00:00.000Z',
+      'updated_at': '2026-09-22T08:30:00.000Z',
+    });
+    await db.insert('conversations', <String, Object?>{
+      'id': 'conv-older',
+      'character_id': 'char-legacy-signature',
+      'context_mode': 'daily',
+      'continuity_id': 'main',
+      'created_at': '2026-09-20T00:00:00.000Z',
+      'updated_at': '2026-09-20T01:00:00.000Z',
+    });
+    await db.insert('conversations', <String, Object?>{
+      'id': 'conv-latest',
+      'character_id': 'char-legacy-signature',
+      'context_mode': 'rp',
+      'continuity_id': 'story-a',
+      'created_at': '2026-09-21T00:00:00.000Z',
+      'updated_at': '2026-09-22T00:00:00.000Z',
+    });
+
+    await DatabaseHelper.upgradeSchemaForTesting(db, 55);
+    await DatabaseHelper.upgradeSchemaForTesting(db, 55);
+
+    final history = await db.query('character_signatures');
+    expect(history, hasLength(1));
+    expect(history.single['character_id'], 'char-legacy-signature');
+    expect(history.single['conversation_id'], 'conv-latest');
+    expect(history.single['context_mode'], 'rp');
+    expect(history.single['continuity_id'], 'story-a');
+    expect(history.single['phase'], 'closing');
+    expect(history.single['signature'], '風從舊窗口吹回來。');
+    expect(history.single['created_at'], '2026-09-22T08:30:00.000Z');
   });
 
   test(
@@ -1234,6 +1905,123 @@ void main() {
     expect(row['status'], 'confirmed');
     expect(row['source'], 'legacy');
     expect(row['updated_at'], '2026-08-01T00:00:00.000');
+  });
+
+  test(
+    'v63 allows multiple relation kinds and protects user decisions',
+    () async {
+      await DatabaseHelper.createSchemaForTesting(db);
+      final first = await _insertMemory(db, 'char-a', 'first');
+      final second = await _insertMemory(db, 'char-a', 'second');
+
+      expect(
+        await DatabaseHelper.upsertSpiderWebRelationDetailed(
+          'char-a',
+          first,
+          second,
+          relationType: 'related',
+          strength: 0.8,
+          status: 'suggested',
+          source: 'local_scan',
+          reason: 'shared trigger',
+        ),
+        SpiderWebRelationWriteResult.inserted,
+      );
+      expect(
+        await DatabaseHelper.upsertSpiderWebRelationDetailed(
+          'char-a',
+          first,
+          second,
+          relationType: 'related',
+          strength: 0.8,
+          status: 'suggested',
+          source: 'local_scan',
+          reason: 'shared trigger',
+        ),
+        SpiderWebRelationWriteResult.unchanged,
+      );
+      expect(
+        await DatabaseHelper.upsertSpiderWebRelationDetailed(
+          'char-a',
+          first,
+          second,
+          relationType: 'temporal',
+          strength: 0.7,
+          status: 'suggested',
+          source: 'model',
+          reason: 'same period',
+        ),
+        SpiderWebRelationWriteResult.inserted,
+      );
+      expect(
+        await DatabaseHelper.resolveSpiderWebRelation(
+          'char-a',
+          (await db.query(
+                'spider_web_links',
+                where: 'relation_type = ?',
+                whereArgs: ['related'],
+              )).single['id']
+              as int,
+          confirmed: true,
+        ),
+        isTrue,
+      );
+      expect(
+        await DatabaseHelper.upsertSpiderWebRelationDetailed(
+          'char-a',
+          first,
+          second,
+          relationType: 'related',
+          strength: 0.2,
+          status: 'suggested',
+          source: 'model',
+          reason: 'model overwrite',
+        ),
+        SpiderWebRelationWriteResult.protected,
+      );
+      expect(
+        await db.query(
+          'spider_web_links',
+          where: 'character_id = ?',
+          whereArgs: ['char-a'],
+        ),
+        hasLength(2),
+      );
+    },
+  );
+
+  test('v64 removes old RP graph links and preserves daily links', () async {
+    await DatabaseHelper.createSchemaForTesting(db);
+    final dailyA = await _insertMemory(db, 'char-a', 'daily a');
+    final dailyB = await _insertMemory(db, 'char-a', 'daily b');
+    final rpA = await _insertMemory(db, 'char-a', 'rp a');
+    final rpB = await _insertMemory(db, 'char-a', 'rp b');
+    await db.update(
+      'memories',
+      <String, Object?>{'context_mode': 'rp', 'continuity_id': 'route-a'},
+      where: 'id IN (?, ?)',
+      whereArgs: <Object?>[rpA, rpB],
+    );
+    final now = DateTime.now().toIso8601String();
+    Future<void> link(int first, int second) =>
+        db.insert('spider_web_links', <String, Object?>{
+          'character_id': 'char-a',
+          'memory_id_1': first < second ? first : second,
+          'memory_id_2': first < second ? second : first,
+          'created_at': now,
+          'updated_at': now,
+        });
+    await link(dailyA, dailyB);
+    await link(rpA, rpB);
+    await link(dailyA, rpA);
+
+    await DatabaseHelper.upgradeSchemaForTesting(db, 63);
+
+    final remaining = await db.query('spider_web_links');
+    expect(remaining, hasLength(1));
+    expect(remaining.single['memory_id_1'], dailyA);
+    expect(remaining.single['memory_id_2'], dailyB);
+    expect(await db.query('memories'), hasLength(4));
   });
 
   test('character deletion clears all database-owned character data', () async {

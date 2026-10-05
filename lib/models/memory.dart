@@ -1,7 +1,11 @@
+import 'context_mode.dart';
+
 /// 記憶資料模型（帶角色綁定 + 送審計數）
 class Memory {
   final int? id;
   final String characterId;
+  final ContextMode contextMode;
+  final String continuityId;
   final String mode;
   final String category;
   final String content;
@@ -26,6 +30,8 @@ class Memory {
   Memory({
     this.id,
     this.characterId = 'default',
+    this.contextMode = ContextMode.daily,
+    this.continuityId = 'main',
     required this.mode,
     required this.category,
     required this.content,
@@ -51,6 +57,8 @@ class Memory {
     return {
       'id': id,
       'character_id': characterId,
+      'context_mode': contextMode.storageValue,
+      'continuity_id': continuityId,
       'mode': mode,
       'category': category,
       'content': content,
@@ -75,6 +83,8 @@ class Memory {
     return Memory(
       id: map['id'] as int?,
       characterId: map['character_id'] as String? ?? 'default',
+      contextMode: ContextMode.fromStorage(map['context_mode']),
+      continuityId: map['continuity_id'] as String,
       mode: map['mode'] as String,
       category: map['category'] as String,
       content: map['content'] as String,

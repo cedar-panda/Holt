@@ -8,8 +8,19 @@ class MemorySettings {
   static const String _keySummarySource = 'summary_source';
   static const String _keySummaryModel = 'summary_model';
   static const String _keySummarySelection = 'summary_model_selection_v1';
+  static const String _keyEmbeddingSelection =
+      'memory_embedding_model_selection_v1';
   static const String _keyMemoryMode = 'memory_mode';
   static const String _keyCustomMemoryPrompt = 'custom_memory_prompt';
+  static const String _keyRpSummaryMaxChars = 'rp_summary_max_chars_v1';
+  static const String _keyRpSummaryAutoMaxChars =
+      'rp_summary_auto_max_chars_v1';
+  static const String _keyDailySummaryCustomRules =
+      'daily_summary_custom_rules_v1';
+  static const String _keyRpSummaryCustomRules = 'rp_summary_custom_rules_v1';
+  static const String _keyRpWorldbookAutoWrite = 'rp_worldbook_auto_write_v1';
+  static const String _keyRpWorldbookSummaryInterval =
+      'rp_worldbook_summary_interval_v1';
 
   static const String defaultSummaryProvider = 'gemini';
   static const String defaultSummaryModel = 'gemini-3-flash';
@@ -92,6 +103,30 @@ class MemorySettings {
     }
   }
 
+  /// 空模型代表不啟用向量召回；來源與模型綁定儲存，
+  /// 避免同名 embedding 模型被送到錯誤的 API。
+  static Future<void> saveEmbeddingSelection({
+    required String provider,
+    required String model,
+  }) async {
+    final normalizedModel = model.trim();
+    final normalizedProvider = normalizedModel.isEmpty ? '' : provider.trim();
+    final p = await SharedPreferences.getInstance();
+    await p.setString(
+      _keyEmbeddingSelection,
+      jsonEncode({'provider': normalizedProvider, 'model': normalizedModel}),
+    );
+  }
+
+  static Future<({String provider, String model})>
+  getEmbeddingSelection() async {
+    final p = await SharedPreferences.getInstance();
+    final selection = _decodeSummarySelection(
+      p.getString(_keyEmbeddingSelection),
+    );
+    return selection ?? (provider: '', model: '');
+  }
+
   /// 記憶方案：daily / story / custom
   static Future<void> saveMemoryMode(String v) async {
     final p = await SharedPreferences.getInstance();
@@ -112,6 +147,72 @@ class MemorySettings {
   static Future<String> getCustomMemoryPrompt() async {
     final p = await SharedPreferences.getInstance();
     return p.getString(_keyCustomMemoryPrompt) ?? '';
+  }
+
+  static Future<void> saveRpSummaryMaxChars(int value) async {
+    final p = await SharedPreferences.getInstance();
+    await p.setInt(_keyRpSummaryMaxChars, value.clamp(800, 12000));
+  }
+
+  static Future<int> getRpSummaryMaxChars() async {
+    final p = await SharedPreferences.getInstance();
+    return (p.getInt(_keyRpSummaryMaxChars) ?? 3000).clamp(800, 12000);
+  }
+
+  static Future<void> saveRpSummaryAutoMaxCharsEnabled(bool value) async {
+    final p = await SharedPreferences.getInstance();
+    await p.setBool(_keyRpSummaryAutoMaxChars, value);
+  }
+
+  static Future<bool> getRpSummaryAutoMaxCharsEnabled() async {
+    final p = await SharedPreferences.getInstance();
+    return p.getBool(_keyRpSummaryAutoMaxChars) ?? true;
+  }
+
+  static Future<void> saveSummaryCustomRules({
+    required String contextMode,
+    required String value,
+  }) async {
+    final p = await SharedPreferences.getInstance();
+    await p.setString(
+      contextMode == 'rp'
+          ? _keyRpSummaryCustomRules
+          : _keyDailySummaryCustomRules,
+      value.trim(),
+    );
+  }
+
+  static Future<String> getSummaryCustomRules({
+    required String contextMode,
+  }) async {
+    final p = await SharedPreferences.getInstance();
+    return (p.getString(
+              contextMode == 'rp'
+                  ? _keyRpSummaryCustomRules
+                  : _keyDailySummaryCustomRules,
+            ) ??
+            '')
+        .trim();
+  }
+
+  static Future<void> saveRpWorldbookAutoWriteEnabled(bool value) async {
+    final p = await SharedPreferences.getInstance();
+    await p.setBool(_keyRpWorldbookAutoWrite, value);
+  }
+
+  static Future<bool> getRpWorldbookAutoWriteEnabled() async {
+    final p = await SharedPreferences.getInstance();
+    return p.getBool(_keyRpWorldbookAutoWrite) ?? true;
+  }
+
+  static Future<void> saveRpWorldbookSummaryInterval(int value) async {
+    final p = await SharedPreferences.getInstance();
+    await p.setInt(_keyRpWorldbookSummaryInterval, value.clamp(1, 20));
+  }
+
+  static Future<int> getRpWorldbookSummaryInterval() async {
+    final p = await SharedPreferences.getInstance();
+    return (p.getInt(_keyRpWorldbookSummaryInterval) ?? 4).clamp(1, 20);
   }
 
   // ═══ Prompt Caching ═══
@@ -252,6 +353,8 @@ class MemorySettings {
       'context_window_summary_enabled';
   static const String _keyContextWindowSummaryTrigger =
       'context_window_summary_trigger_tokens';
+  static const int windowSummaryTriggerMinTokens = 500;
+  static const int windowSummaryTriggerMaxTokens = 200000;
   static const String _keyMemoryWriteEnabled = 'memory_write_enabled';
   static const String _keyTimelineEnabled = 'timeline_enabled';
   static const String _keySelfNotesEnabled = 'self_notes_enabled';
@@ -305,15 +408,30 @@ class MemorySettings {
         false;
   }
 
-  static Future<void> saveContextWindowSummaryTriggerTokens(int v) async {
+  static Future<void> saveWindowSummaryTriggerTokens(int v) async {
     final p = await SharedPreferences.getInstance();
-    await p.setInt(_keyContextWindowSummaryTrigger, v.clamp(1000, 30000));
+    await p.setInt(
+      _keyContextWindowSummaryTrigger,
+      v.clamp(windowSummaryTriggerMinTokens, windowSummaryTriggerMaxTokens),
+    );
   }
 
-  static Future<int> getContextWindowSummaryTriggerTokens() async {
+  static Future<int> getWindowSummaryTriggerTokens() async {
     final p = await SharedPreferences.getInstance();
-    return p.getInt(_keyContextWindowSummaryTrigger) ?? 6000;
+    final stored = p.getInt(_keyContextWindowSummaryTrigger) ?? 6000;
+    return stored.clamp(
+      windowSummaryTriggerMinTokens,
+      windowSummaryTriggerMaxTokens,
+    );
   }
+
+  // Compatibility aliases for callers and stored settings created before the
+  // cache-specific summary exposed the same trigger control.
+  static Future<void> saveContextWindowSummaryTriggerTokens(int v) =>
+      saveWindowSummaryTriggerTokens(v);
+
+  static Future<int> getContextWindowSummaryTriggerTokens() =>
+      getWindowSummaryTriggerTokens();
 
   /// 模型自主寫入長期記憶開關。默認關閉。
   static Future<void> saveMemoryWriteEnabled(bool v) async {
@@ -478,6 +596,59 @@ class MemorySettings {
   static Future<int> getDreamCurationLastCount() async {
     final p = await SharedPreferences.getInstance();
     return p.getInt(_keyDreamCurationLastCount) ?? 0;
+  }
+
+  static String _dreamScopeCountKey({
+    required String characterId,
+    required String contextMode,
+    required String continuityId,
+    required String memoryMode,
+  }) {
+    final scope = <String>[
+      characterId,
+      contextMode,
+      continuityId,
+      memoryMode,
+    ].map(Uri.encodeComponent).join(':');
+    return '${_keyDreamCurationLastCount}_scope_v1:$scope';
+  }
+
+  /// 每個角色、日常/RP、故事線與記憶類型各自累積做夢門檻。
+  /// null 代表此 scope 尚未建立計數，呼叫端可採用有界的首次整理策略。
+  static Future<int?> getDreamCurationLastCountForScope({
+    required String characterId,
+    required String contextMode,
+    required String continuityId,
+    required String memoryMode,
+  }) async {
+    final p = await SharedPreferences.getInstance();
+    return p.getInt(
+      _dreamScopeCountKey(
+        characterId: characterId,
+        contextMode: contextMode,
+        continuityId: continuityId,
+        memoryMode: memoryMode,
+      ),
+    );
+  }
+
+  static Future<void> saveDreamCurationLastCountForScope({
+    required String characterId,
+    required String contextMode,
+    required String continuityId,
+    required String memoryMode,
+    required int count,
+  }) async {
+    final p = await SharedPreferences.getInstance();
+    await p.setInt(
+      _dreamScopeCountKey(
+        characterId: characterId,
+        contextMode: contextMode,
+        continuityId: continuityId,
+        memoryMode: memoryMode,
+      ),
+      count < 0 ? 0 : count,
+    );
   }
 
   /// 所有可切換的 ability 模組

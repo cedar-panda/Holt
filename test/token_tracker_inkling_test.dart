@@ -25,7 +25,7 @@ void main() {
   });
 
   test(
-    'Inkling real usage updates chat total and usage dashboard data',
+    'Inkling real usage updates tokens without inventing provider cost',
     () async {
       ThinkingMachinesService.lastUsage = <String, int>{
         'prompt_tokens': 9999,
@@ -51,10 +51,8 @@ void main() {
       expect(rows.single['model'], ThinkingMachinesService.defaultModel);
       expect(rows.single['prompt_tokens'], 1200);
       expect(rows.single['completion_tokens'], 300);
-      expect(
-        (rows.single['estimated_cost'] as num).toDouble(),
-        closeTo(0.003648, 0.000000001),
-      );
+      expect((rows.single['estimated_cost'] as num).toDouble(), 0.0);
+      expect(rows.single['cost_known'], 0);
 
       final now = DateTime.now();
       final summary = await DatabaseHelper.getUsageSummary(
@@ -68,7 +66,7 @@ void main() {
   );
 
   test(
-    'missing Inkling usage does not create a zero-value dashboard row',
+    'missing Inkling usage still records one cost-unknown request',
     () async {
       final tracker = TokenTracker();
 
@@ -79,7 +77,11 @@ void main() {
       );
 
       expect(tracker.totalTokens, 0);
-      expect(await db.query('usage_logs'), isEmpty);
+      final rows = await db.query('usage_logs');
+      expect(rows, hasLength(1));
+      expect(rows.single['request_kind'], 'chat');
+      expect(rows.single['cost_known'], 0);
+      expect(rows.single['estimated_cost'], 0.0);
     },
   );
 }

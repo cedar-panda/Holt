@@ -3,9 +3,8 @@ import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
 import '../services/locale_strings.dart';
 import '../services/settings_manager.dart';
-import '../services/openrouter_service.dart';
-import '../services/model_info.dart';
 import '../widgets/gradient_background.dart';
+import '../widgets/image_generation_settings_card.dart';
 
 class ToolModelScreen extends StatefulWidget {
   const ToolModelScreen({super.key});
@@ -16,7 +15,8 @@ class ToolModelScreen extends StatefulWidget {
 
 class _ToolModelScreenState extends State<ToolModelScreen> {
   String _stickerVisionModel = '';
-  Set<String> _starredModels = {};
+  String _stickerVisionProvider = '';
+  List<StarredModelEntry> _starredModels = const <StarredModelEntry>[];
 
   @override
   void initState() {
@@ -26,18 +26,28 @@ class _ToolModelScreenState extends State<ToolModelScreen> {
 
   Future<void> _loadSettings() async {
     final stickerModel = await UserSettings.getStickerVisionModel();
-    final starred = await ApiSettings.getStarredModels();
+    var stickerProvider = await UserSettings.getStickerVisionProvider();
+    final starred = await ApiSettings.getStarredModelEntries();
+    if (stickerModel.isNotEmpty && stickerProvider.isEmpty) {
+      stickerProvider = await ApiSettings.resolveStarredModelProvider(
+        stickerModel,
+      );
+    }
 
     if (mounted) {
       setState(() {
         _stickerVisionModel = stickerModel;
-        _starredModels = starred.toSet();
+        _stickerVisionProvider = stickerProvider;
+        _starredModels = starred;
       });
     }
   }
 
   Future<void> _saveSettings() async {
-    await UserSettings.saveStickerVisionModel(_stickerVisionModel);
+    await UserSettings.saveStickerVisionSelection(
+      provider: _stickerVisionProvider,
+      model: _stickerVisionModel,
+    );
 
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -88,15 +98,24 @@ class _ToolModelScreenState extends State<ToolModelScreen> {
   }
 
   Widget _buildModelDropdown({
-    required String value,
-    required ValueChanged<String> onChanged,
+    required String model,
+    required String provider,
+    required void Function(String provider, String model) onChanged,
   }) {
-    final options = <String>['', ..._starredModels];
-    if (value.isNotEmpty && !options.contains(value)) {
-      options.add(value);
+    final options = List<StarredModelEntry>.from(_starredModels);
+    if (model.isNotEmpty &&
+        !options.any(
+          (entry) => entry.provider == provider && entry.modelId == model,
+        )) {
+      options.add(StarredModelEntry(provider: provider, modelId: model));
     }
+    final selectedIdentity = model.isEmpty
+        ? ''
+        : StarredModelEntry(provider: provider, modelId: model).identity;
     return DropdownButton<String>(
-      value: options.contains(value) ? value : '',
+      value: options.any((entry) => entry.identity == selectedIdentity)
+          ? selectedIdentity
+          : '',
       isExpanded: true,
       underline: const SizedBox(),
       dropdownColor: YanciTheme.isDark ? const Color(0xF0302830) : Colors.white,
@@ -104,31 +123,46 @@ class _ToolModelScreenState extends State<ToolModelScreen> {
         fontSize: 12,
         color: YanciTheme.textPrimary,
       ),
-      items: options.map((m) {
-        String label;
-        if (m.isEmpty) {
-          label = L.get('settings_same_as_main');
-        } else if (m.contains('/')) {
-          label = m.split('/').last.replaceAll(RegExp(r'-\d{8}$'), '');
-        } else {
-          label = m;
-        }
-        return DropdownMenuItem(
-          value: m,
+      items: <DropdownMenuItem<String>>[
+        DropdownMenuItem<String>(
+          value: '',
           child: Text(
-            label,
-            style: TextStyle(
-              fontSize: 12,
-              color: m.isEmpty
-                  ? YanciTheme.textSecondary
-                  : YanciTheme.isDark
-                  ? Colors.white.withValues(alpha: 0.85)
-                  : YanciTheme.textPrimary,
-            ),
+            L.get('settings_same_as_main'),
+            style: TextStyle(fontSize: 12, color: YanciTheme.textSecondary),
           ),
+        ),
+        ...options.map((entry) {
+          final m = entry.modelId;
+          String label;
+          if (m.contains('/')) {
+            label = m.split('/').last.replaceAll(RegExp(r'-\d{8}$'), '');
+          } else {
+            label = m;
+          }
+          return DropdownMenuItem<String>(
+            value: entry.identity,
+            child: Text(
+              '$label · ${entry.provider}',
+              style: TextStyle(
+                fontSize: 12,
+                color: YanciTheme.isDark
+                    ? Colors.white.withValues(alpha: 0.85)
+                    : YanciTheme.textPrimary,
+              ),
+            ),
+          );
+        }),
+      ],
+      onChanged: (identity) {
+        if (identity == null || identity.isEmpty) {
+          onChanged('', '');
+          return;
+        }
+        final entry = options.firstWhere(
+          (candidate) => candidate.identity == identity,
         );
-      }).toList(),
-      onChanged: (v) => onChanged(v ?? ''),
+        onChanged(entry.provider, entry.modelId);
+      },
     );
   }
 
@@ -187,9 +221,12 @@ class _ToolModelScreenState extends State<ToolModelScreen> {
                           ),
                           const SizedBox(height: 4),
                           _buildModelDropdown(
-                            value: _stickerVisionModel,
-                            onChanged: (v) =>
-                                setState(() => _stickerVisionModel = v),
+                            model: _stickerVisionModel,
+                            provider: _stickerVisionProvider,
+                            onChanged: (provider, model) => setState(() {
+                              _stickerVisionProvider = provider;
+                              _stickerVisionModel = model;
+                            }),
                           ),
                         ],
                       ),
@@ -199,7 +236,7 @@ class _ToolModelScreenState extends State<ToolModelScreen> {
 
                     _buildSectionTitle(L.pick(en: 'Image Model', zhTW: '畫圖模型')),
                     const SizedBox(height: YanciTheme.spacingSm),
-                    _buildGlassCard(child: const _ImageModelField()),
+                    _buildGlassCard(child: const ImageGenerationSettingsCard()),
 
                     const SizedBox(height: YanciTheme.spacingXl),
 
@@ -235,210 +272,6 @@ class _ToolModelScreenState extends State<ToolModelScreen> {
           ),
         ),
       ),
-    );
-  }
-}
-
-class _ImageModelField extends StatefulWidget {
-  const _ImageModelField();
-
-  @override
-  State<_ImageModelField> createState() => _ImageModelFieldState();
-}
-
-class _ImageModelFieldState extends State<_ImageModelField> {
-  final _ctrl = TextEditingController();
-  bool _isFetching = false;
-  String? _error;
-  List<ModelInfo> _imageModels = [];
-
-  @override
-  void initState() {
-    super.initState();
-    _load();
-  }
-
-  Future<void> _load() async {
-    final saved = await ApiSettings.getImageGenModel();
-    if (mounted) _ctrl.text = saved;
-
-    final apiKey = await ApiSettings.getOpenRouterApiKey();
-    if (apiKey.isEmpty) {
-      if (mounted) {
-        setState(() {
-          _error = L.pick(
-            en: 'Add an OpenRouter API key to load selectable image models.',
-            zhTW: '填入 OpenRouter API Key 後可獲取可選畫圖模型。',
-          );
-        });
-      }
-      return;
-    }
-
-    if (mounted) {
-      setState(() {
-        _isFetching = true;
-        _error = null;
-      });
-    }
-
-    try {
-      final models = await OpenRouterService.fetchModels(apiKey);
-      final imageModels = models.where((m) => m.supportsImageOutput).toList();
-      if (!mounted) return;
-      setState(() {
-        _imageModels = imageModels;
-        _isFetching = false;
-        _error = imageModels.isEmpty
-            ? (L.pick(
-                en: 'No image-output model was marked in the source list. Manual ID still works.',
-                zhTW: '來源清單未標記圖像輸出模型，仍可手動貼模型 ID。',
-              ))
-            : null;
-      });
-    } catch (_) {
-      if (!mounted) return;
-      setState(() {
-        _isFetching = false;
-        _error = L.pick(
-          en: 'Could not load OpenRouter image models. Manual ID still works.',
-          zhTW: '無法獲取 OpenRouter 畫圖模型，仍可手動輸入。',
-        );
-      });
-    }
-  }
-
-  @override
-  void dispose() {
-    final v = _ctrl.text.trim();
-    if (v.isNotEmpty) ApiSettings.saveImageGenModel(v);
-    _ctrl.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final current = _ctrl.text.trim();
-    final options = [..._imageModels];
-    if (current.isNotEmpty && !options.any((m) => m.id == current)) {
-      options.insert(0, ModelInfo(id: current, name: current));
-    }
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        if (_isFetching)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 6),
-            child: Row(
-              children: [
-                const SizedBox(
-                  width: 14,
-                  height: 14,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  L.pick(en: 'Loading source models...', zhTW: '正在獲取來源模型...'),
-                  style: YanciTheme.bodySmall.copyWith(
-                    fontSize: 11,
-                    color: YanciTheme.textSecondary.withValues(alpha: 0.55),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        if (options.isNotEmpty) ...[
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            decoration: BoxDecoration(
-              color: YanciTheme.glassInputBg.withValues(alpha: 0.3),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: DropdownButton<String>(
-              value: current.isEmpty ? null : current,
-              hint: Text(
-                L.pick(en: 'Choose from source', zhTW: '從來源選擇'),
-                style: YanciTheme.bodySmall.copyWith(
-                  color: YanciTheme.textSecondary.withValues(alpha: 0.5),
-                ),
-              ),
-              isExpanded: true,
-              underline: const SizedBox(),
-              dropdownColor: YanciTheme.isDark
-                  ? const Color(0xF0302830)
-                  : Colors.white,
-              style: YanciTheme.bodyText.copyWith(fontSize: 12),
-              items: options.map((model) {
-                final label = model.name == model.id
-                    ? model.id
-                    : '${model.name} · ${model.id}';
-                return DropdownMenuItem(
-                  value: model.id,
-                  child: Text(
-                    label,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                );
-              }).toList(),
-              onChanged: (v) async {
-                if (v == null || v.isEmpty) return;
-                _ctrl.text = v;
-                await ApiSettings.saveImageGenModel(v);
-                if (mounted) setState(() {});
-              },
-            ),
-          ),
-          const SizedBox(height: 8),
-        ],
-        TextField(
-          controller: _ctrl,
-          style: YanciTheme.bodyText,
-          onEditingComplete: () {
-            final v = _ctrl.text.trim();
-            if (v.isNotEmpty) ApiSettings.saveImageGenModel(v);
-            FocusScope.of(context).unfocus();
-          },
-          decoration: InputDecoration(
-            hintText: 'openai/gpt-4o',
-            hintStyle: YanciTheme.bodySmall.copyWith(
-              color: YanciTheme.textSecondary.withValues(alpha: 0.4),
-            ),
-            filled: true,
-            fillColor: YanciTheme.glassInputBg.withValues(alpha: 0.3),
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
-              borderSide: BorderSide.none,
-            ),
-            contentPadding: const EdgeInsets.symmetric(
-              horizontal: 14,
-              vertical: 10,
-            ),
-          ),
-        ),
-        const SizedBox(height: 4),
-        Text(
-          L.pick(
-            en: 'OpenRouter image-output model for <draw>. Choose one above or paste a model ID.',
-            zhTW: 'OpenRouter 圖像輸出模型，角色畫畫用。可從上方選擇，也可手動貼模型 ID。',
-          ),
-          style: YanciTheme.bodySmall.copyWith(
-            fontSize: 10,
-            color: YanciTheme.textSecondary.withValues(alpha: 0.5),
-          ),
-        ),
-        if (_error != null) ...[
-          const SizedBox(height: 4),
-          Text(
-            _error!,
-            style: YanciTheme.bodySmall.copyWith(
-              fontSize: 10,
-              color: Colors.orange.withValues(alpha: 0.7),
-            ),
-          ),
-        ],
-      ],
     );
   }
 }

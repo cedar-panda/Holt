@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import '../services/scratch_service.dart';
 import '../services/locale_strings.dart';
 import '../theme/app_theme.dart';
+import 'themed_notice.dart';
 
 // ═══════════════════════════════════════════════════════════════
 // 刮刮樂系統
@@ -218,15 +219,13 @@ class _ScratchCardDialogState extends State<_ScratchCardDialog>
     } catch (error) {
       if (!mounted) return;
       setState(() => _settling = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            L.pick(
-              en: 'Could not settle this card. Please try again.',
-              zhTW: '這張刮刮卡還沒入帳，請再試一次。',
-            ),
-          ),
+      showThemedPillNotice(
+        context,
+        L.pick(
+          en: 'Could not settle this card. Please try again.',
+          zhTW: '這張刮刮卡還沒入帳，請再試一次。',
         ),
+        tone: ThemedNoticeTone.error,
       );
       return;
     }

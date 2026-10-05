@@ -19,6 +19,8 @@ import 'services/keep_alive_service.dart';
 import 'services/character_timeline_service.dart';
 import 'services/model_cost_policy.dart';
 import 'services/custom_font_service.dart';
+import 'services/background_preset_service.dart';
+import 'services/avatar_image_path_service.dart';
 import 'memory/emotion_coordinates.dart';
 import 'screens/splash_screen.dart';
 import 'screens/initial_setup_screen.dart';
@@ -41,6 +43,7 @@ import 'screens/usage_dashboard_screen.dart';
 import 'screens/game_screen.dart';
 import 'screens/developer_diagnostics_screen.dart';
 import 'screens/settings_screen.dart';
+import 'screens/guide_chat_screen.dart';
 import 'widgets/yanci_sprite_overlay.dart';
 
 /// 全局主題通知器（任何頁面都能觸發重建）
@@ -85,6 +88,7 @@ void main() async {
   await _startupStep('theme', () async {
     final presetId = await ThemeSettings.getThemePreset();
     YanciTheme.setPreset(presetId);
+    await ThemeSettings.restoreThemeBubbleColors(presetId);
     themeNotifier.value++;
 
     // 讀取自定義微調
@@ -93,6 +97,7 @@ void main() async {
     YanciTheme.bubbleRadius = await ThemeSettings.getBubbleRadius();
     YanciTheme.starEnabled = await ThemeSettings.getStarEnabled();
     YanciTheme.starDensity = await ThemeSettings.getStarDensity();
+    YanciTheme.aiBubbleFlat = await ThemeSettings.getAiBubbleFlat();
     YanciTheme.homeBackgroundImagePath =
         await ThemeSettings.getBackgroundImagePath('home');
     YanciTheme.homeBackgroundImageScale =
@@ -101,6 +106,8 @@ void main() async {
         await ThemeSettings.getBackgroundImageOffsetX('home');
     YanciTheme.homeBackgroundImageOffsetY =
         await ThemeSettings.getBackgroundImageOffsetY('home');
+    YanciTheme.homeBackgroundImageBlur =
+        await ThemeSettings.getBackgroundImageBlur('home');
     YanciTheme.chatBackgroundImagePath =
         await ThemeSettings.getBackgroundImagePath('chat');
     YanciTheme.chatBackgroundImageScale =
@@ -109,6 +116,8 @@ void main() async {
         await ThemeSettings.getBackgroundImageOffsetX('chat');
     YanciTheme.chatBackgroundImageOffsetY =
         await ThemeSettings.getBackgroundImageOffsetY('chat');
+    YanciTheme.chatBackgroundImageBlur =
+        await ThemeSettings.getBackgroundImageBlur('chat');
     final chatAiBubbleColor =
         await ThemeSettings.getChatBackgroundAiBubbleColor();
     final chatUserBubbleColor =
@@ -131,6 +140,7 @@ void main() async {
     YanciTheme.chatBackgroundThinkingTextOverride =
         chatThinkingTextColor == null ? null : Color(chatThinkingTextColor);
     YanciTheme.chatBackgroundBubbleOpacityOverride = chatBubbleOpacity;
+    await BackgroundPresetService.loadActiveIntoTheme();
 
     // 讀取字體偏好
     final customFont = await CustomFontService.restoreActiveFont();
@@ -152,6 +162,13 @@ void main() async {
 
   // 讀取界面語言
   await _startupStep('locale', L.load);
+
+  // iOS 更新後資料容器 UUID 可能改變；檔案仍在時重接舊頭像路徑。
+  await _startupStep(
+    'avatar paths',
+    AvatarImagePathService.repairStoredPaths,
+    timeout: const Duration(seconds: 15),
+  );
 
   await _startupStep(
     'local model downloads',
@@ -232,6 +249,7 @@ void _applySystemOverlay(bool isDark) {
 Future<void> toggleTheme() async {
   final newIsDark = !YanciTheme.isDark;
   YanciTheme.setDark(newIsDark);
+  await ThemeSettings.restoreThemeBubbleColors(YanciTheme.presetId);
   await ThemeSettings.saveThemePreset(YanciTheme.presetId);
   themeNotifier.value++;
   _applySystemOverlay(newIsDark);
@@ -356,6 +374,7 @@ class _YanciAppState extends State<YanciApp> with WidgetsBindingObserver {
           '/local_models': (context) => const LocalModelScreen(),
           '/usage': (context) => const UsageDashboardScreen(),
           '/game': (context) => const GameScreen(),
+          '/guide': (context) => const GuideChatScreen(),
           if (developerDiagnosticsEnabled)
             '/developer_diagnostics': (context) =>
                 const DeveloperDiagnosticsScreen(),

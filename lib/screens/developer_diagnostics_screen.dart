@@ -6,6 +6,7 @@ import '../services/locale_strings.dart';
 import '../widgets/gradient_background.dart';
 import 'context_debug_screen.dart';
 import 'system_context_debug_screen.dart';
+import 'memory_debug_screen.dart';
 import '../services/bio_clock_service.dart';
 import '../services/cache_debug_log.dart';
 
@@ -442,6 +443,39 @@ class _DeveloperDiagnosticsScreenState
                                 ],
                               ),
                             ),
+                            Icon(
+                              Icons.chevron_right,
+                              size: 20,
+                              color: YanciTheme.textSecondary,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    GestureDetector(
+                      onTap: () => Navigator.of(context).push(
+                        MaterialPageRoute<void>(
+                          builder: (_) => const MemoryDebugScreen(),
+                        ),
+                      ),
+                      child: _buildGlassCard(
+                        child: Row(
+                          children: [
+                            Icon(
+                              Icons.account_tree_outlined,
+                              size: 20,
+                              color: YanciTheme.accent,
+                            ),
+                            const SizedBox(width: 12),
+                            Text(
+                              'Memory Debug',
+                              style: YanciTheme.bodyText.copyWith(
+                                fontSize: 15,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            const Spacer(),
                             Icon(
                               Icons.chevron_right,
                               size: 20,

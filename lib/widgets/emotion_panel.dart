@@ -4,6 +4,7 @@ import '../memory/emotion_coordinates.dart';
 import '../services/locale_strings.dart';
 import '../theme/app_theme.dart';
 import '../utils/latest_request_gate.dart';
+import 'themed_notice.dart';
 
 /// ═══════════════════════════════════════════════
 /// 情緒座標測試面板 V2
@@ -87,6 +88,7 @@ class _EmotionPanelState extends State<EmotionPanel> {
 
   @override
   Widget build(BuildContext context) {
+    final dimensionLabelWidth = L.locale == 'en' ? 96.0 : 52.0;
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
@@ -103,153 +105,181 @@ class _EmotionPanelState extends State<EmotionPanel> {
           // ═══ 標題行 ═══
           Row(
             children: [
-              Text(
-                L.pick(en: 'Mood Map', zhTW: '心境圖譜'),
-                style: YanciTheme.bodySmall.copyWith(
-                  fontWeight: FontWeight.w500,
-                  color: YanciTheme.textSecondary,
+              Expanded(
+                child: Wrap(
+                  spacing: 8,
+                  runSpacing: 5,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    Text(
+                      L.pick(en: 'Mood Map', zhTW: '心境圖譜', zhCN: '心境图谱'),
+                      style: YanciTheme.bodySmall.copyWith(
+                        fontWeight: FontWeight.w500,
+                        color: YanciTheme.textSecondary,
+                      ),
+                    ),
+                    Builder(
+                      builder: (_) {
+                        final resonating =
+                            _windowCount >= 2 && _chaos < kResonanceBelow;
+                        final label = resonating
+                            ? '${L.pick(en: 'resonance', zhTW: '共鳴', zhCN: '共鸣')} ${(1 - _chaos).toStringAsFixed(2)}'
+                            : '${L.pick(en: 'chaos', zhTW: '混亂', zhCN: '混乱')} ${_chaos.toStringAsFixed(2)}';
+                        return Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 2,
+                          ),
+                          decoration: BoxDecoration(
+                            color: YanciTheme.accent.withValues(
+                              alpha: 0.08 + _chaos * 0.25,
+                            ),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: Text(
+                            label,
+                            style: TextStyle(
+                              fontSize: 10,
+                              color: YanciTheme.accent,
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  ],
                 ),
               ),
               const SizedBox(width: 8),
-              Builder(
-                builder: (_) {
-                  final resonating =
-                      _windowCount >= 2 && _chaos < kResonanceBelow;
-                  final label = resonating
-                      ? '${L.pick(en: 'resonance', zhTW: '共鳴')} ${(1 - _chaos).toStringAsFixed(2)}'
-                      : '${L.pick(en: 'chaos', zhTW: '混亂')} ${_chaos.toStringAsFixed(2)}';
-                  return Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 2,
-                    ),
-                    decoration: BoxDecoration(
-                      color: YanciTheme.accent.withValues(
-                        alpha: 0.08 + _chaos * 0.25,
-                      ),
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: Text(
-                      label,
-                      style: TextStyle(fontSize: 10, color: YanciTheme.accent),
-                    ),
-                  );
-                },
-              ),
-              const Spacer(),
-              GestureDetector(
-                onTap: () async {
-                  final messenger = ScaffoldMessenger.of(context);
-                  final confirm = await showDialog<bool>(
-                    context: context,
-                    builder: (ctx) => AlertDialog(
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      title: Text(
-                        L.pick(en: 'Reset Mood Map?', zhTW: '重置心境圖譜？'),
-                        style: TextStyle(
-                          fontSize: 14,
-                          color: YanciTheme.textPrimary,
+              Semantics(
+                button: true,
+                label: L.pick(
+                  en: 'Reset Mood Map',
+                  zhTW: '重置心境圖譜',
+                  zhCN: '重置心境图谱',
+                ),
+                child: GestureDetector(
+                  onTap: () async {
+                    final confirm = await showDialog<bool>(
+                      context: context,
+                      builder: (ctx) => AlertDialog(
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
                         ),
-                      ),
-                      content: Text(
-                        L.pick(
-                          en: 'All active emotion points will be dissipated.',
-                          zhTW: '所有活躍情緒點會被清除（dissipated）。',
-                        ),
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: YanciTheme.textSecondary,
-                        ),
-                      ),
-                      actions: [
-                        TextButton(
-                          onPressed: () => Navigator.pop(ctx, false),
-                          child: Text(
-                            L.pick(en: 'Cancel', zhTW: '取消'),
-                            style: TextStyle(color: YanciTheme.textSecondary),
+                        title: Text(
+                          L.pick(
+                            en: 'Reset Mood Map?',
+                            zhTW: '重置心境圖譜？',
+                            zhCN: '重置心境图谱？',
+                          ),
+                          style: TextStyle(
+                            fontSize: 14,
+                            color: YanciTheme.textPrimary,
                           ),
                         ),
-                        TextButton(
-                          onPressed: () => Navigator.pop(ctx, true),
-                          child: Text(
-                            L.pick(en: 'Reset', zhTW: '重置'),
-                            style: TextStyle(
-                              color: Colors.red.withValues(alpha: 0.7),
+                        content: Text(
+                          L.pick(
+                            en: 'All active emotion points will be cleared.',
+                            zhTW: '所有活躍情緒點都會被清除。',
+                            zhCN: '所有活跃情绪点都会被清除。',
+                          ),
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: YanciTheme.textSecondary,
+                          ),
+                        ),
+                        actions: [
+                          TextButton(
+                            onPressed: () => Navigator.pop(ctx, false),
+                            child: Text(
+                              L.pick(en: 'Cancel', zhTW: '取消', zhCN: '取消'),
+                              style: TextStyle(color: YanciTheme.textSecondary),
                             ),
+                          ),
+                          TextButton(
+                            onPressed: () => Navigator.pop(ctx, true),
+                            child: Text(
+                              L.pick(en: 'Reset', zhTW: '重置', zhCN: '重置'),
+                              style: TextStyle(
+                                color: Colors.red.withValues(alpha: 0.7),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                    if (confirm == true) {
+                      if (!context.mounted) return;
+                      final n = await EmotionCoordinates.resetAll(
+                        widget.characterId,
+                      );
+                      if (!context.mounted) return;
+                      showThemedPillNotice(
+                        context,
+                        L.pick(
+                          en: 'Reset $n emotion points',
+                          zhTW: '已重置 $n 個情緒點',
+                          zhCN: '已重置 $n 个情绪点',
+                        ),
+                        duration: const Duration(milliseconds: 1200),
+                      );
+                      setState(() => _loading = true);
+                      _load();
+                    }
+                  },
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 6,
+                      vertical: 3,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.red.withValues(alpha: 0.08),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.restart_alt_rounded,
+                          size: 14,
+                          color: Colors.red.withValues(alpha: 0.5),
+                        ),
+                        const SizedBox(width: 2),
+                        Text(
+                          L.pick(en: 'Reset', zhTW: '重置', zhCN: '重置'),
+                          style: TextStyle(
+                            fontSize: 10,
+                            color: Colors.red.withValues(alpha: 0.5),
                           ),
                         ),
                       ],
                     ),
-                  );
-                  if (confirm == true) {
-                    if (!mounted) return;
-                    final n = await EmotionCoordinates.resetAll(
-                      widget.characterId,
-                    );
-                    if (!mounted) return;
-                    messenger.showSnackBar(
-                      SnackBar(
-                        content: Text(
-                          L.pick(
-                            en: 'Reset $n emotion points',
-                            zhTW: '已重置 $n 個情緒點',
-                          ),
-                        ),
-                        behavior: SnackBarBehavior.floating,
-                        duration: const Duration(milliseconds: 1200),
-                      ),
-                    );
-                    setState(() => _loading = true);
-                    _load();
-                  }
-                },
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 6,
-                    vertical: 3,
-                  ),
-                  decoration: BoxDecoration(
-                    color: Colors.red.withValues(alpha: 0.08),
-                    borderRadius: BorderRadius.circular(6),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        Icons.restart_alt_rounded,
-                        size: 14,
-                        color: Colors.red.withValues(alpha: 0.5),
-                      ),
-                      const SizedBox(width: 2),
-                      Text(
-                        L.pick(en: 'Reset', zhTW: '重置'),
-                        style: TextStyle(
-                          fontSize: 10,
-                          color: Colors.red.withValues(alpha: 0.5),
-                        ),
-                      ),
-                    ],
                   ),
                 ),
               ),
               const SizedBox(width: 6),
-              GestureDetector(
-                onTap: () {
-                  setState(() => _loading = true);
-                  _load();
-                },
-                child: Container(
-                  padding: const EdgeInsets.all(4),
-                  decoration: BoxDecoration(
-                    color: YanciTheme.accent.withValues(alpha: 0.08),
-                    borderRadius: BorderRadius.circular(6),
-                  ),
-                  child: Icon(
-                    Icons.refresh_rounded,
-                    size: 18,
-                    color: YanciTheme.accent.withValues(alpha: 0.6),
+              Semantics(
+                button: true,
+                label: L.pick(
+                  en: 'Refresh Mood Map',
+                  zhTW: '重新整理心境圖譜',
+                  zhCN: '刷新心境图谱',
+                ),
+                child: GestureDetector(
+                  onTap: () {
+                    setState(() => _loading = true);
+                    _load();
+                  },
+                  child: Container(
+                    padding: const EdgeInsets.all(4),
+                    decoration: BoxDecoration(
+                      color: YanciTheme.accent.withValues(alpha: 0.08),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Icon(
+                      Icons.refresh_rounded,
+                      size: 18,
+                      color: YanciTheme.accent.withValues(alpha: 0.6),
+                    ),
                   ),
                 ),
               ),
@@ -284,6 +314,7 @@ class _EmotionPanelState extends State<EmotionPanel> {
             L.pick(
               en: 'x: valence −/＋ · y: arousal −/＋ · line = chaos shape (24h)',
               zhTW: 'x 效價 負/正 · y 喚醒 負/正 · 連線 = 混亂的形狀（24h 內）',
+              zhCN: 'x 效价 负/正 · y 唤醒 负/正 · 连线 = 混乱的形状（24h 内）',
             ),
             style: TextStyle(
               fontSize: 9,
@@ -314,7 +345,7 @@ class _EmotionPanelState extends State<EmotionPanel> {
                         ),
                         const SizedBox(width: 3),
                         Text(
-                          t,
+                          EmotionCoordinates.displayDimension(t),
                           style: TextStyle(
                             fontSize: 10,
                             color: YanciTheme.textSecondary,
@@ -337,9 +368,10 @@ class _EmotionPanelState extends State<EmotionPanel> {
               child: Row(
                 children: [
                   SizedBox(
-                    width: 48,
+                    width: dimensionLabelWidth,
                     child: Text(
-                      d,
+                      EmotionCoordinates.displayDimension(d),
+                      maxLines: 2,
                       style: TextStyle(
                         fontSize: 10,
                         color: YanciTheme.textSecondary,
@@ -402,7 +434,7 @@ class _EmotionPanelState extends State<EmotionPanel> {
                   // 長期維度標註 avg
                   if (isLongTerm)
                     Text(
-                      ' avg',
+                      L.pick(en: ' avg', zhTW: ' 均值', zhCN: ' 均值'),
                       style: TextStyle(
                         fontSize: 7,
                         color: YanciTheme.textSecondary.withValues(alpha: 0.3),

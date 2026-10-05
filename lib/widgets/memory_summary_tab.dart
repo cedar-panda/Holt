@@ -6,21 +6,31 @@ import '../memory/database.dart';
 import '../services/context_compressor.dart';
 import '../services/locale_strings.dart';
 import '../services/token_estimator.dart';
+import '../models/context_mode.dart';
 
 /// 摘要 Tab — 無底色條目流 + 關鍵詞召回區
 class MemorySummaryTab extends StatefulWidget {
   final String characterId;
+  final ContextMode? contextMode;
+  final String continuityId;
   final VoidCallback? onSummaryModified;
 
   const MemorySummaryTab({
     super.key,
     required this.characterId,
+    this.contextMode,
+    this.continuityId = 'main',
     this.onSummaryModified,
   });
 
   /// 只改閱讀排版，不改資料庫中的摘要原文，也不影響之後注入模型的內容。
   static String formatForReading(String raw) {
-    final source = raw.replaceAll('\r\n', '\n').trim();
+    final source = raw
+        .replaceAll('\r\n', '\n')
+        .split('\n')
+        .where((line) => !_isGenericSummaryHeading(line))
+        .join('\n')
+        .trim();
     if (source.isEmpty) return '';
     if (containsMarkdown(source)) return source;
 
@@ -64,6 +74,19 @@ class MemorySummaryTab extends StatefulWidget {
       if (paragraph.isNotEmpty) result.add(paragraph);
     }
     return result.join('\n\n');
+  }
+
+  /// The canonical daily-summary headings remain in storage and injection,
+  /// but are redundant inside the visual archive where every row is already a
+  /// summary. Strip them only from the reading surface.
+  static bool _isGenericSummaryHeading(String line) {
+    return RegExp(
+      r'^\s*#{1,6}\s*'
+      r'(?:前情提要|前情摘要|先前摘要|本次摘要|最新摘要|'
+      r'Prior Context|Previous Summary|Prior Summary|This Update|'
+      r'Latest Summary|Recent Summary)\s*[:：]?\s*$',
+      caseSensitive: false,
+    ).hasMatch(line);
   }
 
   /// Markdown 摘要保留原始換行與標記，避免自動分段拆壞標題或條列。
@@ -110,29 +133,67 @@ class _MemorySummaryTabState extends State<MemorySummaryTab>
     super.dispose();
   }
 
+  @override
+  void didUpdateWidget(covariant MemorySummaryTab oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.characterId != widget.characterId ||
+        oldWidget.contextMode != widget.contextMode ||
+        oldWidget.continuityId != widget.continuityId) {
+      _loadData();
+    }
+  }
+
   Future<void> _loadData() async {
-    final summaries = await DatabaseHelper.getContextSummaries(
-      widget.characterId,
-    );
-    final keywords = await DatabaseHelper.getContextKeywords(
-      widget.characterId,
-    );
+    if (mounted) setState(() => _loading = true);
+    final modes = widget.contextMode == null
+        ? const <ContextMode>[ContextMode.daily, ContextMode.rp]
+        : <ContextMode>[widget.contextMode!];
+    final summaryGroups = await Future.wait([
+      for (final mode in modes)
+        DatabaseHelper.getContextSummaries(
+          widget.characterId,
+          contextMode: mode,
+          continuityId: mode == ContextMode.rp ? widget.continuityId : 'main',
+        ),
+    ]);
+    final keywordGroups = await Future.wait([
+      for (final mode in modes)
+        DatabaseHelper.getContextKeywords(
+          widget.characterId,
+          contextMode: mode,
+          continuityId: mode == ContextMode.rp ? widget.continuityId : 'main',
+        ),
+    ]);
+    final summaries = summaryGroups.expand((group) => group).toList()
+      ..sort((a, b) => '${a['created_at']}'.compareTo('${b['created_at']}'));
+    final keywords = keywordGroups.expand((group) => group).toList()
+      ..sort((a, b) => '${a['created_at']}'.compareTo('${b['created_at']}'));
     if (!mounted) return;
     setState(() {
       _summaries = summaries.reversed.map((row) {
+        final mode = ContextMode.fromStorage(row['context_mode']);
         return <String, dynamic>{
           ...row,
-          'content': ContextCompressor.normalizeSummaryFormat(
-            row['content'] as String? ?? '',
-          ),
+          'content': mode == ContextMode.rp
+              ? ContextCompressor.normalizeRpSummaryFormat(
+                  row['content'] as String? ?? '',
+                )
+              : ContextCompressor.normalizeSummaryFormat(
+                  row['content'] as String? ?? '',
+                ),
         };
       }).toList(); // 新→舊
       _keywords = keywords.map((row) {
+        final mode = ContextMode.fromStorage(row['context_mode']);
         return <String, dynamic>{
           ...row,
-          'source_summary_content': ContextCompressor.normalizeSummaryFormat(
-            row['source_summary_content'] as String? ?? '',
-          ),
+          'source_summary_content': mode == ContextMode.rp
+              ? ContextCompressor.normalizeRpSummaryFormat(
+                  row['source_summary_content'] as String? ?? '',
+                )
+              : ContextCompressor.normalizeSummaryFormat(
+                  row['source_summary_content'] as String? ?? '',
+                ),
         };
       }).toList();
       _loading = false;
@@ -159,7 +220,10 @@ class _MemorySummaryTabState extends State<MemorySummaryTab>
 
   Future<void> _saveEdit(Map<String, dynamic> summary) async {
     final id = summary['id'] as int;
-    final newContent = ContextCompressor.normalizeSummaryFormat(_editCtrl.text);
+    final mode = ContextMode.fromStorage(summary['context_mode']);
+    final newContent = mode == ContextMode.rp
+        ? ContextCompressor.normalizeRpSummaryFormat(_editCtrl.text)
+        : ContextCompressor.normalizeSummaryFormat(_editCtrl.text);
     if (newContent.isEmpty) return;
     // Let EditableText release its MediaQuery/Focus dependencies before the
     // editing subtree is replaced by Markdown. Replacing it in the same frame
@@ -182,6 +246,7 @@ class _MemorySummaryTabState extends State<MemorySummaryTab>
   Future<void> _regenerate(Map<String, dynamic> summary) async {
     final id = summary['id'] as int;
     final original = summary['content'] as String;
+    final mode = ContextMode.fromStorage(summary['context_mode']);
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -224,10 +289,17 @@ class _MemorySummaryTabState extends State<MemorySummaryTab>
       id: id,
       characterId: widget.characterId,
       originalSummary: original,
-      issue: L.pick(
-        en: 'Please rewrite this summary to be more accurate and concise.',
-        zhTW: '請重寫這段摘要，使其更準確簡潔。',
-      ),
+      issue: mode == ContextMode.rp
+          ? L.pick(
+              en: 'Rewrite this dossier using the story text as the sole factual source. Preserve the complete event sequence, relationship formation, and concrete causes of important choices.',
+              zhTW: '以劇情正文為唯一事實依據重寫這份卷宗，保持事件脈絡、人物關係形成過程與重要選擇具體前因的完整性。',
+              zhCN: '以剧情正文为唯一事实依据重写这份卷宗，保持事件脉络、人物关系形成过程与重要选择具体前因的完整性。',
+            )
+          : L.pick(
+              en: 'Please rewrite this summary to be more accurate and concise.',
+              zhTW: '請重寫這段摘要，使其更準確簡潔。',
+            ),
+      contextMode: mode,
     );
     if (revised.isNotEmpty) {
       _notifyModified();
@@ -282,7 +354,6 @@ class _MemorySummaryTabState extends State<MemorySummaryTab>
   Future<void> _showFullSummary({
     required String content,
     required String dateLabel,
-    required String windowId,
   }) {
     final readable = MemorySummaryTab.formatForReading(content);
     return showModalBottomSheet<void>(
@@ -329,16 +400,14 @@ class _MemorySummaryTabState extends State<MemorySummaryTab>
                                   fontSize: 17,
                                 ),
                               ),
-                              if (dateLabel.isNotEmpty || windowId.isNotEmpty)
+                              if (dateLabel.isNotEmpty)
                                 Text(
-                                  [
-                                    if (dateLabel.isNotEmpty) dateLabel,
-                                    if (windowId.isNotEmpty) '#$windowId',
-                                  ].join(' · '),
+                                  dateLabel,
                                   style: TextStyle(
                                     fontSize: 10,
+                                    fontFamily: 'monospace',
                                     color: YanciTheme.textSecondary.withValues(
-                                      alpha: 0.45,
+                                      alpha: 0.5,
                                     ),
                                   ),
                                 ),
@@ -415,7 +484,7 @@ class _MemorySummaryTabState extends State<MemorySummaryTab>
       animation: _staggerCtrl,
       builder: (_, _) {
         return ListView(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 80),
+          padding: const EdgeInsets.fromLTRB(18, 8, 16, 80),
           children: [
             // 視窗摘要條目流
             ..._buildSummaryCards(),
@@ -450,66 +519,105 @@ class _MemorySummaryTabState extends State<MemorySummaryTab>
   Widget _buildSummaryCard(Map<String, dynamic> summary, int index) {
     final id = summary['id'] as int;
     final content = (summary['content'] as String? ?? '').trim();
+    final presentation = _SummaryReadingPresentation.from(content);
+    final contextMode = ContextMode.fromStorage(summary['context_mode']);
     final createdAt = summary['created_at'] as String? ?? '';
     final isLocked = (summary['locked'] as int? ?? 0) == 1;
-    final windowId = (summary['source_window_id'] as String? ?? '').trim();
     final isExpanded = _expandedSummaryId == id;
     final isEditing = _editingSummaryId == id;
     final needsFullReader =
         content.characters.length > 120 || '\n'.allMatches(content).length >= 4;
 
     // Date label
-    final date = DateTime.tryParse(createdAt);
+    // RP uses the device timestamp only as hidden ordering metadata. Showing
+    // it as story time would create a false chronology for fictional scenes.
+    final date = contextMode == ContextMode.rp
+        ? null
+        : DateTime.tryParse(createdAt);
     final dateStr = date != null
-        ? '${date.month}/${date.day} ${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}'
+        ? '${date.month.toString().padLeft(2, '0')} / '
+              '${date.day.toString().padLeft(2, '0')}  '
+              '${date.hour.toString().padLeft(2, '0')}:'
+              '${date.minute.toString().padLeft(2, '0')}'
         : '';
 
-    return Column(
+    final isFirst = index == 0;
+    final isLast = index == _summaries.length - 1;
+
+    return Stack(
+      clipBehavior: Clip.none,
       children: [
+        if (_summaries.length > 1)
+          Positioned(
+            left: 1.5,
+            top: isFirst ? 20 : 0,
+            bottom: isLast ? null : 0,
+            height: isLast ? 20 : null,
+            child: ExcludeSemantics(
+              child: Container(
+                width: 1,
+                color: YanciTheme.textSecondary.withValues(alpha: 0.1),
+              ),
+            ),
+          ),
+        Positioned(
+          left: 0,
+          top: 18,
+          child: ExcludeSemantics(
+            child: Container(
+              width: 4,
+              height: 4,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: YanciTheme.accent.withValues(alpha: 0.58),
+              ),
+            ),
+          ),
+        ),
         Padding(
-          padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
+          padding: const EdgeInsets.fromLTRB(18, 12, 18, 18),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Header: date + badges
+              // Quiet chronology anchor. Mode and internal window IDs stay in
+              // the data model but do not compete with the story on this page.
               Row(
                 children: [
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 6,
-                      vertical: 2,
-                    ),
-                    decoration: BoxDecoration(
-                      color: YanciTheme.accent.withValues(alpha: 0.12),
-                      borderRadius: BorderRadius.circular(4),
-                    ),
-                    child: Text(
-                      dateStr.isEmpty
-                          ? L.pick(en: 'Summary', zhTW: '摘要', zhCN: '摘要')
-                          : dateStr,
-                      style: TextStyle(fontSize: 10, color: YanciTheme.accent),
-                    ),
-                  ),
-                  if (windowId.isNotEmpty) ...[
-                    const SizedBox(width: 6),
+                  if (dateStr.isNotEmpty)
                     Text(
-                      '#$windowId',
+                      dateStr,
                       style: TextStyle(
-                        fontSize: 9,
-                        color: YanciTheme.textSecondary.withValues(alpha: 0.3),
+                        fontSize: 10,
                         fontFamily: 'monospace',
+                        letterSpacing: 0.15,
+                        color: YanciTheme.textSecondary.withValues(alpha: 0.5),
+                      ),
+                    ),
+                  if (presentation.isCore) ...[
+                    const SizedBox(width: 8),
+                    Text(
+                      presentation.coreLabel,
+                      style: TextStyle(
+                        fontSize: 9.5,
+                        letterSpacing: 0.15,
+                        color: YanciTheme.accent.withValues(alpha: 0.58),
                       ),
                     ),
                   ],
                   const Spacer(),
                   if (isLocked)
-                    const Text('🔒', style: TextStyle(fontSize: 12)),
+                    Icon(
+                      Icons.lock_outline_rounded,
+                      size: 12,
+                      color: YanciTheme.textSecondary.withValues(alpha: 0.42),
+                    ),
                 ],
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: 9),
 
-              // Content
+              // Story title + body form a single reading target.
               GestureDetector(
+                behavior: HitTestBehavior.opaque,
                 onTap: isEditing
                     ? null
                     : () {
@@ -540,13 +648,31 @@ class _MemorySummaryTabState extends State<MemorySummaryTab>
                             ),
                           ),
                         )
-                      : SizedBox(
-                          width: double.infinity,
-                          child: _buildSummaryMarkdown(
-                            content,
-                            maxHeight: isExpanded && needsFullReader
-                                ? 164
-                                : (!isExpanded ? 68 : null),
+                      : Padding(
+                          padding: const EdgeInsets.only(right: 8),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              if (presentation.title != null) ...[
+                                Text(
+                                  presentation.title!,
+                                  style: YanciTheme.bodyText.copyWith(
+                                    fontSize: 15,
+                                    height: 1.32,
+                                    fontWeight: FontWeight.w600,
+                                    color: YanciTheme.textPrimary,
+                                  ),
+                                ),
+                                const SizedBox(height: 9),
+                              ],
+                              if (presentation.body.isNotEmpty)
+                                _buildSummaryMarkdown(
+                                  presentation.body,
+                                  maxHeight: needsFullReader
+                                      ? (isExpanded ? 220 : 108)
+                                      : null,
+                                ),
+                            ],
                           ),
                         ),
                 ),
@@ -562,7 +688,6 @@ class _MemorySummaryTabState extends State<MemorySummaryTab>
                       onPressed: () => _showFullSummary(
                         content: content,
                         dateLabel: dateStr,
-                        windowId: windowId,
                       ),
                       icon: const Icon(Icons.menu_book_outlined, size: 15),
                       label: Text(L.pick(en: 'Read all', zhTW: '閱讀全文')),
@@ -640,7 +765,6 @@ class _MemorySummaryTabState extends State<MemorySummaryTab>
             ],
           ),
         ),
-        if (index < _summaries.length - 1) const _SummaryFadeDivider(),
       ],
     );
   }
@@ -652,22 +776,31 @@ class _MemorySummaryTabState extends State<MemorySummaryTab>
       selectable: false,
       softLineBreak: true,
       styleSheet: _summaryMarkdownStyle(
-        fontSize: 13,
-        lineHeight: 1.55,
+        fontSize: 14,
+        lineHeight: 1.48,
         spacious: false,
       ),
     );
     if (maxHeight == null) return body;
 
     // Markdown 無 maxLines；固定高度裁切維持摘要卡密度，全文由閱讀器承接。
-    return ClipRect(
-      child: SizedBox(
-        height: maxHeight,
-        child: OverflowBox(
-          alignment: Alignment.topLeft,
-          minHeight: 0,
-          maxHeight: double.infinity,
-          child: body,
+    return ShaderMask(
+      blendMode: BlendMode.dstIn,
+      shaderCallback: (bounds) => const LinearGradient(
+        begin: Alignment.topCenter,
+        end: Alignment.bottomCenter,
+        colors: [Colors.white, Colors.white, Colors.transparent],
+        stops: [0, 0.82, 1],
+      ).createShader(bounds),
+      child: ClipRect(
+        child: SizedBox(
+          height: maxHeight,
+          child: OverflowBox(
+            alignment: Alignment.topLeft,
+            minHeight: 0,
+            maxHeight: double.infinity,
+            child: body,
+          ),
         ),
       ),
     );
@@ -913,37 +1046,75 @@ class _MemorySummaryTabState extends State<MemorySummaryTab>
   }
 }
 
-class _SummaryFadeDivider extends StatelessWidget {
-  const _SummaryFadeDivider();
+class _SummaryReadingPresentation {
+  final String? title;
+  final String? category;
+  final String body;
+  final bool isCore;
 
-  @override
-  Widget build(BuildContext context) {
-    final line = YanciTheme.textSecondary.withValues(alpha: 0.16);
-    return ExcludeSemantics(
-      child: SizedBox(
-        height: 10,
-        child: Row(
-          children: [
-            Expanded(
-              child: Container(
-                height: 0.7,
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(colors: [Colors.transparent, line]),
-                ),
-              ),
-            ),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Container(
-                height: 0.7,
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(colors: [line, Colors.transparent]),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
+  const _SummaryReadingPresentation({
+    required this.title,
+    required this.category,
+    required this.body,
+    required this.isCore,
+  });
+
+  String get coreLabel {
+    final core = L.pick(en: 'Core', zhTW: '核心', zhCN: '核心');
+    return category == null ? '❖ $core' : '❖ $core · $category';
+  }
+
+  factory _SummaryReadingPresentation.from(String raw) {
+    final readable = MemorySummaryTab.formatForReading(raw);
+    final lines = readable.split('\n');
+    final weightHeading = RegExp(
+      r'^\s*#{1,6}\s*[\-—]*\s*'
+      r'(?:核心|支線|支线|氛圍|氛围|觀察區|观察区|'
+      r'Core|Side Story|Atmosphere|Observation)\s*[\-—]*\s*$',
+      caseSensitive: false,
+    );
+    final coreHeading = RegExp(
+      r'^\s*#{1,6}\s*[\-—]*\s*(?:核心|Core)\s*[\-—]*\s*$',
+      caseSensitive: false,
+    );
+    final itemHeading = RegExp(r'^\s*\*\*\[([^\]]+)\]\s*(.+?)\*\*\s*$');
+
+    final isCore = lines.any(coreHeading.hasMatch);
+    String? title;
+    String? category;
+    var titleIndex = -1;
+    var leadWeightIndex = -1;
+
+    // A title is promoted only when it is the first real content in the row.
+    // This avoids pulling a later plot item above a preceding character file.
+    for (var i = 0; i < lines.length; i++) {
+      final line = lines[i].trim();
+      if (line.isEmpty) continue;
+      if (weightHeading.hasMatch(line)) {
+        leadWeightIndex = i;
+        continue;
+      }
+      final match = itemHeading.firstMatch(line);
+      if (match != null) {
+        category = match.group(1)?.trim();
+        title = match.group(2)?.trim();
+        titleIndex = i;
+      }
+      break;
+    }
+
+    if (titleIndex >= 0) {
+      lines.removeAt(titleIndex);
+      if (leadWeightIndex >= 0 && leadWeightIndex < lines.length) {
+        lines.removeAt(leadWeightIndex);
+      }
+    }
+
+    return _SummaryReadingPresentation(
+      title: title == null || title.isEmpty ? null : title,
+      category: category == null || category.isEmpty ? null : category,
+      body: lines.join('\n').trim(),
+      isCore: isCore,
     );
   }
 }
