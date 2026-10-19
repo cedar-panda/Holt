@@ -1,16 +1,28 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:project_yanci/models/background_preset.dart';
 import 'package:project_yanci/services/background_foreground_service.dart';
+import 'package:project_yanci/services/locale_strings.dart';
 import 'package:project_yanci/theme/app_theme.dart';
 import 'package:project_yanci/widgets/gradient_background.dart';
 import 'package:project_yanci/widgets/input_bar.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
+  setUp(() async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    await L.setLocale('en');
+  });
+
   testWidgets('bound input follows palette, then its manual text color', (
     tester,
   ) async {
+    final tempDir = Directory.systemTemp.createTempSync('holt-input-bg-');
+    final background = File('${tempDir.path}/bound.png')..writeAsBytesSync([0]);
+    addTearDown(() => tempDir.deleteSync(recursive: true));
     const palette = ChatBubblePalette(
       aiBubble: Color(0xFF111111),
       userBubble: Color(0xFF222222),
@@ -36,16 +48,20 @@ void main() {
       );
     }
 
-    await pump(const BackgroundPreset(slot: 2, chatPath: 'bound.png'));
+    await pump(BackgroundPreset(slot: 2, chatPath: background.path));
     expect(
       tester.widget<TextField>(find.byType(TextField)).style?.color,
       const Color(0xFF777777),
     );
+    expect(
+      tester.widget<TextField>(find.byType(TextField)).keyboardAppearance,
+      Brightness.dark,
+    );
 
     await pump(
-      const BackgroundPreset(
+      BackgroundPreset(
         slot: 2,
-        chatPath: 'bound.png',
+        chatPath: background.path,
         chatBubbleTextColor: 0xFFABCDEF,
       ),
     );
@@ -68,8 +84,32 @@ void main() {
     );
     expect(
       tester.widget<TextField>(find.byType(TextField)).style?.color,
-      YanciTheme.textOnBubble,
+      YanciTheme.textPrimary,
     );
+  });
+
+  testWidgets('marriage certificate keeps cache details out of the ritual', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    await L.setLocale('zh_TW');
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: InputBar(
+            marriageCertPending: true,
+            onCancelMarriageCert: () {},
+            onSend: (_) {},
+          ),
+        ),
+      ),
+    );
+
+    expect(find.textContaining('結婚證書'), findsOneWidget);
+    expect(find.textContaining('重建一次緩存'), findsNothing);
+
+    // InputBar owns an idle animation; unmount it so the test can finalize.
+    await tester.pumpWidget(const SizedBox.shrink());
   });
 
   testWidgets('InputBar does not erase a draft before Chat accepts it', (
@@ -272,6 +312,27 @@ void main() {
     tester.widget<InkWell>(archiveAction).onTap?.call();
     await tester.pump();
     expect(opened, 1);
+  });
+
+  testWidgets('daily call is available from the add panel', (tester) async {
+    var calls = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: InputBar(onCallTap: () => calls++, onSend: (_) {}),
+        ),
+      ),
+    );
+
+    await tester.tap(find.byTooltip('Add content'));
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.text('Call'), findsOneWidget);
+    final callAction = find
+        .ancestor(of: find.text('Call'), matching: find.byType(InkWell))
+        .first;
+    tester.widget<InkWell>(callAction).onTap?.call();
+    await tester.pump();
+    expect(calls, 1);
   });
 
   testWidgets('single-line composer is centered and multiline text can grow', (

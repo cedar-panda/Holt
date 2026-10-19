@@ -44,6 +44,8 @@ import 'screens/game_screen.dart';
 import 'screens/developer_diagnostics_screen.dart';
 import 'screens/settings_screen.dart';
 import 'screens/guide_chat_screen.dart';
+import 'screens/error_diagnostics_screen.dart';
+import 'screens/functional_model_settings_screen.dart';
 import 'widgets/yanci_sprite_overlay.dart';
 
 /// 全局主題通知器（任何頁面都能觸發重建）
@@ -97,6 +99,7 @@ void main() async {
     YanciTheme.bubbleRadius = await ThemeSettings.getBubbleRadius();
     YanciTheme.starEnabled = await ThemeSettings.getStarEnabled();
     YanciTheme.starDensity = await ThemeSettings.getStarDensity();
+    YanciTheme.particleEffectOverride = await ThemeSettings.getParticleEffect();
     YanciTheme.aiBubbleFlat = await ThemeSettings.getAiBubbleFlat();
     YanciTheme.homeBackgroundImagePath =
         await ThemeSettings.getBackgroundImagePath('home');
@@ -375,6 +378,9 @@ class _YanciAppState extends State<YanciApp> with WidgetsBindingObserver {
           '/usage': (context) => const UsageDashboardScreen(),
           '/game': (context) => const GameScreen(),
           '/guide': (context) => const GuideChatScreen(),
+          '/error_diagnostics': (context) => const ErrorDiagnosticsScreen(),
+          '/functional_models': (context) =>
+              const FunctionalModelSettingsScreen(),
           if (developerDiagnosticsEnabled)
             '/developer_diagnostics': (context) =>
                 const DeveloperDiagnosticsScreen(),

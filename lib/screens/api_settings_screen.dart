@@ -130,6 +130,7 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
 
   final _geminiKeyCtrl = TextEditingController();
   final _deepseekKeyCtrl = TextEditingController();
+  final _deepInfraKeyCtrl = TextEditingController();
   final _qwenKeyCtrl = TextEditingController();
 
   final _awsAccessKeyIdCtrl = TextEditingController();
@@ -191,6 +192,7 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
 
     final gm = await ApiSettings.getGeminiApiKey();
     final ds = await ApiSettings.getDeepseekApiKey();
+    final deepInfra = await ApiSettings.getDeepInfraApiKey();
     final qw = await ApiSettings.getQwenApiKey();
 
     final awsId = await ApiSettings.getAwsAccessKeyId();
@@ -263,6 +265,7 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
 
         _geminiKeyCtrl.text = gm;
         _deepseekKeyCtrl.text = ds;
+        _deepInfraKeyCtrl.text = deepInfra;
         _qwenKeyCtrl.text = qw;
 
         _awsAccessKeyIdCtrl.text = awsId;
@@ -312,6 +315,8 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
         _fetchModels();
       } else if (_provider == 'deepseek' && ds.isNotEmpty) {
         _fetchModels();
+      } else if (_provider == 'deepinfra' && deepInfra.isNotEmpty) {
+        _fetchModels();
       } else if (_provider == 'openai_compatible' && oaiBase.isNotEmpty) {
         _fetchModels();
       }
@@ -332,6 +337,7 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
     final isXai = provider == 'xai';
     final isGemini = provider == 'gemini';
     final isDeepSeek = provider == 'deepseek';
+    final isDeepInfra = provider == 'deepinfra';
     if (!ProviderModelCatalog.supports(provider)) {
       if (mounted && requestGeneration == _modelFetchGeneration) {
         setState(() {
@@ -351,6 +357,8 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
         ? _geminiKeyCtrl.text.trim()
         : isDeepSeek
         ? _deepseekKeyCtrl.text.trim()
+        : isDeepInfra
+        ? _deepInfraKeyCtrl.text.trim()
         : _apiKeyController.text.trim();
     final baseUrl = _oaiCompatBaseUrlCtrl.text.trim();
     if ((!isCompatible && apiKey.isEmpty) ||
@@ -447,6 +455,7 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
 
     add(provider: 'openrouter', key: _apiKeyController.text);
     add(provider: 'gemini', key: _geminiKeyCtrl.text);
+    add(provider: 'deepinfra', key: _deepInfraKeyCtrl.text);
     add(
       provider: 'openai_compatible',
       key: _oaiCompatKeyCtrl.text,
@@ -523,6 +532,7 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
     if (value == 'openrouter' ||
         value == 'gemini' ||
         value == 'deepseek' ||
+        value == 'deepinfra' ||
         value == 'xai' ||
         value == 'openai_compatible') {
       _fetchModels();
@@ -548,6 +558,7 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
     const ApiProviderOption(id: 'xai', label: 'xAI (Grok)'),
     const ApiProviderOption(id: 'gemini', label: 'Gemini'),
     const ApiProviderOption(id: 'deepseek', label: 'DeepSeek'),
+    const ApiProviderOption(id: 'deepinfra', label: 'DeepInfra'),
     const ApiProviderOption(id: 'qwen', label: 'Qwen'),
     const ApiProviderOption(id: 'bedrock', label: 'AWS Bedrock'),
     const ApiProviderOption(id: 'thinking_machines', label: 'Inkling'),
@@ -567,34 +578,14 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
       selectedId: _provider,
       showOtherProviders: _showOtherProviders,
       onChanged: _handleProviderChanged,
+      onExpandedChanged: (expanded) {
+        setState(() => _showOtherProviders = expanded);
+      },
     );
   }
 
   Widget _buildProviderSectionHeader() {
-    return Row(
-      children: [
-        Expanded(child: _buildSectionTitle(L.get('settings_api_source'))),
-        IconButton(
-          key: const Key('api_settings_provider_toggle'),
-          icon: Icon(
-            _showOtherProviders
-                ? Icons.expand_less_rounded
-                : Icons.expand_more_rounded,
-            size: 22,
-            color: YanciTheme.textSecondary,
-          ),
-          tooltip: L.pick(
-            en: _showOtherProviders
-                ? 'Hide other providers'
-                : 'Show other providers',
-            zhTW: _showOtherProviders ? '收起其他來源' : '展開其他來源',
-            zhCN: _showOtherProviders ? '收起其他来源' : '展开其他来源',
-          ),
-          onPressed: () =>
-              setState(() => _showOtherProviders = !_showOtherProviders),
-        ),
-      ],
-    );
+    return _buildSectionTitle(L.get('settings_api_source'));
   }
 
   Widget _buildApiKeySectionHeader() {
@@ -670,6 +661,13 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
         response = await http
             .get(
               Uri.parse('https://api.deepseek.com/models'),
+              headers: {'Authorization': 'Bearer $keyStr'},
+            )
+            .timeout(const Duration(seconds: 20));
+      } else if (provider == 'deepinfra') {
+        response = await http
+            .get(
+              Uri.parse('https://api.deepinfra.com/v1/openai/models'),
               headers: {'Authorization': 'Bearer $keyStr'},
             )
             .timeout(const Duration(seconds: 20));
@@ -782,10 +780,10 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
   void _showCostPolicyNotice(ModelCostPolicyNotice notice) {
     if (!mounted || notice == ModelCostPolicyNotice.none) return;
     final message = switch (notice) {
-      ModelCostPolicyNotice.inklingContextLimitEnabled => L.pick(
-        en: 'Prompt cache and its summary were turned off. Context send limit is now on to reduce Inkling costs.',
-        zhTW: '已關閉緩存命中及其專用摘要，並開啟上下文發送限制以節省 Inkling 費用。',
-        zhCN: '已关闭缓存命中及其专用摘要，并开启上下文发送限制以节省 Inkling 费用。',
+      ModelCostPolicyNotice.inklingContextLimitRecommended => L.pick(
+        en: 'Inkling does not use prompt cache. You can enable the context send limit instead.',
+        zhTW: 'Inkling 不使用提示詞緩存，可以改為開啟上下文發送限制。',
+        zhCN: 'Inkling 不使用提示词缓存，可以改为开启上下文发送限制。',
       ),
       ModelCostPolicyNotice.claudeCacheRecommended => L.pick(
         en: 'Enable cache hits to reduce Claude costs.',
@@ -856,6 +854,7 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
     final model = _modelValueForProvider();
     final geminiKey = _geminiKeyCtrl.text.trim();
     final deepseekKey = _deepseekKeyCtrl.text.trim();
+    final deepInfraKey = _deepInfraKeyCtrl.text.trim();
     final qwenKey = _qwenKeyCtrl.text.trim();
     final awsAccessKeyId = _awsAccessKeyIdCtrl.text.trim();
     final awsSecretAccessKey = _awsSecretAccessKeyCtrl.text.trim();
@@ -888,6 +887,7 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
     await ApiSettings.saveProviderModelSelection(provider, model);
     await ApiSettings.saveGeminiApiKey(geminiKey);
     await ApiSettings.saveDeepseekApiKey(deepseekKey);
+    await ApiSettings.saveDeepInfraApiKey(deepInfraKey);
     await ApiSettings.saveQwenApiKey(qwenKey);
     await ApiSettings.saveAwsAccessKeyId(awsAccessKeyId);
     await ApiSettings.saveAwsSecretAccessKey(awsSecretAccessKey);
@@ -948,6 +948,7 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
     _xaiKeyCtrl.dispose();
     _geminiKeyCtrl.dispose();
     _deepseekKeyCtrl.dispose();
+    _deepInfraKeyCtrl.dispose();
     _qwenKeyCtrl.dispose();
     _awsAccessKeyIdCtrl.dispose();
     _awsSecretAccessKeyCtrl.dispose();
@@ -973,7 +974,6 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
       decoration: BoxDecoration(
         color: Colors.transparent,
         borderRadius: BorderRadius.circular(YanciTheme.radiusMd),
-        border: Border.all(color: _settingsBorderColor, width: 1),
       ),
       child: child,
     );
@@ -983,7 +983,7 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
     YanciTheme.textSecondary,
     YanciTheme.accent,
     YanciTheme.isDark ? 0.38 : 0.28,
-  )!.withValues(alpha: 0.82);
+  )!.withValues(alpha: 0.41);
 
   Color get _selectionSuccessColor =>
       Color.lerp(const Color(0xFF4CAF6A), YanciTheme.accent, 0.24)!;
@@ -1217,14 +1217,7 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
                                     key: ValueKey<String>(
                                       'favorite_model_${favorite.identity}',
                                     ),
-                                    decoration: BoxDecoration(
-                                      border: Border(
-                                        bottom: BorderSide(
-                                          color: YanciTheme.textSecondary
-                                              .withValues(alpha: 0.12),
-                                        ),
-                                      ),
-                                    ),
+                                    decoration: const BoxDecoration(),
                                     child: Row(
                                       children: [
                                         Expanded(
@@ -1444,33 +1437,9 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
                             size: 19,
                           ),
                           isDense: true,
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(
-                              YanciTheme.radiusSm,
-                            ),
-                            borderSide: BorderSide(
-                              color: _settingsBorderColor,
-                              width: 1,
-                            ),
-                          ),
-                          enabledBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(
-                              YanciTheme.radiusSm,
-                            ),
-                            borderSide: BorderSide(
-                              color: _settingsBorderColor,
-                              width: 1,
-                            ),
-                          ),
-                          focusedBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(
-                              YanciTheme.radiusSm,
-                            ),
-                            borderSide: BorderSide(
-                              color: YanciTheme.accent,
-                              width: 1,
-                            ),
-                          ),
+                          border: InputBorder.none,
+                          enabledBorder: InputBorder.none,
+                          focusedBorder: InputBorder.none,
                         ),
                         onChanged: (value) {
                           setDialogState(() => applyFilter(value));
@@ -1695,6 +1664,12 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
       embeddingModel: _embeddingModel,
       embeddingModelEntries: _embeddingModelEntries,
       starredModelEntries: _starredModelEntries,
+      availableModelEntries: _models
+          .map(
+            (model) =>
+                StarredModelEntry(provider: _provider, modelId: model.id),
+          )
+          .toList(growable: false),
       dreamCurationEnabled: _dreamCurationEnabled,
       dreamCurationThreshold: _dreamCurationThreshold,
       showSummarySelection: showSummarySelection,
@@ -2064,6 +2039,30 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
                                   onTestConnection: () => _testApiConnection(
                                     'deepseek',
                                     _deepseekKeyCtrl.text,
+                                  ),
+                                ),
+                              ],
+                              if (_provider == 'deepinfra') ...[
+                                ApiProviderKeySettingsCard(
+                                  controller: _deepInfraKeyCtrl,
+                                  hintText: 'DeepInfra API Key',
+                                  obscureText: _obscureProviderKeys,
+                                  isTesting: _isTestingApi,
+                                  borderColor: _settingsBorderColor,
+                                  onChanged: (value) {
+                                    _scheduleProviderModelFetch(
+                                      'deepinfra',
+                                      value,
+                                    );
+                                    _debouncedSave();
+                                  },
+                                  onToggleObscure: () => setState(
+                                    () => _obscureProviderKeys =
+                                        !_obscureProviderKeys,
+                                  ),
+                                  onTestConnection: () => _testApiConnection(
+                                    'deepinfra',
+                                    _deepInfraKeyCtrl.text,
                                   ),
                                 ),
                               ],

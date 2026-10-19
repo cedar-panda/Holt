@@ -256,6 +256,7 @@ class _ThemedNoticeSurface extends StatelessWidget {
           : YanciTheme.accentLight,
       YanciTheme.isDark ? .22 : .14,
     )!;
+    final isError = tone == ThemedNoticeTone.error;
 
     return Material(
       key: const ValueKey('themed-pill-notice'),
@@ -272,7 +273,9 @@ class _ThemedNoticeSurface extends StatelessWidget {
         ),
         decoration: BoxDecoration(
           color: surface,
-          borderRadius: BorderRadius.circular(999),
+          // Errors carry more text and need a readable card shape; ordinary
+          // notices retain the compact pill treatment.
+          borderRadius: BorderRadius.circular(isError ? 16 : 999),
           border: Border.all(
             color: accent.withValues(alpha: YanciTheme.isDark ? .28 : .18),
           ),

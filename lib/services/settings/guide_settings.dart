@@ -5,7 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 ///
 /// 這些 key 不屬於裝置瞬時狀態，會隨 Holt 完整備份一併導出。
 abstract final class GuideSettings {
-  static const int bundledManualVersion = 1;
+  static const int bundledManualVersion = 2;
 
   static const String _enabledKey = 'guide_enabled_v1';
   static const String _introSeenKey = 'guide_intro_seen_v1';

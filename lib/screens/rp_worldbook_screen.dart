@@ -32,11 +32,17 @@ class _RpWorldbookScreenState extends State<RpWorldbookScreen> {
   @override
   void initState() {
     super.initState();
+    RpWorldbookService.revision.addListener(_handleWorldbookRevision);
     _load();
+  }
+
+  void _handleWorldbookRevision() {
+    if (mounted) _load();
   }
 
   @override
   void dispose() {
+    RpWorldbookService.revision.removeListener(_handleWorldbookRevision);
     _searchController.dispose();
     super.dispose();
   }
@@ -81,64 +87,74 @@ class _RpWorldbookScreenState extends State<RpWorldbookScreen> {
     final saved = await showModalBottomSheet<bool>(
       context: context,
       isScrollControlled: true,
+      useSafeArea: true,
       backgroundColor: YanciTheme.surfacePanel,
-      builder: (context) => Padding(
-        padding: EdgeInsets.fromLTRB(
-          24,
-          20,
-          24,
-          MediaQuery.viewInsetsOf(context).bottom + 24,
-        ),
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text(
-                row == null
-                    ? L.pick(
-                        en: 'New worldbook entry',
-                        zhTW: '新增世界書條目',
-                        zhCN: '新增世界书条目',
-                      )
-                    : row['name']?.toString() ?? '',
-                style: YanciTheme.headingMedium,
-              ),
-              const SizedBox(height: 16),
-              _field(name, L.pick(en: 'Name', zhTW: '名稱', zhCN: '名称')),
-              _field(
-                content,
-                L.pick(en: 'World setting', zhTW: '世界設定', zhCN: '世界设定'),
-                maxLines: 7,
-              ),
-              _field(category, L.pick(en: 'Category', zhTW: '分類', zhCN: '分类')),
-              _field(scope, L.pick(en: 'Scope', zhTW: '生效範圍', zhCN: '生效范围')),
-              _field(
-                visibility,
-                L.pick(en: 'Visibility', zhTW: '知情範圍', zhCN: '知情范围'),
-              ),
-              _field(
-                triggers,
-                L.pick(
-                  en: 'Recall terms',
-                  zhTW: '召回詞（以逗號分隔）',
-                  zhCN: '召回词（以逗号分隔）',
+      builder: (context) {
+        final media = MediaQuery.of(context);
+        return ConstrainedBox(
+          constraints: BoxConstraints(maxHeight: media.size.height * 0.9),
+          child: SingleChildScrollView(
+            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+            padding: EdgeInsets.fromLTRB(
+              24,
+              20,
+              24,
+              media.viewInsets.bottom + 32,
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(
+                  row == null
+                      ? L.pick(
+                          en: 'New worldbook entry',
+                          zhTW: '新增世界書條目',
+                          zhCN: '新增世界书条目',
+                        )
+                      : row['name']?.toString() ?? '',
+                  style: YanciTheme.headingMedium,
                 ),
-              ),
-              const SizedBox(height: 8),
-              TextButton(
-                onPressed: () {
-                  if (name.text.trim().isEmpty || content.text.trim().isEmpty) {
-                    return;
-                  }
-                  Navigator.pop(context, true);
-                },
-                child: Text(L.pick(en: 'Save', zhTW: '儲存', zhCN: '保存')),
-              ),
-            ],
+                const SizedBox(height: 16),
+                _field(name, L.pick(en: 'Name', zhTW: '名稱', zhCN: '名称')),
+                _field(
+                  content,
+                  L.pick(en: 'World setting', zhTW: '世界設定', zhCN: '世界设定'),
+                  maxLines: 7,
+                ),
+                _field(
+                  category,
+                  L.pick(en: 'Category', zhTW: '分類', zhCN: '分类'),
+                ),
+                _field(scope, L.pick(en: 'Scope', zhTW: '生效範圍', zhCN: '生效范围')),
+                _field(
+                  visibility,
+                  L.pick(en: 'Visibility', zhTW: '知情範圍', zhCN: '知情范围'),
+                ),
+                _field(
+                  triggers,
+                  L.pick(
+                    en: 'Recall terms',
+                    zhTW: '召回詞（以逗號分隔）',
+                    zhCN: '召回词（以逗号分隔）',
+                  ),
+                ),
+                const SizedBox(height: 8),
+                TextButton(
+                  onPressed: () {
+                    if (name.text.trim().isEmpty ||
+                        content.text.trim().isEmpty) {
+                      return;
+                    }
+                    Navigator.pop(context, true);
+                  },
+                  child: Text(L.pick(en: 'Save', zhTW: '儲存', zhCN: '保存')),
+                ),
+              ],
+            ),
           ),
-        ),
-      ),
+        );
+      },
     );
     if (saved == true) {
       final parsedTriggers = triggers.text
@@ -456,10 +472,15 @@ class _RpWorldbookScreenState extends State<RpWorldbookScreen> {
                 ),
                 PopupMenuButton<String>(
                   onSelected: (value) {
+                    if (value == 'edit') _edit(row);
                     if (value == 'archive') _toggleArchive(row);
                     if (value == 'delete') _delete(row);
                   },
                   itemBuilder: (_) => <PopupMenuEntry<String>>[
+                    PopupMenuItem<String>(
+                      value: 'edit',
+                      child: Text(L.pick(en: 'Edit', zhTW: '編輯', zhCN: '编辑')),
+                    ),
                     PopupMenuItem<String>(
                       value: 'archive',
                       child: Text(
@@ -480,6 +501,264 @@ class _RpWorldbookScreenState extends State<RpWorldbookScreen> {
         );
       },
     );
+  }
+
+  Future<void> _editReview(Map<String, dynamic> row) async {
+    final payload = _jsonMap(row['payload_json']);
+    final suggestedKey = payload['entry_key']?.toString().trim() ?? '';
+    Map<String, dynamic>? suggestedTarget;
+    for (final entry in _entries) {
+      if (entry['entry_key']?.toString() == suggestedKey &&
+          entry['status'] != 'archived') {
+        suggestedTarget = entry;
+        break;
+      }
+    }
+    String valueOr(Object? primary, Object? fallback, String defaultValue) {
+      final first = primary?.toString().trim() ?? '';
+      if (first.isNotEmpty) return first;
+      final second = fallback?.toString().trim() ?? '';
+      return second.isEmpty ? defaultValue : second;
+    }
+
+    final name = TextEditingController(
+      text: valueOr(payload['candidate_name'], suggestedTarget?['name'], ''),
+    );
+    final content = TextEditingController(
+      text: valueOr(
+        payload['candidate_content'],
+        suggestedTarget?['content'],
+        '',
+      ),
+    );
+    final category = TextEditingController(
+      text: valueOr(payload['category'], suggestedTarget?['category'], 'other'),
+    );
+    final scope = TextEditingController(
+      text: valueOr(payload['scope'], suggestedTarget?['scope'], 'global'),
+    );
+    final visibility = TextEditingController(
+      text: valueOr(
+        payload['visibility'],
+        suggestedTarget?['visibility'],
+        'public',
+      ),
+    );
+    final payloadTriggers = _valueStringList(payload['triggers']);
+    final initialTriggers = payloadTriggers.isNotEmpty
+        ? payloadTriggers
+        : _stringList(suggestedTarget?['triggers_json']);
+    final triggers = TextEditingController(text: initialTriggers.join('、'));
+    var targetEntryKey = suggestedTarget?['entry_key']?.toString() ?? '';
+
+    final result = await showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: YanciTheme.surfacePanel,
+      builder: (sheetContext) => StatefulBuilder(
+        builder: (sheetContext, setSheetState) {
+          final media = MediaQuery.of(sheetContext);
+          final activeEntries = _entries
+              .where((entry) => entry['status'] != 'archived')
+              .toList(growable: false);
+          return ConstrainedBox(
+            constraints: BoxConstraints(maxHeight: media.size.height * 0.9),
+            child: SingleChildScrollView(
+              keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+              padding: EdgeInsets.fromLTRB(
+                24,
+                20,
+                24,
+                media.viewInsets.bottom + 32,
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: <Widget>[
+                  Text(
+                    L.pick(
+                      en: 'Review worldbook change',
+                      zhTW: '審核世界書變更',
+                      zhCN: '审核世界书变更',
+                    ),
+                    style: YanciTheme.headingMedium,
+                  ),
+                  const SizedBox(height: 16),
+                  _field(name, L.pick(en: 'Name', zhTW: '名稱', zhCN: '名称')),
+                  _field(
+                    content,
+                    L.pick(
+                      en: 'Final world setting',
+                      zhTW: '最終世界設定',
+                      zhCN: '最终世界设定',
+                    ),
+                    maxLines: 8,
+                  ),
+                  _field(
+                    category,
+                    L.pick(en: 'Category', zhTW: '分類', zhCN: '分类'),
+                  ),
+                  _field(
+                    scope,
+                    L.pick(en: 'Scope', zhTW: '生效範圍', zhCN: '生效范围'),
+                  ),
+                  _field(
+                    visibility,
+                    L.pick(en: 'Visibility', zhTW: '知情範圍', zhCN: '知情范围'),
+                  ),
+                  _field(
+                    triggers,
+                    L.pick(
+                      en: 'Recall terms',
+                      zhTW: '召回詞（以逗號分隔）',
+                      zhCN: '召回词（以逗号分隔）',
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  DropdownButtonFormField<String>(
+                    initialValue: targetEntryKey,
+                    isExpanded: true,
+                    decoration: InputDecoration(
+                      labelText: L.pick(
+                        en: 'Resolution',
+                        zhTW: '處理方式',
+                        zhCN: '处理方式',
+                      ),
+                    ),
+                    items: <DropdownMenuItem<String>>[
+                      DropdownMenuItem<String>(
+                        value: '',
+                        child: Text(
+                          L.pick(
+                            en: 'Create a new entry',
+                            zhTW: '建立為新條目',
+                            zhCN: '建立为新条目',
+                          ),
+                        ),
+                      ),
+                      for (final entry in activeEntries)
+                        DropdownMenuItem<String>(
+                          value: entry['entry_key']?.toString() ?? '',
+                          child: Text(
+                            L.pick(
+                              en: 'Merge into ${entry['name']}',
+                              zhTW: '合併至「${entry['name']}」',
+                              zhCN: '合并至“${entry['name']}”',
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                    ],
+                    onChanged: (value) =>
+                        setSheetState(() => targetEntryKey = value ?? ''),
+                  ),
+                  const SizedBox(height: 14),
+                  Row(
+                    children: <Widget>[
+                      Expanded(
+                        child: TextButton(
+                          onPressed: () => Navigator.pop(sheetContext, 'draft'),
+                          child: Text(
+                            L.pick(
+                              en: 'Save draft',
+                              zhTW: '儲存草稿',
+                              zhCN: '保存草稿',
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: FilledButton(
+                          onPressed: () {
+                            if (name.text.trim().isEmpty ||
+                                content.text.trim().isEmpty) {
+                              return;
+                            }
+                            Navigator.pop(sheetContext, 'resolve');
+                          },
+                          child: Text(
+                            targetEntryKey.isEmpty
+                                ? L.pick(
+                                    en: 'Create entry',
+                                    zhTW: '建立條目',
+                                    zhCN: '建立条目',
+                                  )
+                                : L.pick(
+                                    en: 'Submit merge',
+                                    zhTW: '送出合併',
+                                    zhCN: '提交合并',
+                                  ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+
+    final parsedTriggers = triggers.text
+        .split(RegExp(r'[,，、]'))
+        .map((item) => item.trim())
+        .where((item) => item.isNotEmpty)
+        .toList(growable: false);
+    try {
+      if (result == 'draft') {
+        await RpWorldbookService.updatePendingReviewDraft(
+          id: row['id'].toString(),
+          characterId: widget.characterId,
+          continuityId: widget.continuityId,
+          name: name.text,
+          content: content.text,
+          category: category.text,
+          scope: scope.text,
+          visibility: visibility.text,
+          triggers: parsedTriggers,
+        );
+      } else if (result == 'resolve') {
+        await RpWorldbookService.resolvePendingReview(
+          id: row['id'].toString(),
+          characterId: widget.characterId,
+          continuityId: widget.continuityId,
+          name: name.text,
+          content: content.text,
+          category: category.text,
+          scope: scope.text,
+          visibility: visibility.text,
+          triggers: parsedTriggers,
+          targetEntryKey: targetEntryKey,
+        );
+      }
+      if (result != null) await _load();
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              L.pick(
+                en: 'Could not save this worldbook change.',
+                zhTW: '這筆世界書變更未能儲存。',
+                zhCN: '这条世界书变更未能保存。',
+              ),
+            ),
+          ),
+        );
+      }
+    } finally {
+      name.dispose();
+      content.dispose();
+      category.dispose();
+      scope.dispose();
+      visibility.dispose();
+      triggers.dispose();
+    }
   }
 
   Widget _reviewList() {
@@ -533,22 +812,39 @@ class _RpWorldbookScreenState extends State<RpWorldbookScreen> {
               ],
               Align(
                 alignment: Alignment.centerRight,
-                child: TextButton(
-                  onPressed: () async {
-                    await RpWorldbookService.dismissReview(
-                      id: row['id'].toString(),
-                      characterId: widget.characterId,
-                      continuityId: widget.continuityId,
-                    );
-                    await _load();
-                  },
-                  child: Text(
-                    L.pick(
-                      en: 'Keep current settings',
-                      zhTW: '保留目前設定',
-                      zhCN: '保留当前设定',
+                child: Wrap(
+                  alignment: WrapAlignment.end,
+                  spacing: 8,
+                  children: <Widget>[
+                    TextButton(
+                      onPressed: () async {
+                        await RpWorldbookService.dismissReview(
+                          id: row['id'].toString(),
+                          characterId: widget.characterId,
+                          continuityId: widget.continuityId,
+                        );
+                        await _load();
+                      },
+                      child: Text(
+                        L.pick(
+                          en: 'Keep current settings',
+                          zhTW: '保留目前設定',
+                          zhCN: '保留当前设定',
+                        ),
+                      ),
                     ),
-                  ),
+                    TextButton.icon(
+                      onPressed: () => _editReview(row),
+                      icon: const Icon(Icons.edit_outlined, size: 16),
+                      label: Text(
+                        L.pick(
+                          en: 'Review and edit',
+                          zhTW: '審核並編輯',
+                          zhCN: '审核并编辑',
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ],
@@ -578,6 +874,16 @@ class _RpWorldbookScreenState extends State<RpWorldbookScreen> {
     } catch (_) {
       return const <String>[];
     }
+  }
+
+  static List<String> _valueStringList(Object? raw) {
+    if (raw is List) {
+      return raw
+          .map((item) => item.toString().trim())
+          .where((item) => item.isNotEmpty)
+          .toList(growable: false);
+    }
+    return _stringList(raw);
   }
 
   static Map<String, dynamic> _jsonMap(Object? raw) {

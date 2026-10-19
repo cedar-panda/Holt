@@ -79,16 +79,13 @@ class ThinkingDetailSheet extends StatelessWidget {
         return Material(
           color: Colors.transparent,
           child: Container(
+            key: const ValueKey('thinking-sheet-surface'),
             decoration: BoxDecoration(
               color: YanciTheme.isDark
                   ? const Color(0xFF211F24)
                   : const Color(0xFFFDFBFC),
               borderRadius: const BorderRadius.vertical(
                 top: Radius.circular(32),
-              ),
-              border: Border.all(
-                color: YanciTheme.glassBorder.withValues(alpha: 0.7),
-                width: 0.6,
               ),
               boxShadow: [
                 BoxShadow(
@@ -156,11 +153,6 @@ class ThinkingDetailSheet extends StatelessWidget {
                         ),
                       ],
                     ),
-                  ),
-                  Divider(
-                    height: 1,
-                    thickness: 0.6,
-                    color: YanciTheme.glassBorder.withValues(alpha: 0.55),
                   ),
                   Expanded(
                     child: ValueListenableBuilder<int>(

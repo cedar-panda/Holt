@@ -2,6 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:project_yanci/services/api_error_localizer.dart';
+import 'package:project_yanci/services/app_error_log_service.dart';
 import 'package:project_yanci/services/locale_strings.dart';
 
 void main() {
@@ -125,6 +126,30 @@ void main() {
 
       expect(diagnosis.category, 'configuration');
       expect(diagnosis.summary, 'Gemini：這個 API 來源尚未完成設定，請先補齊金鑰或節點資訊');
+    },
+  );
+
+  test(
+    'local diagnostic history never persists request conversation text',
+    () async {
+      const privateText = '這是不能寫進診斷紀錄的私人劇情';
+      await AppErrorLogService.record(
+        error: Exception(
+          'API error 400: {"messages":[{"role":"user",'
+          '"content":"$privateText"}],"error":{"code":"bad_request",'
+          '"type":"invalid_request_error"}}',
+        ),
+        trigger: 'send_message',
+        provider: 'test',
+      );
+
+      final rows = await AppErrorLogService.latest();
+      expect(rows, hasLength(1));
+      final raw = '${rows.single['raw_log']}';
+      expect(raw, contains('code=bad_request'));
+      expect(raw, contains('type=invalid_request_error'));
+      expect(raw, isNot(contains(privateText)));
+      expect(raw, isNot(contains('messages')));
     },
   );
 }

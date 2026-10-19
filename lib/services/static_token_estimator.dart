@@ -38,7 +38,9 @@ class StaticTokenEstimator {
       contextMode: contextMode,
     )).persona;
     final nickname = persona.displayName;
-    final toolFeatures = await ToolFeatureSettings.load();
+    final toolFeatures = (await ToolFeatureSettings.load()).forContext(
+      contextMode,
+    );
 
     final parts = <String>[];
 
@@ -53,7 +55,10 @@ class StaticTokenEstimator {
         contextMode == ContextMode.daily &&
         await MemorySettings.getSelfNotesEnabled();
     final selfNotes = selfNotesEnabled
-        ? await DatabaseHelper.getSelfNotes(charId)
+        ? await DatabaseHelper.getSelfNotesForPrompt(
+            charId,
+            limit: await MemorySettings.getSelfNotesInjectionLimit(),
+          )
         : '';
     if (selfNotes.isNotEmpty) {
       parts.add(
@@ -119,9 +124,16 @@ class StaticTokenEstimator {
     if (toolFeatures.toolPromptsEnabled && toolFeatures.shopEnabled) {
       tools.add(ToolPrompts.shop());
     }
-    if (toolFeatures.toolPromptsEnabled) tools.add(ToolPrompts.homeNote());
+    if (toolFeatures.modelGreetingEnabled) {
+      tools.add(ToolPrompts.homeNote());
+    }
     if (toolFeatures.toolPromptsEnabled && whisperModelOverride) {
-      tools.add(ToolPrompts.whisper());
+      tools.add(
+        ToolPrompts.whisper(
+          characterName: charName,
+          userNickname: nickname,
+        ),
+      );
     }
     if (toolFeatures.toolPromptsEnabled && toolFeatures.scratchEnabled) {
       tools.add(ToolPrompts.scratchCard());
@@ -133,6 +145,7 @@ class StaticTokenEstimator {
       tools.add(ToolPrompts.voiceCall());
     }
     if (toolFeatures.toolPromptsEnabled &&
+        toolFeatures.dailyLifeToolsAllowed(contextMode) &&
         await XPostSettings.isEnabled(charId)) {
       tools.add(ToolPrompts.xPost());
     }

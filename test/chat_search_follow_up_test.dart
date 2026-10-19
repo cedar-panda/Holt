@@ -6,7 +6,7 @@ void main() {
   test('local search results stay in request-only App state', () {
     final context = ChatSearchFollowUp.context(
       query: '小痣',
-      excerpts: const <String>['[2026-08-20] 晏辭：睫毛根旁邊有一顆小痣。'],
+      excerpts: const <String>['[2026-08-20] 顧遠：睫毛根旁邊有一顆小痣。'],
     );
     final prompt = StructuredPrompt(
       staticPart: 'STATIC',

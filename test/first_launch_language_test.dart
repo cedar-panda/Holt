@@ -80,6 +80,11 @@ void main() {
     await tester.pump();
 
     expect(find.bySemanticsLabel('Holt'), findsOneWidget);
+    expect(find.byType(ColorFiltered), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('splash-star-feather-mask')),
+      findsOneWidget,
+    );
     expect(find.text('繁體中文'), findsOneWidget);
     expect(find.text('简体中文'), findsOneWidget);
     expect(find.text('English'), findsOneWidget);

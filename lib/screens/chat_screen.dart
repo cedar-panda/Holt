@@ -9,12 +9,12 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:uuid/uuid.dart';
 
 import '../theme/app_theme.dart';
 import '../services/locale_strings.dart';
 import '../widgets/gradient_background.dart';
-import '../widgets/starfield_painter.dart';
-import '../widgets/neural_field.dart';
+import '../widgets/ambient_particles.dart';
 import '../widgets/chat_bubble.dart';
 import '../widgets/chat_diagnostic_card.dart';
 import '../widgets/input_bar.dart';
@@ -23,7 +23,10 @@ import '../widgets/image_card_stack.dart';
 import '../widgets/atom_thinking.dart';
 import '../services/api_adapter.dart';
 import '../services/api_error_localizer.dart';
+import '../services/app_error_log_service.dart';
 import '../services/stream_presentation_policy.dart';
+import '../services/model_stream_decoder.dart';
+import '../services/model_action_protocol.dart';
 import '../services/settings_manager.dart';
 import '../services/token_estimator.dart';
 import '../services/deferred_prompt.dart';
@@ -36,6 +39,7 @@ import '../services/memory_guard_service.dart';
 import '../services/image_gen_service.dart';
 import '../memory/emotion_coordinates.dart';
 import '../services/token_tracker.dart';
+import '../services/chat_window_stats_service.dart';
 import '../services/context_compressor.dart';
 import '../services/context_summary_repair_service.dart';
 import '../services/sticker_service.dart';
@@ -49,6 +53,8 @@ import '../services/shop_service.dart';
 import '../utils/text_safety.dart';
 import '../services/marriage_service.dart';
 import '../services/tool_prompts.dart';
+import '../services/home_note_service.dart';
+import '../services/guide_service.dart';
 import '../services/tool_runner.dart';
 import '../services/web_search_intent.dart';
 import '../services/web_search_follow_up.dart';
@@ -67,6 +73,7 @@ import '../services/rp_story_service.dart';
 import '../services/rp_story_state_service.dart';
 import '../services/rp_worldbook_service.dart';
 import '../services/rp_memory_service.dart';
+import '../services/rp_identity_lock_prompt.dart';
 import '../services/whisper_service.dart';
 import '../memory/spider_web_core.dart';
 import '../services/spider_web_service.dart';
@@ -81,6 +88,7 @@ import '../services/background_preset_service.dart';
 import '../services/background_foreground_service.dart';
 import '../services/keep_alive_foreground.dart';
 import '../services/keep_alive_service.dart';
+import '../services/ios_reply_background_task.dart';
 import '../services/manual_summary_service.dart';
 import '../services/scratch_service.dart';
 import '../services/transfer_service.dart';
@@ -90,6 +98,10 @@ import '../widgets/shop_backpack_sheets.dart';
 import '../widgets/sticker_preview_quality.dart';
 import '../widgets/long_screenshot_options_sheet.dart';
 import '../widgets/chat_model_picker.dart';
+import '../widgets/new_character_draft_card.dart';
+import '../widgets/chat_cost_mode_guide.dart';
+import '../widgets/chat_window_status.dart';
+import '../widgets/reply_variant_controls.dart';
 import '../widgets/memory_review_tab.dart';
 import '../widgets/web_search_activity_card.dart';
 import '../widgets/web_search_result_card.dart';
@@ -110,6 +122,7 @@ part 'chat_screen_generation.dart';
 part 'chat_screen_actions.dart';
 part 'chat_screen_web_search_follow_up.dart';
 part 'chat_screen_email_drafts.dart';
+part 'chat_screen_reply_variants.dart';
 
 const String _chatSearchToolName = 'chat.search';
 
@@ -242,7 +255,7 @@ class _WebSearchActivityState {
   final String? safeMessage;
 }
 
-class _ChatScreenState extends State<ChatScreen> {
+class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   void _refreshChatState(VoidCallback callback) => setState(callback);
 
   final List<Message> _messages = [];
@@ -250,6 +263,13 @@ class _ChatScreenState extends State<ChatScreen> {
     debugLabel: 'chatModelPickerAnchor',
   );
   final LayerLink _noticeAnchorLink = LayerLink();
+  ModelCostModeRecommendation? _costModeRecommendation;
+  Timer? _costModeRecommendationTimer;
+  Timer? _headerModelDetailsTimer;
+  int _costModeGuideRevision = 0;
+  bool _showHeaderModelDetails = true;
+  bool _headerModelNeedsAttention = true;
+  bool _statusButtonNeedsAttention = true;
 
   /// 渲染起點（_messages 索引）——渲染與發送解耦：
   /// 上下文照常發全窗（緩存前綴不斷），UI 每次只掛最近 50 條，
@@ -272,10 +292,12 @@ class _ChatScreenState extends State<ChatScreen> {
   /// 一條可見的矩形裁切線。ListView 會補回相同高度的底部 padding，
   /// 因此最後一條訊息與輸入框之間仍維持原本的 18px 呼吸距離。
   static const double _composerViewportUnderlay = 74;
+  static const double _keyboardFollowThreshold = 96;
   final ScrollController _scrollController = ScrollController();
   final TextEditingController _inputController = TextEditingController();
   final TokenTracker _tokenTracker = TokenTracker();
   bool _isGenerating = false;
+  bool _visibleReplyComplete = false;
   bool _isGeneratingImage = false;
   bool _streamSurfaceVisible = false;
   bool _isCapturingLongScreenshot = false;
@@ -296,12 +318,16 @@ class _ChatScreenState extends State<ChatScreen> {
   ChatSessionIdentity? _sessionIdentity;
   int _tokensSinceSummary = 0; // token 計數觸發
   Future<int>? _compressionInFlight;
+  int? _lastFailedCompressionPendingMessages;
   bool _showScrollToBottom = false;
   bool _userScrolledUp = false; // 流式輸出時用戶手動上滾 → 暫停自動跟隨
   bool _userIsScrolling = false;
   bool _streamScrollAnimating = false;
   bool _streamScrollRequested = false;
   Duration? _streamScrollFrameTime;
+  double _lastKeyboardInset = 0;
+  bool _followKeyboardViewport = false;
+  bool _keyboardFollowScheduled = false;
   bool _shouldAutoName = false;
   String _conversationTitle = '';
   String _characterName = '';
@@ -312,6 +338,7 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _splitReply = false;
   bool _isFirstRoundInWindow = true;
   bool _sentMessageInThisSession = false;
+  bool _newCharacterWorkshopActive = false;
   bool _showChatAvatar = false;
   String? _userAvatarPath;
   UserPersona? _userPersona;
@@ -356,6 +383,8 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _rpContinuationSourceHasMore = false;
   int? _rpContinuationSourceAnchorMessageId;
   int? _rpContinuationOldestLoadedMessageId;
+  double _rpContinuationPullDistance = 0;
+  bool _rpContinuationPullTriggered = false;
   String? _cacheWindowSummaryStaticSnapshot;
   String? _promptLocaleSnapshot;
   bool _manualSummarySelecting = false;
@@ -395,34 +424,10 @@ class _ChatScreenState extends State<ChatScreen> {
     multiLine: true,
     caseSensitive: false,
   );
-  static final _openToolCallsRe = RegExp(
-    r'<tool_calls?>[\s\S]*$',
-    multiLine: true,
-    caseSensitive: false,
-  );
-  static final _completedTagRe = RegExp(
-    r'<(emo|emo_resolve|memo|memo_del|memo_merge|memo_update|memo_link|force_recall|persona_note|draw|clock|clock_keep|clock_update|clock_del|life_fix|home|whisper|search_chat|search_web|call|scratch|transfer|transfer_accept|transfer_decline|x_post|pack_star|email_draft|holt_diary)\b[^>]*>'
-    r'[\s\S]*?'
-    r'</\1>',
-    multiLine: true,
-  );
   static final _openTagRe = RegExp(
     r'<(emo|emo_resolve|memo|memo_del|memo_merge|memo_update|memo_link|force_recall|persona_note|draw|clock|clock_keep|clock_update|clock_del|life_fix|home|whisper|search_chat|search_web|call|scratch|transfer|transfer_accept|transfer_decline|buy|x_post|shop_view|pack_star|sign_marriage|propose_marriage|email_draft|holt_diary)\b[\s\S]*$',
   );
 
-  static final _scratchTagRe = RegExp(
-    r'<scratch\s+[^>]*/>',
-    caseSensitive: false,
-  );
-  static final _transferTagRe = RegExp(
-    r'<transfer\s+[^>]*/>',
-    caseSensitive: false,
-  );
-  static final _transferResponseRe = RegExp(
-    r'<transfer_(accept|decline)\s*/>',
-    caseSensitive: false,
-  );
-  static final _buyTagRe = RegExp(r'<buy\s+[^>]*/?>', caseSensitive: false);
   static final _shopViewTagRe = RegExp(
     r'<shop_view\s*/?>',
     caseSensitive: false,
@@ -461,6 +466,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   // ═══ 流式絲滑打字機佇列 ═══
   final ListQueue<String> _streamCharQueue = ListQueue<String>();
+  final ModelStreamDecoder _modelStreamDecoder = ModelStreamDecoder();
   StreamPresentationMode _streamPresentationMode =
       StreamPresentationMode.nativeBuffered;
   Timer? _streamRevealDelayTimer;
@@ -490,6 +496,13 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    final implicitView =
+        WidgetsBinding.instance.platformDispatcher.implicitView;
+    if (implicitView != null) {
+      _lastKeyboardInset =
+          implicitView.viewInsets.bottom / implicitView.devicePixelRatio;
+    }
     _webSearchToolBridge = WebSearchToolBridge(
       service: _webSearchService,
       coordinator: _webSearchTurnCoordinator,
@@ -512,6 +525,53 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
+  @override
+  void didChangeMetrics() {
+    final implicitView =
+        WidgetsBinding.instance.platformDispatcher.implicitView;
+    if (!mounted || implicitView == null) return;
+    final keyboardInset =
+        implicitView.viewInsets.bottom / implicitView.devicePixelRatio;
+    final keyboardIsRising = keyboardInset > _lastKeyboardInset + 0.5;
+
+    if (keyboardIsRising && _scrollController.hasClients) {
+      final position = _scrollController.position;
+      final distanceFromBottom = position.maxScrollExtent - position.pixels;
+      if (_followKeyboardViewport ||
+          distanceFromBottom <= _keyboardFollowThreshold) {
+        _followKeyboardViewport = true;
+        _scheduleKeyboardViewportFollow();
+      }
+    }
+
+    if (keyboardInset <= 0.5) {
+      _followKeyboardViewport = false;
+    }
+    _lastKeyboardInset = keyboardInset;
+  }
+
+  void _scheduleKeyboardViewportFollow() {
+    if (_keyboardFollowScheduled) return;
+    _keyboardFollowScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _keyboardFollowScheduled = false;
+      if (!mounted ||
+          !_followKeyboardViewport ||
+          _userIsScrolling ||
+          !_scrollController.hasClients) {
+        return;
+      }
+      final position = _scrollController.position;
+      final target = position.maxScrollExtent;
+      if ((target - position.pixels).abs() > 0.5) {
+        // The keyboard already supplies the movement animation. Following its
+        // metrics with a jump keeps the last line visually attached to the
+        // composer instead of adding a second, lagging scroll animation.
+        _scrollController.jumpTo(target);
+      }
+    });
+  }
+
   void _handleBackgroundPresetChanged() {
     if (!mounted || _sessionIdentity == null) return;
     _backgroundPresetRefreshTimer?.cancel();
@@ -519,6 +579,35 @@ class _ChatScreenState extends State<ChatScreen> {
       const Duration(milliseconds: 90),
       () => unawaited(_reloadBoundBackgroundPreset()),
     );
+  }
+
+  void _scheduleHeaderModelDetails({required bool isEmptyWindow}) {
+    _headerModelDetailsTimer?.cancel();
+    _headerModelDetailsTimer = Timer(
+      isEmptyWindow ? const Duration(minutes: 3) : const Duration(seconds: 10),
+      _hideHeaderModelDetails,
+    );
+  }
+
+  void _hideHeaderModelDetails() {
+    _headerModelDetailsTimer?.cancel();
+    if (!mounted || !_showHeaderModelDetails) return;
+    setState(() => _showHeaderModelDetails = false);
+  }
+
+  void _showHeaderModelConfirmation() {
+    _headerModelDetailsTimer?.cancel();
+    if (!mounted) return;
+    setState(() => _showHeaderModelDetails = true);
+    _headerModelDetailsTimer = Timer(
+      const Duration(milliseconds: 1500),
+      _hideHeaderModelDetails,
+    );
+  }
+
+  void _markMessageSentInSession() {
+    _sentMessageInThisSession = true;
+    _hideHeaderModelDetails();
   }
 
   Future<void> _reloadBoundBackgroundPreset() async {
@@ -637,6 +726,7 @@ class _ChatScreenState extends State<ChatScreen> {
         _isLoading = false;
         _initializationFailed = false;
       });
+      _scheduleHeaderModelDetails(isEmptyWindow: _messages.isEmpty);
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted || !_isChatReady) return;
         final personaName = _userPersonaName.isEmpty
@@ -875,6 +965,7 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _loadMessages() async {
+    await IosReplyBackgroundTask.recover(widget.conversationId);
     final p = await SharedPreferences.getInstance();
     final anchorId = p.getInt(_ctxAnchorKey);
 
@@ -1195,10 +1286,12 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     BackgroundPresetService.revision.removeListener(
       _handleBackgroundPresetChanged,
     );
     _backgroundPresetRefreshTimer?.cancel();
+    _headerModelDetailsTimer?.cancel();
     _clearStreamQueue();
     _streamSurfaceDelayTimer?.cancel();
     _generationForegroundStartTimer?.cancel();
@@ -1238,15 +1331,14 @@ class _ChatScreenState extends State<ChatScreen> {
           }
           Future.microtask(() async {
             try {
-              final triggerTokenLimit = await _windowSummaryTriggerTokenLimit();
-              final minTokenThreshold =
-                  await _windowSummaryCloseMinTokenThreshold();
+              final triggerMessageLimit =
+                  await _windowSummaryTriggerMessageLimit();
+              if (triggerMessageLimit == null) return;
               final compressedTokens = await ContextCompressor.compressOnClose(
                 conversationId: convId,
                 characterId: charId,
-                triggerTokenLimit: triggerTokenLimit,
-                minTokenThreshold: minTokenThreshold,
-                thresholdTokenCount: _tokensSinceSummary,
+                triggerMessageLimit: triggerMessageLimit,
+                minMessageThreshold: triggerMessageLimit,
                 contextMode: _requiredSessionIdentity.contextMode,
                 continuityId: _requiredSessionIdentity.continuityId,
               );
@@ -1307,6 +1399,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _scrollController.dispose();
     _inputController.dispose();
     _streamRevision.dispose();
+    _costModeRecommendationTimer?.cancel();
     super.dispose();
   }
 
@@ -1532,21 +1625,35 @@ class _ChatScreenState extends State<ChatScreen> {
         presetOverride: _boundBackgroundPreset,
         chatPaletteOverride: _boundChatPalette,
         foregroundOverride: _boundChatForeground,
-        child: Scaffold(
-          backgroundColor: Colors.transparent,
-          resizeToAvoidBottomInset: true,
-          body: GestureDetector(
-            onTap: () => FocusScope.of(context).unfocus(),
-            child: Stack(
-              children: [
-                Positioned.fill(
-                  child: YanciTheme.starEnabled
-                      ? (YanciTheme.bgEffect == 'stars'
-                            ? const StarfieldWidget(starCount: 10)
-                            : const NeuralFieldWidget(nodeCount: 18))
-                      : const SizedBox.shrink(),
-                ),
-                SafeArea(
+        // The visual background owns the full window. Only the inner Scaffold
+        // responds to IME insets, so particles and custom imagery no longer
+        // resize or jump when the keyboard opens.
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            Positioned(
+              left: 0,
+              right: 0,
+              top: 0,
+              bottom: 96,
+              child: YanciTheme.starEnabled
+                  ? AmbientParticleField(
+                      starCount: 10,
+                      isBusy:
+                          _isGenerating ||
+                          _userIsScrolling ||
+                          _streamScrollAnimating,
+                    )
+                  : const SizedBox.shrink(),
+            ),
+            Scaffold(
+              backgroundColor: Colors.transparent,
+              // Keep the composer above the IME and let the message viewport
+              // use the remaining height without resizing the background.
+              resizeToAvoidBottomInset: true,
+              body: GestureDetector(
+                onTap: () => FocusScope.of(context).unfocus(),
+                child: SafeArea(
                   child: Column(
                     children: [
                       const SizedBox(height: _chatHeaderHeight),
@@ -1637,6 +1744,8 @@ class _ChatScreenState extends State<ChatScreen> {
                             paths: _pendingImagePaths,
                             height: 124,
                             removable: true,
+                            onTap: _openPendingImagePreview,
+                            onLongPress: _openPendingImagePreview,
                             onRemove: (index) {
                               if (index < 0 ||
                                   index >= _pendingImagePaths.length) {
@@ -1960,6 +2069,11 @@ class _ChatScreenState extends State<ChatScreen> {
                                         ContextMode.rp
                                     ? _openRpStoryArchive
                                     : null,
+                                onCallTap:
+                                    _sessionIdentity?.contextMode ==
+                                        ContextMode.daily
+                                    ? () => _openCall()
+                                    : null,
                                 pendingGiftName: _pendingGift?.itemName,
                                 onCancelGift: _cancelPendingGift,
                                 onTransfer: _onTransferToChar,
@@ -1982,23 +2096,87 @@ class _ChatScreenState extends State<ChatScreen> {
                     ],
                   ),
                 ),
-                Positioned(
-                  top: 0,
-                  left: 0,
-                  right: 0,
-                  child: SafeArea(bottom: false, child: _buildAppBar()),
-                ),
-              ],
+              ),
             ),
-          ),
+            if (_costModeRecommendation != null)
+              Positioned.fill(
+                child: ChatCostModeGuideTrail(
+                  key: ValueKey<int>(_costModeGuideRevision),
+                  color: YanciTheme.accent,
+                  targetDx: MediaQuery.sizeOf(context).width * 0.59,
+                  targetDy: MediaQuery.paddingOf(context).top + 18,
+                ),
+              ),
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              child: SafeArea(bottom: false, child: _buildAppBar()),
+            ),
+          ],
         ),
+      ),
+    );
+  }
+
+  void _openPendingImagePreview(String imagePath) {
+    if (imagePath.trim().isEmpty) return;
+    Navigator.of(context).push(
+      PageRouteBuilder<void>(
+        opaque: false,
+        barrierColor: Colors.black87,
+        barrierDismissible: true,
+        transitionDuration: const Duration(milliseconds: 180),
+        pageBuilder: (context, animation, secondaryAnimation) {
+          return FadeTransition(
+            opacity: animation,
+            child: Scaffold(
+              backgroundColor: Colors.transparent,
+              body: Stack(
+                children: [
+                  GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: () => Navigator.of(context).pop(),
+                    child: const SizedBox.expand(),
+                  ),
+                  Center(
+                    child: InteractiveViewer(
+                      minScale: 0.5,
+                      maxScale: 4,
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(24),
+                        child: Image.file(
+                          File(imagePath),
+                          fit: BoxFit.contain,
+                          filterQuality: FilterQuality.high,
+                        ),
+                      ),
+                    ),
+                  ),
+                  Positioned(
+                    top: MediaQuery.paddingOf(context).top + 8,
+                    right: 16,
+                    child: IconButton(
+                      style: IconButton.styleFrom(
+                        backgroundColor: Colors.black54,
+                        foregroundColor: Colors.white,
+                      ),
+                      onPressed: () => Navigator.of(context).pop(),
+                      icon: const Icon(Icons.close_rounded),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
       ),
     );
   }
 
   void _showChatNotice(
     String message, {
-    Duration duration = const Duration(milliseconds: 2600),
+    Duration duration = const Duration(milliseconds: 3600),
     ThemedNoticeTone tone = ThemedNoticeTone.neutral,
     String? actionLabel,
     VoidCallback? onAction,
@@ -2135,7 +2313,11 @@ class _ChatScreenState extends State<ChatScreen> {
     final expanded = _rpContinuationSourceExpanded;
     final actionLabel = expanded
         ? L.pick(en: 'Collapse', zhTW: '收起', zhCN: '收起')
-        : L.pick(en: 'Open original window', zhTW: '展開原窗口', zhCN: '展开原窗口');
+        : L.pick(
+            en: 'Pull down or tap to open the original window',
+            zhTW: '下拉或點擊查看原窗口',
+            zhCN: '下拉或点击查看原窗口',
+          );
     final title = _rpContinuationSourceTitle.isEmpty
         ? L.pick(en: 'Previous window', zhTW: '上一窗口', zhCN: '上一窗口')
         : _rpContinuationSourceTitle;
@@ -2178,6 +2360,22 @@ class _ChatScreenState extends State<ChatScreen> {
                         color: YanciTheme.accent.withValues(alpha: 0.82),
                       ),
                     ),
+                    if (!expanded) ...<Widget>[
+                      const SizedBox(height: 2),
+                      Text(
+                        L.pick(
+                          en: 'Pull down or tap to view earlier messages',
+                          zhTW: '下拉或點擊可查看更早原文',
+                          zhCN: '下拉或点击可查看更早原文',
+                        ),
+                        style: YanciTheme.bodySmall.copyWith(
+                          fontSize: 9.5,
+                          color: YanciTheme.textSecondary.withValues(
+                            alpha: 0.42,
+                          ),
+                        ),
+                      ),
+                    ],
                   ],
                 ),
               ),
@@ -2205,29 +2403,6 @@ class _ChatScreenState extends State<ChatScreen> {
       ),
     );
   }
-
-  Widget _buildRpContinuationLoadEarlier() => Center(
-    child: Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: TextButton(
-        key: const ValueKey('rp-continuation-load-earlier'),
-        onPressed: _rpContinuationSourceLoading
-            ? null
-            : () => unawaited(_loadEarlierRpContinuationSourceHistory()),
-        child: Text(
-          L.pick(
-            en: '↑ Show 50 earlier messages',
-            zhTW: '↑ 查看更早的 50 條',
-            zhCN: '↑ 查看更早的 50 条',
-          ),
-          style: YanciTheme.bodySmall.copyWith(
-            fontSize: 11,
-            color: YanciTheme.accent.withValues(alpha: 0.65),
-          ),
-        ),
-      ),
-    ),
-  );
 
   Widget _buildRpContinuationBoundary() => Semantics(
     label: L.pick(
@@ -2332,18 +2507,6 @@ class _ChatScreenState extends State<ChatScreen> {
               continuationKind: _RpContinuationDisplayKind.header,
             ),
           );
-          if (_rpContinuationSourceExpanded && _rpContinuationSourceHasMore) {
-            displayItems.add(
-              _DisplayItem(
-                text: '',
-                isUser: false,
-                messageId: 'rp_continuation_load_earlier',
-                originalIndex: -1,
-                showToolbar: false,
-                continuationKind: _RpContinuationDisplayKind.loadEarlier,
-              ),
-            );
-          }
           for (final sourceMessage in _rpContinuationDisplayMessages) {
             displayItems.add(
               _DisplayItem(
@@ -2461,6 +2624,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   : null,
               webSearchTrace: isLast ? msg.webSearchTrace : null,
               emailDraft: isLast ? msg.emailDraft : null,
+              personaCard: isLast ? msg.personaCard : null,
               // 她遞的證書卡跟在拆分回覆的最後一段
               hasMarriageCert: isLast && splitHasCert,
               certFromChar: isLast && splitHasCert,
@@ -2498,6 +2662,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 : null,
             webSearchTrace: msg.isUser ? null : msg.webSearchTrace,
             emailDraft: msg.isUser ? null : msg.emailDraft,
+            personaCard: msg.isUser ? null : msg.personaCard,
             giftName: giftMatch?.group(1)?.trim(),
             giftAccepted: giftMatch != null && charReplyAfter[srcIdx],
             hasMarriageCert:
@@ -2541,13 +2706,44 @@ class _ChatScreenState extends State<ChatScreen> {
         (hasSearchCard ? 1 : 0) +
         (hasWebSearchActivity ? 1 : 0) +
         (showAtom ? 1 : 0);
+    final keepFirstUserBelowTopFade =
+        !hasOlderButton &&
+        _olderMessages.isEmpty &&
+        displayItems.isNotEmpty &&
+        displayItems.first.isUser &&
+        displayItems.first.continuationKind == null;
+    final messageListTopPadding = keepFirstUserBelowTopFade
+        ? _chatHeaderHeight + 70 + YanciTheme.spacingSm
+        : YanciTheme.spacingSm + _chatHeaderHeight;
 
     return NotificationListener<ScrollNotification>(
       onNotification: (notification) {
         if (notification is ScrollStartNotification &&
             notification.dragDetails != null) {
+          _followKeyboardViewport = false;
+          _rpContinuationPullDistance = 0;
+          _rpContinuationPullTriggered = false;
+          _hideHeaderModelDetails();
           _userIsScrolling = true;
           _userScrolledUp = true;
+        } else if (notification is OverscrollNotification &&
+            notification.depth == 0 &&
+            notification.overscroll < 0 &&
+            notification.metrics.pixels <=
+                notification.metrics.minScrollExtent + 1 &&
+            _rpContinuationSourceConversationId != null &&
+            !_rpContinuationSourceLoading) {
+          _rpContinuationPullDistance += -notification.overscroll;
+          if (!_rpContinuationPullTriggered &&
+              _rpContinuationPullDistance >= 64) {
+            _rpContinuationPullTriggered = true;
+            HapticFeedback.selectionClick();
+            if (!_rpContinuationSourceExpanded) {
+              unawaited(_toggleRpContinuationSourceHistory());
+            } else if (_rpContinuationSourceHasMore) {
+              unawaited(_loadEarlierRpContinuationSourceHistory());
+            }
+          }
         } else if (notification is UserScrollNotification) {
           if (notification.direction == ScrollDirection.idle) {
             _userIsScrolling = false;
@@ -2556,6 +2752,8 @@ class _ChatScreenState extends State<ChatScreen> {
             if (_isGenerating) _userScrolledUp = true;
           }
         } else if (notification is ScrollEndNotification) {
+          _rpContinuationPullDistance = 0;
+          _rpContinuationPullTriggered = false;
           _userIsScrolling = false;
         }
         return false;
@@ -2563,18 +2761,44 @@ class _ChatScreenState extends State<ChatScreen> {
       child: RawScrollbar(
         controller: _scrollController,
         interactive: true,
+        timeToFade: const Duration(milliseconds: 1600),
+        fadeDuration: const Duration(milliseconds: 250),
+        notificationPredicate: (notification) {
+          if (notification.depth != 0) return false;
+
+          final programmaticFollow =
+              _streamScrollAnimating ||
+              _followKeyboardViewport ||
+              (_isGenerating && !_userScrolledUp && !_userIsScrolling);
+          if (programmaticFollow) return false;
+
+          if (notification is ScrollUpdateNotification &&
+              notification.scrollDelta == null &&
+              !_userIsScrolling) {
+            // Bubble relayouts and viewport metric changes are not user
+            // scrolling. Ignoring them prevents the thumb flashing while a
+            // response streams or the keyboard changes the available height.
+            return false;
+          }
+          return true;
+        },
         thickness: 8,
         minThumbLength: 96.0,
         radius: const Radius.circular(10),
         thumbColor: YanciTheme.accent.withValues(alpha: 0.55),
         child: ListView.builder(
           controller: _scrollController,
+          keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
           physics: const ClampingScrollPhysics(
             parent: AlwaysScrollableScrollPhysics(),
           ),
           scrollCacheExtent: ScrollCacheExtent.pixels(800.0),
-          padding: const EdgeInsets.only(
-            top: YanciTheme.spacingSm + _chatHeaderHeight,
+          padding: EdgeInsets.only(
+            // At a window's initial resting position, its first user message
+            // starts just below the alpha fade. Once later messages arrive,
+            // normal scrolling can push it through the fade like every other
+            // message.
+            top: messageListTopPadding,
             bottom:
                 _messageListBottomBreathingSpace + _composerViewportUnderlay,
           ),
@@ -2637,8 +2861,6 @@ class _ChatScreenState extends State<ChatScreen> {
               switch (item.continuationKind) {
                 case _RpContinuationDisplayKind.header:
                   return _buildRpContinuationHeader();
-                case _RpContinuationDisplayKind.loadEarlier:
-                  return _buildRpContinuationLoadEarlier();
                 case _RpContinuationDisplayKind.boundary:
                   return _buildRpContinuationBoundary();
                 case null:
@@ -2712,6 +2934,12 @@ class _ChatScreenState extends State<ChatScreen> {
                   _manualSummarySelecting &&
                   item.dbMessageId != null &&
                   item.text.trim().isNotEmpty;
+              final groupedWithPrevious =
+                  index > 0 &&
+                  _canGroupDisplayItems(displayItems[index - 1], item);
+              final groupedWithNext =
+                  index + 1 < displayItems.length &&
+                  _canGroupDisplayItems(item, displayItems[index + 1]);
               final bubble = ChatBubble(
                 text: item.text,
                 isUser: item.isUser,
@@ -2745,6 +2973,9 @@ class _ChatScreenState extends State<ChatScreen> {
                 conversationTitle: _characterName,
                 characterId: _activeCharacterId,
                 showAvatar: _showChatAvatar,
+                showAvatarImage: !groupedWithPrevious,
+                groupedWithPrevious: groupedWithPrevious,
+                groupedWithNext: groupedWithNext,
                 avatarPath: item.isUser ? _userAvatarPath : _charAvatarPath,
                 showToolbar: item.showToolbar,
                 cacheHit: item.cacheHit,
@@ -2786,6 +3017,30 @@ class _ChatScreenState extends State<ChatScreen> {
                       item.webSearchResult!,
                     );
               final attachments = <Widget>[];
+              if (!selectable &&
+                  !item.isUser &&
+                  item.showToolbar &&
+                  !item.incomplete &&
+                  item.dbMessageId != null &&
+                  _messages.isNotEmpty &&
+                  item.dbMessageId == _messages.last.id &&
+                  !_isGenerating &&
+                  !_isGeneratingImage &&
+                  !_sendSubmissionInProgress) {
+                attachments.add(
+                  ReplyVariantControls(
+                    messageId: item.dbMessageId!,
+                    revision: _messages.last.revision,
+                    color:
+                        (_boundChatForeground?.primary ??
+                                YanciTheme.textPrimary)
+                            .withValues(alpha: 0.55),
+                    onSelect: (archiveId) => unawaited(
+                      _selectReplyVariant(item.dbMessageId!, archiveId),
+                    ),
+                  ),
+                );
+              }
               if (item.summaryRecordedId != null) {
                 attachments.add(
                   _buildSummaryRecordedDivider(item.summaryRecordedId!),
@@ -2816,6 +3071,22 @@ class _ChatScreenState extends State<ChatScreen> {
                     onOpen: () => unawaited(_openEmailDraft(emailDraft)),
                     onDelete: () =>
                         unawaited(_deleteEmailDraft(item.dbMessageId!)),
+                  ),
+                );
+              }
+              final personaCard = item.personaCard;
+              if (personaCard != null && item.dbMessageId != null) {
+                attachments.add(
+                  NewCharacterDraftCard(
+                    key: ValueKey<String>('persona-card-${item.dbMessageId}'),
+                    state: personaCard,
+                    showAvatar: _showChatAvatar,
+                    onDraftChanged: (draft) =>
+                        _savePersonaCardDraft(item.dbMessageId!, draft),
+                    onAdd: (draft) =>
+                        _addCharacterFromPersonaCard(item.dbMessageId!, draft),
+                    onOpenCharacter: () =>
+                        _openPersonaCharacter(personaCard.createdCharacterId!),
                   ),
                 );
               }
@@ -2869,15 +3140,23 @@ class _ChatScreenState extends State<ChatScreen> {
                 valueListenable: _streamRevision,
                 builder: (context, _, _) {
                   if (!_splitReply) {
+                    final groupedWithPrevious =
+                        displayItems.isNotEmpty &&
+                        _canGroupDisplayItems(
+                          displayItems.last,
+                          _DisplayItem.streamingAssistant,
+                        );
                     return ChatBubble(
                       text: _displayStreamingText,
                       isUser: false,
-                      isStreaming: true,
+                      isStreaming: !_visibleReplyComplete,
                       messageId: 'streaming',
                       conversationId: widget.conversationId,
                       conversationTitle: _characterName,
                       characterId: _activeCharacterId,
                       showAvatar: _showChatAvatar,
+                      showAvatarImage: !groupedWithPrevious,
+                      groupedWithPrevious: groupedWithPrevious,
                       avatarPath: _charAvatarPath,
                       webSearchTrace: pendingWebSearchTrace,
                     );
@@ -2895,12 +3174,29 @@ class _ChatScreenState extends State<ChatScreen> {
                           key: ValueKey<String>('streaming_$streamIdx'),
                           text: parts[streamIdx],
                           isUser: false,
-                          isStreaming: streamIdx == parts.length - 1,
+                          isStreaming:
+                              !_visibleReplyComplete &&
+                              streamIdx == parts.length - 1,
                           messageId: 'streaming_$streamIdx',
                           conversationId: widget.conversationId,
                           conversationTitle: _characterName,
                           characterId: _activeCharacterId,
                           showAvatar: _showChatAvatar,
+                          showAvatarImage:
+                              streamIdx == 0 &&
+                              !(displayItems.isNotEmpty &&
+                                  _canGroupDisplayItems(
+                                    displayItems.last,
+                                    _DisplayItem.streamingAssistant,
+                                  )),
+                          groupedWithPrevious:
+                              streamIdx > 0 ||
+                              (displayItems.isNotEmpty &&
+                                  _canGroupDisplayItems(
+                                    displayItems.last,
+                                    _DisplayItem.streamingAssistant,
+                                  )),
+                          groupedWithNext: streamIdx < parts.length - 1,
                           avatarPath: _charAvatarPath,
                           webSearchTrace: streamIdx == parts.length - 1
                               ? pendingWebSearchTrace
@@ -3096,6 +3392,10 @@ class _ChatScreenState extends State<ChatScreen> {
   // ═══════════════ 通話 ═══════════════
 
   Widget _buildAppBar() {
+    final headerPrimary =
+        _boundChatForeground?.primary ?? YanciTheme.textPrimary;
+    final headerSecondary =
+        _boundChatForeground?.secondary ?? YanciTheme.textSecondary;
     return Padding(
       padding: const EdgeInsets.symmetric(
         horizontal: YanciTheme.spacingSm,
@@ -3107,94 +3407,167 @@ class _ChatScreenState extends State<ChatScreen> {
           // ═══ 置中的標題區域 ═══
           ConstrainedBox(
             constraints: BoxConstraints(
-              maxWidth: MediaQuery.sizeOf(context).width * 0.58,
+              maxWidth:
+                  MediaQuery.sizeOf(context).width *
+                  (_showHeaderModelDetails
+                      ? 0.58
+                      : _sessionIdentity?.contextMode == ContextMode.daily
+                      ? 0.34
+                      : 0.48),
             ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                // ═══ 角色名（加粗）═══
-                Text(
-                  _characterName.isNotEmpty ? _characterName : 'Holt',
-                  style: TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w400,
-                    color: Colors.white.withValues(alpha: 0.94),
-                    fontFamily: YanciTheme.fontFamily,
-                    letterSpacing: 0.5,
+            child: SizedBox(
+              height: 44,
+              child: Stack(
+                alignment: Alignment.center,
+                children: <Widget>[
+                  AnimatedAlign(
+                    duration: MediaQuery.disableAnimationsOf(context)
+                        ? Duration.zero
+                        : const Duration(milliseconds: 190),
+                    curve: Curves.easeOutCubic,
+                    alignment: _showHeaderModelDetails
+                        ? Alignment.topCenter
+                        : Alignment.center,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: <Widget>[
+                        Flexible(
+                          child: Text(
+                            _characterName.isNotEmpty ? _characterName : 'Holt',
+                            style: TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w400,
+                              color: headerPrimary.withValues(alpha: 0.94),
+                              fontFamily: YanciTheme.fontFamily,
+                              letterSpacing: 0.5,
+                              decoration: TextDecoration.none,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        _buildCostModeRecommendationSwitch(),
+                      ],
+                    ),
                   ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                const SizedBox(height: 3),
-                // ═══ 模型 + token ═══
-                Semantics(
-                  button: true,
-                  label: L.pick(en: 'Choose model', zhTW: '選擇模型', zhCN: '选择模型'),
-                  child: GestureDetector(
-                    key: _modelPickerAnchorKey,
-                    behavior: HitTestBehavior.opaque,
-                    onTap: _showModelPicker,
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 9,
-                        vertical: 3,
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          if (_localModelLoading) ...[
-                            SizedBox(
-                              width: 10,
-                              height: 10,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 1.5,
-                                color: Colors.white.withValues(alpha: 0.62),
+                  Align(
+                    alignment: Alignment.bottomCenter,
+                    child: Transform.translate(
+                      offset: const Offset(0, 3),
+                      child: IgnorePointer(
+                        ignoring: !_showHeaderModelDetails,
+                        child: AnimatedOpacity(
+                          duration: MediaQuery.disableAnimationsOf(context)
+                              ? Duration.zero
+                              : const Duration(milliseconds: 150),
+                          opacity: _showHeaderModelDetails ? 1 : 0,
+                          child: ChatHeaderModelAttention(
+                            accentColor: YanciTheme.accent,
+                            playAttention: _headerModelNeedsAttention,
+                            onAttentionComplete: () {
+                              if (!mounted || !_headerModelNeedsAttention) {
+                                return;
+                              }
+                              setState(
+                                () => _headerModelNeedsAttention = false,
+                              );
+                            },
+                            child: Semantics(
+                              button: true,
+                              label: L.pick(
+                                en: 'Choose model',
+                                zhTW: '選擇模型',
+                                zhCN: '选择模型',
                               ),
-                            ),
-                            const SizedBox(width: 4),
-                          ],
-                          Flexible(
-                            child: Text(
-                              _localModelLoading
-                                  ? (L.pick(en: 'Loading…', zhTW: '加載中…'))
-                                  : _shortModelName(_currentModel),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                fontSize: 11,
-                                color: Colors.white.withValues(alpha: 0.62),
-                                fontFamily: YanciTheme.fontFamily,
+                              child: GestureDetector(
+                                key: _modelPickerAnchorKey,
+                                behavior: HitTestBehavior.opaque,
+                                onTap: _showModelPicker,
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 9,
+                                    vertical: 3,
+                                  ),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: <Widget>[
+                                      if (_localModelLoading) ...<Widget>[
+                                        SizedBox(
+                                          width: 10,
+                                          height: 10,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 1.5,
+                                            color: headerSecondary.withValues(
+                                              alpha: 0.62,
+                                            ),
+                                          ),
+                                        ),
+                                        const SizedBox(width: 4),
+                                      ],
+                                      Flexible(
+                                        child: Text(
+                                          _localModelLoading
+                                              ? L.pick(
+                                                  en: 'Loading…',
+                                                  zhTW: '加載中…',
+                                                  zhCN: '加载中…',
+                                                )
+                                              : _shortModelName(_currentModel),
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: TextStyle(
+                                            fontSize: 11,
+                                            color: headerSecondary.withValues(
+                                              alpha: 0.62,
+                                            ),
+                                            fontFamily: YanciTheme.fontFamily,
+                                            decoration: TextDecoration.none,
+                                          ),
+                                        ),
+                                      ),
+                                      if (_tokenTracker.totalTokens >
+                                          0) ...<Widget>[
+                                        Text(
+                                          ' · ',
+                                          style: TextStyle(
+                                            fontSize: 11,
+                                            color: headerSecondary.withValues(
+                                              alpha: 0.32,
+                                            ),
+                                            decoration: TextDecoration.none,
+                                          ),
+                                        ),
+                                        Text(
+                                          '${_tokenTracker.formatTokens()} tokens',
+                                          style: TextStyle(
+                                            fontSize: 11,
+                                            color: headerSecondary.withValues(
+                                              alpha: 0.48,
+                                            ),
+                                            decoration: TextDecoration.none,
+                                          ),
+                                        ),
+                                      ],
+                                      const SizedBox(width: 3),
+                                      Icon(
+                                        Icons.unfold_more_rounded,
+                                        size: 10,
+                                        color: headerSecondary.withValues(
+                                          alpha: 0.38,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
                               ),
                             ),
                           ),
-                          if (_tokenTracker.totalTokens > 0) ...[
-                            Text(
-                              ' · ',
-                              style: TextStyle(
-                                fontSize: 11,
-                                color: Colors.white.withValues(alpha: 0.32),
-                              ),
-                            ),
-                            Text(
-                              '${_tokenTracker.formatTokens()} tokens',
-                              style: TextStyle(
-                                fontSize: 11,
-                                color: Colors.white.withValues(alpha: 0.48),
-                              ),
-                            ),
-                          ],
-                          const SizedBox(width: 3),
-                          Icon(
-                            Icons.unfold_more_rounded,
-                            size: 10,
-                            color: Colors.white.withValues(alpha: 0.38),
-                          ),
-                        ],
+                        ),
                       ),
                     ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
           // ═══ 左右按鈕 ═══
@@ -3213,75 +3586,28 @@ class _ChatScreenState extends State<ChatScreen> {
               Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  // ═══ 語音通話 ═══
-                  if (_sessionIdentity?.contextMode == ContextMode.daily) ...[
-                    Semantics(
-                      button: true,
-                      label: L.pick(
-                        en: 'Voice call',
-                        zhTW: '語音通話',
-                        zhCN: '语音通话',
-                      ),
-                      child: GestureDetector(
-                        behavior: HitTestBehavior.opaque,
-                        onTap: _isChatReady ? () => _openCall() : null,
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 10,
-                            vertical: 8,
-                          ),
-                          child: Icon(
-                            Icons.call_rounded,
-                            size: 21,
+                  SizedBox(
+                    width: 44,
+                    height: 44,
+                    child: _showHeaderModelDetails
+                        ? null
+                        : ChatWindowStatusButton(
                             color:
                                 _boundChatForeground?.primary ??
-                                YanciTheme.accent.withValues(alpha: 0.5),
+                                YanciTheme.textPrimary,
+                            accentColor: YanciTheme.accent,
+                            playAttention: _statusButtonNeedsAttention,
+                            onAttentionComplete: () {
+                              if (!mounted || !_statusButtonNeedsAttention) {
+                                return;
+                              }
+                              setState(
+                                () => _statusButtonNeedsAttention = false,
+                              );
+                            },
+                            onPressed: _showWindowStatus,
                           ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 2),
-                  ],
-                  // ═══ 長截圖（取代低頻的新窗口入口）═══
-                  Semantics(
-                    button: true,
-                    enabled: _isChatReady && !_isCapturingLongScreenshot,
-                    label: L.pick(en: 'Long screenshot', zhTW: '長截圖'),
-                    child: Tooltip(
-                      message: L.pick(en: 'Long screenshot', zhTW: '長截圖'),
-                      excludeFromSemantics: true,
-                      child: GestureDetector(
-                        behavior: HitTestBehavior.opaque,
-                        onTap: _isChatReady && !_isCapturingLongScreenshot
-                            ? _captureLongScreenshot
-                            : null,
-                        child: Padding(
-                          padding: const EdgeInsets.all(9),
-                          child: _isCapturingLongScreenshot
-                              ? SizedBox(
-                                  width: 18,
-                                  height: 18,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 1.7,
-                                    color:
-                                        _boundChatForeground?.primary ??
-                                        YanciTheme.accent.withValues(
-                                          alpha: 0.65,
-                                        ),
-                                  ),
-                                )
-                              : Icon(
-                                  Icons.panorama_vertical_outlined,
-                                  size: 22,
-                                  color:
-                                      _boundChatForeground?.primary ??
-                                      YanciTheme.accent.withValues(alpha: 0.5),
-                                ),
-                        ),
-                      ),
-                    ),
                   ),
-                  const SizedBox(width: 1),
                 ],
               ),
             ],
@@ -3739,10 +4065,27 @@ class _WindowSummaryEditorSheetState extends State<_WindowSummaryEditorSheet> {
   }
 }
 
-enum _RpContinuationDisplayKind { header, loadEarlier, boundary }
+enum _RpContinuationDisplayKind { header, boundary }
+
+enum _ContinuationStartMode { userFirst, characterFirst }
+
+class _ContinuationChoice {
+  const _ContinuationChoice({required this.source, required this.mode});
+
+  final RpChapterContinuationSource source;
+  final _ContinuationStartMode mode;
+}
 
 /// 顯示用消息項（支持拆分回覆）
 class _DisplayItem {
+  static final streamingAssistant = _DisplayItem(
+    text: '',
+    isUser: false,
+    messageId: 'streaming_group_probe',
+    originalIndex: -1,
+    showToolbar: false,
+  );
+
   final String text;
   final bool isUser;
   final DateTime? timestamp;
@@ -3766,6 +4109,9 @@ class _DisplayItem {
 
   /// 模型產生、用戶可編輯的本機郵件草稿；永不進提示詞。
   final EmailDraft? emailDraft;
+
+  /// Local persona proposal attached to this exact assistant reply.
+  final PersonaCardState? personaCard;
 
   /// 非空 → 這項渲染成居中分割線（通話已結束等），不渲染氣泡
   final String? callDivider;
@@ -3807,6 +4153,7 @@ class _DisplayItem {
     this.webSearchResult,
     this.webSearchTrace,
     this.emailDraft,
+    this.personaCard,
     this.showToolbar = true,
     this.cacheHit = false,
     this.incomplete = false,
@@ -3819,4 +4166,18 @@ class _DisplayItem {
     this.summaryRecordedId,
     this.continuationKind,
   });
+}
+
+bool _canGroupDisplayItems(_DisplayItem previous, _DisplayItem next) {
+  if (previous.isUser != next.isUser) return false;
+  if (previous.callDivider != null || next.callDivider != null) return false;
+  if (previous.continuationKind != null || next.continuationKind != null) {
+    return false;
+  }
+  if (previous.summaryRecordedId != null ||
+      previous.emailDraft != null ||
+      previous.personaCard != null) {
+    return false;
+  }
+  return true;
 }

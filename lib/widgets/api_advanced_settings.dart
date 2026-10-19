@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
 import '../models/context_mode.dart';
@@ -32,11 +34,96 @@ class KeepAliveGuard {
   }
 }
 
+class _AdvancedCommittedIntField extends StatefulWidget {
+  const _AdvancedCommittedIntField({
+    required this.value,
+    required this.min,
+    required this.max,
+    required this.suffix,
+    required this.onCommit,
+  });
+
+  final int value;
+  final int min;
+  final int max;
+  final String suffix;
+  final ValueChanged<int> onCommit;
+
+  @override
+  State<_AdvancedCommittedIntField> createState() =>
+      _AdvancedCommittedIntFieldState();
+}
+
+class _AdvancedCommittedIntFieldState
+    extends State<_AdvancedCommittedIntField> {
+  late final TextEditingController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: '${widget.value}');
+  }
+
+  @override
+  void didUpdateWidget(covariant _AdvancedCommittedIntField oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.value != widget.value) {
+      _controller.text = '${widget.value}';
+    }
+  }
+
+  void _commit() {
+    final parsed = int.tryParse(_controller.text.trim());
+    if (parsed == null) {
+      _controller.text = '${widget.value}';
+      return;
+    }
+    widget.onCommit(parsed.clamp(widget.min, widget.max).toInt());
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return TextField(
+      controller: _controller,
+      keyboardType: TextInputType.number,
+      textInputAction: TextInputAction.done,
+      textAlign: TextAlign.center,
+      style: YanciTheme.bodyText.copyWith(
+        fontSize: 14,
+        color: YanciTheme.accent,
+      ),
+      decoration: InputDecoration(
+        isDense: true,
+        suffixText: widget.suffix,
+        contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+        border: InputBorder.none,
+        enabledBorder: InputBorder.none,
+        focusedBorder: InputBorder.none,
+      ),
+      onTapOutside: (_) {
+        _commit();
+        FocusManager.instance.primaryFocus?.unfocus();
+      },
+      onSubmitted: (_) {
+        _commit();
+        FocusManager.instance.primaryFocus?.unfocus();
+      },
+    );
+  }
+}
+
 class ApiAdvancedSettings extends StatefulWidget {
   final bool cacheOnly;
   final bool showCacheSection;
   final bool showKeepAliveSection;
   final bool showContextSection;
+  final bool showCacheMasterToggle;
 
   const ApiAdvancedSettings({
     super.key,
@@ -44,6 +131,7 @@ class ApiAdvancedSettings extends StatefulWidget {
     this.showCacheSection = true,
     this.showKeepAliveSection = true,
     this.showContextSection = true,
+    this.showCacheMasterToggle = true,
   });
 
   @override
@@ -252,6 +340,13 @@ class _ApiAdvancedSettingsState extends State<ApiAdvancedSettings> {
           model: await ApiSettings.getModelForProvider(provider),
           apiKey: inklingKey,
         );
+        // Inkling cannot use prompt cache.  The safe fallback is the
+        // mutually-exclusive context limit, so the user's cache tap still
+        // leaves them with a usable cost-control mode instead of silently
+        // turning every protection off.
+        if (!await MemorySettings.getContextLimitEnabled()) {
+          await ModelCostPolicy.setContextLimitEnabled(true);
+        }
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -290,9 +385,6 @@ class _ApiAdvancedSettingsState extends State<ApiAdvancedSettings> {
       decoration: BoxDecoration(
         color: Colors.transparent,
         borderRadius: BorderRadius.circular(YanciTheme.radiusMd),
-        border: bordered
-            ? Border.all(color: _settingsBorderColor, width: 1)
-            : null,
       ),
       child: child,
     );
@@ -324,14 +416,14 @@ class _ApiAdvancedSettingsState extends State<ApiAdvancedSettings> {
   OutlineInputBorder _thinInputBorder({Color? color, double width = 1}) {
     return OutlineInputBorder(
       borderRadius: BorderRadius.circular(YanciTheme.radiusSm),
-      borderSide: BorderSide(
-        color: color ?? _settingsBorderColor,
-        width: width,
-      ),
+      borderSide: BorderSide.none,
     );
   }
 
-  Widget _buildSummaryTriggerEditor(int summaryTrigger) {
+  Widget _buildSummaryTriggerEditor(
+    int summaryTrigger, {
+    required ValueChanged<int> onChanged,
+  }) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -344,36 +436,12 @@ class _ApiAdvancedSettingsState extends State<ApiAdvancedSettings> {
             const Spacer(),
             SizedBox(
               width: 92,
-              child: TextField(
-                keyboardType: TextInputType.number,
-                textAlign: TextAlign.center,
-                style: YanciTheme.bodyText.copyWith(
-                  fontSize: 14,
-                  color: YanciTheme.accent,
-                ),
-                decoration: InputDecoration(
-                  isDense: true,
-                  suffixText: 't',
-                  contentPadding: const EdgeInsets.symmetric(
-                    horizontal: 8,
-                    vertical: 6,
-                  ),
-                  border: _thinInputBorder(),
-                  enabledBorder: _thinInputBorder(),
-                  focusedBorder: _thinInputBorder(
-                    color: YanciTheme.accent.withValues(alpha: 0.85),
-                    width: 1,
-                  ),
-                ),
-                controller: TextEditingController(text: '$summaryTrigger'),
-                onChanged: (value) {
-                  final tokens = int.tryParse(value);
-                  if (tokens != null &&
-                      tokens >= MemorySettings.windowSummaryTriggerMinTokens &&
-                      tokens <= MemorySettings.windowSummaryTriggerMaxTokens) {
-                    MemorySettings.saveWindowSummaryTriggerTokens(tokens);
-                  }
-                },
+              child: _AdvancedCommittedIntField(
+                value: summaryTrigger,
+                min: 2,
+                max: 200,
+                suffix: L.pick(en: '', zhTW: '條', zhCN: '条'),
+                onCommit: onChanged,
               ),
             ),
           ],
@@ -381,9 +449,9 @@ class _ApiAdvancedSettingsState extends State<ApiAdvancedSettings> {
         const SizedBox(height: 4),
         Text(
           L.pick(
-            en: 'A summary runs whenever new unsummarized content reaches this token count. A whole message is never split.',
-            zhTW: '未摘要內容每次累積到此 Token 數即觸發；單則消息不會被切開。',
-            zhCN: '未摘要内容每次累积到此 Token 数即触发；单条消息不会被切开。',
+            en: 'A summary runs after this many complete unsummarized messages.',
+            zhTW: '未摘要內容累積到此消息條數後觸發，消息不會被拆開。',
+            zhCN: '未摘要内容累积到此消息条数后触发，消息不会被拆开。',
           ),
           style: YanciTheme.bodySmall.copyWith(
             fontSize: 10,
@@ -517,13 +585,17 @@ class _ApiAdvancedSettingsState extends State<ApiAdvancedSettings> {
                 children: [
                   Text(
                     title,
-                    style: YanciTheme.bodyText.copyWith(fontSize: 13),
+                    style:
+                        (widget.cacheOnly
+                                ? YanciTheme.bodySmall
+                                : YanciTheme.bodyText)
+                            .copyWith(fontSize: widget.cacheOnly ? 11.5 : 13),
                   ),
                   const SizedBox(height: 2),
                   Text(
                     description,
                     style: YanciTheme.bodySmall.copyWith(
-                      fontSize: 11,
+                      fontSize: widget.cacheOnly ? 10.5 : 11,
                       color: YanciTheme.textSecondary.withValues(alpha: 0.5),
                     ),
                   ),
@@ -594,27 +666,36 @@ class _ApiAdvancedSettingsState extends State<ApiAdvancedSettings> {
           return Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              _buildCheckOption(
-                title: L.get('settings_cache_on'),
-                description: L.get('settings_cache_hint'),
-                value: cacheOn,
-                onChanged: (value) =>
-                    _handlePromptCachingChanged(value ?? false),
-              ),
+              if (widget.showCacheMasterToggle)
+                _buildCheckOption(
+                  title: L.get('settings_cache_on'),
+                  description: L.get('settings_cache_hint'),
+                  value: cacheOn,
+                  onChanged: (value) =>
+                      _handlePromptCachingChanged(value ?? false),
+                ),
               if (cacheOn) ...[
-                const SizedBox(height: 10),
-                _buildFadeDivider(),
-                const SizedBox(height: 8),
+                if (widget.showCacheMasterToggle) ...[
+                  const SizedBox(height: 10),
+                  _buildFadeDivider(),
+                  const SizedBox(height: 8),
+                ],
                 FutureBuilder<List<dynamic>>(
                   future: Future.wait(<Future<dynamic>>[
                     MemorySettings.getCacheWindowSummaryEnabled(),
-                    MemorySettings.getWindowSummaryTriggerTokens(),
+                    MemorySettings.getCacheSummaryTriggerMessages(),
+                    MemorySettings.getSummaryModel(),
                   ]),
                   builder: (ctx, summarySnap) {
                     final summaryEnabled =
                         (summarySnap.data?[0] as bool?) ?? false;
                     final summaryTrigger =
-                        (summarySnap.data?[1] as int?) ?? 6000;
+                        (summarySnap.data?[1] as int?) ??
+                        MemorySettings.defaultCacheSummaryTriggerMessages;
+                    final hasSummaryModel =
+                        ((summarySnap.data?[2] as String?) ?? '')
+                            .trim()
+                            .isNotEmpty;
                     return Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
@@ -626,25 +707,40 @@ class _ApiAdvancedSettingsState extends State<ApiAdvancedSettings> {
                             zhTW: '專用窗口摘要',
                             zhCN: '专用窗口摘要',
                           ),
-                          description: L.pick(
-                            en: 'Pins a window summary into the cacheable prompt for new windows.',
-                            zhTW: '新窗口把窗口摘要釘入可緩存提示。',
-                            zhCN: '新窗口把窗口摘要钉入可缓存提示。',
-                          ),
-                          value: summaryEnabled,
-                          onChanged: (value) {
-                            MemorySettings.saveCacheWindowSummaryEnabled(
-                              value ?? false,
-                            );
-                            setState(() {});
-                            StaticTokenEstimator.showAfterToggle(context);
-                          },
+                          description: !hasSummaryModel
+                              ? L.pick(
+                                  en: 'Choose a summary model first.',
+                                  zhTW: '請先選擇摘要模型。',
+                                  zhCN: '请先选择摘要模型。',
+                                )
+                              : L.pick(
+                                  en: 'Pins a window summary into the cacheable prompt for new windows.',
+                                  zhTW: '新窗口把窗口摘要釘入可緩存提示。',
+                                  zhCN: '新窗口把窗口摘要钉入可缓存提示。',
+                                ),
+                          value: hasSummaryModel && summaryEnabled,
+                          onChanged: !hasSummaryModel
+                              ? null
+                              : (value) {
+                                  MemorySettings.saveCacheWindowSummaryEnabled(
+                                    value ?? false,
+                                  );
+                                  setState(() {});
+                                  StaticTokenEstimator.showAfterToggle(context);
+                                },
                         ),
-                        if (summaryEnabled) ...[
+                        if (hasSummaryModel && summaryEnabled) ...[
                           const SizedBox(height: 8),
                           Padding(
                             padding: const EdgeInsets.only(left: 40),
-                            child: _buildSummaryTriggerEditor(summaryTrigger),
+                            child: _buildSummaryTriggerEditor(
+                              summaryTrigger,
+                              onChanged: (value) => unawaited(
+                                MemorySettings.saveCacheSummaryTriggerMessages(
+                                  value,
+                                ),
+                              ),
+                            ),
                           ),
                           Padding(
                             padding: const EdgeInsets.only(left: 32),
@@ -906,17 +1002,20 @@ class _ApiAdvancedSettingsState extends State<ApiAdvancedSettings> {
                 child: FutureBuilder<List<dynamic>>(
                   future: Future.wait([
                     MemorySettings.getContextLimitEnabled(),
-                    MemorySettings.getContextTokenLimit(),
+                    MemorySettings.getContextMessageLimit(),
                     MemorySettings.getContextWindowSummaryEnabled(),
-                    MemorySettings.getWindowSummaryTriggerTokens(),
+                    MemorySettings.getContextSummaryTriggerMessages(),
                     MemorySettings.getEnablePromptCaching(),
                   ]),
                   builder: (ctx, snap) {
                     final storedEnabled = (snap.data?[0] as bool?) ?? false;
-                    final rawLimit = (snap.data?[1] as int?) ?? 5000;
-                    final limit = rawLimit < 1000 ? 5000 : rawLimit;
+                    final limit =
+                        (snap.data?[1] as int?) ??
+                        MemorySettings.defaultContextMessageLimit;
                     final summaryEnabled = (snap.data?[2] as bool?) ?? false;
-                    final summaryTrigger = (snap.data?[3] as int?) ?? 6000;
+                    final summaryTrigger =
+                        (snap.data?[3] as int?) ??
+                        MemorySettings.defaultContextSummaryTriggerMessages;
                     final cacheOn = (snap.data?[4] as bool?) ?? false;
                     final enabled = storedEnabled && !cacheOn;
                     return Column(
@@ -940,7 +1039,11 @@ class _ApiAdvancedSettingsState extends State<ApiAdvancedSettings> {
                           Row(
                             children: [
                               Text(
-                                L.pick(en: 'Max tokens', zhTW: '上限'),
+                                L.pick(
+                                  en: 'Messages sent',
+                                  zhTW: '發送消息條數',
+                                  zhCN: '发送消息条数',
+                                ),
                                 style: YanciTheme.bodySmall.copyWith(
                                   fontSize: 12,
                                 ),
@@ -948,38 +1051,16 @@ class _ApiAdvancedSettingsState extends State<ApiAdvancedSettings> {
                               const Spacer(),
                               SizedBox(
                                 width: 80,
-                                child: TextField(
-                                  keyboardType: TextInputType.number,
-                                  textAlign: TextAlign.center,
-                                  style: YanciTheme.bodyText.copyWith(
-                                    fontSize: 14,
-                                    color: YanciTheme.accent,
-                                  ),
-                                  decoration: InputDecoration(
-                                    isDense: true,
-                                    suffixText: 't',
-                                    contentPadding: const EdgeInsets.symmetric(
-                                      horizontal: 8,
-                                      vertical: 6,
-                                    ),
-                                    border: _thinInputBorder(),
-                                    enabledBorder: _thinInputBorder(),
-                                    focusedBorder: _thinInputBorder(
-                                      color: YanciTheme.accent.withValues(
-                                        alpha: 0.85,
-                                      ),
-                                      width: 1,
+                                child: _AdvancedCommittedIntField(
+                                  value: limit,
+                                  min: MemorySettings.minContextMessageLimit,
+                                  max: MemorySettings.maxContextMessageLimit,
+                                  suffix: L.pick(en: '', zhTW: '條', zhCN: '条'),
+                                  onCommit: (value) => unawaited(
+                                    MemorySettings.saveContextMessageLimit(
+                                      value,
                                     ),
                                   ),
-                                  controller: TextEditingController(
-                                    text: '$limit',
-                                  ),
-                                  onChanged: (v) {
-                                    final n = int.tryParse(v);
-                                    if (n != null && n >= 1000) {
-                                      MemorySettings.saveContextTokenLimit(n);
-                                    }
-                                  },
                                 ),
                               ),
                             ],
@@ -987,8 +1068,9 @@ class _ApiAdvancedSettingsState extends State<ApiAdvancedSettings> {
                           const SizedBox(height: 4),
                           Text(
                             L.pick(
-                              en: 'Minimum 1000t. Use the switch above to turn the limit off.',
-                              zhTW: '最低 1000t；要關閉限制請直接關上方開關。',
+                              en: 'The newest complete messages are sent. Turn off the switch to remove the limit.',
+                              zhTW: '只送出最新的完整消息；關閉上方開關即可取消限制。',
+                              zhCN: '只发送最新的完整消息；关闭上方开关即可取消限制。',
                             ),
                             style: YanciTheme.bodySmall.copyWith(
                               fontSize: 10,
@@ -1036,7 +1118,14 @@ class _ApiAdvancedSettingsState extends State<ApiAdvancedSettings> {
                         ],
                         if (enabled && summaryEnabled) ...[
                           const SizedBox(height: 10),
-                          _buildSummaryTriggerEditor(summaryTrigger),
+                          _buildSummaryTriggerEditor(
+                            summaryTrigger,
+                            onChanged: (value) => unawaited(
+                              MemorySettings.saveContextSummaryTriggerMessages(
+                                value,
+                              ),
+                            ),
+                          ),
                           _buildCustomSummaryRulesEntry('context'),
                         ],
                       ],

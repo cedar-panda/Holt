@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
 import 'package:project_yanci/services/deepseek_service.dart';
+import 'package:project_yanci/services/deepinfra_service.dart';
 import 'package:project_yanci/services/gemini_service.dart';
 import 'package:project_yanci/services/openai_compatible_service.dart';
 import 'package:project_yanci/services/openrouter_service.dart';
@@ -127,6 +128,60 @@ void main() {
       'deepseek-v4-pro',
     ]);
   });
+
+  test(
+    'DeepInfra discovery keeps chat and embedding models separate',
+    () async {
+      final client = MockClient((request) async {
+        if (request.url == Uri.parse(DeepInfraService.modelsUrl)) {
+          expect(request.headers['authorization'], 'Bearer deepinfra-test-key');
+          return http.Response(
+            jsonEncode(<String, Object?>{
+              'data': <Object?>[
+                <String, Object?>{'id': 'Qwen/Qwen3.8-Flash'},
+                <String, Object?>{'id': 'BAAI/bge-m3'},
+                <String, Object?>{'id': 'image/not-for-chat'},
+              ],
+            }),
+            200,
+          );
+        }
+        expect(request.url, Uri.parse(DeepInfraService.catalogueUrl));
+        return http.Response(
+          jsonEncode(<Object?>[
+            <String, Object?>{
+              'model_name': 'Qwen/Qwen3.8-Flash',
+              'type': 'text-generation',
+              'tags': <String>['openai'],
+            },
+            <String, Object?>{
+              'model_name': 'BAAI/bge-m3',
+              'type': 'embeddings',
+              'tags': <String>['openai'],
+            },
+            <String, Object?>{
+              'model_name': 'image/not-for-chat',
+              'type': 'text-to-image',
+              'tags': <String>['openai'],
+            },
+          ]),
+          200,
+        );
+      });
+
+      final chat = await DeepInfraService.fetchModels(
+        'deepinfra-test-key',
+        client: client,
+      );
+      final embeddings = await DeepInfraService.fetchEmbeddingModels(
+        'deepinfra-test-key',
+        client: client,
+      );
+
+      expect(chat.map((model) => model.id), <String>['Qwen/Qwen3.8-Flash']);
+      expect(embeddings.map((model) => model.id), <String>['BAAI/bge-m3']);
+    },
+  );
 
   test(
     'OpenRouter discovery keeps its credential and metadata isolated',

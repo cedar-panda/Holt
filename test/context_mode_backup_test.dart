@@ -66,7 +66,7 @@ void main() {
     final backup = _emptyV5(databaseVersion: 50);
     backup['characters'] = <Object?>[_characterRow()];
     backup['user_personas'] = <Object?>[
-      _personaRow(id: 'default', name: '昭昭', isDefault: true),
+      _personaRow(id: 'default', name: '小禾', isDefault: true),
       _personaRow(id: 'persona-rp', name: '巡夜人'),
     ];
     backup['character_persona_bindings'] = <Object?>[
@@ -106,6 +106,43 @@ void main() {
     );
   });
 
+  test('old mode-scoped bindings import as one newest shared pair', () {
+    final backup = _emptyV5(databaseVersion: 81);
+    backup['characters'] = <Object?>[_characterRow()];
+    backup['user_personas'] = <Object?>[
+      _personaRow(id: 'default', name: '小禾', isDefault: true),
+      _personaRow(id: 'persona-daily', name: '日常'),
+      _personaRow(id: 'persona-rp', name: 'RP'),
+    ];
+    backup['character_persona_bindings'] = <Object?>[
+      <String, Object?>{
+        'character_id': 'char-a',
+        'context_mode': 'daily',
+        'continuity_id': 'main',
+        'user_persona_id': 'persona-daily',
+        'created_at': '2026-09-13T00:00:00.000Z',
+        'updated_at': '2026-09-13T00:00:00.000Z',
+      },
+      <String, Object?>{
+        'character_id': 'char-a',
+        'context_mode': 'rp',
+        'continuity_id': 'route-b',
+        'user_persona_id': 'persona-rp',
+        'created_at': '2026-09-14T00:00:00.000Z',
+        'updated_at': '2026-09-14T00:00:00.000Z',
+      },
+    ];
+
+    final bindings = BackupService.normalizeForTesting(
+      backup,
+    )['character_persona_bindings']!;
+
+    expect(bindings, hasLength(1));
+    expect(bindings.single['user_persona_id'], 'persona-rp');
+    expect(bindings.single['context_mode'], 'daily');
+    expect(bindings.single['continuity_id'], 'main');
+  });
+
   test('v50 backup without mode overrides remains importable', () {
     final backup = _emptyV5(databaseVersion: 50);
     final schema = backup['schema']! as Map<String, dynamic>;
@@ -122,7 +159,7 @@ void main() {
     final backup = _emptyV5(databaseVersion: 50);
     backup['characters'] = <Object?>[_characterRow()];
     backup['user_personas'] = <Object?>[
-      _personaRow(id: 'default', name: '昭昭', isDefault: true),
+      _personaRow(id: 'default', name: '小禾', isDefault: true),
     ];
     backup['character_persona_bindings'] = <Object?>[
       <String, Object?>{
@@ -151,7 +188,7 @@ void main() {
     final backup = _emptyV5(databaseVersion: 50);
     backup['characters'] = <Object?>[_characterRow()];
     backup['user_personas'] = <Object?>[
-      _personaRow(id: 'default', name: '昭昭', isDefault: true),
+      _personaRow(id: 'default', name: '小禾', isDefault: true),
       _personaRow(id: 'persona-rp', name: '巡夜人'),
     ];
     backup['conversations'] = <Object?>[

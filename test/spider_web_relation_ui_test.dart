@@ -262,14 +262,14 @@ const _memories = <Map<String, dynamic>>[
   {
     'id': 1,
     'category': '偏好',
-    'content': '昭昭喜歡雨天',
+    'content': '小禾喜歡雨天',
     'mention_count': 1,
     'created_at': '2026-08-01T00:00:00.000',
   },
   {
     'id': 2,
     'category': '偏好',
-    'content': '昭昭喜歡下雨',
+    'content': '小禾喜歡下雨',
     'mention_count': 1,
     'created_at': '2026-08-02T00:00:00.000',
   },

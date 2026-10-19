@@ -260,7 +260,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 50));
     }
 
-    await tester.tap(find.byKey(const Key('api_settings_provider_toggle')));
+    await tester.tap(find.byKey(const Key('api_settings_provider_selector')));
     await tester.pump();
     expect(find.byKey(const Key('api_settings_provider_xai')), findsOneWidget);
     await tester.tap(find.byKey(const Key('api_settings_provider_xai')));

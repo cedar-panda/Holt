@@ -18,6 +18,7 @@ import '../services/settings_manager.dart';
 import '../services/token_estimator.dart';
 import '../services/token_tracker.dart';
 import '../services/api_adapter.dart';
+import '../services/app_error_log_service.dart';
 import '../services/local_ai_service.dart';
 import '../services/locale_strings.dart';
 import '../services/recall_text_matcher.dart';
@@ -26,7 +27,7 @@ import '../services/user_persona_service.dart';
 /// 窗口摘要器 — 鏈式摘要 + 關鍵詞提取
 ///
 /// 三層結構：
-/// - 關鍵詞層 ≤ 1800 tokens（最舊摘要壓縮而來，觸發召回用）
+/// - 關鍵詞層完整保存（最舊摘要壓縮而來，只作觸發索引）
 /// - 摘要層   ≤ 3600 tokens（滾動更新，180-450t / block）
 /// - 原文區   從成功游標起約 6000 tokens（邊界氣泡完整納入，可略超）
 ///
@@ -36,32 +37,48 @@ class ContextCompressor {
   static const int triggerTokens = 6000;
   static const int minCompressTokens = 500;
   static const int summaryCapTokens = 3600;
-  static const int keywordCapTokens = 1800;
+
+  /// Legacy diagnostic value kept for old debug consumers. Recall labels are
+  /// no longer evicted by a token cap; only matched event segments are sent to
+  /// the chat model, so retaining the complete local index does not enlarge a
+  /// normal prompt.
+  @Deprecated('RP recall labels are retained without a storage token cap.')
+  static const int keywordCapTokens =
+      DatabaseHelper.contextKeywordIndexTokenCap;
   static const int latestSummaryBlocksForPrompt = 4;
-  static const int rpKeywordRecallLimit = 3;
+
+  /// A message-count trigger is an explicit user-selected cadence. It must not
+  /// inherit the token-based 500-token floor, otherwise a short oldest batch
+  /// can keep the summary cursor at zero forever and every later retry will
+  /// select the same unprocessable messages again.
+  static int minimumSourceTokensForTrigger({int? triggerMessageLimit}) =>
+      triggerMessageLimit == null ? minCompressTokens : 1;
 
   @visibleForTesting
   static int suggestedRpSummaryMaxCharsForSource(int sourceCharacters) {
-    if (sourceCharacters >= 1200000) return 10000;
-    if (sourceCharacters >= 700000) return 8000;
-    if (sourceCharacters >= 300000) return 6000;
-    if (sourceCharacters >= 100000) return 4500;
-    return RpSummaryPrompt.defaultMaxChars;
+    if (sourceCharacters >= 1200000) return 4000;
+    if (sourceCharacters >= 700000) return 3400;
+    if (sourceCharacters >= 300000) return 2800;
+    if (sourceCharacters >= 100000) return 2200;
+    return 1200;
   }
 
   static Future<int> effectiveRpSummaryMaxChars({
     required String characterId,
     required String continuityId,
   }) async {
+    final userCeiling = await MemorySettings.getRpSummaryMaxChars();
     if (!await MemorySettings.getRpSummaryAutoMaxCharsEnabled()) {
-      return MemorySettings.getRpSummaryMaxChars();
+      return userCeiling;
     }
     final sourceCharacters =
         await DatabaseHelper.getRpStorylineSourceCharacterCount(
           characterId: characterId,
           continuityId: continuityId,
         );
-    return suggestedRpSummaryMaxCharsForSource(sourceCharacters);
+    return suggestedRpSummaryMaxCharsForSource(
+      sourceCharacters,
+    ).clamp(800, userCeiling).toInt();
   }
 
   /// User rules are optional preferences. They may shape emphasis and wording,
@@ -103,7 +120,8 @@ Apply the following preferences only where they do not conflict with the require
   // 詳細規格由本地驗證器與測試承擔；正式 prompt 只保留正向准入條件，
   // 避免長禁令清單既燒 token，又把不希望出現的概念反覆提示給小模型。
   static const String _compressPromptZh = '''
-整合【前次摘要】與帶有消息 ID、本地時間及發言者的【新對話內容】。
+整合【最近摘要基底】與帶有消息 ID、本地時間及發言者的【新對話內容】。
+【最近摘要基底】最多包含最近兩份有效摘要，按較早到最新排列。兩份摘要可能互相包含；先合併重複內容，再加入本輪內容。
 
 summary：輸出「前情提要」與「本次摘要」兩部分。
 - 只記錄對話中明確發生的事：說過的話、做過的決定、發生的事件
@@ -113,13 +131,16 @@ summary：輸出「前情提要」與「本次摘要」兩部分。
 - 保留具體的名字、地點、時間、數字；重要的話保留原詞
 - 去掉寒暄、重複、過渡語
 - 用第三人稱，簡潔客觀
-- 摘要正文約 250～700 個中文字；內容完整優先，不為湊字數重複
+- 每輪輸出的 summary 是目前完整的滾動摘要，不是只描述本輪的增量附錄
+- 最近摘要基底中的重點事件必須繼續存在。可以縮短措辭、合併重複事件或用新狀態更新舊狀態，但不能省略事件主體、發生內容、必要原因、結果及持續影響
+- 已收束事件仍保留「起因、結果、影響」；只有 User 明確修正、來源被判定無效或舊狀態被新狀態取代時才改寫
+- 內容完整優先，不為湊字數重複
 - summary 欄位只放摘要正文，不要前綴說明
 - 使用以下 Markdown 結構：
   ## 前情提要
-  將【前次摘要】壓縮為 60～120 字；沒有前次摘要時，概括本批對話開始時的情境
+  整合【最近摘要基底】中仍有效的全部重點事件；使用簡潔措辭，但不得因篇幅省略
   ## 本次摘要
-  只整理【新對話內容】
+  整理【新對話內容】帶來的新增、修正與進展
 - 使用精簡 Markdown，按實際內容選 2～4 個區塊，沒有內容的區塊省略
 - 區塊標題使用「**1. 重要事件與決定**」格式；內容使用「* **主題：** 事實」格式
 - 區塊從「重要事件與決定、關係與情緒變化、持續狀態與偏好、承諾與待續事項」中選擇
@@ -132,7 +153,7 @@ timeline：只從【新對話內容】提取屬於角色本人或雙方關係、
 ''';
 
   static const String _compressPromptEn = '''
-Combine 【Previous Summary】 with 【New Conversation】, whose messages include ids, local timestamps, and speaker roles.
+Combine 【Recent Summary Anchors】 with 【New Conversation】, whose messages include ids, local timestamps, and speaker roles. The anchor block contains up to the two most recent valid summaries in older-to-newer order. Merge their overlap before adding this batch.
 
 summary: Output two parts, Prior Context and This Update.
 - Record only what explicitly happened: things said, decisions made, events that occurred
@@ -142,13 +163,15 @@ summary: Output two parts, Prior Context and This Update.
 - Keep specific names, places, times, numbers, and important original wording
 - Remove greetings, repetition, and filler
 - Use third person, concise and objective
-- Output 180-450 tokens
+- Output the complete current rolling summary, not an incremental note about this batch
+- Every important event from the recent summary anchors must remain represented. Wording may be shortened, duplicates merged, and superseded state updated, but the actor, event, necessary cause, result, and lasting effect cannot be omitted
+- A closed event still keeps its cause, result, and effect. Rewrite it only when the user explicitly corrects it, its source is invalidated, or a newer state replaces an older state
 - Put only the summary body in the summary field, with no prefix
 - Use this Markdown structure:
   ## Prior Context
-  Compress 【Previous Summary】 into 40-90 words; when absent, recap the situation at the start of this batch
+  Integrate every still-valid important event from 【Recent Summary Anchors】 in concise wording without dropping it
   ## This Update
-  Cover only 【New Conversation】
+  Cover additions, corrections, and developments from 【New Conversation】
 - Use compact Markdown with 2-4 non-empty sections
 - Format section titles as "**1. Important events and decisions**" and entries as "* **Topic:** fact"
 - Choose sections from important events and decisions, relationship and emotional changes, ongoing states and preferences, and promises and open threads
@@ -400,6 +423,8 @@ Rules:
     bool isRepair = false,
     int? repairSummaryId,
   }) {
+    final sourceMessages = summaryEligibleMessages(messages);
+    if (sourceMessages.isEmpty) return Future<int>.value(0);
     final normalizedCharacterId = characterId.trim().isEmpty
         ? 'default'
         : characterId.trim();
@@ -412,7 +437,7 @@ Rules:
         if (isRepair) {
           return existing.then(
             (_) => compress(
-              messages: messages,
+              messages: sourceMessages,
               characterId: characterId,
               conversationId: conversationId,
               contextMode: contextMode,
@@ -442,7 +467,7 @@ Rules:
     operation = previous
         .then(
           (_) => _compressQueued(
-            messages: messages,
+            messages: sourceMessages,
             characterId: normalizedCharacterId,
             conversationId: normalizedConversationId,
             contextMode: contextMode,
@@ -513,16 +538,19 @@ Rules:
     );
     if (rawTokens < minimumSourceTokens) return 0; // 太短不壓
 
-    // 取前次摘要（最新一塊）
+    // Snowball chain: every new summary receives the two newest valid
+    // summaries in the same mode/storyline, older first. Include archived
+    // rows here because archiving only changes live-recall storage; it must
+    // not silently remove a recent chain anchor from the next summary pass.
     final existingSummaries = await DatabaseHelper.getContextSummaries(
       characterId,
       contextMode: contextMode,
       continuityId: continuityId,
+      includeArchived: true,
     );
-    String? prevSummary;
-    if (existingSummaries.isNotEmpty) {
-      prevSummary = existingSummaries.last['content'] as String;
-    }
+    final rollingSummaryAnchors = existingSummaries.length <= 2
+        ? existingSummaries
+        : existingSummaries.sublist(existingSummaries.length - 2);
 
     // 組裝輸入
     final identity = await _loadSummaryIdentity(
@@ -572,12 +600,17 @@ Rules:
       userContent.writeln();
       userContent.writeln(
         L.pick(
-          en: '【Existing Story Dossier】',
-          zhTW: '【既有劇情摘要】',
-          zhCN: '【既有剧情摘要】',
+          en: '【Existing Story Dossiers · older to newer】',
+          zhTW: '【既有劇情摘要 · 較早到最新】',
+          zhCN: '【既有剧情摘要 · 较早到最新】',
         ),
       );
-      userContent.writeln(prevSummary ?? '');
+      userContent.writeln(
+        _formatRollingSummaryAnchors(
+          rollingSummaryAnchors,
+          contextMode: contextMode,
+        ),
+      );
       userContent.writeln();
       userContent.writeln(
         L.pick(
@@ -596,9 +629,16 @@ Rules:
         }),
       );
       userContent.writeln();
-    } else if (prevSummary != null && prevSummary.isNotEmpty) {
-      userContent.writeln(L.pick(en: '【Previous Summary】', zhTW: '【前次摘要】'));
-      userContent.writeln(prevSummary);
+    } else if (rollingSummaryAnchors.isNotEmpty) {
+      userContent.writeln(
+        L.pick(en: '【Recent Summary Anchors】', zhTW: '【最近摘要基底】'),
+      );
+      userContent.writeln(
+        _formatRollingSummaryAnchors(
+          rollingSummaryAnchors,
+          contextMode: contextMode,
+        ),
+      );
       userContent.writeln();
     }
     userContent.writeln(
@@ -612,9 +652,12 @@ Rules:
     );
     userContent.write(rawText);
 
-    // 調用小模型
+    // 調用小模型。RP 的既有事件保留由下方的本地合併器兜底，不能因
+    // 模型漏掉一個標題就重叫一次模型並把整批結果丟棄；那會令摘要
+    // 游標永遠不前進，連帶讓人物／關係投影永遠無法落庫。
     final response = await _callModel(
       characterId: characterId,
+      conversationId: conversationId,
       systemPrompt: prompt,
       userMessage: userContent.toString(),
     );
@@ -629,10 +672,50 @@ Rules:
       );
       return 0;
     }
-    final summaryText = contextMode == ContextMode.rp
+    var summaryText = contextMode == ContextMode.rp
         ? normalizeRpSummaryFormat(decoded.summary)
         : normalizeSummaryFormat(decoded.summary);
-    if (summaryText.isEmpty) return 0;
+    if (summaryText.isEmpty) {
+      try {
+        await AppErrorLogService.record(
+          error: const FormatException('摘要模型回傳內容無法解析為有效摘要'),
+          trigger: 'automatic_summary_decode',
+          source: 'summary',
+        );
+      } catch (_) {
+        // Diagnostics must never replace the original summary failure.
+      }
+      return 0;
+    }
+    if (contextMode == ContextMode.rp) {
+      final missingTitles = _missingRpCarryoverTitles(
+        rollingSummaryAnchors,
+        summaryText,
+      );
+      if (missingTitles.isNotEmpty) {
+        summaryText = _restoreMissingRpCarryoverEvents(
+          rollingSummaryAnchors,
+          summaryText,
+        );
+        developer.log(
+          'Restored omitted RP carryover events locally: '
+          '${missingTitles.join(' | ')}',
+          name: 'ContextCompressor',
+        );
+      }
+      final rpSummaryMaxChars = await effectiveRpSummaryMaxChars(
+        characterId: characterId,
+        continuityId: continuityId,
+      );
+      summaryText = compactRpSummaryToHardLimit(summaryText, rpSummaryMaxChars);
+      developer.log(
+        'RP summary projections decoded: '
+        'characters=${decoded.storyCharacters.length} '
+        'relationships=${decoded.relationships.length} '
+        'states=${decoded.storyStates.length}',
+        name: 'ContextCompressor',
+      );
+    }
     if (conversationId.isNotEmpty &&
         !await DatabaseHelper.messageSnapshotsStillCurrent(messages)) {
       developer.log(
@@ -650,6 +733,12 @@ Rules:
         : decoded.timeline;
 
     final summaryTokens = TokenEstimator.estimate(summaryText);
+    final recallSegments = contextMode == ContextMode.rp
+        ? buildRpRecallSegmentDrafts(
+            summary: summaryText,
+            modelSegments: decoded.recallSegments,
+          )
+        : const <ContextSummarySegmentDraft>[];
     final sourceConversationId = conversationId;
 
     final cursorMessageId = messages
@@ -678,6 +767,7 @@ Rules:
         continuityId: continuityId,
         expectedSourceMessages: messages,
         allowPendingRepairs: true,
+        recallSegments: recallSegments,
       );
     } else if (sourceConversationId.isNotEmpty && cursorMessageId > 0) {
       summaryId = await DatabaseHelper.insertContextSummaryAndAdvanceCursor(
@@ -693,6 +783,7 @@ Rules:
         continuityId: continuityId,
         expectedSourceMessages: messages,
         allowPendingRepairs: isRepair,
+        recallSegments: recallSegments,
       );
     } else {
       summaryId = await DatabaseHelper.insertContextSummary(
@@ -704,6 +795,7 @@ Rules:
         contextMode: contextMode,
         continuityId: continuityId,
         expectedSourceMessages: messages,
+        recallSegments: recallSegments,
       );
     }
     if (summaryId <= 0) return 0;
@@ -767,6 +859,7 @@ Rules:
         RpWorldbookService.maybeProcessAfterSummary(
           characterId: characterId,
           continuityId: continuityId,
+          triggerConversationId: sourceConversationId,
         ),
       );
     }
@@ -781,17 +874,34 @@ Rules:
     int triggerTokenLimit = triggerTokens,
     int minTokenThreshold = triggerTokens,
     int? thresholdTokenCount,
+    int? triggerMessageLimit,
+    int? minMessageThreshold,
     ContextMode contextMode = ContextMode.daily,
     String continuityId = 'main',
   }) async {
     final cursor = await DatabaseHelper.getConversationSummaryCursor(
       conversationId,
     );
-    final messages = await DatabaseHelper.getMessagesAfterId(
-      conversationId,
-      cursor,
+    final messages = summaryEligibleMessages(
+      await DatabaseHelper.getMessagesAfterId(conversationId, cursor),
     );
     if (messages.isEmpty) return 0;
+
+    if (triggerMessageLimit != null) {
+      final minimum = minMessageThreshold ?? triggerMessageLimit;
+      if (messages.length < minimum) return 0;
+      final recentMsgs = selectWholeMessageBatch(messages, triggerMessageLimit);
+      return compress(
+        messages: recentMsgs,
+        characterId: characterId,
+        conversationId: conversationId,
+        contextMode: contextMode,
+        continuityId: continuityId,
+        minimumSourceTokens: minimumSourceTokensForTrigger(
+          triggerMessageLimit: triggerMessageLimit,
+        ),
+      );
+    }
 
     final totalTokens = _estimateMessageTokens(messages);
     final comparableTokens = thresholdTokenCount ?? totalTokens;
@@ -813,17 +923,45 @@ Rules:
     final cursor = await DatabaseHelper.getConversationSummaryCursor(
       conversationId,
     );
-    final messages = await DatabaseHelper.getMessagesAfterId(
-      conversationId,
-      cursor,
+    final messages = summaryEligibleMessages(
+      await DatabaseHelper.getMessagesAfterId(conversationId, cursor),
     );
     return _estimateMessageTokens(messages);
   }
 
+  /// Number of complete message bubbles not yet covered by the persisted
+  /// summary cursor. This is the source of truth for message-count based
+  /// summary thresholds.
+  static Future<int> pendingMessageCount(String conversationId) async {
+    final cursor = await DatabaseHelper.getConversationSummaryCursor(
+      conversationId,
+    );
+    final messages = summaryEligibleMessages(
+      await DatabaseHelper.getMessagesAfterId(conversationId, cursor),
+    );
+    return messages.length;
+  }
+
+  /// Only completed, user-visible bubbles participate in cadence and source
+  /// selection. Internal RP continuation markers and half-written streaming
+  /// rows previously made an 18-message trigger fire several turns early.
+  @visibleForTesting
+  static List<Message> summaryEligibleMessages(List<Message> messages) =>
+      messages
+          .where(
+            (message) =>
+                !message.isIncomplete &&
+                !message.isRpChapterContinuation &&
+                (message.promptVisibleText.trim().isNotEmpty ||
+                    message.imagePaths.isNotEmpty),
+          )
+          .toList(growable: false);
+
   static int _estimateMessageTokens(List<Message> messages) =>
       messages.fold<int>(
         0,
-        (total, message) => total + TokenEstimator.estimate(message.text),
+        (total, message) =>
+            total + TokenEstimator.estimate(message.promptVisibleText),
       );
 
   /// Select oldest pending messages until the token target is crossed. The
@@ -833,15 +971,26 @@ Rules:
     List<Message> messages,
     int tokenLimit,
   ) {
-    if (messages.isEmpty) return const [];
+    final eligible = summaryEligibleMessages(messages);
+    if (eligible.isEmpty) return const [];
     final selected = <Message>[];
     int total = 0;
-    for (final message in messages) {
+    for (final message in eligible) {
       selected.add(message);
-      total += TokenEstimator.estimate(message.text);
+      total += TokenEstimator.estimate(message.promptVisibleText);
       if (total >= tokenLimit) break;
     }
     return selected;
+  }
+
+  static List<Message> selectWholeMessageBatch(
+    List<Message> messages,
+    int messageLimit,
+  ) {
+    if (messages.isEmpty || messageLimit <= 0) return const [];
+    return summaryEligibleMessages(
+      messages,
+    ).take(messageLimit).toList(growable: false);
   }
 
   /// 載入摘要包。
@@ -854,13 +1003,16 @@ Rules:
     bool includeKeywordRecall = true,
     ContextMode contextMode = ContextMode.daily,
     String continuityId = 'main',
+    int latestLimit = latestSummaryBlocksForPrompt,
+    int? rpKeywordMaxChars,
+    String alreadyInjected = '',
   }) async {
     final summaryParts = <String>[];
     if (includeLatestSummaries) {
       final summaries = await DatabaseHelper.getLatestContextSummaries(
         characterId,
         excludeWindowId: excludeWindowId,
-        limit: latestSummaryBlocksForPrompt,
+        limit: latestLimit,
         contextMode: contextMode,
         continuityId: continuityId,
       );
@@ -873,19 +1025,39 @@ Rules:
 
     String keywordSummary = '';
     if (includeKeywordRecall) {
-      final keywords = await DatabaseHelper.getContextKeywords(
-        characterId,
-        contextMode: contextMode,
-        continuityId: continuityId,
+      final maxRpSegments = contextMode == ContextMode.rp
+          ? await MemorySettings.getRpDynamicSummarySegments()
+          : 1;
+      final maxRpCharacters = contextMode == ContextMode.rp
+          ? rpKeywordMaxChars ??
+                await MemorySettings.getRpDynamicSummaryMaxChars()
+          : null;
+      final maxRecalled = contextMode == ContextMode.rp ? maxRpSegments : 1;
+      // 兩段式：先只用關鍵詞欄位挑候選，再只撈候選的全文。
+      // 以前每輪把整條故事線的摘要全文載入記憶體，標籤上千時會吃掉大量記憶體。
+      final index = currentMessage.trim().isEmpty
+          ? const <Map<String, dynamic>>[]
+          : await DatabaseHelper.getRecallIndexRows(
+              characterId,
+              contextMode: contextMode,
+              continuityId: continuityId,
+            );
+      final candidates = _preselectRecallCandidates(
+        index,
+        currentMessage: currentMessage,
+        excludeWindowId: excludeWindowId,
+        // 多留幾個，給後面的指紋去重、字數預算跳過使用。
+        limit: maxRecalled * 4 < 8 ? 8 : maxRecalled * 4,
       );
+      final keywords = await DatabaseHelper.fillRecallContents(candidates);
       keywordSummary =
           _recallKeywordSummarySegment(
             keywords,
             currentMessage: currentMessage,
             excludeWindowId: excludeWindowId,
-            maxRecalledSummaries: contextMode == ContextMode.rp
-                ? rpKeywordRecallLimit
-                : 1,
+            maxRecalledSummaries: maxRecalled,
+            maxCharacters: maxRpCharacters,
+            alreadyInjected: alreadyInjected,
           ) ??
           '';
     }
@@ -894,6 +1066,45 @@ Rules:
       'summary': summaryParts.join('\n\n'),
       'keywordSummaries': keywordSummary,
     };
+  }
+
+  /// 召回第一段：只看關鍵詞欄位挑出候選。排序規則與
+  /// [_recallKeywordSummarySegment] 相同（分數高者先、同分較新者先）。
+  static List<Map<String, dynamic>> _preselectRecallCandidates(
+    List<Map<String, dynamic>> rows, {
+    required String currentMessage,
+    String? excludeWindowId,
+    required int limit,
+  }) {
+    if (currentMessage.trim().isEmpty) return const <Map<String, dynamic>>[];
+    final excluded = (excludeWindowId ?? '').trim();
+    final eligibleRows = <Map<String, dynamic>>[];
+    for (final row in rows) {
+      final sourceWindowId = (row['source_window_id'] as String? ?? '').trim();
+      if (excluded.isNotEmpty && sourceWindowId == excluded) continue;
+      eligibleRows.add(row);
+    }
+    final rowMatches = RecallTextMatcher.bestKeywordMatches(
+      currentMessage,
+      eligibleRows.map((row) => row['keywords'] as String? ?? ''),
+    );
+    final matches = <({Map<String, dynamic> row, RecallKeywordMatch match})>[];
+    for (var index = 0; index < eligibleRows.length; index++) {
+      final match = rowMatches[index];
+      if (match != null) {
+        matches.add((row: eligibleRows[index], match: match));
+      }
+    }
+    matches.sort((left, right) {
+      final score = right.match.score.compareTo(left.match.score);
+      if (score != 0) return score;
+      return (right.row['created_at']?.toString() ?? '').compareTo(
+        left.row['created_at']?.toString() ?? '',
+      );
+    });
+    return <Map<String, dynamic>>[
+      for (final entry in matches.take(limit)) entry.row,
+    ];
   }
 
   /// Keep recent summary blocks active until their lane reaches its retention
@@ -912,13 +1123,17 @@ Rules:
     );
     bool overLimit() {
       if (rows.length < 2) return false;
+      if (contextMode == ContextMode.rp) {
+        // RP keeps exactly the newest four complete dossiers visible. Their
+        // length must not make an earlier block disappear before a fifth one
+        // exists; older blocks become durable event labels one by one.
+        return rows.length > latestSummaryBlocksForPrompt;
+      }
       final total = rows.fold<int>(
         0,
         (sum, row) => sum + (row['token_count'] as int? ?? 0),
       );
-      return contextMode == ContextMode.rp
-          ? rows.length > 4 || total > summaryCapTokens * 2
-          : total > summaryCapTokens;
+      return total > summaryCapTokens;
     }
 
     final failedIds = <int>{};
@@ -939,25 +1154,36 @@ Rules:
         continue;
       }
       try {
-        final keywords = extractKeywords == null
-            ? await _extractKeywordText(
+        final bool archived;
+        if (contextMode == ContextMode.rp && extractKeywords == null) {
+          archived =
+              await DatabaseHelper.archiveContextSummaryWithStoredSegments(
+                summaryId: id,
                 characterId: characterId,
-                summaryContent: source,
                 contextMode: contextMode,
-              )
-            : await extractKeywords(source);
-        if (keywords.trim().isEmpty) {
-          failedIds.add(id);
-          continue;
+                continuityId: continuityId,
+              );
+        } else {
+          final keywords = extractKeywords == null
+              ? await _extractKeywordText(
+                  characterId: characterId,
+                  summaryContent: source,
+                  contextMode: contextMode,
+                )
+              : await extractKeywords(source);
+          if (keywords.trim().isEmpty) {
+            failedIds.add(id);
+            continue;
+          }
+          archived = await DatabaseHelper.archiveContextSummaryWithKeywords(
+            summaryId: id,
+            characterId: characterId,
+            contextMode: contextMode,
+            continuityId: continuityId,
+            keywords: keywords.trim(),
+            keywordTokenCount: TokenEstimator.estimate(keywords),
+          );
         }
-        final archived = await DatabaseHelper.archiveContextSummaryWithKeywords(
-          summaryId: id,
-          characterId: characterId,
-          contextMode: contextMode,
-          continuityId: continuityId,
-          keywords: keywords.trim(),
-          keywordTokenCount: TokenEstimator.estimate(keywords),
-        );
         if (!archived) failedIds.add(id);
       } catch (error) {
         developer.log(
@@ -973,8 +1199,10 @@ Rules:
         continuityId: continuityId,
       );
     }
-    await _enforceKeywordCap(
-      characterId,
+    // Labels are the durable lookup index for every archived summary. Keep all
+    // of them locally; prompt injection still selects only matched segments.
+    await DatabaseHelper.restoreArchivedSummaryKeywords(
+      characterId: characterId,
       contextMode: contextMode,
       continuityId: continuityId,
     );
@@ -1025,6 +1253,12 @@ Rules:
             includeNonMain: true,
           )).length
         : 0;
+    final rpRelationshipExtraction = contextMode == ContextMode.rp
+        ? RpStoryService.latestExtractionReport(
+            characterId,
+            continuityId: continuityId,
+          )?.toJson()
+        : null;
 
     return {
       'summaryBlocks': summaries,
@@ -1032,12 +1266,14 @@ Rules:
       'summaryTokenTotal': summaryTotal,
       'keywordTokenTotal': keywordTotal,
       'summaryCap': summaryCapTokens,
-      'keywordCap': keywordCapTokens,
+      'keywordCap': null,
       'contextMode': contextMode.storageValue,
       'continuityId': continuityId,
       'rpStoryCharacterCount': rpStoryCharacterCount,
       'rpStoryRelationshipCount': rpStoryRelationshipCount,
       'rpStoryStateCount': rpStoryStateCount,
+      'rpStoryExtraction': rpRelationshipExtraction,
+      'rpRelationshipExtraction': rpRelationshipExtraction,
     };
   }
 
@@ -1167,32 +1403,6 @@ Rules:
 
   // ═══ 內部方法 ═══
 
-  /// Bound the active label index; archived source snapshots remain available
-  /// from their original chat markers even when an old label is evicted.
-  static Future<void> _enforceKeywordCap(
-    String characterId, {
-    required ContextMode contextMode,
-    required String continuityId,
-  }) async {
-    var kwTotal = await DatabaseHelper.getContextKeywordTokenTotal(
-      characterId,
-      contextMode: contextMode,
-      continuityId: continuityId,
-    );
-    while (kwTotal > keywordCapTokens) {
-      await DatabaseHelper.deleteOldestContextKeyword(
-        characterId,
-        contextMode: contextMode,
-        continuityId: continuityId,
-      );
-      kwTotal = await DatabaseHelper.getContextKeywordTokenTotal(
-        characterId,
-        contextMode: contextMode,
-        continuityId: continuityId,
-      );
-    }
-  }
-
   /// 從摘要塊提取關鍵詞。呼叫端只有在成功取得非空結果後，才會於同一
   /// 筆 transaction 將摘要搬到關鍵詞層，避免模型失敗時先刪掉原資料。
   static Future<String> _extractKeywordText({
@@ -1223,9 +1433,15 @@ Rules:
     required String currentMessage,
     String? excludeWindowId,
     int maxRecalledSummaries = 1,
+    int? maxCharacters,
+    String alreadyInjected = '',
   }) {
     if (currentMessage.trim().isEmpty) return null;
     final excluded = (excludeWindowId ?? '').trim();
+    final injectedFingerprint = alreadyInjected.toLowerCase().replaceAll(
+      RegExp(r'[\s\p{P}\p{S}]+', unicode: true),
+      '',
+    );
 
     final matches =
         <({Map<String, dynamic> block, RecallKeywordMatch match})>[];
@@ -1249,30 +1465,57 @@ Rules:
       );
     });
     final recalled = <String>[];
-    final recalledSummaryIds = <Object?>{};
+    final recalledSegmentIds = <String>{};
     final recalledFingerprints = <String>{};
     for (final candidate in matches) {
       final block = candidate.block;
-      if (!recalledSummaryIds.add(block['source_summary_id'])) continue;
+      // Keywords are lookup aliases, not separate recall payloads. Multiple
+      // different keywords may point at the same stored event segment; inject
+      // that segment only once even when every alias is present in the turn.
+      final segmentIdentity =
+          '${block['source_summary_id'] ?? ''}:'
+          '${block['segment_order'] ?? block['id'] ?? ''}';
+      if (!recalledSegmentIds.add(segmentIdentity)) continue;
       final source = (block['source_summary_content'] as String? ?? '').trim();
-      final segment = _pickMatchedSummarySegment(source, [
-        candidate.match.keyword,
-      ]);
+      // New RP rows are already the exact one/two-paragraph segment emitted
+      // by the summary model. Do not split or re-select them locally: a valid
+      // retrieval keyword need not appear verbatim inside the copied prose.
+      final segment = block['segment_order'] != null
+          ? _SummarySegment(block['title']?.toString().trim() ?? '', source)
+          : _pickMatchedSummarySegment(source, <String>[
+              candidate.match.keyword,
+            ]);
       if (segment == null) continue;
       final fingerprint = segment.content.toLowerCase().replaceAll(
         RegExp(r'[\s\p{P}\p{S}]+', unicode: true),
         '',
       );
+      if (injectedFingerprint.contains(fingerprint)) continue;
       if (fingerprint.isEmpty || !recalledFingerprints.add(fingerprint)) {
         continue;
       }
-      recalled.add(
-        _formatKeywordRecallBlock(
-          segment,
-          sourceWindowId: (block['source_window_id'] as String? ?? '').trim(),
-          createdAt: block['created_at'] as String? ?? '',
-        ),
+      final sourceWindowId = (block['source_window_id'] as String? ?? '')
+          .trim();
+      final createdAt = block['created_at'] as String? ?? '';
+      final fittedSegment = maxCharacters == null
+          ? segment
+          : _fitSegmentToCharacterBudget(segment, maxCharacters);
+      if (fittedSegment == null) continue;
+      final formatted = _formatKeywordRecallBlock(
+        fittedSegment,
+        sourceWindowId: sourceWindowId,
+        createdAt: createdAt,
       );
+      final nextLength =
+          recalled.fold<int>(0, (total, item) => total + item.length) +
+          (recalled.isEmpty ? 0 : 2) +
+          formatted.length;
+      if (maxCharacters != null &&
+          recalled.isNotEmpty &&
+          nextLength > maxCharacters) {
+        continue;
+      }
+      recalled.add(formatted);
       if (recalled.length >= maxRecalledSummaries) break;
     }
     return recalled.isEmpty ? null : recalled.join('\n\n');
@@ -1296,6 +1539,287 @@ Rules:
     if (meta.isEmpty) return content;
     if (L.locale == 'en') return '[Window Summary $meta]\n$content';
     return '${L.pick(en: '', zhTW: '【窗口摘要')} $meta】\n$content';
+  }
+
+  static String _formatRollingSummaryAnchors(
+    List<Map<String, dynamic>> anchors, {
+    required ContextMode contextMode,
+  }) {
+    if (anchors.isEmpty) return '';
+    return anchors.indexed
+        .map((entry) {
+          final ordinal = entry.$1 + 1;
+          final label = L.pick(
+            en: '【Summary anchor $ordinal · ${ordinal == anchors.length ? 'newest' : 'older'}】',
+            zhTW:
+                '【摘要基底 $ordinal · ${ordinal == anchors.length ? '最新' : '較早'}】',
+            zhCN:
+                '【摘要基底 $ordinal · ${ordinal == anchors.length ? '最新' : '较早'}】',
+          );
+          final raw = entry.$2['content']?.toString() ?? '';
+          final content = contextMode == ContextMode.rp
+              ? normalizeRpSummaryFormat(raw)
+              : normalizeSummaryFormat(raw);
+          return '$label\n$content';
+        })
+        .join('\n\n');
+  }
+
+  @visibleForTesting
+  static String formatRollingSummaryAnchorsForTesting(
+    List<String> anchors, {
+    ContextMode contextMode = ContextMode.rp,
+  }) => _formatRollingSummaryAnchors(
+    anchors
+        .map<Map<String, dynamic>>(
+          (content) => <String, dynamic>{'content': content},
+        )
+        .toList(growable: false),
+    contextMode: contextMode,
+  );
+
+  static List<String> _rpEventTitles(String summary) {
+    final titles = <String>[];
+    final seen = <String>{};
+    final pattern = RegExp(
+      r'^\s*\*\*\[[^\]]+\]\s*([^*\n]+?)\s*\*\*\s*$',
+      multiLine: true,
+    );
+    for (final match in pattern.allMatches(summary)) {
+      final title = match.group(1)?.trim() ?? '';
+      final normalized = _normalizeCarryoverTitle(title);
+      if (normalized.isNotEmpty && seen.add(normalized)) titles.add(title);
+    }
+    return titles;
+  }
+
+  static String _normalizeCarryoverTitle(String value) => value
+      .toLowerCase()
+      .replaceAll(RegExp(r'[\s\p{P}\p{S}]+', unicode: true), '');
+
+  static List<String> _missingRpCarryoverTitles(
+    List<Map<String, dynamic>> anchors,
+    String nextSummary,
+  ) {
+    if (anchors.isEmpty) return const <String>[];
+    final next = _normalizeCarryoverTitle(nextSummary);
+    final missing = <String>[];
+    final seen = <String>{};
+    for (final anchor in anchors) {
+      for (final title in _rpEventTitles(anchor['content']?.toString() ?? '')) {
+        final normalized = _normalizeCarryoverTitle(title);
+        if (normalized.isEmpty || !seen.add(normalized)) continue;
+        if (!next.contains(normalized)) missing.add(title);
+      }
+    }
+    return missing;
+  }
+
+  static Map<String, String> _rpCarryoverBlocks(
+    List<Map<String, dynamic>> anchors,
+  ) {
+    final blocks = <String, String>{};
+    final headerPattern = RegExp(r'^\s*\*\*\[[^\]]+\]\s*([^*\n]+?)\s*\*\*\s*$');
+    // Older-to-newer input means a later dossier can replace the compact
+    // wording of the same stable event title without changing its identity.
+    for (final anchor in anchors) {
+      final lines = (anchor['content']?.toString() ?? '').split('\n');
+      for (var i = 0; i < lines.length; i++) {
+        final match = headerPattern.firstMatch(lines[i]);
+        if (match == null) continue;
+        final normalized = _normalizeCarryoverTitle(match.group(1) ?? '');
+        if (normalized.isEmpty) continue;
+        final body = <String>[];
+        for (var j = i + 1; j < lines.length; j++) {
+          final line = lines[j].trim();
+          if (headerPattern.hasMatch(lines[j]) || line.startsWith('### ')) {
+            break;
+          }
+          if (line.isNotEmpty && !line.startsWith('[劇情位置]')) body.add(line);
+        }
+        final compactBody = _compactRpCarryoverBody(body.join(' '));
+        blocks[normalized] = compactBody.isEmpty
+            ? lines[i].trim()
+            : '${lines[i].trim()}\n$compactBody';
+      }
+    }
+    return blocks;
+  }
+
+  static String _compactRpCarryoverBody(String raw) {
+    final text = raw.replaceAll(RegExp(r'\s+'), ' ').trim();
+    if (text.length <= 320) return text;
+    final prefix = text.substring(0, 320);
+    final lastBoundary = prefix.lastIndexOf(RegExp(r'[。！？.!?；;]'));
+    if (lastBoundary >= 120) {
+      return prefix.substring(0, lastBoundary + 1).trim();
+    }
+    return '${prefix.trimRight()}…';
+  }
+
+  static String _restoreMissingRpCarryoverEvents(
+    List<Map<String, dynamic>> anchors,
+    String nextSummary,
+  ) {
+    final missing = _missingRpCarryoverTitles(anchors, nextSummary);
+    if (missing.isEmpty) return nextSummary.trim();
+    final blocks = _rpCarryoverBlocks(anchors);
+    final restored = <String>[];
+    for (final title in missing) {
+      final block = blocks[_normalizeCarryoverTitle(title)];
+      if (block != null) restored.add(block);
+    }
+    if (restored.isEmpty) return nextSummary.trim();
+
+    final insertion = restored.join('\n\n');
+    final firstSection = RegExp(
+      r'^###\s+',
+      multiLine: true,
+    ).firstMatch(nextSummary);
+    if (firstSection == null) {
+      return '### ——主線——\n$insertion\n\n${nextSummary.trim()}';
+    }
+    final remaining = nextSummary.substring(firstSection.end);
+    final nextSection = RegExp(
+      r'^###\s+',
+      multiLine: true,
+    ).firstMatch(remaining);
+    final index = nextSection == null
+        ? nextSummary.length
+        : firstSection.end + nextSection.start;
+    return '${nextSummary.substring(0, index).trimRight()}\n\n$insertion\n\n'
+            '${nextSummary.substring(index).trimLeft()}'
+        .trim();
+  }
+
+  @visibleForTesting
+  static List<String> missingRpCarryoverTitlesForTesting({
+    required List<String> anchors,
+    required String nextSummary,
+  }) => _missingRpCarryoverTitles(
+    anchors
+        .map<Map<String, dynamic>>(
+          (content) => <String, dynamic>{'content': content},
+        )
+        .toList(growable: false),
+    nextSummary,
+  );
+
+  @visibleForTesting
+  static String restoreMissingRpCarryoverEventsForTesting({
+    required List<String> anchors,
+    required String nextSummary,
+  }) => _restoreMissingRpCarryoverEvents(
+    anchors
+        .map<Map<String, dynamic>>(
+          (content) => <String, dynamic>{'content': content},
+        )
+        .toList(growable: false),
+    nextSummary,
+  );
+
+  /// Enforces the stored RP dossier ceiling after the provider response and
+  /// local carry-over repair. Every event header remains represented; prose is
+  /// shortened evenly rather than letting one long recent scene erase older
+  /// events from the rolling dossier.
+  @visibleForTesting
+  static String compactRpSummaryToHardLimit(String source, int maxCharacters) {
+    final normalized = normalizeRpSummaryFormat(source).trim();
+    if (normalized.isEmpty || normalized.length <= maxCharacters) {
+      return normalized;
+    }
+
+    final entryPattern = RegExp(r'^\s*\*\*\[[^\]]+\]\s*([^*\n]+?)\s*\*\*\s*$');
+    final blocks = <({String section, String header, String body})>[];
+    var section = '### ——主線——';
+    String? header;
+    final body = <String>[];
+
+    void flush() {
+      final value = header;
+      if (value == null) return;
+      blocks.add((
+        section: section,
+        header: value,
+        body: body.join(' ').trim(),
+      ));
+      body.clear();
+    }
+
+    for (final rawLine in normalized.split('\n')) {
+      final line = rawLine.trim();
+      if (line.startsWith('### ')) {
+        flush();
+        header = null;
+        section = line;
+      } else if (entryPattern.hasMatch(line)) {
+        flush();
+        header = line;
+      } else if (header != null &&
+          line.isNotEmpty &&
+          !line.startsWith('### ')) {
+        body.add(line);
+      }
+    }
+    flush();
+
+    if (blocks.isEmpty) {
+      return fitRpSummaryToCharacterBudget(normalized, maxCharacters);
+    }
+
+    final sectionHeadings = <String>[];
+    for (final block in blocks) {
+      if (sectionHeadings.isEmpty || sectionHeadings.last != block.section) {
+        sectionHeadings.add(block.section);
+      }
+    }
+    final fixedLength =
+        sectionHeadings.fold<int>(0, (sum, value) => sum + value.length + 1) +
+        blocks.fold<int>(0, (sum, block) => sum + block.header.length) +
+        blocks.length * 2 +
+        (blocks.length > 1 ? (blocks.length - 1) * 2 : 0);
+    var proseBudget = maxCharacters - fixedLength;
+    final rendered = <String>[];
+    String? renderedSection;
+    for (var index = 0; index < blocks.length; index++) {
+      final block = blocks[index];
+      if (renderedSection != block.section) {
+        rendered.add(block.section);
+        renderedSection = block.section;
+      }
+      final remainingBlocks = blocks.length - index;
+      final quota = proseBudget <= 0
+          ? 0
+          : (proseBudget / remainingBlocks).floor();
+      final compactBody = _compactRpBodyToBudget(block.body, quota);
+      rendered.add(
+        compactBody.isEmpty ? block.header : '${block.header}\n$compactBody',
+      );
+      proseBudget -= compactBody.length;
+    }
+    var result = rendered.join('\n\n').trim();
+    if (result.length <= maxCharacters) return result;
+
+    // Extremely dense title sets can consume almost the whole allowance.
+    // Remove section headings before touching any stable event title.
+    result = rendered
+        .where((line) => !line.startsWith('### '))
+        .join('\n\n')
+        .trim();
+    if (result.length <= maxCharacters) return result;
+    return result.substring(0, maxCharacters).trimRight();
+  }
+
+  static String _compactRpBodyToBudget(String raw, int budget) {
+    if (budget < 8 || raw.isEmpty) return '';
+    final text = raw.replaceAll(RegExp(r'\s+'), ' ').trim();
+    if (text.length <= budget) return text;
+    final window = text.substring(0, budget - 1);
+    final boundary = window.lastIndexOf(RegExp(r'[。！？.!?；;]'));
+    if (boundary >= (budget * 0.45).floor()) {
+      return window.substring(0, boundary + 1).trim();
+    }
+    return '${window.trimRight()}…';
   }
 
   static String _formatKeywordRecallBlock(
@@ -1376,7 +1900,109 @@ Rules:
       final trimmed = source.trim();
       return trimmed.isEmpty ? const [] : [_SummarySegment('', trimmed)];
     }
+    if (segments.length == 1 && segments.first.content.length > 1200) {
+      final paragraphs = segments.first.content
+          .split(RegExp(r'\n\s*\n'))
+          .map((item) => item.trim())
+          .where((item) => item.isNotEmpty)
+          .toList(growable: false);
+      if (paragraphs.length > 1) {
+        return <_SummarySegment>[
+          for (var index = 0; index < paragraphs.length; index += 2)
+            _SummarySegment(
+              segments.first.title,
+              paragraphs.skip(index).take(2).join('\n\n'),
+            ),
+        ];
+      }
+    }
     return segments;
+  }
+
+  /// Fits an RP dossier to a character budget using complete event segments.
+  /// It never cuts through a sentence or paragraph. This is intentionally a
+  /// transport budget, not another summarisation layer.
+  static String fitRpSummaryToCharacterBudget(
+    String source,
+    int maxCharacters, {
+    bool preferLatest = false,
+  }) {
+    final normalized = normalizeRpSummaryFormat(source).trim();
+    if (normalized.isEmpty || normalized.length <= maxCharacters) {
+      return normalized;
+    }
+    final segments = _splitSummarySegments(normalized);
+    if (segments.isEmpty) return '';
+    final ordered = preferLatest ? segments.reversed : segments;
+    final selected = <_SummarySegment>[];
+    var used = 0;
+    for (final segment in ordered) {
+      final fitted = _fitSegmentToCharacterBudget(segment, maxCharacters);
+      if (fitted == null) continue;
+      final addition = fitted.content.length + (selected.isEmpty ? 0 : 2);
+      if (selected.isNotEmpty && used + addition > maxCharacters) continue;
+      selected.add(fitted);
+      used += addition;
+      if (used >= maxCharacters) break;
+    }
+    final output = preferLatest ? selected.reversed : selected;
+    return output.map((item) => item.content).join('\n\n').trim();
+  }
+
+  static String fitRpSummariesToCharacterBudget(
+    Iterable<String> summaries,
+    int maxCharacters,
+  ) {
+    final source = summaries
+        .map((item) => item.trim())
+        .where((item) => item.isNotEmpty)
+        .toList(growable: false);
+    if (source.isEmpty) return '';
+    final selected = <String>[];
+    var used = 0;
+    for (final summary in source.reversed) {
+      final remaining = maxCharacters - used - (selected.isEmpty ? 0 : 7);
+      if (remaining < 200) break;
+      final fitted = fitRpSummaryToCharacterBudget(
+        summary,
+        remaining,
+        preferLatest: true,
+      );
+      if (fitted.isEmpty) continue;
+      selected.add(fitted);
+      used += fitted.length + (selected.length == 1 ? 0 : 7);
+    }
+    return selected.reversed.join('\n\n---\n\n');
+  }
+
+  static _SummarySegment? _fitSegmentToCharacterBudget(
+    _SummarySegment segment,
+    int maxCharacters,
+  ) {
+    if (maxCharacters <= 0) return null;
+    if (segment.content.length <= maxCharacters) return segment;
+    var paragraphs = segment.content
+        .split(RegExp(r'\n\s*\n'))
+        .map((item) => item.trim())
+        .where((item) => item.isNotEmpty)
+        .toList(growable: false);
+    if (paragraphs.length == 1 && paragraphs.first.length > maxCharacters) {
+      paragraphs = paragraphs.first
+          .split(RegExp(r'(?<=[。！？.!?])\s*'))
+          .map((item) => item.trim())
+          .where((item) => item.isNotEmpty)
+          .toList(growable: false);
+    }
+    final kept = <String>[];
+    var used = 0;
+    for (final paragraph in paragraphs) {
+      final addition = paragraph.length + (kept.isEmpty ? 0 : 2);
+      if (used + addition > maxCharacters) break;
+      kept.add(paragraph);
+      used += addition;
+    }
+    if (kept.isEmpty) return null;
+    return _SummarySegment(segment.title, kept.join('\n\n'));
   }
 
   static String _dateLabel(String raw) {
@@ -1623,26 +2249,20 @@ Rules:
           );
         }
       }
-      List<Map<String, Object?>> objectList(Object? raw) {
-        if (raw is! List) return const <Map<String, Object?>>[];
-        return raw
-            .whereType<Map>()
-            .map(
-              (row) => <String, Object?>{
-                for (final entry in row.entries)
-                  entry.key.toString(): entry.value,
-              },
-            )
-            .toList(growable: false);
-      }
-
       return SummaryEnvelope(
         summary,
         timeline,
         storylineId: decoded['storyline_id']?.toString().trim() ?? '',
-        storyCharacters: objectList(decoded['story_characters']),
-        relationships: objectList(decoded['relationships']),
-        storyStates: objectList(decoded['story_states']),
+        storyCharacters: _mergeStoryCharacterCandidates(
+          _objectMapList(decoded['story_characters']),
+          _objectMapList(decoded['character_index']),
+        ),
+        relationships: _objectMapList(decoded['relationships']),
+        storyStates: _objectMapList(decoded['story_states']),
+        recallSegments: _decodeRecallSegments(
+          decoded['recall_segments'],
+          summary,
+        ),
       );
     }
 
@@ -1652,7 +2272,26 @@ Rules:
     if (summaryField != null) {
       try {
         final summary = jsonDecode(summaryField.group(1)!) as String;
-        return SummaryEnvelope(summary.trim(), const []);
+        final compactCharacters = _decodePartialObjectList(
+          text,
+          'character_index',
+        );
+        final storylineField = RegExp(
+          r'"storyline_id"\s*:\s*("(?:\\.|[^"\\])*")',
+        ).firstMatch(text);
+        var storylineId = '';
+        if (storylineField != null) {
+          storylineId = (jsonDecode(storylineField.group(1)!) as String).trim();
+        }
+        return SummaryEnvelope(
+          summary.trim(),
+          const [],
+          storylineId: storylineId,
+          storyCharacters: _mergeStoryCharacterCandidates(
+            const <Map<String, Object?>>[],
+            compactCharacters,
+          ),
+        );
       } on FormatException {
         return const SummaryEnvelope('', []);
       }
@@ -1664,6 +2303,264 @@ Rules:
       return SummaryEnvelope(text, const []);
     }
     return const SummaryEnvelope('', []);
+  }
+
+  static List<Map<String, Object?>> _objectMapList(Object? raw) {
+    if (raw is! List) return const <Map<String, Object?>>[];
+    return raw
+        .whereType<Map>()
+        .map(
+          (row) => <String, Object?>{
+            for (final entry in row.entries) entry.key.toString(): entry.value,
+          },
+        )
+        .toList(growable: false);
+  }
+
+  static List<Map<String, Object?>> _mergeStoryCharacterCandidates(
+    List<Map<String, Object?>> detailed,
+    List<Map<String, Object?>> compact,
+  ) {
+    final merged = <Map<String, Object?>>[];
+    final names = <String>{};
+    String key(Map<String, Object?> value) => (value['name']?.toString() ?? '')
+        .trim()
+        .toLowerCase()
+        .replaceAll(RegExp(r'[\s\p{P}\p{S}]+', unicode: true), '');
+
+    for (final candidate in [...detailed, ...compact]) {
+      final nameKey = key(candidate);
+      final name = candidate['name']?.toString().trim() ?? '';
+      if (nameKey.isEmpty || !names.add(nameKey)) continue;
+      merged.add(<String, Object?>{
+        if (!candidate.containsKey('entity_id')) 'entity_id': 'new',
+        ...candidate,
+        'name': name,
+      });
+      if (merged.length >= RpStoryService.characterExtractionLimit) break;
+    }
+    return List<Map<String, Object?>>.unmodifiable(merged);
+  }
+
+  static List<Map<String, Object?>> _decodePartialObjectList(
+    String text,
+    String key,
+  ) {
+    final marker = RegExp('"${RegExp.escape(key)}"\\s*:').firstMatch(text);
+    if (marker == null) return const <Map<String, Object?>>[];
+    final start = text.indexOf('[', marker.end);
+    if (start < 0) return const <Map<String, Object?>>[];
+    var depth = 0;
+    var inString = false;
+    var escaped = false;
+    for (var index = start; index < text.length; index++) {
+      final unit = text.codeUnitAt(index);
+      if (inString) {
+        if (escaped) {
+          escaped = false;
+        } else if (unit == 0x5c) {
+          escaped = true;
+        } else if (unit == 0x22) {
+          inString = false;
+        }
+        continue;
+      }
+      if (unit == 0x22) {
+        inString = true;
+      } else if (unit == 0x5b) {
+        depth++;
+      } else if (unit == 0x5d) {
+        depth--;
+        if (depth == 0) {
+          try {
+            return _objectMapList(jsonDecode(text.substring(start, index + 1)));
+          } on FormatException {
+            return const <Map<String, Object?>>[];
+          }
+        }
+      }
+    }
+    return const <Map<String, Object?>>[];
+  }
+
+  static List<SummaryRecallSegment> _decodeRecallSegments(
+    Object? raw,
+    String summary,
+  ) {
+    if (raw is! List || summary.trim().isEmpty) {
+      return const <SummaryRecallSegment>[];
+    }
+    final result = <SummaryRecallSegment>[];
+    final usedOrders = <int>{};
+    for (final value in raw.whereType<Map>()) {
+      final rawOrder = value['segment_order'];
+      final order = switch (rawOrder) {
+        int number => number,
+        num number => number.toInt(),
+        String text => int.tryParse(text.trim()) ?? 0,
+        _ => 0,
+      };
+      final content = value['content']?.toString().trim() ?? '';
+      final rawKeywords = value['keywords'];
+      final keywords = rawKeywords is List
+          ? rawKeywords
+                .map((item) => item?.toString().trim() ?? '')
+                .where((item) => item.isNotEmpty)
+                .toSet()
+                .take(1)
+                .toList(growable: false)
+          : const <String>[];
+      // The model must bind its labels to text that is actually present in
+      // the replacement summary. Dropping an unbound segment is safer than
+      // creating a recall path to invented or stale material.
+      if (order <= 0 ||
+          !usedOrders.add(order) ||
+          content.isEmpty ||
+          RegExp(r'\n\s*\n').hasMatch(content) ||
+          keywords.isEmpty ||
+          !summary.contains(content)) {
+        continue;
+      }
+      result.add(
+        SummaryRecallSegment(
+          order: order,
+          title: value['title']?.toString().trim() ?? '',
+          content: content,
+          keywords: keywords,
+        ),
+      );
+    }
+    result.sort((left, right) => left.order.compareTo(right.order));
+    return List<SummaryRecallSegment>.unmodifiable(result);
+  }
+
+  /// Produces a complete event-segment index even when a provider omits or
+  /// slightly damages recall_segments. Model labels remain authoritative when
+  /// they bind to the final summary; only uncovered summary text gets a local,
+  /// deterministic fallback. No extra API request is made.
+  static List<ContextSummarySegmentDraft> buildRpRecallSegmentDrafts({
+    required String summary,
+    Iterable<SummaryRecallSegment> modelSegments =
+        const <SummaryRecallSegment>[],
+  }) {
+    final normalized = normalizeRpSummaryFormat(summary).trim();
+    if (normalized.isEmpty) return const <ContextSummarySegmentDraft>[];
+
+    final indexed =
+        <
+          ({
+            int start,
+            int end,
+            String title,
+            String content,
+            List<String> keywords,
+          })
+        >[];
+    for (final segment in modelSegments) {
+      final content = segment.content.trim();
+      final start = normalized.indexOf(content);
+      if (start < 0 ||
+          segment.keywords.isEmpty ||
+          RegExp(r'\n\s*\n').hasMatch(content)) {
+        continue;
+      }
+      indexed.add((
+        start: start,
+        end: start + content.length,
+        title: segment.title.trim(),
+        content: content,
+        keywords: segment.keywords,
+      ));
+    }
+
+    for (final segment in _splitSummarySegments(normalized).expand((segment) {
+      final paragraphs = segment.content
+          .split(RegExp(r'\n\s*\n'))
+          .map((paragraph) => paragraph.trim())
+          .where((paragraph) => paragraph.isNotEmpty)
+          .toList(growable: false);
+      return <_SummarySegment>[
+        for (var index = 0; index < paragraphs.length; index++)
+          _SummarySegment(index == 0 ? segment.title : '', paragraphs[index]),
+      ];
+    })) {
+      final content = segment.content.trim();
+      final start = normalized.indexOf(content);
+      if (start < 0 || content.isEmpty) continue;
+      final end = start + content.length;
+      final covered = indexed.any(
+        (item) => item.start < end && item.end > start,
+      );
+      if (covered) continue;
+      final keywords = _fallbackRecallKeywords(segment);
+      if (keywords.isEmpty) continue;
+      indexed.add((
+        start: start,
+        end: end,
+        title: segment.title.trim(),
+        content: content,
+        keywords: keywords,
+      ));
+    }
+
+    indexed.sort((left, right) => left.start.compareTo(right.start));
+    return <ContextSummarySegmentDraft>[
+      for (var index = 0; index < indexed.length; index++)
+        ContextSummarySegmentDraft(
+          order: index + 1,
+          title: indexed[index].title,
+          content: indexed[index].content,
+          keywords: indexed[index].keywords,
+          tokenCount: TokenEstimator.estimate(indexed[index].content),
+        ),
+    ];
+  }
+
+  static List<String> _fallbackRecallKeywords(_SummarySegment segment) {
+    final candidates = <String>[];
+    void add(String value) {
+      var cleaned = value
+          .replaceAll(RegExp(r'[#*_>`\[\]]'), '')
+          .replaceAll(RegExp(r'^[-—–·：:、，。！？；\s]+|[-—–·：:、，。！？；\s]+$'), '')
+          .trim();
+      final categorySeparator = cleaned.indexOf('·');
+      if (categorySeparator >= 0 && categorySeparator + 1 < cleaned.length) {
+        cleaned = cleaned.substring(categorySeparator + 1).trim();
+      }
+      if (RegExp(
+        r'^(主線|支線|氛圍|觀察區|Main|Side Threads|Atmosphere|Observation)$',
+        caseSensitive: false,
+      ).hasMatch(cleaned)) {
+        return;
+      }
+      if (cleaned.length < 2) return;
+      if (cleaned.length > 28) cleaned = cleaned.substring(0, 28).trim();
+      if (cleaned.length >= 2 && !candidates.contains(cleaned)) {
+        candidates.add(cleaned);
+      }
+    }
+
+    add(segment.title);
+    for (final match in RegExp(
+      r'[「『“\"]([^」』”\"]{2,24})[」』”\"]',
+    ).allMatches(segment.content)) {
+      add(match.group(1) ?? '');
+    }
+    final plain = segment.content
+        .replaceAllMapped(
+          RegExp(r'\*\*\[[^\]]+\]\s*([^*]+)\*\*'),
+          (match) => match.group(1) ?? '',
+        )
+        .replaceAll(RegExp(r'[#*_>`]'), ' ');
+    for (final clause in plain.split(RegExp(r'[。！？；\n]+'))) {
+      final parts = clause.split(RegExp(r'[，,：:]'));
+      for (final part in parts) {
+        add(part);
+        if (candidates.isNotEmpty) break;
+      }
+      if (candidates.isNotEmpty) break;
+    }
+    return candidates.take(1).toList(growable: false);
   }
 
   static String? _firstBalancedJsonObject(String text) {
@@ -1827,9 +2724,12 @@ Output valid JSON only: {"summary":"","timeline":[{"type":"state","subject":"cha
   /// 調用小模型（摘要綁定模型）
   static Future<String> _callModel({
     String characterId = 'default',
+    String conversationId = '',
     required String systemPrompt,
     required String userMessage,
   }) async {
+    var model = '';
+    var provider = '';
     try {
       final source = await MemorySettings.getSummarySource();
 
@@ -1844,11 +2744,11 @@ Output valid JSON only: {"summary":"","timeline":[{"type":"state","subject":"cha
         );
       }
 
-      var model = await MemorySettings.getSummaryModel();
+      model = await MemorySettings.getSummaryModel();
       if (model.isEmpty) {
         model = await ApiSettings.getModel();
       }
-      final provider = await ApiSettings.resolveSummaryModelProvider(model);
+      provider = await ApiSettings.resolveSummaryModelProvider(model);
       final adapter = await ApiSettings.buildAdapterForSummaryModel(model);
       ApiUsage? usage;
       final response = await adapter.sendMessage(
@@ -1864,11 +2764,31 @@ Output valid JSON only: {"summary":"","timeline":[{"type":"state","subject":"cha
         model: model,
         usage: usage ?? const ApiUsage(),
         characterId: characterId,
+        conversationId: conversationId,
         requestKind: ApiRequestKind.summary,
       );
+      if (response.trim().isEmpty) {
+        throw StateError('摘要模型回傳空內容');
+      }
       return response;
-    } catch (e) {
-      developer.log('窗口摘要失敗', error: e, name: 'ContextCompressor');
+    } catch (e, stackTrace) {
+      developer.log(
+        '窗口摘要失敗',
+        error: e,
+        stackTrace: stackTrace,
+        name: 'ContextCompressor',
+      );
+      try {
+        await AppErrorLogService.record(
+          error: e,
+          trigger: 'automatic_summary',
+          source: 'summary',
+          provider: provider,
+          model: model,
+        );
+      } catch (_) {
+        // A diagnostics write failure must not crash the chat maintenance job.
+      }
       return '';
     }
   }
@@ -1947,9 +2867,18 @@ Output valid JSON only: {"summary":"","timeline":[{"type":"state","subject":"cha
       });
     }
 
+    // All known characters that are either name-matched in source text or
+    // still marked active — used as the full "existing characters" reference.
     final involved = allCharacters
         .where((row) => mentioned(row) || row['tier'] == 'active')
-        .take(12)
+        .take(24)
+        .toList(growable: false);
+    // Subset: only those whose name/alias actually appears in this batch's
+    // source text. This is the "matched existing" list — explicitly separate
+    // from the full roster so the model knows which names are NOT yet filed.
+    final matched = allCharacters
+        .where(mentioned)
+        .take(24)
         .toList(growable: false);
     final involvedKeys = involved
         .map((row) => row['entity_key']?.toString() ?? '')
@@ -1967,10 +2896,9 @@ Output valid JSON only: {"summary":"","timeline":[{"type":"state","subject":"cha
         )
         .take(16)
         .toList(growable: false);
-    final states = await RpStoryStateService.listStates(
+    final allStates = await RpStoryStateService.listStates(
       characterId,
       continuityId: continuityId,
-      includeNonMain: true,
     );
     final characterCard = await DatabaseHelper.getCharacter(characterId);
     final recalledWorldbook = await RpWorldbookService.recallPrompt(
@@ -1984,6 +2912,38 @@ Output valid JSON only: {"summary":"","timeline":[{"type":"state","subject":"cha
           for (final key in keys)
             if (row[key] != null) key: row[key],
         };
+
+    bool relatedState(Map<String, dynamic> state) {
+      final type = state['state_type']?.toString() ?? '';
+      if (type == 'scene' || type == 'plot') return true;
+      return involvedKeys.contains(state['subject_entity_key']) ||
+          involvedKeys.contains(state['object_entity_key']);
+    }
+
+    final relevantStates = allStates.where(relatedState).toList();
+    final statesForModel =
+        <Map<String, Object?>>[
+              ...relevantStates
+                  .where(RpStoryStateService.isActiveForRecall)
+                  .take(12),
+              ...relevantStates
+                  .where(
+                    (state) => !RpStoryStateService.isActiveForRecall(state),
+                  )
+                  .take(4),
+            ]
+            .map(
+              (state) => select(state, const <String>[
+                'state_key',
+                'state_type',
+                'subject_entity_key',
+                'object_entity_key',
+                'value',
+                'status',
+                'story_time',
+              ]),
+            )
+            .toList(growable: false);
 
     final currentPersona = <String, Object?>{};
     if (conversationId.isNotEmpty) {
@@ -2058,7 +3018,7 @@ Output valid JSON only: {"summary":"","timeline":[{"type":"state","subject":"cha
       ..writeln(recalledWorldbook)
       ..writeln()
       ..writeln('【現有劇情狀態】')
-      ..writeln(jsonEncode(states.take(12).toList(growable: false)))
+      ..writeln(jsonEncode(statesForModel))
       ..writeln()
       ..writeln('【現有劇情人物】')
       ..writeln(jsonEncode(involved))
@@ -2066,10 +3026,13 @@ Output valid JSON only: {"summary":"","timeline":[{"type":"state","subject":"cha
       ..writeln('【現有人物關係】')
       ..writeln(jsonEncode(relationships))
       ..writeln()
-      ..writeln('【本輪涉及人物】')
+      ..writeln('【本輪命中的既有人物】')
+      ..writeln(
+        '以下只列出姓名或別名確實出現在本輪正文中的已建檔人物，僅用於沿用 entity_id。正文中出現但不在此清單的名字即為新人物，必須以 entity_id="new" 建檔。',
+      )
       ..write(
         jsonEncode(
-          involved
+          matched
               .map(
                 (row) => select(row, const [
                   'entity_key',
@@ -2172,6 +3135,7 @@ class SummaryEnvelope {
   final List<Map<String, Object?>> storyCharacters;
   final List<Map<String, Object?>> relationships;
   final List<Map<String, Object?>> storyStates;
+  final List<SummaryRecallSegment> recallSegments;
 
   const SummaryEnvelope(
     this.summary,
@@ -2180,6 +3144,21 @@ class SummaryEnvelope {
     this.storyCharacters = const <Map<String, Object?>>[],
     this.relationships = const <Map<String, Object?>>[],
     this.storyStates = const <Map<String, Object?>>[],
+    this.recallSegments = const <SummaryRecallSegment>[],
+  });
+}
+
+class SummaryRecallSegment {
+  final int order;
+  final String title;
+  final String content;
+  final List<String> keywords;
+
+  const SummaryRecallSegment({
+    required this.order,
+    required this.content,
+    required this.keywords,
+    this.title = '',
   });
 }
 

@@ -91,10 +91,15 @@ void main() {
     );
     await tester.pump();
 
-    expect(find.byType(Opacity), findsNWidgets(2));
+    final crossfadeOpacityFinder = find.byWidgetPredicate(
+      (widget) =>
+          widget is Opacity &&
+          widget.key != const ValueKey('custom-background-visibility'),
+    );
+    expect(crossfadeOpacityFinder, findsNWidgets(2));
     expect(find.byType(ImageFiltered), findsOneWidget);
     final crossfadeLayers = tester
-        .widgetList<Opacity>(find.byType(Opacity))
+        .widgetList<Opacity>(crossfadeOpacityFinder)
         .toList();
     expect(crossfadeLayers.first.opacity, 1);
     expect(crossfadeLayers.last.opacity, greaterThan(0));
@@ -109,7 +114,7 @@ void main() {
     );
     await tester.pump();
     final themeHandoffLayers = tester
-        .widgetList<Opacity>(find.byType(Opacity))
+        .widgetList<Opacity>(crossfadeOpacityFinder)
         .toList();
     expect(themeHandoffLayers.first.opacity, lessThan(1));
 
@@ -119,6 +124,45 @@ void main() {
       onlineReady: true,
     );
     await tester.pumpAndSettle();
+    expect(find.byType(ImageFiltered), findsNothing);
+  });
+
+  testWidgets('tab background visibility can use an independent duration', (
+    tester,
+  ) async {
+    var opacity = 0.0;
+    late StateSetter setHostState;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: StatefulBuilder(
+          builder: (context, setState) {
+            setHostState = setState;
+            return GradientBackground(
+              customBackgroundOpacity: opacity,
+              transitionDuration: const Duration(seconds: 1),
+              customBackgroundTransitionDuration: const Duration(
+                milliseconds: 500,
+              ),
+              child: const SizedBox.expand(),
+            );
+          },
+        ),
+      ),
+    );
+
+    expect(
+      find.byKey(const ValueKey('custom-background-visibility')),
+      findsNothing,
+    );
+    setHostState(() => opacity = 1);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
+    expect(
+      find.byKey(const ValueKey('custom-background-visibility')),
+      findsOneWidget,
+    );
+    expect(find.byType(ImageFiltered), findsOneWidget);
+    await tester.pump(const Duration(milliseconds: 250));
     expect(find.byType(ImageFiltered), findsNothing);
   });
 }

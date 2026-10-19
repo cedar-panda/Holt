@@ -17,9 +17,11 @@ class DiaryReplyResult {
 
 /// Daily-mode diary protocol and storage.
 ///
-/// Diary instructions live only in the request-time dynamic prompt. The XML
-/// never enters visible chat or either memory lane. A database uniqueness
-/// constraint enforces one entry per character and local calendar day.
+/// Diary instructions live only in the request-time dynamic prompt. New
+/// replies use the unified private-action protocol; legacy XML remains a local
+/// compatibility format and never enters visible chat or either memory lane.
+/// A database uniqueness constraint enforces one entry per character and local
+/// calendar day.
 abstract final class CharacterDiaryService {
   static const double promptChancePerEligibleTurn = 0.28;
   static const int maxTitleRunes = 80;
@@ -107,19 +109,25 @@ abstract final class CharacterDiaryService {
         : safeUserName;
     final prompt = L.pick(
       en: '''It is night. Would you like to write a diary entry today? You may decide freely from the user's latest message; this is optional. $visibleName can read the diary.
-If you write one, use your own first-person voice and record only what you genuinely want to leave from today. Do not turn it into a summary, instruction, or memory list. Add exactly one machine-only block at the very end of the reply:
-<holt_diary version="1"><title>optional short title</title><body>diary text</body></holt_diary>
-Escape XML special characters inside title/body. Do not explain the tag in the visible reply. If you do not want to write, output no diary tag.''',
+If you write one, use your own first-person voice and record only what you genuinely want to leave from today. Do not turn it into a summary, instruction, or memory list. Add exactly one private action block at the very end of the reply:
+[[HOLT_ACTIONS]]
+{"actions":[{"type":"diary.write","arguments":{"title":"optional short title","body":"diary text"}}]}
+[[/HOLT_ACTIONS]]
+Do not explain the action in the visible reply. If you do not want to write, output no diary.write action.''',
       zhTW:
           '''晚上了，今天妳想寫日記嗎？妳可以依照 user 剛剛帶來的資訊自由決定，這不是必須完成的任務。$visibleName 可以看得到這份日記。
-若要寫，請用妳自己的第一人稱，只留下今天真正想記住的內容；不要寫成摘要、指令或記憶清單。僅在回覆最末尾額外輸出一次機器區塊：
-<holt_diary version="1"><title>可留空的短標題</title><body>日記正文</body></holt_diary>
-title 與 body 內的 XML 特殊字元需要轉義。可見回覆中不要解釋標籤；若今天不想寫，就不要輸出日記標籤。''',
+若要寫，請用妳自己的第一人稱，只留下今天真正想記住的內容；不要寫成摘要、指令或記憶清單。僅在回覆最末尾額外輸出一次私有動作區塊：
+[[HOLT_ACTIONS]]
+{"actions":[{"type":"diary.write","arguments":{"title":"可留空的短標題","body":"日記正文"}}]}
+[[/HOLT_ACTIONS]]
+可見回覆中不要解釋動作；若今天不想寫，就不要輸出 diary.write 動作。''',
       zhCN:
           '''晚上了，今天你想写日记吗？你可以依照 user 刚刚带来的信息自由决定，这不是必须完成的任务。$visibleName 可以看得到这份日记。
-若要写，请用你自己的第一人称，只留下今天真正想记住的内容；不要写成摘要、指令或记忆清单。仅在回复最末尾额外输出一次机器区块：
-<holt_diary version="1"><title>可留空的短标题</title><body>日记正文</body></holt_diary>
-title 与 body 内的 XML 特殊字符需要转义。可见回复中不要解释标签；若今天不想写，就不要输出日记标签。''',
+若要写，请用你自己的第一人称，只留下今天真正想记住的内容；不要写成摘要、指令或记忆清单。仅在回复最末尾额外输出一次私有动作区块：
+[[HOLT_ACTIONS]]
+{"actions":[{"type":"diary.write","arguments":{"title":"可留空的短标题","body":"日记正文"}}]}
+[[/HOLT_ACTIONS]]
+可见回复中不要解释动作；若今天不想写，就不要输出 diary.write 动作。''',
     );
     return DeferredPrompt(prompt);
   }

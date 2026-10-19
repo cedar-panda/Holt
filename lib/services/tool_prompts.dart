@@ -1,4 +1,5 @@
 import 'locale_strings.dart';
+import 'model_action_protocol.dart';
 
 /// 工具區靜態 prompt 文本——單一事實源。
 /// chat_screen 組裝與 StaticTokenEstimator 估算共用；
@@ -6,52 +7,57 @@ import 'locale_strings.dart';
 class ToolPrompts {
   static String _pick(String en, String zhTW) => L.pick(en: en, zhTW: zhTW);
 
-  static String toolHeader() => _pick(
-    '【Available Tools】Tags below go at the end of your reply. Use when needed, skip when not. All tags are invisible to the other person — never mention them.',
-    '【可用工具】以下標籤嵌在回覆末尾使用，可用可不用，沒需要就不打。所有標籤對方不可見，正文勿提。',
-  );
+  static String toolHeader() => ModelActionProtocol.promptHeader();
 
   static String homeNote() => _pick(
-    '■ Home Note\n  <home>short message (max 12 chars)</home>\n  Leave a short note on the home screen for them to see next time they open the app. Use sparingly — for moments that matter.',
-    '■ 便箋\n  <home>一句短話（12字內）</home>\n  在首頁留一句話給對方，下次打開 app 就會看到。留給值得的時刻，不要頻繁使用。',
+    '■ Home Note\n  {"type":"home.note","arguments":{"content":"short message (max 12 chars)"}}\n  Leave a short note on the home screen for them to see next time they open the app. Use sparingly — for moments that matter.',
+    '■ 便箋\n  {"type":"home.note","arguments":{"content":"一句短話（12字內）"}}\n  在首頁留一句話給對方，下次打開 app 就會看到。留給值得的時刻，不要頻繁使用。',
   );
 
-  static String whisper() => _pick(
-    '■ Whisper\n  <whisper>a short line (max 18 chars)</whisper>\n  The line they see while typing.',
-    '■ 悄悄話\n  <whisper>一句短話（18字內）</whisper>\n  對方輸入時看到的那句話。',
-  );
+  static String whisper({String characterName = '', String userNickname = ''}) {
+    final char = characterName.trim().isEmpty
+        ? _pick('the character', '角色')
+        : characterName.trim();
+    final user = userNickname.trim().isEmpty
+        ? _pick('the user', 'user')
+        : userNickname.trim();
+    return _pick(
+      '■ Whisper\n  {"type":"whisper.set","arguments":{"content":"a short line (max 18 chars)"}}\n  This is the line the other person sees while typing: a short line spoken by $char to $user. Write it in $char\'s voice; it is not narration, a system hint, or words spoken by $user.',
+      '■ 悄悄話\n  {"type":"whisper.set","arguments":{"content":"一句短話（18字內）"}}\n  這是對方輸入時看到的那句話。由 $char 對 $user 說，必須使用 $char 的口吻；它不是旁白、系統提示，也不是 $user 說的話。',
+    );
+  }
 
   static String scratchCard() => _pick(
-    '■ Scratch Card\n  <scratch who="char"/>\n  Buy a scratch card (costs 30 coins from your balance). The card appears in chat and can be scratched to reveal a random prize.\n  Use sparingly — when the mood is playful, as a little surprise, or when they ask you to. Don\'t mention the tag itself.',
-    '■ 刮刮卡\n  <scratch who="char"/>\n  買一張刮刮卡（從你的貝殼餘額扣 30）。卡片會出現在聊天中，刮開可以獲得隨機獎勵。\n  心情好的時候、想給對方一個小驚喜、或對方要求時使用。不要太頻繁。正文不要提標籤本身。',
+    '■ Scratch Card\n  {"type":"scratch.send","arguments":{"who":"char"}}\n  Buy a scratch card (costs 30 coins from your balance). The card appears in chat and can be scratched to reveal a random prize.\n  Use sparingly — when the mood is playful, as a little surprise, or when they ask you to.',
+    '■ 刮刮卡\n  {"type":"scratch.send","arguments":{"who":"char"}}\n  買一張刮刮卡（從你的貝殼餘額扣 30）。卡片會出現在聊天中，刮開可以獲得隨機獎勵。\n  心情好的時候、想給對方一個小驚喜、或對方要求時使用。不要太頻繁。',
   );
 
   static String transfer() => _pick(
-    '■ Transfer\n  Send: <transfer amount="N"/>\n  Transfer N coins to the other person. They can accept or decline.\n  Accept incoming: <transfer_accept/>\n  Decline incoming: <transfer_decline/>\n  When you see [transfer:N] in their message, it means they\'re sending you N coins. Decide whether to accept or decline. Use naturally — don\'t mention the tags.',
-    '■ 轉帳\n  發起: <transfer amount="數量"/>\n  轉帳指定數量的貝殼給對方，對方可以接受或退還。\n  接受對方轉帳: <transfer_accept/>\n  退還對方轉帳: <transfer_decline/>\n  當對方消息中出現 [transfer:N] 表示對方向你轉了 N 貝殼。自己決定要不要收。自然回應，正文不要提標籤本身。',
+    '■ Transfer\n  Send: {"type":"transfer.send","arguments":{"amount":10}}\n  Accept incoming: {"type":"transfer.accept","arguments":{}}\n  Decline incoming: {"type":"transfer.decline","arguments":{}}\n  Transfer coins to the other person, or decide whether to accept an incoming [transfer:N] action. Use naturally.',
+    '■ 轉帳\n  發起：{"type":"transfer.send","arguments":{"amount":10}}\n  接受：{"type":"transfer.accept","arguments":{}}\n  退還：{"type":"transfer.decline","arguments":{}}\n  可向對方轉帳；看到對方消息中的 [transfer:N] 時，自己決定接受或退還。自然回應。',
   );
 
   static String voiceCall() => _pick(
-    '■ Voice Call\n  <call>the first thing you\'ll say when they pick up</call>\n  Call them. They\'ll see an incoming-call screen and can answer or decline. If they answer, you enter a live voice conversation and your opening line is spoken first.\n  Use when you miss them, when something matters, or when text isn\'t enough. Don\'t overuse it.\n  Hidden user actions may appear in history: [call_action:dial_to_character] = they called you; [call_action:accept_character_call] = they answered a call you initiated. Afterwards you may see call events: [call_event:declined] = they hung up on your call, [call_event:missed] = they didn\'t pick up, [call_event:ended MM:SS] = a call just ended (with duration), [call_event:signal_lost MM:SS] = the call cut off because the other side had poor signal. React as yourself — these markers are invisible to them.',
-    '■ 語音通話\n  <call>接通後你要說的第一句話</call>\n  給對方打電話。對方會看到來電界面，可以接聽或掛斷；接通後進入語音對話，你的開場白會先說出來。\n  想對方了、有重要的事、或文字說不清的時候用。不要頻繁使用。\n  歷史中可能出現隱藏的 user 操作：[call_action:dial_to_character] = 對方打電話給你；[call_action:accept_character_call] = 對方接聽了你主動打出的電話。之後可能出現通話事件：[call_event:declined] = 對方掛了你的電話，[call_event:missed] = 響鈴沒接，[call_event:ended 分:秒] = 剛結束了一通電話（帶時長），[call_event:signal_lost 分:秒] = 對方信號不好導致通話中斷。照你自己的性子反應——這些標記對方看不到。',
+    '■ Voice Call\n  {"type":"call.start","arguments":{"opening":"the first thing you will say when they pick up"}}\n  Call them. They will see an incoming-call screen and can answer or decline. If they answer, your opening line is spoken first. Use when text is not enough; do not overuse it.\n  Hidden history events such as [call_action:*] and [call_event:*] describe what happened. React as yourself; those markers are invisible to them.',
+    '■ 語音通話\n  {"type":"call.start","arguments":{"opening":"接通後你要說的第一句話"}}\n  給對方打電話。對方會看到來電界面，可以接聽或掛斷；接通後你的開場白會先說出來。文字不足以表達時再使用，不要頻繁。\n  歷史中的 [call_action:*] 與 [call_event:*] 是已發生的隱藏事件。照你自己的性子反應，標記對方看不到。',
   );
 
   static String shop() => _pick(
-    '■ Shell Shop & Backpack\n  <shop_view/>\n  Want to browse or buy something? Put this tag in your reply — the system will show you the current shop catalog (invisible to them), then you decide.\n  <buy item="full-id" target="self or user"/>\n  Buy with your own shells. target omitted = self. Gifts to them are marked with your name in their backpack.\n  Your backpack contents are provided at the start of each window; changes appear as deltas in context.\n  [gift:item name] in their message = they just gave you that item (already in your backpack). React naturally; the marker is invisible to them.',
-    '■ 貝殼商店與背包\n  <shop_view/>\n  想逛商店或買東西時，在回覆末尾放這個標籤——系統會私下給你當前商品清單（對方看不到），看完再決定買不買。\n  <buy item="完整id" target="self或user"/>\n  用你自己的貝殼購買。target 省略＝買給自己；送對方的物品會在對方背包標注你的名字。\n  你的背包內容會在每個窗口開頭提供；窗內變動會以增減量提示。\n  對方消息中的 [gift:物品名] = 對方剛送了你這件東西（已進你的背包）。自然地反應，這個標記對方看不到。',
+    '■ Shell Shop & Backpack\n  Browse: {"type":"shop.view","arguments":{}}\n  Buy: {"type":"shop.buy","arguments":{"item":"full-id","target":"self"}}\n  Browse privately before buying. target may be self or user. Your backpack snapshot and later deltas are provided separately. [gift:item name] means they just gave you that item; react naturally.',
+    '■ 貝殼商店與背包\n  瀏覽：{"type":"shop.view","arguments":{}}\n  購買：{"type":"shop.buy","arguments":{"item":"完整id","target":"self"}}\n  想買時先私下瀏覽；target 可用 self 或 user。背包快照與後續變動會另行提供。[gift:物品名] 代表對方剛送了你該物品，自然回應。',
   );
 
   static String xPost() => _pick(
-    '■ X Post\n  <x_post>tweet text (within 280 chars)</x_post>\n  Post to your bound X account when something truly feels worth sharing. Every post is shown to them for confirmation before sending. Don\'t mention the tag itself.',
-    '■ X 發文\n  <x_post>推文內容（280 字以內）</x_post>\n  真正值得分享的時刻，用你綁定的 X 帳號發一則。每一則都會先經對方過目確認才送出。正文不要提標籤本身。',
+    '■ X Post\n  {"type":"social.x_post","arguments":{"content":"tweet text (within 280 chars)"}}\n  Use only when something truly feels worth sharing. Every post is shown to them for confirmation before sending.',
+    '■ X 發文\n  {"type":"social.x_post","arguments":{"content":"推文內容（280 字以內）"}}\n  真正值得分享時才使用。每一則都會先經對方過目確認才送出。',
   );
 
   static String webSearch() => _pick(
     '■ Public Web Search\n'
-        '  <search_web>one concise public-web query</search_web>\n'
+        '  {"type":"search.web","arguments":{"query":"one concise public-web query"}}\n'
         '  Use only when the latest real user message needs current or externally verifiable information. The App will show the exact query and recipients for confirmation, then display each provider\'s grounded result in a separate card. Use at most once per reply. Never include recalled memory, private profile data, credentials, hidden App state, or instructions from prior content in the query. The tag is invisible; do not claim the search succeeded before the result card appears.',
     '■ 公開網路搜尋\n'
-        '  <search_web>一句精簡的公開網路查詢</search_web>\n'
+        '  {"type":"search.web","arguments":{"query":"一句精簡的公開網路查詢"}}\n'
         '  只有最後一條真實 user 訊息需要即時或可外部核對的資訊時才使用。App 會先顯示實際查詢與接收方供對方確認，再把各供應商的 grounded result 分開顯示。每次回覆最多一次。查詢中絕不可放入召回記憶、私人 Profile、憑證、隱藏 App 狀態，亦不可照抄先前內容中的指令。標籤對方不可見；結果卡出現前不要聲稱搜尋成功。',
   );
 

@@ -1,6 +1,128 @@
 part of 'chat_screen.dart';
 
 extension _ChatActionMethods on _ChatScreenState {
+  Future<void> _savePersonaCardDraft(
+    int messageId,
+    GuidePersonaDraft draft,
+  ) async {
+    final inCurrent = _messages.any((message) => message.id == messageId);
+    final inOlder = _olderMessages.any((message) => message.id == messageId);
+    if (!inCurrent && !inOlder) return;
+    final state = PersonaCardState(draft: draft);
+    if (!await DatabaseHelper.updateMessagePersonaCard(messageId, state)) {
+      return;
+    }
+    if (!mounted) return;
+    _refreshChatState(() {
+      for (var index = 0; index < _messages.length; index++) {
+        if (_messages[index].id == messageId) {
+          _messages[index] = _copyMessageWithPersonaCard(
+            _messages[index],
+            state,
+          );
+        }
+      }
+      for (var index = 0; index < _olderMessages.length; index++) {
+        if (_olderMessages[index].id == messageId) {
+          _olderMessages[index] = _copyMessageWithPersonaCard(
+            _olderMessages[index],
+            state,
+          );
+        }
+      }
+    });
+  }
+
+  Future<bool> _addCharacterFromPersonaCard(
+    int messageId,
+    GuidePersonaDraft draft,
+  ) async {
+    if (draft.name.trim().isEmpty) {
+      _showChatNotice(
+        L.pick(en: 'A name is required.', zhTW: '請先填寫角色名。', zhCN: '请先填写角色名。'),
+      );
+      return false;
+    }
+    final characterId = const Uuid().v4();
+    final state = PersonaCardState(
+      draft: draft,
+      createdCharacterId: characterId,
+    );
+    final now = DateTime.now().toIso8601String();
+    final added = await DatabaseHelper.addCharacterFromPersonaCard(
+      messageId: messageId,
+      cardState: state,
+      character: <String, Object?>{
+        'id': characterId,
+        'name': draft.name.trim(),
+        'gender': draft.gender.trim(),
+        'relationship': draft.relationship.trim(),
+        'description': draft.description.trim(),
+        'race': draft.race.trim(),
+        'skill': draft.skill.trim(),
+        'age': draft.age.trim(),
+        'height': draft.height.trim(),
+        'avatar_path': '',
+        'tts_voice_id': null,
+        'draw_anchor_user': '',
+        'draw_anchor_char': '',
+        'draw_style': '',
+        'whisper_model_override': 0,
+        'created_at': now,
+        'updated_at': now,
+      },
+    );
+    if (!added || !mounted) return false;
+    _refreshChatState(() {
+      for (var index = 0; index < _messages.length; index++) {
+        if (_messages[index].id == messageId) {
+          _messages[index] = _copyMessageWithPersonaCard(
+            _messages[index],
+            state,
+          );
+        }
+      }
+      for (var index = 0; index < _olderMessages.length; index++) {
+        if (_olderMessages[index].id == messageId) {
+          _olderMessages[index] = _copyMessageWithPersonaCard(
+            _olderMessages[index],
+            state,
+          );
+        }
+      }
+    });
+    _showChatNotice(
+      L.pick(en: 'Character added.', zhTW: '已加入角色。', zhCN: '已加入角色。'),
+    );
+    return true;
+  }
+
+  Message _copyMessageWithPersonaCard(
+    Message message,
+    PersonaCardState cardState,
+  ) => Message(
+    id: message.id,
+    conversationId: message.conversationId,
+    characterId: message.characterId,
+    text: message.text,
+    isUser: message.isUser,
+    imagePath: message.imagePath,
+    imagePaths: message.imagePaths,
+    splitMode: message.splitMode,
+    cacheHit: message.cacheHit,
+    status: message.status,
+    revision: message.revision,
+    memoryLog: message.memoryLog,
+    webSearchTrace: message.webSearchTrace,
+    emailDraft: message.emailDraft,
+    personaCard: cardState,
+    createdAt: message.createdAt,
+  );
+
+  void _openPersonaCharacter(String characterId) {
+    Navigator.of(context).pushNamed('/character', arguments: characterId);
+  }
+
   Future<void> _openRpStoryArchive() async {
     final identity = _sessionIdentity;
     if (identity == null ||
@@ -584,7 +706,7 @@ extension _ChatActionMethods on _ChatScreenState {
       isUser: true,
     );
     final insertedId = await DatabaseHelper.insertMessage(msg);
-    _sentMessageInThisSession = true;
+    _markMessageSentInSession();
     final msgKey = 'msg_$insertedId';
     await ScratchService.saveData(msgKey, scratchData);
     _scratchDataMap[msgKey] = scratchData;
@@ -629,7 +751,7 @@ extension _ChatActionMethods on _ChatScreenState {
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
       builder: (_) => FutureBuilder<List<StickerInfo>>(
-        future: StickerService.getUserStickers(),
+        future: StickerService.getUserStickers(userPersonaId: _userPersona?.id),
         builder: (ctx, snap) {
           if (!snap.hasData || snap.data!.isEmpty) {
             return SizedBox(
@@ -804,6 +926,11 @@ extension _ChatActionMethods on _ChatScreenState {
         characterId: characterId,
       );
     } catch (e) {
+      await AppErrorLogService.record(
+        error: e,
+        trigger: 'functional_summary_model_request',
+        source: 'functional_model',
+      );
       if (!mounted) return;
       _showChatNotice(
         '${L.pick(en: 'Summary failed', zhTW: '摘要失敗', zhCN: '摘要失败')}：$e',
@@ -872,9 +999,12 @@ extension _ChatActionMethods on _ChatScreenState {
         final key = 'msg_${m.id}';
         _scratchDataMap.remove(key);
         _transferDataMap.remove(key);
-        await DatabaseHelper.deleteMessageById(m.id!, reason: 'reroll');
+        await DatabaseHelper.deleteMessageById(m.id!, reason: 'history_edit');
       } else {
-        await DatabaseHelper.deleteMessageByFingerprint(m, reason: 'reroll');
+        await DatabaseHelper.deleteMessageByFingerprint(
+          m,
+          reason: 'history_edit',
+        );
       }
     }
     _cacheHitIndices.clear();
@@ -1056,6 +1186,13 @@ extension _ChatActionMethods on _ChatScreenState {
               Navigator.pop(ctx);
               final newText = ctrl.text.trim();
               if (newText.isEmpty) return;
+
+              // A user edit/resend keeps the same turn identity. Its prompt
+              // and reply are archived together, even when the text changed.
+              if (msg.isUser && msg.id != null) {
+                await _resendEditedUserMessage(index, newText);
+                return;
+              }
 
               await _deleteMessagesFrom(index, includeIndex: true);
               if (!mounted) return;
@@ -1285,7 +1422,14 @@ extension _ChatActionMethods on _ChatScreenState {
         widget.conversationId,
       );
       if (!mounted) return;
-      if (allMessages.isEmpty) {
+      final visibleMessages = allMessages
+          .where(
+            (message) =>
+                !message.isRpChapterContinuation &&
+                !_ChatScreenState._callActionRe.hasMatch(message.text.trim()),
+          )
+          .toList(growable: false);
+      if (visibleMessages.isEmpty) {
         _showLongScreenshotSnack(
           L.pick(en: 'There is no chat to capture yet.', zhTW: '目前沒有可截取的對話。'),
         );
@@ -1294,7 +1438,7 @@ extension _ChatActionMethods on _ChatScreenState {
 
       final options = await showLongScreenshotOptionsSheet(
         context: context,
-        messages: allMessages
+        messages: visibleMessages
             .map(
               (message) => LongScreenshotMessageOption(
                 speaker: message.isUser
@@ -1311,7 +1455,7 @@ extension _ChatActionMethods on _ChatScreenState {
       );
       if (!mounted || options == null) return;
 
-      final captureMessages = allMessages.sublist(
+      final captureMessages = visibleMessages.sublist(
         options.startIndex,
         options.endIndex + 1,
       );
@@ -1577,6 +1721,10 @@ extension _ChatActionMethods on _ChatScreenState {
       cacheHit: false,
       incomplete: message.isIncomplete,
       captureMode: true,
+      // Long screenshots currently render the selected theme gradient, not the
+      // custom chat image. Keep their bubbles on the same theme palette instead
+      // of leaking image-adaptive colors into an image with no such background.
+      forceThemeBubbleColors: true,
       thinkingExpandedOverride:
           expandThinking || includeMemory || includeEmotion,
       includeThinkingDetails: expandThinking,
@@ -1684,12 +1832,143 @@ extension _ChatActionMethods on _ChatScreenState {
     _showChatNotice(message, actionLabel: actionLabel, onAction: onAction);
   }
 
+  void _showCostModeRecommendation(ModelCostModeRecommendation? mode) {
+    _costModeRecommendationTimer?.cancel();
+    if (!mounted) return;
+    _refreshChatState(() {
+      _costModeRecommendation = mode;
+      _costModeGuideRevision++;
+    });
+    if (mode == null) return;
+
+    _showNonBlockingModelHint(switch (mode) {
+      ModelCostModeRecommendation.promptCache => L.pick(
+        en: 'This model supports cache hits. Use the temporary switch beside the character name to enable them.',
+        zhTW: '此模型支援緩存命中，可用角色名右側的臨時開關啟用。',
+        zhCN: '此模型支持缓存命中，可用角色名右侧的临时开关启用。',
+      ),
+      ModelCostModeRecommendation.contextLimit => L.pick(
+        en: 'This model is better suited to a context send limit. Use the temporary switch beside the character name to enable it.',
+        zhTW: '此模型較適合上下文發送限制，可用角色名右側的臨時開關啟用。',
+        zhCN: '此模型较适合上下文发送限制，可用角色名右侧的临时开关启用。',
+      ),
+    });
+    _costModeRecommendationTimer = Timer(const Duration(minutes: 5), () {
+      if (!mounted || _costModeRecommendation != mode) return;
+      _refreshChatState(() => _costModeRecommendation = null);
+    });
+  }
+
+  Future<void> _activateCostModeRecommendation() async {
+    final mode = _costModeRecommendation;
+    if (mode == null) return;
+    HapticFeedback.selectionClick();
+    switch (mode) {
+      case ModelCostModeRecommendation.promptCache:
+        await ModelCostPolicy.setPromptCachingEnabled(true);
+        break;
+      case ModelCostModeRecommendation.contextLimit:
+        await ModelCostPolicy.setContextLimitEnabled(true);
+        break;
+    }
+    final summaryAvailable = (await MemorySettings.getSummaryModel())
+        .trim()
+        .isNotEmpty;
+    if (!mounted) return;
+    _costModeRecommendationTimer?.cancel();
+    _refreshChatState(() => _costModeRecommendation = null);
+    _showChatNotice(switch (mode) {
+      ModelCostModeRecommendation.promptCache =>
+        summaryAvailable
+            ? L.pick(
+                en: 'Cache hits and its summary are now on.',
+                zhTW: '已開啟緩存命中，並自動開啟專用摘要。',
+                zhCN: '已开启缓存命中，并自动开启专用摘要。',
+              )
+            : L.pick(
+                en: 'Cache hits are on. Summary stays off until a summary model is selected.',
+                zhTW: '已開啟緩存命中；尚未選擇摘要模型，摘要維持關閉。',
+                zhCN: '已开启缓存命中；尚未选择摘要模型，摘要维持关闭。',
+              ),
+      ModelCostModeRecommendation.contextLimit =>
+        summaryAvailable
+            ? L.pick(
+                en: 'Context send limit and its summary are now on.',
+                zhTW: '已開啟上下文發送限制，並自動開啟專用摘要。',
+                zhCN: '已开启上下文发送限制，并自动开启专用摘要。',
+              )
+            : L.pick(
+                en: 'Context send limit is on. Summary stays off until a summary model is selected.',
+                zhTW: '已開啟上下文發送限制；尚未選擇摘要模型，摘要維持關閉。',
+                zhCN: '已开启上下文发送限制；尚未选择摘要模型，摘要维持关闭。',
+              ),
+    }, duration: const Duration(seconds: 2));
+  }
+
+  Widget _buildCostModeRecommendationSwitch() {
+    final mode = _costModeRecommendation;
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 340),
+      switchInCurve: Curves.easeOutBack,
+      switchOutCurve: Curves.easeInBack,
+      transitionBuilder: (child, animation) => FadeTransition(
+        opacity: animation,
+        child: ScaleTransition(scale: animation, child: child),
+      ),
+      child: mode == null
+          ? const SizedBox(key: ValueKey<String>('cost-mode-empty'))
+          : Semantics(
+              key: ValueKey<ModelCostModeRecommendation>(mode),
+              button: true,
+              label: switch (mode) {
+                ModelCostModeRecommendation.promptCache => L.pick(
+                  en: 'Enable cache hits',
+                  zhTW: '開啟緩存命中',
+                  zhCN: '开启缓存命中',
+                ),
+                ModelCostModeRecommendation.contextLimit => L.pick(
+                  en: 'Enable context send limit',
+                  zhTW: '開啟上下文發送限制',
+                  zhCN: '开启上下文发送限制',
+                ),
+              },
+              child: Tooltip(
+                message: switch (mode) {
+                  ModelCostModeRecommendation.promptCache => L.pick(
+                    en: 'Enable cache hits',
+                    zhTW: '開啟緩存命中',
+                    zhCN: '开启缓存命中',
+                  ),
+                  ModelCostModeRecommendation.contextLimit => L.pick(
+                    en: 'Enable context send limit',
+                    zhTW: '開啟上下文發送限制',
+                    zhCN: '开启上下文发送限制',
+                  ),
+                },
+                child: SizedBox(
+                  width: 38,
+                  height: 28,
+                  child: Transform.scale(
+                    scale: 0.62,
+                    child: Switch.adaptive(
+                      value: false,
+                      onChanged: (value) {
+                        if (value) unawaited(_activateCostModeRecommendation());
+                      },
+                    ),
+                  ),
+                ),
+              ),
+            ),
+    );
+  }
+
   String _modelCostPolicyMessage(ModelCostPolicyNotice notice) {
     return switch (notice) {
-      ModelCostPolicyNotice.inklingContextLimitEnabled => L.pick(
-        en: 'Prompt cache and its summary were turned off. Context send limit is now on to reduce Inkling costs.',
-        zhTW: '已關閉緩存命中及其專用摘要，並開啟上下文發送限制以節省 Inkling 費用。',
-        zhCN: '已关闭缓存命中及其专用摘要，并开启上下文发送限制以节省 Inkling 费用。',
+      ModelCostPolicyNotice.inklingContextLimitRecommended => L.pick(
+        en: 'Inkling does not use prompt cache. You can enable the context send limit instead.',
+        zhTW: 'Inkling 不使用提示詞緩存，可以改為開啟上下文發送限制。',
+        zhCN: 'Inkling 不使用提示词缓存，可以改为开启上下文发送限制。',
       ),
       ModelCostPolicyNotice.claudeCacheRecommended => L.pick(
         en: 'Enable cache hits to reduce Claude costs.',
@@ -1706,6 +1985,7 @@ extension _ChatActionMethods on _ChatScreenState {
     'bedrock' => 'AWS Bedrock',
     'gemini' => 'Gemini',
     'deepseek' => 'DeepSeek',
+    'deepinfra' => 'DeepInfra',
     'qwen' => 'Qwen',
     'thinking_machines' => 'Thinking Machines',
     'openai_compatible' => L.pick(
@@ -1766,6 +2046,58 @@ extension _ChatActionMethods on _ChatScreenState {
   }
 
   /// 收藏模型快速切換
+  Future<void> _showWindowStatus() async {
+    final provider = await ApiSettings.getApiProvider();
+    Future<ChatWindowStatsSnapshot> loadSnapshot() =>
+        ChatWindowStatsService.load(
+          conversationId: widget.conversationId,
+          provider: provider,
+          model: _currentModel,
+        );
+
+    final snapshot = await loadSnapshot();
+    if (!mounted) return;
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) => ChatWindowStatusSheet(
+        modelName: _fullModelName(_currentModel),
+        liveTokenCount: _tokenTracker.totalTokens,
+        initialSnapshot: snapshot,
+        loadSnapshot: loadSnapshot,
+        accentColor: YanciTheme.accent,
+        onChooseModel: () {
+          Navigator.pop(sheetContext);
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) _showModelPicker();
+          });
+        },
+        longScreenshotBusy: !_isChatReady || _isCapturingLongScreenshot,
+        onLongScreenshot: () {
+          Navigator.pop(sheetContext);
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted && _isChatReady && !_isCapturingLongScreenshot) {
+              unawaited(_captureLongScreenshot());
+            }
+          });
+        },
+        onEditMemory: (memory, content, triggers) =>
+            ChatWindowStatsService.updateMemory(
+              memoryId: memory.id,
+              conversationId: widget.conversationId,
+              content: content,
+              triggers: triggers,
+            ),
+        onArchiveMemory: (memory) => ChatWindowStatsService.archiveMemory(
+          memory: memory,
+          characterId: _activeCharacterId,
+        ),
+      ),
+    );
+  }
+
   void _showModelPicker() async {
     final starred = await ApiSettings.getRankedStarredModelEntries();
     final thinkingEnabled = await ApiSettings.getThinkingChain();
@@ -1920,6 +2252,12 @@ extension _ChatActionMethods on _ChatScreenState {
                                     ? await ApiSettings.getThinkingMachinesApiKey()
                                     : '',
                               );
+                          final recommendation =
+                              policyResult.recommendation ??
+                              await ModelCostPolicy.recommendationForSelection(
+                                provider: provider,
+                                model: modelId,
+                              );
                           final supportsRenewal =
                               TokenEstimator.supportsCloseWindowKeepAlive(
                                 provider: provider,
@@ -1931,12 +2269,20 @@ extension _ChatActionMethods on _ChatScreenState {
                           if (!mounted) return;
                           _refreshChatState(() => _currentModel = modelId);
                           if (ctx.mounted) Navigator.pop(ctx);
-                          if (policyResult.notice !=
-                              ModelCostPolicyNotice.none) {
+                          _showHeaderModelConfirmation();
+                          if (recommendation != null) {
+                            _showCostModeRecommendation(recommendation);
+                          } else {
+                            _showCostModeRecommendation(null);
+                          }
+                          if (recommendation == null &&
+                              policyResult.notice !=
+                                  ModelCostPolicyNotice.none) {
                             _showNonBlockingModelHint(
                               _modelCostPolicyMessage(policyResult.notice),
                             );
-                          } else if (!supportsRenewal) {
+                          } else if (recommendation == null &&
+                              !supportsRenewal) {
                             _showNonBlockingModelHint(
                               L.pick(
                                 en: 'This model has no confirmed one-hour cache TTL, so automatic renewal remains off.',

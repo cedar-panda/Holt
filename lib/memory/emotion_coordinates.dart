@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:math';
 import 'package:flutter/foundation.dart';
+import '../models/context_mode.dart';
 import '../services/locale_strings.dart';
 
 import 'database.dart';
@@ -153,6 +154,28 @@ class EmotionPoint {
 }
 
 class EmotionCoordinates {
+  // ─────────────────────────────────────────────
+  // 情緒範圍：RP 是平行時空，每條故事線各一份情緒，日常一份。
+  // 不改表結構——character_id 欄位在 RP 時存「角色id#rp:故事線」。
+  // ─────────────────────────────────────────────
+
+  static const String rpScopeMark = '#rp:';
+
+  /// 日常 → 角色 id；RP → 角色 id#rp:故事線 id。
+  static String scopeId(
+    String characterId,
+    ContextMode mode,
+    String continuityId,
+  ) {
+    if (mode != ContextMode.rp) return characterId;
+    final line = continuityId.trim().isEmpty ? 'main' : continuityId.trim();
+    return '$characterId$rpScopeMark$line';
+  }
+
+  /// 從範圍 ID 取回真正的角色 id（查訊息等非情緒表時用）。
+  static String baseCharacterId(String scopeId) =>
+      scopeId.split(rpScopeMark).first;
+
   // ─────────────────────────────────────────────
   // 可調參數
   // ─────────────────────────────────────────────
@@ -348,8 +371,11 @@ class EmotionCoordinates {
     final db = await DatabaseHelper.database;
     final removed = await db.delete(
       'emotion_points',
-      where: "character_id = ? AND status != 'active' AND created_at < ?",
-      whereArgs: [characterId, cutoff],
+      // 同時清理該角色所有 RP 故事線範圍的過期點。
+      where:
+          "(character_id = ? OR character_id LIKE ?) "
+          "AND status != 'active' AND created_at < ?",
+      whereArgs: [characterId, '$characterId$rpScopeMark%', cutoff],
     );
     if (removed > 0) {
       debugPrint('Emotion maintenance removed $removed expired points');
@@ -561,7 +587,10 @@ class EmotionCoordinates {
     int touched = 0;
 
     // 安全感閒置衰減的錨點：最後一次真的聊過的時間
-    final lastChatAt = await DatabaseHelper.getLastMessageTime(characterId);
+    // 訊息表沒有範圍 ID，要用真正的角色 id 查。
+    final lastChatAt = await DatabaseHelper.getLastMessageTime(
+      baseCharacterId(characterId),
+    );
 
     // ── 預計算交互衰減參數 ──
     final safetyAvg = await slidingAverage(
@@ -1063,7 +1092,7 @@ class EmotionCoordinates {
   static String abilityPrompt() {
     if (L.locale == 'en') {
       return '''■ Emotion
-  <emo>dimension|x,y|intensity|note</emo>
+  {"type":"emotion.record","arguments":{"dimension":"Security","x":0,"y":0,"intensity":35,"note":""}}
   Log your inner shifts whenever this turn touched you — not just major events. Emotion points are not long-term memory; don't wait for something memo-worthy.
   Dimensions (use exactly one of these labels): Security / Desire / Comfort / Negative emotion / Banter
   X: -100 to +100 (unpleasant → pleasant), Y: -100 to +100 (calm → aroused)
@@ -1071,13 +1100,13 @@ class EmotionCoordinates {
   Note rules: 85+ write the triggering context, 60~84 at most two keywords, below 60 may be empty.
   Desire caps at 80. Multiple coexisting emotions may take multiple tags, usually 1~2. If stable, skip.
 
-  <emo_resolve>dimension</emo_resolve>
+  {"type":"emotion.resolve","arguments":{"dimension":"Security"}}
   Use when an emotion is truly resolved (it passed, you made up, it released). Use the English dimension labels above.''';
     }
     return L.pick(
       en: '',
       zhTW: '''■ 情緒
-  <emo>維度|x,y|濃度|備註</emo>
+  {"type":"emotion.record","arguments":{"dimension":"安全感","x":0,"y":0,"intensity":35,"note":""}}
   用來記錄你這一輪被觸動後的內在波動，不只重大事件。情緒打點不是長期記憶，不需要等到值得寫 memo 才用。
   維度：安全感／慾望／愜意／負面情緒／戲謔
   X：-100 到 +100（不愉快 → 愉快），Y：-100 到 +100（平靜 → 激動）
@@ -1085,10 +1114,10 @@ class EmotionCoordinates {
   備註規則：85+ 寫觸發語境，60~84 最多兩個關鍵詞，60 以下可以留空。
   慾望上限 80。多情緒並存可打多個，通常 1~2 個就夠。穩定沒變就不打。
 
-  <emo_resolve>維度</emo_resolve>
+  {"type":"emotion.resolve","arguments":{"dimension":"安全感"}}
   當一份情緒被真實化解（事過了、和好了、釋放了）時使用。''',
       zhCN: '''■ 情绪
-  <emo>维度|x,y|浓度|备注</emo>
+  {"type":"emotion.record","arguments":{"dimension":"安全感","x":0,"y":0,"intensity":35,"note":""}}
   用来记录你这一轮被触动后的内在波动，不只重大事件。情绪打点不是长期记忆，不需要等到值得写 memo 才用。
   维度：安全感／欲望／惬意／负面情绪／戏谑
   X：-100 到 +100（不愉快 → 愉快），Y：-100 到 +100（平静 → 激动）
@@ -1096,7 +1125,7 @@ class EmotionCoordinates {
   备注规则：85+ 写触发语境，60~84 最多两个关键词，60 以下可以留空。
   欲望上限 80。多情绪并存可打多个，通常 1~2 个就够。稳定没变就不打。
 
-  <emo_resolve>维度</emo_resolve>
+  {"type":"emotion.resolve","arguments":{"dimension":"安全感"}}
   当一份情绪被真实化解（事过了、和好了、释放了）时使用。''',
     );
   }

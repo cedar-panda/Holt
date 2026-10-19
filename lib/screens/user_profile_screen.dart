@@ -22,7 +22,7 @@ import '../widgets/gradient_background.dart';
 import '../widgets/user_persona_avatar_pair.dart';
 
 /// Mode-aware user role file. Base identity is shared until a mode-specific
-/// edit creates an override; companion bindings are always mode scoped.
+/// edit creates an override; the companion binding is shared across modes.
 class UserProfileScreen extends StatefulWidget {
   const UserProfileScreen({super.key, this.personaId});
 

@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'email_draft.dart';
 import 'context_mode.dart';
+import 'guide_persona_draft.dart';
 import 'web_search_trace.dart';
 
 /// 訊息資料模型（帶角色綁定）
@@ -12,6 +13,8 @@ class Message {
       '[holt:continue_rp_source:';
   static const String _rpChapterContinuationAnchorPrefix =
       '[holt:continue_rp_anchor:';
+  static const String _continuationStartModePrefix =
+      '[holt:continuation_start:';
 
   final int? id;
   final String conversationId;
@@ -44,6 +47,9 @@ class Message {
 
   static String rpChapterContinuationAnchorMarker(int messageId) =>
       '$_rpChapterContinuationAnchorPrefix$messageId]';
+
+  static String continuationStartModeMarker(String mode) =>
+      '$_continuationStartModePrefix${Uri.encodeComponent(mode)}]';
 
   String? get rpChapterContinuationSourceId {
     if (!isRpChapterContinuation) return null;
@@ -86,6 +92,31 @@ class Message {
     return null;
   }
 
+  String? get continuationStartMode {
+    if (!isRpChapterContinuation) return null;
+    for (final rawLine in text.split('\n')) {
+      final line = rawLine.trim();
+      if (!line.startsWith(_continuationStartModePrefix) ||
+          !line.endsWith(']')) {
+        continue;
+      }
+      final encoded = line.substring(
+        _continuationStartModePrefix.length,
+        line.length - 1,
+      );
+      if (encoded.isEmpty) return null;
+      try {
+        final decoded = Uri.decodeComponent(encoded).trim();
+        return decoded.isEmpty ? null : decoded;
+      } on FormatException {
+        return null;
+      }
+    }
+    return null;
+  }
+
+  bool get isUserFirstContinuation => continuationStartMode == 'user';
+
   String get promptVisibleText {
     if (!isRpChapterContinuation) return text;
     return text
@@ -93,7 +124,8 @@ class Message {
         .where(
           (rawLine) =>
               !rawLine.trim().startsWith(_rpChapterContinuationSourcePrefix) &&
-              !rawLine.trim().startsWith(_rpChapterContinuationAnchorPrefix),
+              !rawLine.trim().startsWith(_rpChapterContinuationAnchorPrefix) &&
+              !rawLine.trim().startsWith(_continuationStartModePrefix),
         )
         .join('\n')
         .trim();
@@ -110,6 +142,7 @@ class Message {
   final String memoryLog;
   final WebSearchDisplayTrace? webSearchTrace;
   final EmailDraft? emailDraft;
+  final PersonaCardState? personaCard;
   final DateTime createdAt;
 
   Message({
@@ -127,6 +160,7 @@ class Message {
     this.memoryLog = '',
     this.webSearchTrace,
     this.emailDraft,
+    this.personaCard,
     DateTime? createdAt,
   }) : imagePath = _firstImagePath(imagePaths, imagePath),
        imagePaths = _normalizeImagePaths(imagePaths, imagePath),
@@ -168,6 +202,7 @@ class Message {
       'memory_log': memoryLog,
       'web_search_trace_json': webSearchTrace?.encode() ?? '',
       'email_draft_json': emailDraft?.encode() ?? '',
+      'persona_card_json': personaCard?.encode() ?? '',
       'created_at': createdAt.toIso8601String(),
     };
   }
@@ -204,6 +239,7 @@ class Message {
         map['web_search_trace_json'] as String?,
       ),
       emailDraft: EmailDraft.decode(map['email_draft_json'] as String?),
+      personaCard: PersonaCardState.decode(map['persona_card_json'] as String?),
       createdAt: DateTime.parse(map['created_at'] as String),
     );
   }

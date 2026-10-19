@@ -78,6 +78,7 @@ class ExistingMemoryScanner {
     required String characterId,
     required List<Memory> memories,
     bool applyImmediately = false,
+    bool persistSuggestions = true,
   }) async {
     final unique = <int, Memory>{
       for (final memory in memories)
@@ -172,6 +173,7 @@ class ExistingMemoryScanner {
     for (final candidate in selected.where(
       (candidate) => !candidate.isDuplicate,
     )) {
+      if (!applyImmediately && !persistSuggestions) continue;
       final writeResult = await DatabaseHelper.upsertSpiderWebRelationDetailed(
         characterId,
         candidate.first.id!,
@@ -235,6 +237,7 @@ class ExistingMemoryScanner {
           .expand((candidate) => candidate.match.reasons)
           .toSet()
           .toList(growable: false);
+      if (!applyImmediately && !persistSuggestions) continue;
       final proposalId = await MemoryGuardService.proposeExistingDuplicateGroup(
         characterId: characterId,
         mode: groupMemories.first.mode,

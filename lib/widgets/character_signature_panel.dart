@@ -33,6 +33,12 @@ class CharacterSignaturePanel extends StatelessWidget {
     return truncateGraphemes(value, CharacterSignaturePrompt.maxCharacters);
   }
 
+  Color _signatureTextColor() {
+    if (foregroundColor != null) return foregroundColor!;
+    final themed = YanciTheme.characterResourceLabel.withValues(alpha: 0.72);
+    return YanciTheme.isDark ? themed : Color.lerp(themed, Colors.black, 0.10)!;
+  }
+
   @override
   Widget build(BuildContext context) {
     final child = _buildPanel(context);
@@ -58,9 +64,7 @@ class CharacterSignaturePanel extends StatelessWidget {
       final textStyle = TextStyle(
         fontSize: 10,
         height: 1.45,
-        color:
-            foregroundColor ??
-            YanciTheme.characterResourceLabel.withValues(alpha: 0.72),
+        color: _signatureTextColor(),
         fontFamily: YanciTheme.fontFamily,
       );
       return LayoutBuilder(
@@ -152,11 +156,7 @@ class CharacterSignaturePanel extends StatelessWidget {
                   style: TextStyle(
                     fontSize: 10.5,
                     height: 1.55,
-                    color:
-                        foregroundColor ??
-                        YanciTheme.characterResourceLabel.withValues(
-                          alpha: 0.72,
-                        ),
+                    color: _signatureTextColor(),
                     fontFamily: YanciTheme.fontFamily,
                   ),
                 ),

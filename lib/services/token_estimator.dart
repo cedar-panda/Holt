@@ -3,6 +3,10 @@ import 'settings/api_settings.dart';
 import 'sticker_service.dart';
 import 'locale_strings.dart';
 import '../memory/database.dart';
+import 'cache/claude_cache_policy.dart';
+import 'cache/deepinfra_cache_policy.dart';
+import 'cache/deepseek_cache_policy.dart';
+import 'cache/gemini_cache_policy.dart';
 
 enum CacheThresholdKind {
   fixed,
@@ -72,6 +76,8 @@ class TokenEstimator {
         return ApiSettings.getAwsModelId();
       case 'deepseek':
         return ApiSettings.getDeepseekModel();
+      case 'deepinfra':
+        return ApiSettings.getDeepInfraModel();
       case 'gemini':
         return ApiSettings.getGeminiModel();
       case 'qwen':
@@ -122,6 +128,9 @@ class TokenEstimator {
     // 直連來源先於模型名判定，避免 Qwen/Model Studio 下載入
     // DeepSeek、Kimi 等模型時誤用另一家 API 的規則。
     if (p == 'deepseek') return const CacheThresholdInfo.fixed(64);
+    if (p == 'deepinfra') {
+      return const CacheThresholdInfo.automaticWithoutPublishedMinimum();
+    }
     if (p == 'qwen') return const CacheThresholdInfo.fixed(1024);
     if (p == 'xai') {
       return const CacheThresholdInfo.automaticWithoutPublishedMinimum();
@@ -129,6 +138,9 @@ class TokenEstimator {
 
     // ── Gemini ──
     if (p == 'gemini' || m.contains('gemini')) {
+      if (m.contains('gemini-4-argon') || m.contains('gemini-4-')) {
+        return const CacheThresholdInfo.fixed(4096);
+      }
       if (_containsAny(m, [
         '3.8',
         '3-8',
@@ -264,20 +276,10 @@ class TokenEstimator {
   //  保活資格判斷
   // ═══════════════════════════════════════════════════════
 
-  /// 關鍵字列表：不同網站模型 ID 格式不同，只要含關鍵系列名就能判斷。
-  static const _claudeFamilyKeywords = [
-    'claude',
-    'anthropic',
-    'opus',
-    'sonnet',
-    'haiku',
-    'fable',
-    'mythos',
-  ];
-
   /// 判斷當前模型是否支持保活（= 已確認有 1 小時 cache TTL）。
   /// Claude 家族走 Anthropic cache_control ttl:1h。
-  /// Gemini 官方 API 走 cachedContents ttl:3600s。
+  /// Gemini 舊模型可走 cachedContents ttl:3600s；Gemini 4 的隱式快取
+  /// 沒有可由客戶端延續的 TTL，因此不屬於關窗保活。
   /// 其它模型即使有自動 cache，也不做關窗保活。
   static Future<bool> supportsKeepAlive() async {
     final provider = (await ApiSettings.getApiProvider()).toLowerCase();
@@ -293,8 +295,16 @@ class TokenEstimator {
   }) {
     final p = provider.toLowerCase();
     final m = model.toLowerCase();
-    if (_isClaudeFamilyModel(m)) return _isClaudeCacheProvider(p);
-    if (_isGeminiFamilyModel(m)) return _isGeminiCacheProvider(p);
+    if (ClaudeCachePolicy.isFamilyModel(m)) {
+      return ClaudeCachePolicy.supportsRoute(p);
+    }
+    if (GeminiCachePolicy.matches(provider: p, model: m) &&
+        GeminiCachePolicy.supportsExplicitCaching(m)) {
+      return true;
+    }
+    if (p == 'deepinfra' && DeepInfraCachePolicy.supportsExplicitRetention(m)) {
+      return true;
+    }
     return false;
   }
 
@@ -305,13 +315,7 @@ class TokenEstimator {
     required String provider,
     required String model,
   }) {
-    final p = provider.toLowerCase();
-    final m = model.toLowerCase();
-    if (!_isClaudeCacheProvider(p)) return null;
-    if (!_isClaudeFamilyModel(m)) return null;
-
-    // 所有支援 Anthropic Cache 的路徑都預設帶上 1 小時 TTL
-    return {'type': 'ephemeral', 'ttl': '1h'};
+    return ClaudeCachePolicy.cacheControl(provider: provider, model: model);
   }
 
   /// 是否為可使用 Anthropic Prompt Cache 的 Claude 家族模型。
@@ -322,28 +326,11 @@ class TokenEstimator {
     required String provider,
     required String model,
   }) {
-    final p = provider.toLowerCase();
-    final m = model.toLowerCase();
-    return _isClaudeCacheProvider(p) && _isClaudeFamilyModel(m);
+    return ClaudeCachePolicy.matches(provider: provider, model: model);
   }
 
-  static bool _isClaudeFamilyModel(String model) =>
-      _claudeFamilyKeywords.any((kw) => model.contains(kw));
-
-  static bool _isGeminiFamilyModel(String model) => model.contains('gemini');
-
-  static bool _isClaudeCacheProvider(String provider) {
-    final p = provider.toLowerCase();
-    return p == 'openrouter' ||
-        p == 'openai_compatible' ||
-        p == 'bedrock' ||
-        p == 'aws_bedrock' ||
-        p == 'anthropic' ||
-        p == 'claude';
-  }
-
-  static bool _isGeminiCacheProvider(String provider) =>
-      provider.toLowerCase() == 'gemini';
+  static bool isDeepSeekAutomaticCacheProvider(String provider) =>
+      DeepSeekCachePolicy.isDirectProvider(provider);
 
   static bool _containsAny(String text, List<String> values) =>
       values.any(text.contains);

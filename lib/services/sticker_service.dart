@@ -13,6 +13,21 @@ import 'token_tracker.dart';
 class StickerService {
   static const String userBucket = 'user';
   static const String legacyDefaultBucket = 'default';
+  static const String _userPersonaBucketPrefix = 'user_persona:';
+
+  /// The original user sticker library belongs to the default persona. New
+  /// personas receive their own bucket without a database migration because
+  /// the existing character_id column is already the sticker ownership key.
+  static String userBucketForPersona(String? personaId) {
+    final id = personaId?.trim() ?? '';
+    if (id.isEmpty || id == legacyDefaultBucket) return userBucket;
+    return '$_userPersonaBucketPrefix$id';
+  }
+
+  static bool isUserBucket(String bucketId) {
+    final id = bucketId.trim();
+    return id == userBucket || id.startsWith(_userPersonaBucketPrefix);
+  }
 
   /// 預設情緒標籤
   static const List<String> presetLabels = [
@@ -118,13 +133,29 @@ class StickerService {
 
   /// 「我的表情」：正式桶為 user，兼容尚未遷移的舊 default 桶。
   static Future<List<StickerInfo>> getUserStickers({
+    String? userPersonaId,
     bool includeLegacyDefault = true,
   }) async {
+    final personaBucket = userBucketForPersona(userPersonaId);
     final buckets = <String>[
-      userBucket,
-      if (includeLegacyDefault) legacyDefaultBucket,
+      personaBucket,
+      if (personaBucket == userBucket && includeLegacyDefault)
+        legacyDefaultBucket,
     ];
     return _getMergedStickers(buckets);
+  }
+
+  /// Sticker ids are globally unique. Resolving by id keeps old messages
+  /// renderable even when their user persona is no longer selected.
+  static Future<StickerInfo?> getStickerById(int id) async {
+    final db = await DatabaseHelper.database;
+    final rows = await db.query(
+      'stickers',
+      where: 'id = ?',
+      whereArgs: <Object?>[id],
+      limit: 1,
+    );
+    return rows.isEmpty ? null : StickerInfo.fromMap(rows.first);
   }
 
   static Future<List<StickerInfo>> _getMergedStickers(
@@ -306,6 +337,7 @@ Output JSON only, with no other text or Markdown:
   /// 組裝表情包 prompt 注入文字
   static Future<String> buildStickerPrompt({
     String characterId = legacyDefaultBucket,
+    String? userPersonaId,
   }) async {
     var ownStickers = await getStickers(characterId: characterId);
     // fallback：舊版角色共用表情可能仍在 default；新資料不再寫入 default。
@@ -314,7 +346,7 @@ Output JSON only, with no other text or Markdown:
         characterId != userBucket) {
       ownStickers = await getStickers(characterId: legacyDefaultBucket);
     }
-    final userStickers = await getUserStickers();
+    final userStickers = await getUserStickers(userPersonaId: userPersonaId);
     if (ownStickers.isEmpty && userStickers.isEmpty) return '';
 
     final buffer = StringBuffer();

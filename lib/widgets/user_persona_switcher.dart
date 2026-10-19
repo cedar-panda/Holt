@@ -127,9 +127,11 @@ class _UserPersonaSwitcherState extends State<UserPersonaSwitcher> {
                           button: true,
                           expanded: _carouselExpanded,
                           label: L.pick(
-                            en: 'Open role carousel',
-                            zhTW: '展開角色輪播',
-                            zhCN: '展开角色轮播',
+                            en: _carouselExpanded
+                                ? 'Close role carousel'
+                                : 'Open role carousel',
+                            zhTW: _carouselExpanded ? '收起角色輪播' : '展開角色輪播',
+                            zhCN: _carouselExpanded ? '收起角色轮播' : '展开角色轮播',
                           ),
                           child: InkResponse(
                             key: const ValueKey('persona-carousel-toggle'),
@@ -141,15 +143,39 @@ class _UserPersonaSwitcherState extends State<UserPersonaSwitcher> {
                               width: 40,
                               height: 44,
                               child: Center(
-                                child: CustomPaint(
-                                  size: const Size(11, 8),
-                                  painter: _InvertedTrianglePainter(
-                                    color:
-                                        widget.imageSecondaryForeground ??
-                                        YanciTheme.textSecondary.withValues(
-                                          alpha: .48,
+                                child: AnimatedSlide(
+                                  duration: reduced
+                                      ? Duration.zero
+                                      : const Duration(milliseconds: 220),
+                                  curve: Curves.easeOutCubic,
+                                  offset: _carouselExpanded
+                                      ? const Offset(0, -0.08)
+                                      : Offset.zero,
+                                  child: AnimatedScale(
+                                    duration: reduced
+                                        ? Duration.zero
+                                        : const Duration(milliseconds: 220),
+                                    curve: Curves.easeOutCubic,
+                                    scale: _carouselExpanded ? 1.08 : 1,
+                                    child: AnimatedRotation(
+                                      key: const ValueKey(
+                                        'persona-carousel-chevron',
+                                      ),
+                                      turns: _carouselExpanded ? 0.5 : 0,
+                                      duration: reduced
+                                          ? Duration.zero
+                                          : const Duration(milliseconds: 220),
+                                      curve: Curves.easeOutCubic,
+                                      child: CustomPaint(
+                                        size: const Size(13, 9),
+                                        painter: _InvertedTrianglePainter(
+                                          color:
+                                              widget.imageSecondaryForeground ??
+                                              YanciTheme.textSecondary
+                                                  .withValues(alpha: .62),
                                         ),
-                                    expanded: _carouselExpanded,
+                                      ),
+                                    ),
                                   ),
                                 ),
                               ),
@@ -160,50 +186,76 @@ class _UserPersonaSwitcherState extends State<UserPersonaSwitcher> {
                   ],
                 ),
         ),
-        AnimatedSize(
-          duration: reduced ? Duration.zero : const Duration(milliseconds: 220),
-          curve: Curves.easeOutCubic,
-          alignment: Alignment.topCenter,
-          child: !_carouselExpanded || !showCarousel
-              ? const SizedBox(width: double.infinity)
-              : Padding(
-                  padding: const EdgeInsets.only(top: 4),
-                  child: PersonaCarousel(
-                    personas: widget.personas,
-                    selectedId: widget.selectedId,
-                    onSelected: _selectExisting,
-                    onCreate: widget.onCreate,
-                    imageSecondaryForeground: widget.imageSecondaryForeground,
+        if (showCarousel)
+          TweenAnimationBuilder<double>(
+            tween: Tween<double>(end: _carouselExpanded ? 1 : 0),
+            duration: reduced
+                ? Duration.zero
+                : const Duration(milliseconds: 220),
+            curve: Curves.easeOutCubic,
+            child: Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: PersonaCarousel(
+                personas: widget.personas,
+                selectedId: widget.selectedId,
+                onSelected: _selectExisting,
+                onCreate: widget.onCreate,
+                imageSecondaryForeground: widget.imageSecondaryForeground,
+              ),
+            ),
+            builder: (context, value, child) => ClipRect(
+              child: Align(
+                alignment: Alignment.topCenter,
+                heightFactor: value,
+                child: Opacity(
+                  opacity: value,
+                  child: IgnorePointer(
+                    ignoring: !_carouselExpanded,
+                    child: TickerMode(
+                      enabled: _carouselExpanded,
+                      child: child!,
+                    ),
                   ),
                 ),
-        ),
+              ),
+            ),
+          ),
       ],
     );
   }
 }
 
 class _InvertedTrianglePainter extends CustomPainter {
-  const _InvertedTrianglePainter({required this.color, this.expanded = false});
+  const _InvertedTrianglePainter({required this.color});
 
   final Color color;
-  final bool expanded;
 
   @override
   void paint(Canvas canvas, Size size) {
+    final outlineColor = color.computeLuminance() > 0.5
+        ? Colors.black.withValues(alpha: 0.22)
+        : Colors.white.withValues(alpha: 0.2);
+    final outlinePaint = Paint()
+      ..color = outlineColor
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 3
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round;
     final paint = Paint()
       ..color = color
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.1
+      ..strokeWidth = 1.35
       ..strokeCap = StrokeCap.round
       ..strokeJoin = StrokeJoin.round;
     final path = Path()
       ..moveTo(size.width * .08, size.height * .18)
       ..lineTo(size.width * .50, size.height * .88)
       ..lineTo(size.width * .92, size.height * .18);
+    canvas.drawPath(path, outlinePaint);
     canvas.drawPath(path, paint);
   }
 
   @override
   bool shouldRepaint(covariant _InvertedTrianglePainter oldDelegate) =>
-      oldDelegate.color != color || oldDelegate.expanded != expanded;
+      oldDelegate.color != color;
 }

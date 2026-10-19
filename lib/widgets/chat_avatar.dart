@@ -19,7 +19,6 @@ class ChatAvatar extends StatelessWidget {
     return Container(
       width: 40,
       height: 40,
-      margin: const EdgeInsets.only(top: 6),
       decoration: BoxDecoration(
         shape: BoxShape.circle,
         color: YanciTheme.accent.withValues(alpha: 0.08),

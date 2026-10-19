@@ -29,6 +29,9 @@ class InputBar extends StatefulWidget {
   /// RP 劇情檔案快捷入口。日常窗口不提供此入口。
   final VoidCallback? onStoryArchiveTap;
 
+  /// 日常窗口的語音通話入口。RP 窗口不提供此入口。
+  final VoidCallback? onCallTap;
+
   /// 轉帳：回傳金額
   final Function(int amount)? onTransfer;
   final bool showTransfer;
@@ -68,6 +71,7 @@ class InputBar extends StatefulWidget {
     this.onShopGift,
     this.onBackpackTap,
     this.onStoryArchiveTap,
+    this.onCallTap,
     this.onTransfer,
     this.showTransfer = true,
     this.showScratch = true,
@@ -230,6 +234,7 @@ class _InputBarState extends State<InputBar> with TickerProviderStateMixin {
       return;
     }
 
+    _controller.removeListener(_scheduleRadiusSync);
     if (_ownsController) _controller.dispose();
     if (widget.externalController != null) {
       _controller = widget.externalController!;
@@ -238,6 +243,8 @@ class _InputBarState extends State<InputBar> with TickerProviderStateMixin {
       _controller = TextEditingController();
       _ownsController = true;
     }
+    _controller.addListener(_scheduleRadiusSync);
+    _scheduleRadiusSync();
   }
 
   @override
@@ -269,13 +276,18 @@ class _InputBarState extends State<InputBar> with TickerProviderStateMixin {
   Widget build(BuildContext context) {
     final bottomPad = MediaQuery.of(context).padding.bottom;
     final chatScope = ChatBackgroundPresetScope.of(context);
+    final hasCustomChatImage = chatScope?.hasCustomImage ?? false;
     final palette = chatScope?.palette;
     final inputBarBg = chatScope == null
         ? YanciTheme.chatBackgroundInputBarBg
-        : palette?.inputBarBg ?? YanciTheme.glassInputBg;
+        : hasCustomChatImage
+        ? palette?.inputBarBg ?? YanciTheme.glassInputBg
+        : YanciTheme.glassInputBg;
     final inputBarBorder = chatScope == null
         ? YanciTheme.chatBackgroundInputBarBorder
-        : palette?.inputBarBorder ?? YanciTheme.glassBorder;
+        : hasCustomChatImage
+        ? palette?.inputBarBorder ?? YanciTheme.glassBorder
+        : YanciTheme.glassBorder;
     final manualText = chatScope?.preset?.chatBubbleTextColor;
     final themeText = YanciTheme.bubbleColorOverride(
       YanciTheme.presetId,
@@ -283,9 +295,22 @@ class _InputBarState extends State<InputBar> with TickerProviderStateMixin {
     );
     final inputBarText = chatScope == null
         ? YanciTheme.chatBackgroundInputBarText
+        : !hasCustomChatImage
+        ? YanciTheme.textPrimary
         : manualText == null
         ? themeText ?? palette?.inputBarText ?? YanciTheme.textOnBubble
         : Color(manualText);
+    // iOS renders the native keyboard outside Flutter's paint tree, so it
+    // cannot literally reuse the background bitmap. Match the keyboard's
+    // light/dark material to the bound image's dominant tone instead of the
+    // selected theme; the translucent keyboard then continues the custom
+    // background rather than snapping back to the theme appearance.
+    final keyboardAppearance = hasCustomChatImage
+        ? ((chatScope?.foreground?.dominant ?? inputBarBg).computeLuminance() <
+                  0.42
+              ? Brightness.dark
+              : Brightness.light)
+        : (YanciTheme.isDark ? Brightness.dark : Brightness.light);
     final reduceMotion = MediaQuery.disableAnimationsOf(context);
     final composerBottomPadding = bottomPad > 24
         ? bottomPad - 8
@@ -350,77 +375,62 @@ class _InputBarState extends State<InputBar> with TickerProviderStateMixin {
                 ),
               ),
             ),
-          // ═══ 掛起結婚證 chip：隨下一條消息送出（右側緩存警告）═══
+          // ═══ 掛起結婚證 chip：隨下一條消息送出 ═══
+          // Cache rebuild is an implementation detail and requires no user
+          // decision here; exposing it during the ceremony breaks immersion.
           if (widget.marriageCertPending)
             Padding(
               padding: const EdgeInsets.only(bottom: 8, left: 8, right: 8),
-              child: Row(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 6,
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 6,
+                  ),
+                  decoration: BoxDecoration(
+                    color: YanciTheme.accent.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(
+                      color: YanciTheme.accent.withValues(alpha: 0.3),
+                      width: 0.6,
                     ),
-                    decoration: BoxDecoration(
-                      color: YanciTheme.accent.withValues(alpha: 0.12),
-                      borderRadius: BorderRadius.circular(16),
-                      border: Border.all(
-                        color: YanciTheme.accent.withValues(alpha: 0.3),
-                        width: 0.6,
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.history_edu_rounded,
+                        size: 15,
+                        color: YanciTheme.accent,
                       ),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          Icons.history_edu_rounded,
+                      const SizedBox(width: 6),
+                      Text(
+                        L.pick(
+                          en: 'Marriage certificate (sent with message)',
+                          zhTW: '結婚證書（隨消息送出）',
+                          zhCN: '结婚证书（随消息送出）',
+                        ),
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: YanciTheme.textPrimary,
+                          fontFamily: YanciTheme.fontFamily,
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      GestureDetector(
+                        onTap: widget.onCancelMarriageCert,
+                        child: Icon(
+                          Icons.close_rounded,
                           size: 15,
-                          color: YanciTheme.accent,
-                        ),
-                        const SizedBox(width: 6),
-                        Text(
-                          L.pick(
-                            en: 'Marriage certificate (sent with message)',
-                            zhTW: '結婚證書（隨消息送出）',
-                            zhCN: '结婚证书（随消息送出）',
-                          ),
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: YanciTheme.textPrimary,
-                            fontFamily: YanciTheme.fontFamily,
+                          color: YanciTheme.textSecondary.withValues(
+                            alpha: 0.7,
                           ),
                         ),
-                        const SizedBox(width: 6),
-                        GestureDetector(
-                          onTap: widget.onCancelMarriageCert,
-                          child: Icon(
-                            Icons.close_rounded,
-                            size: 15,
-                            color: YanciTheme.textSecondary.withValues(
-                              alpha: 0.7,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Flexible(
-                    child: Text(
-                      L.pick(
-                        en: 'Sending is cache-free; a successful signing rebuilds the cache once',
-                        zhTW: '發送本身不影響緩存；簽署成功後將重建一次緩存',
-                        zhCN: '发送本身不影响缓存；签署成功后将重建一次缓存',
                       ),
-                      style: TextStyle(
-                        fontSize: 10.5,
-                        color: YanciTheme.textSecondary.withValues(alpha: 0.75),
-                        fontFamily: YanciTheme.fontFamily,
-                      ),
-                      maxLines: 2,
-                    ),
+                    ],
                   ),
-                ],
+                ),
               ),
             ),
           Row(
@@ -445,364 +455,387 @@ class _InputBarState extends State<InputBar> with TickerProviderStateMixin {
                               : const Duration(milliseconds: 200),
                           curve: Curves.easeOutCubic,
                           alignment: Alignment.bottomCenter,
-                          child: Container(
-                            key: _surfaceKey,
-                            constraints: const BoxConstraints(minHeight: 72),
-                            padding: const EdgeInsets.fromLTRB(6, 4, 6, 4),
-                            decoration: BoxDecoration(
-                              color: inputBarBg,
-                              borderRadius: BorderRadius.circular(radius),
-                              border: Border.all(
-                                color: inputBarBorder,
-                                width: 0.5,
+                          child: KeyedSubtree(
+                            key: const ValueKey('input_bar_surface'),
+                            child: Container(
+                              key: _surfaceKey,
+                              constraints: const BoxConstraints(minHeight: 72),
+                              padding: const EdgeInsets.fromLTRB(6, 4, 6, 4),
+                              decoration: BoxDecoration(
+                                color: inputBarBg,
+                                borderRadius: BorderRadius.circular(radius),
+                                border: Border.all(
+                                  color: inputBarBorder,
+                                  width: 0.5,
+                                ),
                               ),
-                            ),
-                            child: Row(
-                              crossAxisAlignment: CrossAxisAlignment.end,
-                              children: [
-                                // ＋ 按鈕：在輸入框下方展開雙層玻璃工具盒。
-                                Align(
-                                  alignment: Alignment.bottomCenter,
-                                  child: Semantics(
-                                    button: true,
-                                    expanded: _drawerOpen,
-                                    label: L.pick(
-                                      en: 'Open add actions',
-                                      zhTW: '打開添加工具',
-                                      zhCN: '打开添加工具',
-                                    ),
-                                    child: SizedBox(
-                                      width: 64,
-                                      height: 64,
-                                      child: IconButton(
-                                        key: const ValueKey(
-                                          'input_bar_add_button',
-                                        ),
-                                        tooltip: L.pick(
-                                          en: 'Add content',
-                                          zhTW: '添加內容',
-                                          zhCN: '添加内容',
-                                        ),
-                                        onPressed: _toggleActionPanel,
-                                        padding: EdgeInsets.zero,
-                                        icon: AnimatedRotation(
-                                          turns: _drawerOpen ? 0.125 : 0,
-                                          duration: const Duration(
-                                            milliseconds: 220,
+                              child: Row(
+                                crossAxisAlignment: CrossAxisAlignment.end,
+                                children: [
+                                  // ＋ 按鈕：在輸入框下方展開雙層玻璃工具盒。
+                                  Align(
+                                    alignment: Alignment.bottomCenter,
+                                    child: Semantics(
+                                      button: true,
+                                      expanded: _drawerOpen,
+                                      label: L.pick(
+                                        en: 'Open add actions',
+                                        zhTW: '打開添加工具',
+                                        zhCN: '打开添加工具',
+                                      ),
+                                      child: SizedBox(
+                                        width: 64,
+                                        height: 64,
+                                        child: IconButton(
+                                          key: const ValueKey(
+                                            'input_bar_add_button',
                                           ),
-                                          child: Icon(
-                                            Icons.add_rounded,
-                                            size: 23,
-                                            color: YanciTheme.textSecondary
-                                                .withValues(
-                                                  alpha: _drawerOpen
-                                                      ? 0.78
-                                                      : 0.55,
-                                                ),
+                                          tooltip: L.pick(
+                                            en: 'Add content',
+                                            zhTW: '添加內容',
+                                            zhCN: '添加内容',
+                                          ),
+                                          onPressed: _toggleActionPanel,
+                                          padding: EdgeInsets.zero,
+                                          icon: AnimatedRotation(
+                                            turns: _drawerOpen ? 0.125 : 0,
+                                            duration: const Duration(
+                                              milliseconds: 220,
+                                            ),
+                                            child: Icon(
+                                              Icons.add_rounded,
+                                              size: 23,
+                                              color: YanciTheme.textSecondary
+                                                  .withValues(
+                                                    alpha: _drawerOpen
+                                                        ? 0.78
+                                                        : 0.55,
+                                                  ),
+                                            ),
                                           ),
                                         ),
                                       ),
                                     ),
                                   ),
-                                ),
-                                const SizedBox(width: 8),
-                                // 輸入框
-                                Expanded(
-                                  child: AnimatedBuilder(
-                                    animation: _controller,
-                                    builder: (context, _) {
-                                      final whisper =
-                                          widget.hintText?.trim() ?? '';
-                                      final hasWhisper = whisper.isNotEmpty;
-                                      final hasText =
-                                          _controller.text.isNotEmpty;
-                                      if (!hasWhisper) {
-                                        return ConstrainedBox(
-                                          constraints: const BoxConstraints(
-                                            minHeight: 64,
-                                          ),
-                                          child: TextField(
-                                            key: const ValueKey(
-                                              'input_bar_text_field',
+                                  const SizedBox(width: 8),
+                                  // 輸入框
+                                  Expanded(
+                                    child: AnimatedBuilder(
+                                      animation: _controller,
+                                      builder: (context, _) {
+                                        final whisper =
+                                            widget.hintText?.trim() ?? '';
+                                        final hasWhisper = whisper.isNotEmpty;
+                                        final hasText =
+                                            _controller.text.isNotEmpty;
+                                        if (!hasWhisper) {
+                                          return ConstrainedBox(
+                                            constraints: const BoxConstraints(
+                                              minHeight: 64,
                                             ),
-                                            controller: _controller,
-                                            focusNode: _focusNode,
-                                            minLines: 1,
-                                            maxLines: 4,
-                                            textAlignVertical:
-                                                TextAlignVertical.center,
-                                            style: YanciTheme.bodyText.copyWith(
-                                              color: inputBarText,
-                                            ),
-                                            decoration: InputDecoration(
-                                              hintText: L.get('input_hint'),
-                                              hintMaxLines: 2,
-                                              hintStyle: YanciTheme.bodyText
+                                            child: TextField(
+                                              key: const ValueKey(
+                                                'input_bar_text_field',
+                                              ),
+                                              controller: _controller,
+                                              focusNode: _focusNode,
+                                              keyboardAppearance:
+                                                  keyboardAppearance,
+                                              minLines: 1,
+                                              maxLines: 4,
+                                              textAlignVertical:
+                                                  TextAlignVertical.center,
+                                              style: YanciTheme.bodyText
                                                   .copyWith(
-                                                    color: inputBarText
-                                                        .withValues(alpha: 0.4),
+                                                    color: inputBarText,
                                                   ),
-                                              border: InputBorder.none,
-                                              isDense: true,
-                                              contentPadding:
-                                                  const EdgeInsets.symmetric(
-                                                    vertical: 8,
-                                                  ),
+                                              decoration: InputDecoration(
+                                                hintText: L.get('input_hint'),
+                                                hintMaxLines: 2,
+                                                hintStyle: YanciTheme.bodyText
+                                                    .copyWith(
+                                                      color: inputBarText
+                                                          .withValues(
+                                                            alpha: 0.4,
+                                                          ),
+                                                    ),
+                                                border: InputBorder.none,
+                                                isDense: true,
+                                                contentPadding:
+                                                    const EdgeInsets.symmetric(
+                                                      vertical: 8,
+                                                    ),
+                                              ),
+                                              textInputAction:
+                                                  TextInputAction.newline,
                                             ),
-                                            textInputAction:
-                                                TextInputAction.newline,
-                                          ),
-                                        );
-                                      }
-                                      return AnimatedSize(
-                                        duration: reduceMotion
-                                            ? Duration.zero
-                                            : const Duration(milliseconds: 140),
-                                        curve: Curves.easeOutCubic,
-                                        alignment: Alignment.bottomCenter,
-                                        child: ConstrainedBox(
-                                          constraints: const BoxConstraints(
-                                            minHeight: 64,
-                                          ),
-                                          child: Stack(
-                                            alignment: Alignment.centerLeft,
-                                            children: [
-                                              if (hasWhisper)
-                                                Positioned.fill(
-                                                  child: IgnorePointer(
-                                                    child: AnimatedOpacity(
-                                                      key: const ValueKey(
-                                                        'composer-whisper',
+                                          );
+                                        }
+                                        return AnimatedSize(
+                                          duration: reduceMotion
+                                              ? Duration.zero
+                                              : const Duration(
+                                                  milliseconds: 140,
+                                                ),
+                                          curve: Curves.easeOutCubic,
+                                          alignment: Alignment.bottomCenter,
+                                          child: ConstrainedBox(
+                                            constraints: const BoxConstraints(
+                                              minHeight: 64,
+                                            ),
+                                            child: Stack(
+                                              alignment: Alignment.centerLeft,
+                                              children: [
+                                                if (hasWhisper)
+                                                  Positioned.fill(
+                                                    child: IgnorePointer(
+                                                      child: AnimatedOpacity(
+                                                        key: const ValueKey(
+                                                          'composer-whisper',
+                                                        ),
+                                                        opacity: hasText
+                                                            ? 0
+                                                            : 1,
+                                                        duration: reduceMotion
+                                                            ? Duration.zero
+                                                            : const Duration(
+                                                                milliseconds:
+                                                                    110,
+                                                              ),
+                                                        child: Align(
+                                                          alignment: Alignment
+                                                              .centerLeft,
+                                                          child: Text(
+                                                            whisper,
+                                                            maxLines: 2,
+                                                            overflow:
+                                                                TextOverflow
+                                                                    .ellipsis,
+                                                            style: YanciTheme
+                                                                .bodyText
+                                                                .copyWith(
+                                                                  color: inputBarText
+                                                                      .withValues(
+                                                                        alpha:
+                                                                            0.34,
+                                                                      ),
+                                                                  height: 1.5,
+                                                                ),
+                                                          ),
+                                                        ),
                                                       ),
-                                                      opacity: hasText ? 0 : 1,
-                                                      duration: reduceMotion
-                                                          ? Duration.zero
-                                                          : const Duration(
-                                                              milliseconds: 110,
-                                                            ),
-                                                      child: Align(
-                                                        alignment: Alignment
-                                                            .centerLeft,
-                                                        child: Text(
-                                                          whisper,
-                                                          maxLines: 2,
-                                                          overflow: TextOverflow
-                                                              .ellipsis,
-                                                          style: YanciTheme
-                                                              .bodyText
-                                                              .copyWith(
-                                                                color: inputBarText
-                                                                    .withValues(
-                                                                      alpha:
-                                                                          0.4,
-                                                                    ),
-                                                                height: 1.5,
+                                                    ),
+                                                  ),
+                                                TextField(
+                                                  key: const ValueKey(
+                                                    'input_bar_text_field',
+                                                  ),
+                                                  controller: _controller,
+                                                  focusNode: _focusNode,
+                                                  keyboardAppearance:
+                                                      keyboardAppearance,
+                                                  minLines: 1,
+                                                  maxLines: 4,
+                                                  textAlignVertical:
+                                                      TextAlignVertical.center,
+                                                  style: YanciTheme.bodyText
+                                                      .copyWith(
+                                                        color: inputBarText,
+                                                      ),
+                                                  decoration: InputDecoration(
+                                                    hintText: null,
+                                                    hintMaxLines: 2,
+                                                    hintStyle: YanciTheme
+                                                        .bodyText
+                                                        .copyWith(
+                                                          color: inputBarText
+                                                              .withValues(
+                                                                alpha: 0.4,
                                                               ),
                                                         ),
-                                                      ),
-                                                    ),
-                                                  ),
-                                                ),
-                                              TextField(
-                                                key: const ValueKey(
-                                                  'input_bar_text_field',
-                                                ),
-                                                controller: _controller,
-                                                focusNode: _focusNode,
-                                                minLines: 1,
-                                                maxLines: 4,
-                                                textAlignVertical:
-                                                    TextAlignVertical.center,
-                                                style: YanciTheme.bodyText
-                                                    .copyWith(
-                                                      color: inputBarText,
-                                                    ),
-                                                decoration: InputDecoration(
-                                                  hintText: null,
-                                                  hintMaxLines: 2,
-                                                  hintStyle: YanciTheme.bodyText
-                                                      .copyWith(
-                                                        color: inputBarText
-                                                            .withValues(
-                                                              alpha: 0.4,
-                                                            ),
-                                                      ),
-                                                  border: InputBorder.none,
-                                                  isDense: true,
-                                                  contentPadding:
-                                                      const EdgeInsets.symmetric(
-                                                        vertical: 8,
-                                                      ),
-                                                ),
-                                                textInputAction:
-                                                    TextInputAction.newline,
-                                              ),
-                                            ],
-                                          ),
-                                        ),
-                                      );
-                                    },
-                                  ),
-                                ),
-                                const SizedBox(width: 6),
-                                // 發送鍵 / 停止鍵
-                                if (widget.isGeneratingImage ||
-                                    widget.isGeneratingResponse)
-                                  Align(
-                                    alignment: Alignment.bottomCenter,
-                                    child: SizedBox(
-                                      width: 64,
-                                      height: 64,
-                                      child: Center(
-                                        child: GestureDetector(
-                                          key: const ValueKey(
-                                            'input_bar_stop_button',
-                                          ),
-                                          onTap: widget.onStopGeneration,
-                                          child: Container(
-                                            width: 52,
-                                            height: 52,
-                                            decoration: BoxDecoration(
-                                              shape: BoxShape.circle,
-                                              border: Border.all(
-                                                color: YanciTheme.accent
-                                                    .withValues(alpha: 0.7),
-                                                width: 1.5,
-                                              ),
-                                            ),
-                                            child: Center(
-                                              child: Container(
-                                                width: 14,
-                                                height: 14,
-                                                decoration: BoxDecoration(
-                                                  borderRadius:
-                                                      BorderRadius.circular(2),
-                                                  border: Border.all(
-                                                    color: YanciTheme.accent
-                                                        .withValues(alpha: 0.7),
-                                                    width: 1.5,
-                                                  ),
-                                                ),
-                                              ),
-                                            ),
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                  )
-                                else
-                                  Align(
-                                    alignment: Alignment.bottomCenter,
-                                    child: AnimatedBuilder(
-                                      animation: Listenable.merge([
-                                        _controller,
-                                        _swayCtrl,
-                                        _sendCtrl,
-                                      ]),
-                                      builder: (_, _) {
-                                        final hasText = _controller.text
-                                            .trim()
-                                            .isNotEmpty;
-                                        final isSending = _sendCtrl.isAnimating;
-                                        final showBtn =
-                                            (hasText ||
-                                                widget.hasPendingContent) &&
-                                            !widget.isSendBlocked;
-                                        return GestureDetector(
-                                          key: const ValueKey(
-                                            'input_bar_send_button',
-                                          ),
-                                          onTap:
-                                              (hasText ||
-                                                      widget
-                                                          .hasPendingContent) &&
-                                                  !widget.isSendBlocked
-                                              ? _handleSend
-                                              : null,
-                                          child: SizedBox(
-                                            width: 64,
-                                            height: 64,
-                                            child: Center(
-                                              child: AnimatedOpacity(
-                                                opacity: showBtn ? 1.0 : 0.4,
-                                                duration: const Duration(
-                                                  milliseconds: 200,
-                                                ),
-                                                child: Transform.translate(
-                                                  offset: isSending
-                                                      ? _sendOffset.value
-                                                      : Offset.zero,
-                                                  child: Opacity(
-                                                    opacity: isSending
-                                                        ? _sendOpacity.value
-                                                        : 1.0,
-                                                    child: Transform.rotate(
-                                                      angle: isSending
-                                                          ? _sendRotation.value
-                                                          : _swayAnim.value,
-                                                      child: Transform.scale(
-                                                        scale: isSending
-                                                            ? _sendScale.value
-                                                            : 1.0,
-                                                        child: Container(
-                                                          width: 52,
-                                                          height: 52,
-                                                          decoration: BoxDecoration(
-                                                            color: YanciTheme
-                                                                .accent
-                                                                .withValues(
-                                                                  alpha: showBtn
-                                                                      ? 0.85
-                                                                      : 0.3,
-                                                                ),
-                                                            shape:
-                                                                BoxShape.circle,
-                                                            boxShadow: showBtn
-                                                                ? [
-                                                                    BoxShadow(
-                                                                      color: YanciTheme
-                                                                          .accent
-                                                                          .withValues(
-                                                                            alpha:
-                                                                                0.2,
-                                                                          ),
-                                                                      blurRadius:
-                                                                          8,
-                                                                      offset:
-                                                                          const Offset(
-                                                                            0,
-                                                                            2,
-                                                                          ),
-                                                                    ),
-                                                                  ]
-                                                                : null,
-                                                          ),
-                                                          child: Center(
-                                                            child: Image.asset(
-                                                              widget.sendStyle ==
-                                                                      SendButtonStyle
-                                                                          .leaf
-                                                                  ? 'assets/images/send_leaf.png'
-                                                                  : 'assets/images/send_paw.png',
-                                                              width: 32,
-                                                              height: 32,
-                                                              fit: BoxFit
-                                                                  .contain,
-                                                            ),
-                                                          ),
+                                                    border: InputBorder.none,
+                                                    isDense: true,
+                                                    contentPadding:
+                                                        const EdgeInsets.symmetric(
+                                                          vertical: 8,
                                                         ),
-                                                      ),
-                                                    ),
                                                   ),
+                                                  textInputAction:
+                                                      TextInputAction.newline,
                                                 ),
-                                              ),
+                                              ],
                                             ),
                                           ),
                                         );
                                       },
                                     ),
                                   ),
-                              ],
+                                  const SizedBox(width: 6),
+                                  // 發送鍵 / 停止鍵
+                                  if (widget.isGeneratingImage ||
+                                      widget.isGeneratingResponse)
+                                    Align(
+                                      alignment: Alignment.bottomCenter,
+                                      child: SizedBox(
+                                        width: 64,
+                                        height: 64,
+                                        child: Center(
+                                          child: GestureDetector(
+                                            key: const ValueKey(
+                                              'input_bar_stop_button',
+                                            ),
+                                            onTap: widget.onStopGeneration,
+                                            child: Container(
+                                              width: 52,
+                                              height: 52,
+                                              decoration: BoxDecoration(
+                                                shape: BoxShape.circle,
+                                                border: Border.all(
+                                                  color: YanciTheme.accent
+                                                      .withValues(alpha: 0.7),
+                                                  width: 1.5,
+                                                ),
+                                              ),
+                                              child: Center(
+                                                child: Container(
+                                                  width: 14,
+                                                  height: 14,
+                                                  decoration: BoxDecoration(
+                                                    borderRadius:
+                                                        BorderRadius.circular(
+                                                          2,
+                                                        ),
+                                                    border: Border.all(
+                                                      color: YanciTheme.accent
+                                                          .withValues(
+                                                            alpha: 0.7,
+                                                          ),
+                                                      width: 1.5,
+                                                    ),
+                                                  ),
+                                                ),
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    )
+                                  else
+                                    Align(
+                                      alignment: Alignment.bottomCenter,
+                                      child: AnimatedBuilder(
+                                        animation: Listenable.merge([
+                                          _controller,
+                                          _swayCtrl,
+                                          _sendCtrl,
+                                        ]),
+                                        builder: (_, _) {
+                                          final hasText = _controller.text
+                                              .trim()
+                                              .isNotEmpty;
+                                          final isSending =
+                                              _sendCtrl.isAnimating;
+                                          final showBtn =
+                                              (hasText ||
+                                                  widget.hasPendingContent) &&
+                                              !widget.isSendBlocked;
+                                          return GestureDetector(
+                                            key: const ValueKey(
+                                              'input_bar_send_button',
+                                            ),
+                                            onTap:
+                                                (hasText ||
+                                                        widget
+                                                            .hasPendingContent) &&
+                                                    !widget.isSendBlocked
+                                                ? _handleSend
+                                                : null,
+                                            child: SizedBox(
+                                              width: 64,
+                                              height: 64,
+                                              child: Center(
+                                                child: AnimatedOpacity(
+                                                  opacity: showBtn ? 1.0 : 0.4,
+                                                  duration: const Duration(
+                                                    milliseconds: 200,
+                                                  ),
+                                                  child: Transform.translate(
+                                                    offset: isSending
+                                                        ? _sendOffset.value
+                                                        : Offset.zero,
+                                                    child: Opacity(
+                                                      opacity: isSending
+                                                          ? _sendOpacity.value
+                                                          : 1.0,
+                                                      child: Transform.rotate(
+                                                        angle: isSending
+                                                            ? _sendRotation
+                                                                  .value
+                                                            : _swayAnim.value,
+                                                        child: Transform.scale(
+                                                          scale: isSending
+                                                              ? _sendScale.value
+                                                              : 1.0,
+                                                          child: Container(
+                                                            width: 52,
+                                                            height: 52,
+                                                            decoration: BoxDecoration(
+                                                              color: YanciTheme
+                                                                  .accent
+                                                                  .withValues(
+                                                                    alpha:
+                                                                        showBtn
+                                                                        ? 0.85
+                                                                        : 0.3,
+                                                                  ),
+                                                              shape: BoxShape
+                                                                  .circle,
+                                                              boxShadow: showBtn
+                                                                  ? [
+                                                                      BoxShadow(
+                                                                        color: YanciTheme
+                                                                            .accent
+                                                                            .withValues(
+                                                                              alpha: 0.2,
+                                                                            ),
+                                                                        blurRadius:
+                                                                            8,
+                                                                        offset:
+                                                                            const Offset(
+                                                                              0,
+                                                                              2,
+                                                                            ),
+                                                                      ),
+                                                                    ]
+                                                                  : null,
+                                                            ),
+                                                            child: Center(
+                                                              child: Image.asset(
+                                                                widget.sendStyle ==
+                                                                        SendButtonStyle
+                                                                            .leaf
+                                                                    ? 'assets/images/send_leaf.png'
+                                                                    : 'assets/images/send_paw.png',
+                                                                width: 32,
+                                                                height: 32,
+                                                                fit: BoxFit
+                                                                    .contain,
+                                                              ),
+                                                            ),
+                                                          ),
+                                                        ),
+                                                      ),
+                                                    ),
+                                                  ),
+                                                ),
+                                              ),
+                                            ),
+                                          );
+                                        },
+                                      ),
+                                    ),
+                                ],
+                              ),
                             ),
                           ),
                         ),
@@ -853,159 +886,125 @@ class _InputBarState extends State<InputBar> with TickerProviderStateMixin {
   }
 
   Widget _buildActionPanel() {
-    final chatScope = ChatBackgroundPresetScope.of(context);
-    final inherited = chatScope?.palette?.inputBarBg;
-    final panelColor =
-        inherited ??
-        (YanciTheme.isDark ? const Color(0xD91B1820) : const Color(0xD9FFFFFF));
-
     return Semantics(
       container: true,
       label: L.pick(en: 'Message add actions', zhTW: '消息添加工具', zhCN: '消息添加工具'),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(24),
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
-          child: DecoratedBox(
-            decoration: BoxDecoration(
-              color: panelColor,
-              borderRadius: BorderRadius.circular(24),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(
-                    alpha: YanciTheme.isDark ? 0.28 : 0.12,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 10),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final width = (constraints.maxWidth - 27) / 4;
+            final wideWidth = (constraints.maxWidth - 9) / 2;
+            return Wrap(
+              spacing: 9,
+              runSpacing: 9,
+              children: [
+                if (widget.onStoryArchiveTap != null)
+                  SizedBox(
+                    width: wideWidth,
+                    child: _drawerAction(
+                      iconData: Icons.menu_book_outlined,
+                      label: L.pick(
+                        en: 'Story archive',
+                        zhTW: '劇情檔案',
+                        zhCN: '剧情档案',
+                      ),
+                      onTap: () => _runPanelAction(
+                        () => widget.onStoryArchiveTap?.call(),
+                      ),
+                      wide: true,
+                    ),
                   ),
-                  blurRadius: 24,
-                  offset: const Offset(0, 6),
+                SizedBox(
+                  width: width,
+                  child: _drawerAction(
+                    iconData: Icons.image_outlined,
+                    label: L.pick(en: 'Photo', zhTW: '圖片', zhCN: '图片'),
+                    onTap: () => _runPanelAction(_pickImageFromGallery),
+                  ),
                 ),
+                SizedBox(
+                  width: width,
+                  child: _drawerAction(
+                    iconData: Icons.emoji_emotions_outlined,
+                    label: L.pick(en: 'Sticker', zhTW: '表情包', zhCN: '表情包'),
+                    onTap: () =>
+                        _runPanelAction(() => widget.onStickerTap?.call()),
+                  ),
+                ),
+                if (widget.onCallTap != null)
+                  SizedBox(
+                    width: width,
+                    child: _drawerAction(
+                      iconData: Icons.call_outlined,
+                      label: L.pick(en: 'Call', zhTW: '打電話', zhCN: '打电话'),
+                      onTap: () =>
+                          _runPanelAction(() => widget.onCallTap?.call()),
+                    ),
+                  ),
+                if (widget.showTransfer)
+                  SizedBox(
+                    width: width,
+                    child: _drawerAction(
+                      assetPath: 'assets/images/shell_coin.png',
+                      label: L.pick(en: 'Transfer', zhTW: '轉帳', zhCN: '转账'),
+                      onTap: () => _runPanelAction(_showTransferDialog),
+                    ),
+                  ),
+                if (widget.showScratch)
+                  SizedBox(
+                    width: width,
+                    child: _drawerAction(
+                      iconData: Icons.local_activity_outlined,
+                      label: L.pick(
+                        en: 'Scratch card',
+                        zhTW: '刮刮卡',
+                        zhCN: '刮刮卡',
+                      ),
+                      onTap: () => _runPanelAction(_showScratchGiftPicker),
+                    ),
+                  ),
+                if (widget.showShop)
+                  SizedBox(
+                    width: width,
+                    child: _drawerAction(
+                      iconData: Icons.storefront_outlined,
+                      label: L.pick(
+                        en: 'Gift shop',
+                        zhTW: '禮物商店',
+                        zhCN: '礼物商店',
+                      ),
+                      onTap: () =>
+                          _runPanelAction(() => widget.onShopGift?.call()),
+                    ),
+                  ),
+                if (widget.showBackpack)
+                  SizedBox(
+                    width: width,
+                    child: _drawerAction(
+                      iconData: Icons.backpack_outlined,
+                      label: L.pick(en: 'Backpack', zhTW: '背包', zhCN: '背包'),
+                      onTap: () =>
+                          _runPanelAction(() => widget.onBackpackTap?.call()),
+                    ),
+                  ),
+                if (widget.showMarriageCert)
+                  SizedBox(
+                    width: width,
+                    child: _drawerAction(
+                      iconData: Icons.history_edu_outlined,
+                      label: L.pick(
+                        en: 'Marriage letter',
+                        zhTW: '簽署書',
+                        zhCN: '签署书',
+                      ),
+                      onTap: () =>
+                          _runPanelAction(() => widget.onMarriageCert?.call()),
+                    ),
+                  ),
               ],
-            ),
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(10, 10, 10, 10),
-              child: LayoutBuilder(
-                builder: (context, constraints) {
-                  final width = (constraints.maxWidth - 27) / 4;
-                  final wideWidth = (constraints.maxWidth - 9) / 2;
-                  return Wrap(
-                    spacing: 9,
-                    runSpacing: 9,
-                    children: [
-                      if (widget.onStoryArchiveTap != null)
-                        SizedBox(
-                          width: wideWidth,
-                          child: _drawerAction(
-                            iconData: Icons.menu_book_outlined,
-                            label: L.pick(
-                              en: 'Story archive',
-                              zhTW: '劇情檔案',
-                              zhCN: '剧情档案',
-                            ),
-                            onTap: () => _runPanelAction(
-                              () => widget.onStoryArchiveTap?.call(),
-                            ),
-                            wide: true,
-                          ),
-                        ),
-                      SizedBox(
-                        width: width,
-                        child: _drawerAction(
-                          iconData: Icons.image_outlined,
-                          label: L.pick(en: 'Photo', zhTW: '圖片', zhCN: '图片'),
-                          onTap: () => _runPanelAction(_pickImageFromGallery),
-                        ),
-                      ),
-                      SizedBox(
-                        width: width,
-                        child: _drawerAction(
-                          iconData: Icons.emoji_emotions_outlined,
-                          label: L.pick(
-                            en: 'Sticker',
-                            zhTW: '表情包',
-                            zhCN: '表情包',
-                          ),
-                          onTap: () => _runPanelAction(
-                            () => widget.onStickerTap?.call(),
-                          ),
-                        ),
-                      ),
-                      if (widget.showTransfer)
-                        SizedBox(
-                          width: width,
-                          child: _drawerAction(
-                            assetPath: 'assets/images/shell_coin.png',
-                            label: L.pick(
-                              en: 'Transfer',
-                              zhTW: '轉帳',
-                              zhCN: '转账',
-                            ),
-                            onTap: () => _runPanelAction(_showTransferDialog),
-                          ),
-                        ),
-                      if (widget.showScratch)
-                        SizedBox(
-                          width: width,
-                          child: _drawerAction(
-                            iconData: Icons.local_activity_outlined,
-                            label: L.pick(
-                              en: 'Scratch card',
-                              zhTW: '刮刮卡',
-                              zhCN: '刮刮卡',
-                            ),
-                            onTap: () =>
-                                _runPanelAction(_showScratchGiftPicker),
-                          ),
-                        ),
-                      if (widget.showShop)
-                        SizedBox(
-                          width: width,
-                          child: _drawerAction(
-                            iconData: Icons.storefront_outlined,
-                            label: L.pick(
-                              en: 'Gift shop',
-                              zhTW: '禮物商店',
-                              zhCN: '礼物商店',
-                            ),
-                            onTap: () => _runPanelAction(
-                              () => widget.onShopGift?.call(),
-                            ),
-                          ),
-                        ),
-                      if (widget.showBackpack)
-                        SizedBox(
-                          width: width,
-                          child: _drawerAction(
-                            iconData: Icons.backpack_outlined,
-                            label: L.pick(
-                              en: 'Backpack',
-                              zhTW: '背包',
-                              zhCN: '背包',
-                            ),
-                            onTap: () => _runPanelAction(
-                              () => widget.onBackpackTap?.call(),
-                            ),
-                          ),
-                        ),
-                      if (widget.showMarriageCert)
-                        SizedBox(
-                          width: width,
-                          child: _drawerAction(
-                            iconData: Icons.history_edu_outlined,
-                            label: L.pick(
-                              en: 'Marriage letter',
-                              zhTW: '簽署書',
-                              zhCN: '签署书',
-                            ),
-                            onTap: () => _runPanelAction(
-                              () => widget.onMarriageCert?.call(),
-                            ),
-                          ),
-                        ),
-                    ],
-                  );
-                },
-              ),
-            ),
-          ),
+            );
+          },
         ),
       ),
     );

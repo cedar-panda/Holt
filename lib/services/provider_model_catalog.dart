@@ -1,4 +1,5 @@
 import 'deepseek_service.dart';
+import 'deepinfra_service.dart';
 import 'gemini_service.dart';
 import 'model_info.dart';
 import 'openai_compatible_service.dart';
@@ -15,6 +16,7 @@ abstract final class ProviderModelCatalog {
     'xai',
     'gemini',
     'deepseek',
+    'deepinfra',
     'openai_compatible',
   };
 
@@ -25,6 +27,7 @@ abstract final class ProviderModelCatalog {
     'xai' => 'xAI',
     'gemini' => 'Gemini',
     'deepseek' => 'DeepSeek',
+    'deepinfra' => 'DeepInfra',
     'openai_compatible' => 'OpenAI Compatible',
     _ => provider,
   };
@@ -34,6 +37,7 @@ abstract final class ProviderModelCatalog {
     'xai' => 'xai',
     'gemini' => 'gemini',
     'deepseek' => 'deepseek',
+    'deepinfra' => 'deepinfra',
     _ => 'openrouter',
   };
 
@@ -41,7 +45,7 @@ abstract final class ProviderModelCatalog {
     final normalized = key.trim();
     return switch (provider) {
       'openrouter' => normalized.startsWith('sk-or-'),
-      'gemini' || 'xai' || 'deepseek' => normalized.length >= 8,
+      'gemini' || 'xai' || 'deepseek' || 'deepinfra' => normalized.length >= 8,
       _ => false,
     };
   }
@@ -58,6 +62,7 @@ abstract final class ProviderModelCatalog {
     'xai' => XaiService.fetchModels(apiKey),
     'gemini' => GeminiService.fetchModels(apiKey),
     'deepseek' => DeepSeekService.fetchModels(apiKey),
+    'deepinfra' => DeepInfraService.fetchModels(apiKey),
     'openrouter' => OpenRouterService.fetchModels(apiKey),
     _ => Future<List<ModelInfo>>.error(
       UnsupportedError('Provider does not expose model discovery: $provider'),
@@ -74,10 +79,12 @@ abstract final class ProviderModelCatalog {
     final discovered = switch (provider) {
       'openrouter' => await OpenRouterService.fetchEmbeddingModels(apiKey),
       'gemini' => await GeminiService.fetchEmbeddingModels(apiKey),
+      'deepinfra' => await DeepInfraService.fetchEmbeddingModels(apiKey),
       _ => await fetch(provider: provider, apiKey: apiKey, baseUrl: baseUrl),
     };
     return discovered
         .where((model) {
+          if (provider == 'deepinfra') return true;
           final searchable = '${model.id} ${model.name}'.toLowerCase();
           return searchable.contains('embedding');
         })

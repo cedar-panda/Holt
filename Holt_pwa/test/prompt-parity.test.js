@@ -15,7 +15,7 @@ import {
 } from "../prompt-builder.js";
 
 const character = {
-  name: "晏辭",
+  name: "顧遠",
   relationship: "伴侶",
   gender: "女性",
   age: "26",
@@ -29,14 +29,14 @@ const character = {
 test("PWA character fields become one canonical Character Profile payload", () => {
   assert.equal(
     buildCharacterDescription(character),
-    "你叫晏辭。\n你與用戶的關係：伴侶。\n性別：女性。\n年齡：26。\n種族：人類。\n身高：168cm。\n技能：寫作。\n角色設定：\n安靜、敏銳。",
+    "你叫顧遠。\n你與用戶的關係：伴侶。\n性別：女性。\n年齡：26。\n種族：人類。\n身高：168cm。\n技能：寫作。\n角色設定：\n安靜、敏銳。",
   );
 });
 
 test("user profile matches Flutter punctuation and field names", () => {
   assert.equal(
-    buildUserProfilePrompt({ nickname: "昭昭", pronouns: "他", bio: "個人開發者" }),
-    "【用戶檔案】暱稱：昭昭，稱謂：他，自我介紹：個人開發者",
+    buildUserProfilePrompt({ nickname: "小禾", pronouns: "他", bio: "個人開發者" }),
+    "【用戶檔案】暱稱：小禾，稱謂：他，自我介紹：個人開發者",
   );
   assert.equal(buildUserProfilePrompt(), "");
 });
@@ -71,7 +71,7 @@ test("current-time prompt matches Flutter zh-TW shape", () => {
 test("core prompt keeps stable layers unchanged when only time changes", () => {
   const base = {
     character,
-    profile: { nickname: "昭昭", pronouns: "他", bio: "個人開發者" },
+    profile: { nickname: "小禾", pronouns: "他", bio: "個人開發者" },
     selfNotesSnapshot: character.selfNotes,
     thinkingEnabled: true,
     providerId: "openrouter",
@@ -91,7 +91,7 @@ test("core prompt keeps stable layers unchanged when only time changes", () => {
 test("provider source does not alter prompt layers", () => {
   const base = {
     character,
-    profile: { nickname: "昭昭" },
+    profile: { nickname: "小禾" },
     selfNotesSnapshot: character.selfNotes,
     thinkingEnabled: false,
     now: new Date("2026-08-24T01:00:00Z"),

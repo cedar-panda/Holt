@@ -12,6 +12,8 @@ import 'sse_stream.dart';
 import 'stream_transport.dart';
 import 'system_context_debug.dart';
 import 'token_estimator.dart';
+import 'provider_content_parser.dart';
+import 'cache/deepinfra_cache_policy.dart';
 
 /// OpenAI 兼容 API（支持任何中轉站 / 自建端點）
 /// 只要遵循 /v1/chat/completions 格式就能用
@@ -20,6 +22,8 @@ class OpenAICompatibleService implements ApiAdapter {
   final String baseUrl; // 例：https://api.openai.com/v1
   final String modelPrefixToStrip;
   final bool thinkingEnabled;
+  final String providerId;
+  final String providerLabel;
   http.Client? _activeClient;
   static Map<String, int> lastUsageStats = <String, int>{};
 
@@ -28,6 +32,8 @@ class OpenAICompatibleService implements ApiAdapter {
     required this.baseUrl,
     this.modelPrefixToStrip = '',
     this.thinkingEnabled = false,
+    this.providerId = 'openai_compatible',
+    this.providerLabel = 'OpenAI-compatible API',
   });
 
   Future<Map<String, dynamic>> debugBuildBodyForTesting({
@@ -296,7 +302,9 @@ class OpenAICompatibleService implements ApiAdapter {
       final stats = _extractUsage(data);
       if (stats != null) onUsage?.call(ApiUsage.fromStats(stats));
       final message = data['choices'][0]['message'];
-      final content = message is Map ? '${message['content'] ?? ''}' : '';
+      final content = message is Map
+          ? ProviderContentParser.visibleText(message['content'])
+          : '';
       final reasoning = message is Map
           ? ProviderReasoning.fromMap(message)
           : '';
@@ -342,7 +350,7 @@ class OpenAICompatibleService implements ApiAdapter {
       try {
         response = await StreamTransport.waitForResponseStart(
           client.send(request),
-          provider: 'OpenAI-compatible API',
+          provider: providerLabel,
         );
       } on SocketException catch (e) {
         throw Exception(_friendlyNetworkError(e));
@@ -360,16 +368,26 @@ class OpenAICompatibleService implements ApiAdapter {
 
       Map<String, int>? requestStats;
       var reasoningOpen = false;
+      var sawDone = false;
+      String? terminalFinishReason;
       final diagnostics = SseStreamDiagnostics();
       await for (final data in SseStream.data(
         response.stream,
         diagnostics: diagnostics,
       )) {
-        if (data == '[DONE]') break;
+        if (data == '[DONE]') {
+          sawDone = true;
+          break;
+        }
 
         try {
           final json = jsonDecode(data);
           if (json['usage'] != null) requestStats = _extractUsage(json);
+          final finishReason = json['choices']?[0]?['finish_reason']
+              ?.toString();
+          if (finishReason != null && finishReason.isNotEmpty) {
+            terminalFinishReason = finishReason;
+          }
           final deltaMap = json['choices']?[0]?['delta'];
           final reasoning = deltaMap is Map
               ? ProviderReasoning.fromMap(deltaMap)
@@ -381,8 +399,10 @@ class OpenAICompatibleService implements ApiAdapter {
             }
             yield reasoning;
           }
-          final delta = deltaMap is Map ? deltaMap['content'] : null;
-          if (delta != null && delta.isNotEmpty) {
+          final delta = deltaMap is Map
+              ? ProviderContentParser.visibleText(deltaMap['content'])
+              : '';
+          if (delta.isNotEmpty) {
             if (reasoningOpen) {
               reasoningOpen = false;
               yield '</think>';
@@ -402,6 +422,11 @@ class OpenAICompatibleService implements ApiAdapter {
       } else {
         onUsage?.call(ApiUsage(diagnostics: streamDiagnostics));
       }
+      StreamTerminalGuard.requireOpenAiCompatible(
+        provider: 'OpenAI-compatible API',
+        sawDone: sawDone,
+        finishReason: terminalFinishReason,
+      );
     } finally {
       if (identical(_activeClient, client)) _activeClient = null;
       client.close();
@@ -483,10 +508,14 @@ class OpenAICompatibleService implements ApiAdapter {
     final allMessages = <Map<String, dynamic>>[];
     // Claude 系模型（經中轉）支持 Anthropic 風格 cache_control 透傳
     final cacheControl = TokenEstimator.promptCacheControl(
-      provider: 'openai_compatible',
+      provider: providerId,
       model: model,
     );
-    final shouldCache = cacheControl != null && enableCache;
+    final isClaudeRoute = TokenEstimator.isClaudePromptCacheModel(
+      provider: providerId,
+      model: model,
+    );
+    final shouldCache = isClaudeRoute && cacheControl != null && enableCache;
 
     // ═══ system 分層：只放可快取的穩定前綴 ═══
     final cacheableParts =
@@ -548,6 +577,11 @@ class OpenAICompatibleService implements ApiAdapter {
 
     // ═══ 滾動 breakpoint（僅 Claude 路線 + 啟用 caching）═══
     final latestUserIndex = CacheBreakpoint.latestUserIndex(allMessages);
+    // DeepInfra 的 explicit retention 也要錨定在「即時狀態」插入前的
+    // 最後一則穩定訊息。保留 Map 參照，避免插入 live state 後舊索引偏移。
+    final deepInfraStableBoundary = latestUserIndex > 0
+        ? allMessages[latestUserIndex - 1]
+        : null;
     if (shouldCache) {
       CacheBreakpoint.applyRolling(
         allMessages,
@@ -567,7 +601,7 @@ class OpenAICompatibleService implements ApiAdapter {
     var runtimeTransport = '';
     var runtimeFallback = '';
     var cachePrefixPreserved = true;
-    if (lowerModel.contains('claude')) {
+    if (isClaudeRoute) {
       if (RuntimeContextSidecar.supportsClaudeMidConversationSystem(model)) {
         final attached = RuntimeContextSidecar.appendSystemAfterLatestUser(
           allMessages,
@@ -615,9 +649,22 @@ class OpenAICompatibleService implements ApiAdapter {
       'messages': allMessages,
       'stream': stream,
     };
+    if (providerId.toLowerCase() == 'deepinfra') {
+      final deepInfraBreakpointIndex = deepInfraStableBoundary == null
+          ? -1
+          : allMessages.indexOf(deepInfraStableBoundary);
+      DeepInfraCachePolicy.decorateRequest(
+        body: body,
+        messages: allMessages,
+        model: model,
+        sessionId: structuredPrompt?.cacheSessionId ?? '',
+        breakpointIndex: deepInfraBreakpointIndex,
+        enabled: enableCache,
+      );
+    }
     if (structuredPrompt != null) {
       SystemContextDebug.recordChatRequest(
-        provider: 'openai_compatible',
+        provider: providerId,
         model: model,
         cacheChannel: structuredPrompt.cacheChannel,
         sessionId: structuredPrompt.cacheSessionId,

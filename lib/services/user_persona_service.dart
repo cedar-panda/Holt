@@ -12,7 +12,7 @@ import 'locale_strings.dart';
 import 'settings/api_settings.dart';
 import 'settings/user_settings.dart';
 
-/// One user-authored identity that can be bound to a companion/context lane.
+/// One user-authored identity that can be bound to a companion.
 ///
 /// This model deliberately lives with its service so the future UI can depend
 /// on one narrow API instead of spreading persona SQL through screen files.
@@ -197,11 +197,6 @@ class UserPersonaService {
   static const String _starredPersonaKey = 'starred_user_persona_ids_v1';
   static const String _legacyProfileMigrationKey =
       'user_persona_profile_migrated_v1';
-
-  static String _scopeContinuity(String continuityId) {
-    final value = continuityId.trim();
-    return value.isEmpty ? 'main' : value;
-  }
 
   static Future<UserPersona> ensureDefaultPersona() async {
     final db = await DatabaseHelper.database;
@@ -645,6 +640,9 @@ class UserPersonaService {
         1;
   }
 
+  /// Binds one character to one persona globally. [contextMode] and
+  /// [continuityId] remain in the API so older callers and backups stay
+  /// compatible; only the persona file itself is mode-specific.
   static Future<void> bindPersona({
     required String characterId,
     required ContextMode contextMode,
@@ -670,19 +668,26 @@ class UserPersonaService {
       throw StateError('Persona $userPersonaId does not exist or is archived');
     }
     final now = DateTime.now().toIso8601String();
-    await db.insert('character_persona_bindings', <String, Object?>{
-      'character_id': charId,
-      'context_mode': contextMode.storageValue,
-      'continuity_id': _scopeContinuity(continuityId),
-      'user_persona_id': userPersonaId,
-      'created_at': now,
-      'updated_at': now,
-    }, conflictAlgorithm: ConflictAlgorithm.replace);
+    await db.transaction((txn) async {
+      await txn.delete(
+        'character_persona_bindings',
+        where: 'character_id = ?',
+        whereArgs: <Object?>[charId],
+      );
+      await txn.insert('character_persona_bindings', <String, Object?>{
+        'character_id': charId,
+        // Retained as compatibility placeholders for existing backups.
+        'context_mode': ContextMode.daily.storageValue,
+        'continuity_id': 'main',
+        'user_persona_id': userPersonaId,
+        'created_at': now,
+        'updated_at': now,
+      });
+    });
   }
 
-  /// Current UI policy: one companion per persona/mode. The underlying table
-  /// deliberately remains one-row-per companion scope so a future multi-bind
-  /// selector can use [bindPersona] without another migration.
+  /// Current UI policy: one shared companion per persona. Daily and RP keep
+  /// separate persona text, but never separate companion relationships.
   static Future<void> bindSingleCompanion({
     required String personaId,
     required String characterId,
@@ -698,15 +703,8 @@ class UserPersonaService {
     final db = await DatabaseHelper.database;
     await db.delete(
       'character_persona_bindings',
-      where:
-          'user_persona_id = ? AND context_mode = ? AND continuity_id = ? '
-          'AND character_id <> ?',
-      whereArgs: <Object?>[
-        personaId.trim(),
-        contextMode.storageValue,
-        _scopeContinuity(continuityId),
-        characterId.trim(),
-      ],
+      where: 'user_persona_id = ? AND character_id <> ?',
+      whereArgs: <Object?>[personaId.trim(), characterId.trim()],
     );
   }
 
@@ -718,12 +716,8 @@ class UserPersonaService {
     final db = await DatabaseHelper.database;
     await db.delete(
       'character_persona_bindings',
-      where: 'user_persona_id = ? AND context_mode = ? AND continuity_id = ?',
-      whereArgs: <Object?>[
-        personaId.trim(),
-        contextMode.storageValue,
-        _scopeContinuity(continuityId),
-      ],
+      where: 'user_persona_id = ?',
+      whereArgs: <Object?>[personaId.trim()],
     );
   }
 
@@ -748,12 +742,8 @@ class UserPersonaService {
     final db = await DatabaseHelper.database;
     await db.delete(
       'character_persona_bindings',
-      where: 'character_id = ? AND context_mode = ? AND continuity_id = ?',
-      whereArgs: <Object?>[
-        characterId.trim(),
-        contextMode.storageValue,
-        _scopeContinuity(continuityId),
-      ],
+      where: 'character_id = ?',
+      whereArgs: <Object?>[characterId.trim()],
     );
   }
 
@@ -769,16 +759,11 @@ class UserPersonaService {
       FROM character_persona_bindings b
       INNER JOIN user_personas p ON p.id = b.user_persona_id
       WHERE b.character_id = ?
-        AND b.context_mode = ?
-        AND b.continuity_id = ?
         AND p.is_archived = 0
+      ORDER BY b.updated_at DESC, b.rowid DESC
       LIMIT 1
       ''',
-      <Object?>[
-        characterId.trim(),
-        contextMode.storageValue,
-        _scopeContinuity(continuityId),
-      ],
+      <Object?>[characterId.trim()],
     );
     return rows.isEmpty ? null : rows.first['user_persona_id']?.toString();
   }
@@ -789,17 +774,14 @@ class UserPersonaService {
     String continuityId = 'main',
   }) async {
     final db = await DatabaseHelper.database;
-    final conditions = <String>['user_persona_id = ?', 'continuity_id = ?'];
-    final args = <Object?>[personaId.trim(), _scopeContinuity(continuityId)];
-    if (contextMode != null) {
-      conditions.add('context_mode = ?');
-      args.add(contextMode.storageValue);
-    }
+    final conditions = <String>['user_persona_id = ?'];
+    final args = <Object?>[personaId.trim()];
     final rows = await db.query(
       'character_persona_bindings',
       where: conditions.join(' AND '),
       whereArgs: args,
-      orderBy: 'updated_at DESC, character_id ASC',
+      orderBy: 'updated_at DESC, rowid DESC',
+      limit: 1,
     );
     return rows.map(UserPersonaBinding.fromMap).toList(growable: false);
   }

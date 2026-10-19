@@ -10,6 +10,7 @@ void main() {
         );
 
     test('Gemini current models use Google published minimums', () {
+      expect(info('gemini', 'gemini-4-argon').minimumTokens, 4096);
       expect(info('gemini', 'gemini-3.8-flash').minimumTokens, 4096);
       expect(info('gemini', 'gemini-3.7-flash').minimumTokens, 4096);
       expect(info('gemini', 'gemini-3.6-flash').minimumTokens, 4096);
@@ -17,6 +18,27 @@ void main() {
       expect(info('gemini', 'gemini-3.1-pro-preview').minimumTokens, 4096);
       expect(info('gemini', 'gemini-2.5-flash').minimumTokens, 2048);
       expect(info('gemini', 'gemini-2.5-pro').minimumTokens, 2048);
+      expect(
+        TokenEstimator.supportsCloseWindowKeepAlive(
+          provider: 'gemini',
+          model: 'gemini-4-argon',
+        ),
+        isFalse,
+      );
+      expect(
+        TokenEstimator.supportsCloseWindowKeepAlive(
+          provider: 'openrouter',
+          model: 'google/gemini-4-argon',
+        ),
+        isFalse,
+      );
+      expect(
+        TokenEstimator.supportsCloseWindowKeepAlive(
+          provider: 'gemini',
+          model: 'gemini-3.8-flash',
+        ),
+        isTrue,
+      );
     });
 
     test('Claude thresholds track the current per-model table', () {
@@ -55,6 +77,10 @@ void main() {
         CacheThresholdKind.automaticWithoutPublishedMinimum,
       );
       expect(info('xai', 'grok-4.6').minimumTokens, isNull);
+      expect(
+        info('deepinfra', 'Qwen/Qwen3.8-Flash').kind,
+        CacheThresholdKind.automaticWithoutPublishedMinimum,
+      );
       expect(
         info('openai_compatible', 'private-model').kind,
         CacheThresholdKind.routeDependent,

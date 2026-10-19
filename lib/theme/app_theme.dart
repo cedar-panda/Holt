@@ -3,6 +3,7 @@ import 'theme_presets.dart';
 
 /// Project Yanci 設計系統 — 主題預設驅動
 class YanciTheme {
+  static final ValueNotifier<int> particleRevision = ValueNotifier<int>(0);
   static ThemePreset _preset = presets[0]; // 默認「晨光」
   static String _fontChinese = 'Lora';
   static String _fontEnglish = 'LXGW WenKai TC';
@@ -19,6 +20,7 @@ class YanciTheme {
   static double bubbleRadiusUser = 16.0;
   static bool starEnabled = true;
   static int starDensity = 12; // 粒子數
+  static String? particleEffectOverride;
   static bool aiBubbleFlat = false; // true = AI 訊息無氣泡（平鋪）
   static String homeBackgroundImagePath = '';
   static double homeBackgroundImageScale = 1.0;
@@ -58,7 +60,16 @@ class YanciTheme {
   static double get fontScale => _fontScale;
 
   // ═══ Setters ═══
-  static void setPreset(String id) => _preset = findPreset(id);
+  static void setPreset(String id) {
+    _preset = findPreset(id);
+    particleRevision.value++;
+  }
+
+  static void setStarDensity(int value) {
+    starDensity = value.clamp(1, 50);
+    particleRevision.value++;
+  }
+
   static void setFont(String cn, String en) {
     _fontChinese = cn;
     _fontEnglish = en;
@@ -141,6 +152,26 @@ class YanciTheme {
 
   static Color get aiBubbleBorder => _preset.aiBubbleBorder;
   static String? get bgEffect => _preset.bgEffect;
+  static String get particleEffect {
+    final candidate = particleEffectOverride ?? bgEffect ?? 'neural';
+    return particleEffectIds.contains(candidate) ? candidate : 'neural';
+  }
+
+  static const Set<String> particleEffectIds = {
+    'neural',
+    'stars',
+    'rain',
+    'ripple',
+    'ember',
+    'dandelion',
+  };
+
+  static void setParticleEffect(String effect) {
+    if (!particleEffectIds.contains(effect)) return;
+    particleEffectOverride = effect;
+    particleRevision.value++;
+  }
+
   static Color get userBubbleBorder => _preset.userBubbleBorder;
 
   static Color get textPrimary => _preset.textPrimary;

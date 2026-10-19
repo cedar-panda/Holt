@@ -15,7 +15,7 @@ void main() {
 
   setUp(() async {
     SharedPreferences.setMockInitialValues(<String, Object>{
-      'user_profile_nickname': '昭昭',
+      'user_profile_nickname': '小禾',
       'user_profile_pronouns': '他',
       'user_profile_bio': '預設身分',
     });
@@ -46,7 +46,7 @@ void main() {
     final persona = await UserPersonaService.ensureDefaultPersona();
 
     expect(persona.id, UserPersonaService.defaultPersonaId);
-    expect(persona.displayName, '昭昭');
+    expect(persona.displayName, '小禾');
     expect(persona.pronouns, '他');
     expect(persona.bio, '預設身分');
     expect(persona.isDefault, isTrue);
@@ -170,54 +170,48 @@ void main() {
     },
   );
 
-  test('bindings are isolated by character mode and continuity', () async {
-    final daily = await UserPersonaService.createPersona(
-      id: 'persona-daily',
-      displayName: '日常的我',
+  test('binding is shared while persona files remain mode-specific', () async {
+    final persona = await UserPersonaService.createPersona(
+      id: 'persona-shared',
+      displayName: '平時的我',
     );
-    final rp = await UserPersonaService.createPersona(
-      id: 'persona-rp',
-      displayName: '劇中人',
-    );
-
-    await UserPersonaService.bindPersona(
-      characterId: 'char-a',
+    await UserPersonaService.saveModeIdentity(
+      personaId: persona.id,
       contextMode: ContextMode.daily,
-      personaId: daily.id,
+      displayName: '日常的我',
+      pronouns: '他',
+      bio: '日常檔案',
+    );
+    await UserPersonaService.saveModeIdentity(
+      personaId: persona.id,
+      contextMode: ContextMode.rp,
+      displayName: '劇中人',
+      pronouns: '他',
+      bio: 'RP 檔案',
     );
     await UserPersonaService.bindPersona(
       characterId: 'char-a',
       contextMode: ContextMode.rp,
       continuityId: 'route-b',
-      personaId: rp.id,
+      personaId: persona.id,
     );
 
-    expect(
-      (await UserPersonaService.resolveForNewWindow(
-        characterId: 'char-a',
-        contextMode: ContextMode.daily,
-      )).persona.id,
-      daily.id,
+    final daily = await UserPersonaService.resolveForNewWindow(
+      characterId: 'char-a',
+      contextMode: ContextMode.daily,
     );
-    expect(
-      (await UserPersonaService.resolveForNewWindow(
-        characterId: 'char-a',
-        contextMode: ContextMode.rp,
-        continuityId: 'route-b',
-      )).persona.id,
-      rp.id,
+    final rp = await UserPersonaService.resolveForNewWindow(
+      characterId: 'char-a',
+      contextMode: ContextMode.rp,
+      continuityId: 'another-route',
     );
-    expect(
-      (await UserPersonaService.resolveForNewWindow(
-        characterId: 'char-a',
-        contextMode: ContextMode.rp,
-      )).persona.id,
-      UserPersonaService.defaultPersonaId,
-      reason: 'a different continuity must not inherit another route binding',
-    );
+    expect(daily.persona.id, persona.id);
+    expect(daily.persona.displayName, '日常的我');
+    expect(rp.persona.id, persona.id);
+    expect(rp.persona.displayName, '劇中人');
   });
 
-  test('rebinding replaces only the exact future-window scope', () async {
+  test('rebinding replaces the shared future-window binding', () async {
     final first = await UserPersonaService.createPersona(
       id: 'persona-first',
       displayName: 'First',
@@ -241,7 +235,7 @@ void main() {
     expect(
       await UserPersonaService.boundPersonaId(
         characterId: 'char-a',
-        contextMode: ContextMode.rp,
+        contextMode: ContextMode.daily,
       ),
       second.id,
     );
@@ -259,13 +253,13 @@ void main() {
     await UserPersonaService.bindSingleCompanion(
       personaId: persona.id,
       characterId: 'char-b',
-      contextMode: ContextMode.rp,
+      contextMode: ContextMode.daily,
     );
 
     expect(
       await UserPersonaService.companionIdForPersona(
         personaId: persona.id,
-        contextMode: ContextMode.rp,
+        contextMode: ContextMode.daily,
       ),
       'char-b',
     );
@@ -492,7 +486,7 @@ void main() {
     expect(pinned.userPersonaId, UserPersonaService.defaultPersonaId);
     expect(
       (await UserPersonaService.personaForConversation(pinned)).displayName,
-      '昭昭',
+      '小禾',
     );
   });
 }

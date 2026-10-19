@@ -1,5 +1,7 @@
 import 'dart:convert';
+import 'dart:developer' as developer;
 
+import 'package:flutter/foundation.dart';
 import 'package:uuid/uuid.dart';
 import 'package:sqflite/sqflite.dart';
 
@@ -8,16 +10,71 @@ import '../models/message.dart';
 import 'locale_strings.dart';
 import 'token_estimator.dart';
 
+class RpStoryExtractionReport {
+  final int characterSubmitted;
+  final int characterCreated;
+  final int characterUpdated;
+  final int characterRejectedMissingSource;
+  final int characterRejectedEvidenceMismatch;
+  final int characterEntityIdMismatch;
+  final int relationshipSubmitted;
+  final int relationshipStored;
+  final int relationshipRejectedMissingSource;
+  final int relationshipRejectedEvidenceMismatch;
+  final int relationshipRejectedMissingParties;
+  final int relationshipProtectedByUserEdit;
+  final bool sourceSummaryInvalid;
+
+  const RpStoryExtractionReport({
+    this.characterSubmitted = 0,
+    this.characterCreated = 0,
+    this.characterUpdated = 0,
+    this.characterRejectedMissingSource = 0,
+    this.characterRejectedEvidenceMismatch = 0,
+    this.characterEntityIdMismatch = 0,
+    this.relationshipSubmitted = 0,
+    this.relationshipStored = 0,
+    this.relationshipRejectedMissingSource = 0,
+    this.relationshipRejectedEvidenceMismatch = 0,
+    this.relationshipRejectedMissingParties = 0,
+    this.relationshipProtectedByUserEdit = 0,
+    this.sourceSummaryInvalid = false,
+  });
+
+  Map<String, Object?> toJson() => <String, Object?>{
+    'characterSubmitted': characterSubmitted,
+    'characterCreated': characterCreated,
+    'characterUpdated': characterUpdated,
+    'characterRejectedMissingSource': characterRejectedMissingSource,
+    'characterRejectedEvidenceMismatch': characterRejectedEvidenceMismatch,
+    'characterEntityIdMismatch': characterEntityIdMismatch,
+    'submitted': relationshipSubmitted,
+    'stored': relationshipStored,
+    'rejectedMissingSource': relationshipRejectedMissingSource,
+    'rejectedEvidenceMismatch': relationshipRejectedEvidenceMismatch,
+    'rejectedMissingParties': relationshipRejectedMissingParties,
+    'protectedByUserEdit': relationshipProtectedByUserEdit,
+    'sourceSummaryInvalid': sourceSummaryInvalid,
+  };
+}
+
+enum _SourceSupportFailure { missingSource, evidenceMismatch }
+
 /// Persistence and request-only recall for RP story characters and relations.
 /// Every query is scoped by the parent character card and continuity id so a
 /// future multi-story UI can switch lanes without migrating these records.
 abstract final class RpStoryService {
   static const Uuid _uuid = Uuid();
-  static const int characterExtractionLimit = 6;
+  static const int characterExtractionLimit = 24;
   static const int relationshipExtractionLimit = 8;
   static const int fullProfileLimit = 3;
   static const int compactProfileLimit = 6;
   static const int defaultTokenBudget = 1800;
+  static final Map<String, RpStoryExtractionReport> _latestExtractionReports =
+      <String, RpStoryExtractionReport>{};
+  static final ValueNotifier<int> revision = ValueNotifier<int>(0);
+
+  static void _notifyChanged() => revision.value += 1;
 
   static String _scope(String value) =>
       value.trim().isEmpty ? 'main' : value.trim();
@@ -28,8 +85,19 @@ abstract final class RpStoryService {
       .replaceAll(RegExp(r'[\s\p{P}\p{S}]+', unicode: true), '');
 
   static List<int> _sourceIds(Object? raw) {
-    if (raw is! List) return const <int>[];
-    return raw
+    Object? normalized = raw;
+    if (raw is String && raw.trim().isNotEmpty) {
+      try {
+        normalized = jsonDecode(raw);
+      } catch (_) {
+        normalized = raw
+            .split(RegExp(r'[,，\s]+'))
+            .where((value) => value.trim().isNotEmpty)
+            .toList(growable: false);
+      }
+    }
+    if (normalized is! List) return const <int>[];
+    return normalized
         .map(
           (value) => switch (value) {
             num number => number.toInt(),
@@ -119,16 +187,122 @@ abstract final class RpStoryService {
   static String _text(Map<String, Object?> row, String key) =>
       row[key]?.toString().trim() ?? '';
 
-  static bool _supportedBySource(
+  static String _firstText(Map<String, Object?> row, Iterable<String> keys) {
+    for (final key in keys) {
+      final value = _text(row, key);
+      if (value.isNotEmpty) return value;
+    }
+    return '';
+  }
+
+  static String _normalizedEvidence(String value) => value
+      .trim()
+      .toLowerCase()
+      .replaceAll(RegExp(r'[\s\p{P}\p{S}]+', unicode: true), '');
+
+  /// Returns true when [name] (≥2 chars after normalisation) appears in at
+  /// least one source message's text. Used as a relaxed gate for brand-new
+  /// character candidates whose evidence excerpt didn't pass verbatim check.
+  static bool _nameAppearsInSources(String name, Iterable<Message> sources) {
+    final normalized = name.trim().toLowerCase();
+    if (normalized.length < 2) return false;
+    return sources.any(
+      (message) => message.text.toLowerCase().contains(normalized),
+    );
+  }
+
+  static bool _sourceExplicitlyLinksIdentity({
+    required String existingName,
+    required String candidateName,
+    required Iterable<Message> sources,
+  }) {
+    final left = existingName.trim();
+    final right = candidateName.trim();
+    if (left.isEmpty || right.isEmpty) return false;
+    final patterns = <String>[
+      '$left以$right之名',
+      '$left又名$right',
+      '$left本名$right',
+      '$left即$right',
+      '$left就是$right',
+      '$right是$left的化名',
+      '$right是$left的本名',
+      '$right即$left',
+      '$right就是$left',
+    ];
+    return sources.any((message) {
+      final text = message.text.replaceAll(RegExp(r'\s+'), '');
+      return patterns.any(text.contains);
+    });
+  }
+
+  static List<int> _supportedSourceIds(
     Map<String, Object?> candidate,
     Map<int, Message> sources,
   ) {
-    final ids = _sourceIds(candidate['source_message_ids']);
+    final explicit = _sourceIds(candidate['source_message_ids']);
+    if (explicit.isNotEmpty) return explicit;
+
+    // Structured-output support varies between providers. If the model omits
+    // only the id but supplies a genuinely verbatim excerpt, infer the source
+    // from one unambiguous message in the batch. Paraphrases and ambiguous
+    // matches remain rejected.
     final evidence = _text(candidate, 'evidence');
-    if (ids.isEmpty || evidence.isEmpty) return false;
-    return ids.every(sources.containsKey) &&
-        ids.any((id) => sources[id]!.text.contains(evidence));
+    final normalizedEvidence = _normalizedEvidence(evidence);
+    if (evidence.isEmpty || normalizedEvidence.length < 4) {
+      return const <int>[];
+    }
+    final matches = sources.entries
+        .where((entry) {
+          final text = entry.value.text;
+          return text.contains(evidence) ||
+              _normalizedEvidence(text).contains(normalizedEvidence);
+        })
+        .map((entry) => entry.key)
+        .toList(growable: false);
+    return matches.length == 1 ? matches : const <int>[];
   }
+
+  static _SourceSupportFailure? _sourceSupportFailure(
+    Map<String, Object?> candidate,
+    Map<int, Message> sources,
+  ) {
+    final ids = _supportedSourceIds(candidate, sources);
+    final evidence = _text(candidate, 'evidence');
+    if (ids.isEmpty || evidence.isEmpty || !ids.every(sources.containsKey)) {
+      return _SourceSupportFailure.missingSource;
+    }
+    final citedTexts = ids
+        .map((id) => sources[id]!.text)
+        .toList(growable: false);
+    if (citedTexts.any((text) => text.contains(evidence))) return null;
+
+    // Providers often normalize quotes, spaces, and punctuation in an
+    // otherwise verbatim excerpt. Accept that transport-only difference,
+    // including an excerpt crossing two explicitly cited messages, while
+    // still rejecting semantic paraphrases and unsupported claims.
+    final normalizedEvidence = _normalizedEvidence(evidence);
+    if (normalizedEvidence.length < 4) {
+      return _SourceSupportFailure.evidenceMismatch;
+    }
+    final normalizedTexts = citedTexts
+        .map(_normalizedEvidence)
+        .toList(growable: false);
+    if (normalizedTexts.any((text) => text.contains(normalizedEvidence))) {
+      return null;
+    }
+    return normalizedTexts.join().contains(normalizedEvidence)
+        ? null
+        : _SourceSupportFailure.evidenceMismatch;
+  }
+
+  static String _reportKey(String characterId, String continuityId) =>
+      '$characterId|${_scope(continuityId)}';
+
+  static RpStoryExtractionReport? latestExtractionReport(
+    String characterId, {
+    String continuityId = 'main',
+  }) => _latestExtractionReports[_reportKey(characterId, continuityId)];
 
   static Future<String> _nextEntityKey(
     DatabaseExecutor db,
@@ -198,7 +372,7 @@ abstract final class RpStoryService {
     return aliases.length == 1 ? aliases.first['entity_key']!.toString() : '';
   }
 
-  static Future<void> storeExtraction({
+  static Future<RpStoryExtractionReport> storeExtraction({
     required String characterId,
     required String continuityId,
     required String sourceConversationId,
@@ -207,7 +381,19 @@ abstract final class RpStoryService {
     required List<Message> sourceMessages,
     int? sourceSummaryId,
   }) async {
-    if (characters.isEmpty && relationships.isEmpty) return;
+    var characterCreated = 0;
+    var characterUpdated = 0;
+    var characterRejectedMissingSource = 0;
+    var characterRejectedEvidenceMismatch = 0;
+    var characterEntityIdMismatch = 0;
+    var relationshipStored = 0;
+    var rejectedMissingSource = 0;
+    var rejectedEvidenceMismatch = 0;
+    var rejectedMissingParties = 0;
+    var protectedByUserEdit = 0;
+    var sourceSummaryInvalid = false;
+    final characterSubmitted = characters.take(characterExtractionLimit).length;
+    final submitted = relationships.take(relationshipExtractionLimit).length;
     final db = await DatabaseHelper.database;
     final scope = _scope(continuityId);
     final sources = <int, Message>{
@@ -215,6 +401,41 @@ abstract final class RpStoryService {
         if (message.id != null) message.id!: message,
     };
     final now = DateTime.now().toIso8601String();
+
+    // A rolling dossier may legitimately refer to an older source message
+    // from another window in the same storyline. The model has seen that id
+    // through the prior dossier, but the current compression batch only
+    // carries the newest raw messages. Rehydrate only explicitly cited ids
+    // that belong to this character + RP storyline, then apply the same exact
+    // evidence check below. This closes the false "missing source" drop
+    // without accepting unsupported or cross-story claims.
+    final citedIds = <int>{
+      for (final candidate in <Map<String, Object?>>[
+        ...characters.take(characterExtractionLimit),
+        ...relationships.take(relationshipExtractionLimit),
+      ])
+        ..._sourceIds(candidate['source_message_ids']),
+    };
+    final missingIds = citedIds.difference(sources.keys.toSet()).toList();
+    if (missingIds.isNotEmpty) {
+      final placeholders = List.filled(missingIds.length, '?').join(',');
+      final rows = await db.rawQuery(
+        '''
+        SELECT m.*
+        FROM messages m
+        INNER JOIN conversations c ON c.id = m.conversation_id
+        WHERE m.id IN ($placeholders)
+          AND c.character_id = ?
+          AND c.context_mode = 'rp'
+          AND c.continuity_id = ?
+        ''',
+        <Object?>[...missingIds, characterId, scope],
+      );
+      for (final row in rows) {
+        final message = Message.fromMap(row);
+        if (message.id != null) sources[message.id!] = message;
+      }
+    }
 
     await db.transaction((txn) async {
       if (sourceSummaryId != null) {
@@ -225,7 +446,10 @@ abstract final class RpStoryService {
           whereArgs: <Object?>[sourceSummaryId],
           limit: 1,
         );
-        if (summary.isEmpty) return;
+        if (summary.isEmpty) {
+          sourceSummaryInvalid = true;
+          return;
+        }
       }
       // Active means active in the newest archived batch, not permanently.
       await txn.rawUpdate(
@@ -238,22 +462,110 @@ abstract final class RpStoryService {
       );
 
       for (final candidate in characters.take(characterExtractionLimit)) {
-        if (!_supportedBySource(candidate, sources)) continue;
+        final supportFailure = _sourceSupportFailure(candidate, sources);
+        if (supportFailure != null) {
+          // For brand-new characters the model may paraphrase the evidence
+          // slightly. As long as the character name actually appears in at
+          // least one source message, allow creation — the name-in-source
+          // check is strong enough to prevent hallucinated entries.
+          final isNewCandidate =
+              _text(candidate, 'entity_id').isEmpty ||
+              _text(candidate, 'entity_id') == 'new';
+          final nameInSource = _nameAppearsInSources(
+            _text(candidate, 'name'),
+            sources.values,
+          );
+          if (!isNewCandidate || !nameInSource) {
+            if (supportFailure == _SourceSupportFailure.missingSource) {
+              characterRejectedMissingSource += 1;
+            } else {
+              characterRejectedEvidenceMismatch += 1;
+            }
+            developer.log(
+              'Dropped RP character candidate without valid source evidence: '
+              '${_text(candidate, 'name')}',
+              name: 'RpStoryService',
+            );
+            continue;
+          }
+          developer.log(
+            'Relaxed evidence check for new character whose name appears '
+            'in source: ${_text(candidate, 'name')}',
+            name: 'RpStoryService',
+          );
+        }
         final name = _text(candidate, 'name');
         final normalized = _normalizedName(name);
         if (normalized.isEmpty) continue;
-        final ids = _sourceIds(candidate['source_message_ids']);
+        var ids = _supportedSourceIds(candidate, sources);
+        // When the relaxed evidence path accepted this candidate, ids may be
+        // empty. Fall back to every source message that mentions the name.
+        if (ids.isEmpty && name.isNotEmpty) {
+          final lowerName = name.toLowerCase();
+          ids = sources.entries
+              .where((e) => e.value.text.toLowerCase().contains(lowerName))
+              .map((e) => e.key)
+              .toList(growable: false);
+        }
         final requestedEntityKey = _text(candidate, 'entity_id');
-        var existing =
-            requestedEntityKey.isNotEmpty && requestedEntityKey != 'new'
-            ? await txn.query(
-                'rp_story_characters',
-                where:
-                    'character_id = ? AND continuity_id = ? AND entity_key = ?',
-                whereArgs: <Object?>[characterId, scope, requestedEntityKey],
-                limit: 1,
-              )
-            : <Map<String, Object?>>[];
+        var existing = <Map<String, Object?>>[];
+        if (requestedEntityKey.isNotEmpty && requestedEntityKey != 'new') {
+          final requested = await txn.query(
+            'rp_story_characters',
+            where: 'character_id = ? AND continuity_id = ? AND entity_key = ?',
+            whereArgs: <Object?>[characterId, scope, requestedEntityKey],
+            limit: 1,
+          );
+          if (requested.isNotEmpty) {
+            final aliases = await txn.query(
+              'rp_story_entity_aliases',
+              columns: const <String>['entity_key'],
+              where:
+                  'character_id = ? AND continuity_id = ? AND entity_key = ? AND normalized_alias = ?',
+              whereArgs: <Object?>[
+                characterId,
+                scope,
+                requestedEntityKey,
+                normalized,
+              ],
+              limit: 1,
+            );
+            final baseNameMatches =
+                requested.first['normalized_name']?.toString() == normalized;
+            final explicitlyLinked = _sourceExplicitlyLinksIdentity(
+              existingName: requested.first['name']?.toString() ?? '',
+              candidateName: name,
+              sources: ids.map((id) => sources[id]).whereType<Message>(),
+            );
+            if (baseNameMatches || aliases.isNotEmpty || explicitlyLinked) {
+              existing = requested;
+            } else {
+              characterEntityIdMismatch += 1;
+              developer.log(
+                'Ignored mismatched RP character entity id: '
+                '$requestedEntityKey was supplied for $name',
+                name: 'RpStoryService',
+              );
+            }
+          }
+        }
+        if (existing.isEmpty) {
+          final resolvedEntityKey = await _resolveEntityKey(
+            txn,
+            characterId: characterId,
+            continuityId: scope,
+            name: name,
+          );
+          if (resolvedEntityKey.isNotEmpty) {
+            existing = await txn.query(
+              'rp_story_characters',
+              where:
+                  'character_id = ? AND continuity_id = ? AND entity_key = ?',
+              whereArgs: <Object?>[characterId, scope, resolvedEntityKey],
+              limit: 1,
+            );
+          }
+        }
         if (existing.isEmpty) {
           existing = await txn.query(
             'rp_story_characters',
@@ -368,6 +680,7 @@ abstract final class RpStoryService {
             'mention_count': 1,
             'created_at': now,
           });
+          characterCreated += 1;
         } else {
           final update = editable
               ? values
@@ -384,6 +697,7 @@ abstract final class RpStoryService {
             where: 'id = ?',
             whereArgs: <Object?>[existing.first['id']],
           );
+          characterUpdated += 1;
         }
         await _replaceAliases(
           txn,
@@ -400,10 +714,49 @@ abstract final class RpStoryService {
       }
 
       for (final candidate in relationships.take(relationshipExtractionLimit)) {
-        if (!_supportedBySource(candidate, sources)) continue;
-        final from = _text(candidate, 'from');
-        final to = _text(candidate, 'to');
+        final supportFailure = _sourceSupportFailure(candidate, sources);
+        if (supportFailure != null) {
+          if (supportFailure == _SourceSupportFailure.missingSource) {
+            rejectedMissingSource += 1;
+          } else {
+            rejectedEvidenceMismatch += 1;
+          }
+          developer.log(
+            'Dropped RP relationship candidate: ${supportFailure.name}; '
+            '${_text(candidate, 'from')} -> ${_text(candidate, 'to')}',
+            name: 'RpStoryService',
+          );
+          continue;
+        }
+        final requestedFromKey = _firstText(candidate, const <String>[
+          'from_entity_id',
+          'from_entity_key',
+        ]);
+        final requestedToKey = _firstText(candidate, const <String>[
+          'to_entity_id',
+          'to_entity_key',
+        ]);
+
+        Future<String> entityName(String requested) async {
+          if (!RegExp(r'^P-\d{4,}$').hasMatch(requested)) return '';
+          final rows = await txn.query(
+            'rp_story_characters',
+            columns: const <String>['name'],
+            where: 'character_id = ? AND continuity_id = ? AND entity_key = ?',
+            whereArgs: <Object?>[characterId, scope, requested],
+            limit: 1,
+          );
+          return rows.isEmpty
+              ? ''
+              : rows.first['name']?.toString().trim() ?? '';
+        }
+
+        var from = _firstText(candidate, const <String>['from', 'from_name']);
+        var to = _firstText(candidate, const <String>['to', 'to_name']);
+        if (from.isEmpty) from = await entityName(requestedFromKey);
+        if (to.isEmpty) to = await entityName(requestedToKey);
         if (_normalizedName(from).isEmpty || _normalizedName(to).isEmpty) {
+          rejectedMissingParties += 1;
           continue;
         }
         final direction =
@@ -414,9 +767,7 @@ abstract final class RpStoryService {
             }.contains(_text(candidate, 'direction'))
             ? _text(candidate, 'direction')
             : 'mutual';
-        final ids = _sourceIds(candidate['source_message_ids']);
-        final requestedFromKey = _text(candidate, 'from_entity_id');
-        final requestedToKey = _text(candidate, 'to_entity_id');
+        final ids = _supportedSourceIds(candidate, sources);
         Future<String> resolve(String requested, String fallbackName) async {
           if (RegExp(r'^P-\d{4,}$').hasMatch(requested)) {
             final rows = await txn.query(
@@ -429,12 +780,68 @@ abstract final class RpStoryService {
             );
             if (rows.isNotEmpty) return requested;
           }
-          return _resolveEntityKey(
+          final resolved = await _resolveEntityKey(
             txn,
             characterId: characterId,
             continuityId: scope,
             name: fallbackName,
           );
+          if (resolved.isNotEmpty) return resolved;
+
+          // A relationship candidate is already source-validated. When the
+          // model omits the matching story_characters item, preserve a minimal
+          // anchor rather than storing an unlinked edge that never appears in
+          // the character list.
+          final normalized = _normalizedName(fallbackName);
+          final existingByName = await txn.query(
+            'rp_story_characters',
+            columns: const <String>['entity_key'],
+            where:
+                'character_id = ? AND continuity_id = ? AND normalized_name = ?',
+            whereArgs: <Object?>[characterId, scope, normalized],
+            limit: 1,
+          );
+          if (existingByName.isNotEmpty) {
+            final key = existingByName.first['entity_key']!.toString();
+            await _replaceAliases(
+              txn,
+              characterId: characterId,
+              continuityId: scope,
+              entityKey: key,
+              name: fallbackName,
+              aliases: const <String>[],
+              now: now,
+            );
+            return key;
+          }
+
+          final key = await _nextEntityKey(txn, characterId, scope);
+          await txn.insert('rp_story_characters', <String, Object?>{
+            'id': _uuid.v4(),
+            'entity_key': key,
+            'character_id': characterId,
+            'continuity_id': scope,
+            'normalized_name': normalized,
+            'name': fallbackName,
+            'tier': 'active',
+            'mention_count': 1,
+            'last_seen_at': now,
+            'source_conversation_id': sourceConversationId,
+            'source_message_ids': jsonEncode(ids),
+            'evidence': _text(candidate, 'evidence'),
+            'created_at': now,
+            'updated_at': now,
+          });
+          await _replaceAliases(
+            txn,
+            characterId: characterId,
+            continuityId: scope,
+            entityKey: key,
+            name: fallbackName,
+            aliases: const <String>[],
+            now: now,
+          );
+          return key;
         }
 
         final fromEntityKey = await resolve(requestedFromKey, from);
@@ -551,6 +958,7 @@ abstract final class RpStoryService {
             ...values,
             'created_at': now,
           });
+          relationshipStored += 1;
         } else if (existing.first['user_edited'] != 1) {
           await txn.update(
             'rp_story_relationships',
@@ -558,8 +966,12 @@ abstract final class RpStoryService {
             where: 'id = ?',
             whereArgs: <Object?>[relationshipId],
           );
+          relationshipStored += 1;
+        } else {
+          protectedByUserEdit += 1;
         }
         final change = _text(candidate, 'change');
+        var storedNewEvent = false;
         if (change.isNotEmpty) {
           final duplicate = await txn.query(
             'rp_story_relationship_events',
@@ -585,10 +997,53 @@ abstract final class RpStoryService {
               'evidence': _text(candidate, 'evidence'),
               'created_at': now,
             });
+            storedNewEvent = true;
           }
+        }
+        if (existing.isNotEmpty &&
+            existing.first['user_edited'] == 1 &&
+            storedNewEvent) {
+          // Manual edits protect the user's canonical relationship wording,
+          // but must not freeze the card in time. Keep the protected fields
+          // intact while advancing provenance/order so the latest supported
+          // relationship event remains visible in the UI.
+          await txn.update(
+            'rp_story_relationships',
+            <String, Object?>{
+              'source_conversation_id': sourceConversationId,
+              'source_message_ids': jsonEncode(ids),
+              'source_summary_id': sourceSummaryId,
+              'evidence': _text(candidate, 'evidence'),
+              'updated_at': now,
+            },
+            where: 'id = ?',
+            whereArgs: <Object?>[relationshipId],
+          );
         }
       }
     });
+    final report = RpStoryExtractionReport(
+      characterSubmitted: characterSubmitted,
+      characterCreated: characterCreated,
+      characterUpdated: characterUpdated,
+      characterRejectedMissingSource: characterRejectedMissingSource,
+      characterRejectedEvidenceMismatch: characterRejectedEvidenceMismatch,
+      characterEntityIdMismatch: characterEntityIdMismatch,
+      relationshipSubmitted: submitted,
+      relationshipStored: relationshipStored,
+      relationshipRejectedMissingSource: rejectedMissingSource,
+      relationshipRejectedEvidenceMismatch: rejectedEvidenceMismatch,
+      relationshipRejectedMissingParties: rejectedMissingParties,
+      relationshipProtectedByUserEdit: protectedByUserEdit,
+      sourceSummaryInvalid: sourceSummaryInvalid,
+    );
+    _latestExtractionReports[_reportKey(characterId, scope)] = report;
+    developer.log(
+      'RP story extraction: ${report.toJson()}',
+      name: 'RpStoryService',
+    );
+    if (characters.isNotEmpty || relationships.isNotEmpty) _notifyChanged();
+    return report;
   }
 
   static Future<List<Map<String, dynamic>>> listCharacters(
@@ -625,11 +1080,26 @@ abstract final class RpStoryService {
     String continuityId = 'main',
   }) async {
     final db = await DatabaseHelper.database;
-    return db.query(
-      'rp_story_relationships',
-      where: 'character_id = ? AND continuity_id = ?',
-      whereArgs: <Object?>[characterId, _scope(continuityId)],
-      orderBy: 'updated_at DESC',
+    return db.rawQuery(
+      '''
+SELECT
+  relation.*,
+  latest.change_text AS latest_change,
+  latest.story_time AS latest_change_story_time,
+  latest.created_at AS latest_change_at
+FROM rp_story_relationships AS relation
+LEFT JOIN rp_story_relationship_events AS latest
+  ON latest.id = (
+    SELECT event.id
+    FROM rp_story_relationship_events AS event
+    WHERE event.relationship_id = relation.id
+    ORDER BY event.created_at DESC, event.rowid DESC
+    LIMIT 1
+  )
+WHERE relation.character_id = ? AND relation.continuity_id = ?
+ORDER BY COALESCE(latest.created_at, relation.updated_at) DESC
+''',
+      <Object?>[characterId, _scope(continuityId)],
     );
   }
 
@@ -669,6 +1139,7 @@ abstract final class RpStoryService {
       'WHERE character_id = ? AND continuity_id = ? AND is_important = 1',
       <Object?>[target.first['character_id'], target.first['continuity_id']],
     );
+    _notifyChanged();
     return (rows.first['total'] as int?) ?? 0;
   }
 
@@ -695,6 +1166,7 @@ abstract final class RpStoryService {
       where: 'id = ?',
       whereArgs: <Object?>[id],
     );
+    _notifyChanged();
   }
 
   static Future<void> updateRelationship(
@@ -704,18 +1176,35 @@ abstract final class RpStoryService {
     required String visibility,
   }) async {
     final db = await DatabaseHelper.database;
+    final existing = await db.query(
+      'rp_story_relationships',
+      columns: const <String>['current_relation', 'origin', 'visibility'],
+      where: 'id = ?',
+      whereArgs: <Object?>[id],
+      limit: 1,
+    );
+    if (existing.isEmpty) return;
+    final nextCurrentRelation = currentRelation.trim();
+    final nextOrigin = origin.trim();
+    final nextVisibility = visibility.trim();
+    final unchanged =
+        _text(existing.first, 'current_relation') == nextCurrentRelation &&
+        _text(existing.first, 'origin') == nextOrigin &&
+        _text(existing.first, 'visibility') == nextVisibility;
+    if (unchanged) return;
     await db.update(
       'rp_story_relationships',
       <String, Object?>{
-        'current_relation': currentRelation.trim(),
-        'origin': origin.trim(),
-        'visibility': visibility.trim(),
+        'current_relation': nextCurrentRelation,
+        'origin': nextOrigin,
+        'visibility': nextVisibility,
         'user_edited': 1,
         'updated_at': DateTime.now().toIso8601String(),
       },
       where: 'id = ?',
       whereArgs: <Object?>[id],
     );
+    _notifyChanged();
   }
 
   static Future<String> recallPrompt(
@@ -723,6 +1212,7 @@ abstract final class RpStoryService {
     String currentText, {
     String continuityId = 'main',
     int tokenBudget = defaultTokenBudget,
+    List<Message> recentMessages = const <Message>[],
   }) async {
     final db = await DatabaseHelper.database;
     final scope = _scope(continuityId);
@@ -738,7 +1228,17 @@ abstract final class RpStoryService {
       characterId,
       continuityId: scope,
     );
-    final needle = currentText.toLowerCase();
+    final recentNarrative = recentMessages.reversed
+        .where((message) => !message.isIncomplete)
+        .map((message) => message.promptVisibleText.trim())
+        .where((text) => text.isNotEmpty)
+        .take(8)
+        .toList(growable: false)
+        .reversed;
+    final sceneNeedle = <String>[
+      currentText,
+      ...recentNarrative,
+    ].join('\n').toLowerCase();
     Iterable<String> termsFor(Map<String, dynamic> row) =>
         <String>[
               row['name']?.toString() ?? '',
@@ -751,7 +1251,7 @@ abstract final class RpStoryService {
             .where((term) => term.length >= 2);
 
     bool isRelevant(Map<String, dynamic> row) =>
-        needle.isNotEmpty && termsFor(row).any(needle.contains);
+        sceneNeedle.isNotEmpty && termsFor(row).any(sceneNeedle.contains);
 
     int score(Map<String, dynamic> row) {
       var value = row['is_important'] == 1 ? 35 : 0;
@@ -789,6 +1289,11 @@ abstract final class RpStoryService {
         .take(compactProfileLimit)
         .toList(growable: false);
     final selectedEntityKeys = <Map<String, dynamic>>[...full, ...compact]
+        .map((row) => row['entity_key']?.toString() ?? '')
+        .where((key) => key.isNotEmpty)
+        .toSet();
+    final appearingEntityKeys = characters
+        .where(isRelevant)
         .map((row) => row['entity_key']?.toString() ?? '')
         .where((key) => key.isNotEmpty)
         .toSet();
@@ -862,10 +1367,23 @@ abstract final class RpStoryService {
         '${compact.map((row) => '${row['name']}（${row['identity']}／${row['relation_to_leads']}）').join('；')}',
       );
     }
+    var includedNewestOffstageRelationship = false;
     for (final relation in relationships) {
-      if (!selectedEntityKeys.contains(relation['from_entity_key']) &&
-          !selectedEntityKeys.contains(relation['to_entity_key'])) {
+      final fromKey = relation['from_entity_key']?.toString() ?? '';
+      final toKey = relation['to_entity_key']?.toString() ?? '';
+      if (!selectedEntityKeys.contains(fromKey) &&
+          !selectedEntityKeys.contains(toKey)) {
         continue;
+      }
+      final involvesAppearing =
+          appearingEntityKeys.contains(fromKey) ||
+          appearingEntityKeys.contains(toKey);
+      if (!involvesAppearing) {
+        // listRelationships is newest-first. For cast who are not in the
+        // recent narrative, retain only the single newest relation instead of
+        // sending the offstage social graph on every turn.
+        if (includedNewestOffstageRelationship) continue;
+        includedNewestOffstageRelationship = true;
       }
       out.writeln(
         '${relation['from_name']} → ${relation['to_name']}：'

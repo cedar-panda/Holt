@@ -4,6 +4,7 @@ import 'dart:developer' as developer;
 import 'package:http/http.dart' as http;
 import 'package:crypto/crypto.dart';
 import 'api_adapter.dart';
+import 'cache/gemini_cache_policy.dart';
 import 'model_info.dart';
 import 'locale_strings.dart';
 import 'settings/memory_settings.dart';
@@ -63,7 +64,7 @@ class GeminiService implements ApiAdapter {
     lastCacheStats = {};
   }
 
-  static const Duration _cacheTtl = Duration(hours: 1);
+  static const Duration _cacheTtl = GeminiCachePolicy.ttl;
 
   GeminiService({
     required this.apiKey,
@@ -254,7 +255,7 @@ class GeminiService implements ApiAdapter {
             headers: {'Content-Type': 'application/json'},
             body: jsonEncode(body),
           )
-          .timeout(const Duration(seconds: 180));
+          .timeout(_requestTimeoutForModel(m));
 
       if (response.statusCode != 200) {
         throw Exception('Gemini 錯誤 ${response.statusCode}: ${response.body}');
@@ -353,6 +354,7 @@ class GeminiService implements ApiAdapter {
       final response = await StreamTransport.waitForResponseStart(
         client.send(request),
         provider: 'Gemini',
+        timeout: _requestTimeoutForModel(m),
       );
 
       if (response.statusCode != 200) {
@@ -368,9 +370,11 @@ class GeminiService implements ApiAdapter {
       var answerCharacters = 0;
       String? terminalFinishReason;
       // 思考模式下模型可能長時間只輸出思考 chunk，加長超時
-      final sseTimeout = thinkingEnabled
-          ? const Duration(seconds: 120)
-          : SseStream.defaultIdleTimeout;
+      final sseTimeout = GeminiCachePolicy.usesImplicitCaching(m)
+          ? _requestTimeoutForModel(m)
+          : (thinkingEnabled
+                ? const Duration(seconds: 120)
+                : SseStream.defaultIdleTimeout);
       await for (final data in SseStream.data(
         response.stream,
         idleTimeout: sseTimeout,
@@ -441,6 +445,14 @@ class GeminiService implements ApiAdapter {
         onUsage?.call(primaryUsage);
         throw const GeminiResponseTruncatedException();
       }
+      if (terminalFinishReason == null || terminalFinishReason.isEmpty) {
+        onUsage?.call(primaryUsage);
+        throw const StreamEndedWithoutTerminalException('Gemini');
+      }
+      if (terminalFinishReason != 'STOP') {
+        onUsage?.call(primaryUsage);
+        throw StreamEndedWithReasonException('Gemini', terminalFinishReason);
+      }
       if (thoughtBuffer.isNotEmpty && answerCharacters == 0) {
         if (!thinkingEnabled) {
           onUsage?.call(primaryUsage);
@@ -509,10 +521,6 @@ class GeminiService implements ApiAdapter {
     }
 
     if (prompt == null) return publish(<String, int>{});
-    if (!await MemorySettings.getEnablePromptCaching()) {
-      _clearActiveCache();
-      return publish(<String, int>{});
-    }
 
     final thresholdInfo = TokenEstimator.cacheThresholdInfoForModel(
       provider: 'gemini',
@@ -527,10 +535,43 @@ class GeminiService implements ApiAdapter {
       return publish(<String, int>{'cache_status': 0, 'cache_threshold': 0});
     }
 
-    final hashStr = prompt.cacheableParts.join('\n\n');
-    final staticHash = sha256.convert(utf8.encode(hashStr)).toString();
+    final staticText = prompt.cacheableParts.join('\n\n');
+    final staticTokens = _estimateTokens(staticText);
+
+    // Gemini 4 Argon only supports provider-managed implicit caching. Never
+    // call cachedContents for it: keep systemInstruction and the complete
+    // selected history in the ordinary request so Google can match the common
+    // prefix. A cache hit is confirmed only by cachedContentTokenCount later.
+    if (GeminiCachePolicy.usesImplicitCaching(model)) {
+      _clearActiveCache();
+      final historyTokens = _estimateMessagePrefixTokens(
+        messages,
+        messages.length,
+      );
+      final dynamicTokens = _estimateTokens(prompt.requestOnlyPart);
+      // Implicit cache eligibility is based on the reusable common prefix.
+      // The request-only live state changes every turn and must not make the
+      // UI claim that a stable prefix reached Google's minimum by itself.
+      final reusablePrefixTokens = staticTokens + historyTokens;
+      return publish(<String, int>{
+        'cache_status': reusablePrefixTokens >= minCacheTokens ? 3 : 0,
+        'cache_implicit': 1,
+        'cache_threshold': minCacheTokens,
+        'cache_prefix_tokens': reusablePrefixTokens,
+        'cache_static_tokens': staticTokens,
+        'cache_history_tokens': historyTokens,
+        'cache_history_messages': messages.length,
+        'cache_dynamic_tokens': dynamicTokens,
+      });
+    }
+
+    if (!await MemorySettings.getEnablePromptCaching()) {
+      _clearActiveCache();
+      return publish(<String, int>{});
+    }
+
+    final staticHash = sha256.convert(utf8.encode(staticText)).toString();
     final cacheNamespace = _cacheNamespace(prompt);
-    final staticTokens = _estimateTokens(hashStr);
     final candidateMessageCount = _historySnapshotMessageCount(messages);
     final candidateMessageHash = _messagePrefixHash(
       messages,
@@ -557,16 +598,25 @@ class GeminiService implements ApiAdapter {
           expectedHash: _activeCachedMessageHash,
         );
     if (activeMatches) {
-      return publish(<String, int>{
-        'cache_status': 2,
-        'cache_threshold': minCacheTokens,
-        'cache_static_tokens': staticTokens,
-        'cache_history_tokens': _estimateMessagePrefixTokens(
-          messages,
-          _activeCachedMessageCount,
-        ),
-        'cache_history_messages': _activeCachedMessageCount,
-      });
+      final pendingHistoryTokens = _estimateMessageRangeTokens(
+        messages,
+        _activeCachedMessageCount,
+        candidateMessageCount,
+      );
+      if (candidateMessageCount <= _activeCachedMessageCount ||
+          pendingHistoryTokens < minCacheTokens) {
+        return publish(<String, int>{
+          'cache_status': 2,
+          'cache_threshold': minCacheTokens,
+          'cache_static_tokens': staticTokens,
+          'cache_history_tokens': _estimateMessagePrefixTokens(
+            messages,
+            _activeCachedMessageCount,
+          ),
+          'cache_history_messages': _activeCachedMessageCount,
+          'cache_pending_history_tokens': pendingHistoryTokens,
+        });
+      }
     }
 
     _clearActiveCache();
@@ -579,17 +629,26 @@ class GeminiService implements ApiAdapter {
       now: now,
     );
     if (reusable != null) {
-      _activateCache(reusable);
-      return publish(<String, int>{
-        'cache_status': 2,
-        'cache_threshold': minCacheTokens,
-        'cache_static_tokens': staticTokens,
-        'cache_history_tokens': _estimateMessagePrefixTokens(
-          messages,
-          reusable.messagePrefixCount,
-        ),
-        'cache_history_messages': reusable.messagePrefixCount,
-      });
+      final pendingHistoryTokens = _estimateMessageRangeTokens(
+        messages,
+        reusable.messagePrefixCount,
+        candidateMessageCount,
+      );
+      if (candidateMessageCount <= reusable.messagePrefixCount ||
+          pendingHistoryTokens < minCacheTokens) {
+        _activateCache(reusable);
+        return publish(<String, int>{
+          'cache_status': 2,
+          'cache_threshold': minCacheTokens,
+          'cache_static_tokens': staticTokens,
+          'cache_history_tokens': _estimateMessagePrefixTokens(
+            messages,
+            reusable.messagePrefixCount,
+          ),
+          'cache_history_messages': reusable.messagePrefixCount,
+          'cache_pending_history_tokens': pendingHistoryTokens,
+        });
+      }
     }
 
     // Gemini 的 explicit cache 門檻以「穩定 system 前綴＋舊對話快照」
@@ -741,6 +800,21 @@ class GeminiService implements ApiAdapter {
     return _estimateTokens(text);
   }
 
+  static int _estimateMessageRangeTokens(
+    List<Map<String, String>> messages,
+    int start,
+    int end,
+  ) {
+    final safeStart = start.clamp(0, messages.length);
+    final safeEnd = end.clamp(safeStart, messages.length);
+    if (safeStart >= safeEnd) return 0;
+    final text = <String>[
+      for (var i = safeStart; i < safeEnd; i++)
+        '${messages[i]['role'] ?? ''}: ${messages[i]['content'] ?? ''}',
+    ].join('\n');
+    return _estimateTokens(text);
+  }
+
   /// Keep-alive 與設定 UI 共用的 Gemini explicit-cache 資格判斷。
   /// 門檻包含穩定 system 前綴與可安全凍結的舊對話快照。
   static bool hasCacheableExplicitPrefix({
@@ -748,6 +822,7 @@ class GeminiService implements ApiAdapter {
     required List<Map<String, String>> messages,
     required String model,
   }) {
+    if (!GeminiCachePolicy.supportsExplicitCaching(model)) return false;
     final threshold = TokenEstimator.cacheThresholdInfoForModel(
       provider: 'gemini',
       model: model,
@@ -925,11 +1000,14 @@ class GeminiService implements ApiAdapter {
     final activeModel = (requestModel ?? modelId).trim();
     final thinkingConfig = _thinkingConfig(activeModel);
     body['generationConfig'] = <String, dynamic>{
-      'maxOutputTokens': 8192,
+      'maxOutputTokens': GeminiCachePolicy.usesImplicitCaching(activeModel)
+          ? 32768
+          : 8192,
       if (thinkingConfig.isNotEmpty) 'thinkingConfig': thinkingConfig,
     };
 
     if (structuredPrompt != null) {
+      final implicitCache = GeminiCachePolicy.usesImplicitCaching(activeModel);
       SystemContextDebug.recordChatRequest(
         provider: 'gemini',
         model: modelId,
@@ -940,8 +1018,9 @@ class GeminiService implements ApiAdapter {
         requestMessages: contents,
         stableContext: structuredPrompt.cacheableParts.join('\n\n'),
         liveState: structuredPrompt.liveStatePart,
-        cacheEnabled: useCachedContent,
-        cachePrefixPreserved: useCachedContent || liveState.trim().isEmpty,
+        cacheEnabled: useCachedContent || implicitCache,
+        cachePrefixPreserved:
+            useCachedContent || implicitCache || liveState.trim().isEmpty,
         fallbackReason: runtimeFallback,
         topLevelRoles: body.containsKey('cachedContent')
             ? const <String>['cachedContent']
@@ -977,10 +1056,16 @@ class GeminiService implements ApiAdapter {
   }
 
   Map<String, Object?> _thinkingConfig(String model) {
+    final normalized = model.toLowerCase();
+    if (GeminiCachePolicy.usesImplicitCaching(normalized)) {
+      return <String, Object?>{
+        'thinkingLevel': thinkingEnabled ? 'medium' : 'low',
+        'includeThoughts': thinkingEnabled,
+      };
+    }
     if (thinkingEnabled) {
       return const <String, Object?>{'includeThoughts': true};
     }
-    final normalized = model.toLowerCase();
     if (_supportsThinkingBudget(normalized)) {
       return const <String, Object?>{
         'thinkingBudget': 0,
@@ -1049,6 +1134,11 @@ class GeminiService implements ApiAdapter {
 
   static bool _supportsThinkingBudget(String model) =>
       model.toLowerCase().contains('gemini-2.5');
+
+  static Duration _requestTimeoutForModel(String model) =>
+      GeminiCachePolicy.usesImplicitCaching(model)
+      ? const Duration(minutes: 20)
+      : const Duration(seconds: 180);
 
   Map<String, int> _extractUsage(
     Map<String, dynamic> data, {

@@ -16,8 +16,12 @@ import '../widgets/yanci_sprite_overlay.dart';
 import '../widgets/help_switch_tile.dart';
 import '../widgets/context_mode_pill.dart';
 
+enum CostContextSection { behavior, modules, avatars, memory }
+
 class CostContextScreen extends StatefulWidget {
-  const CostContextScreen({super.key});
+  const CostContextScreen({super.key, this.section});
+
+  final CostContextSection? section;
 
   @override
   State<CostContextScreen> createState() => _CostContextScreenState();
@@ -29,6 +33,30 @@ class _CostContextScreenState extends State<CostContextScreen> {
   bool _emotionEnabled = true;
   bool _guideEnabled = true;
   ToolFeatureState _toolFeatures = const ToolFeatureState();
+
+  String get _screenTitle => switch (widget.section) {
+    CostContextSection.behavior => L.pick(
+      en: 'Behavior / Output',
+      zhTW: '對話行為／輸出格式',
+      zhCN: '对话行为／输出格式',
+    ),
+    CostContextSection.modules => L.pick(
+      en: 'Feature modules',
+      zhTW: '功能模組',
+      zhCN: '功能模块',
+    ),
+    CostContextSection.avatars => L.pick(
+      en: 'Chat avatars',
+      zhTW: '頭像顯示',
+      zhCN: '头像显示',
+    ),
+    CostContextSection.memory => L.pick(
+      en: 'Memory & Role',
+      zhTW: '記憶與角色功能',
+      zhCN: '记忆与角色功能',
+    ),
+    null => L.pick(en: 'Preferences', zhTW: '偏好設定', zhCN: '偏好设置'),
+  };
 
   @override
   void initState() {
@@ -191,8 +219,74 @@ class _CostContextScreenState extends State<CostContextScreen> {
           ),
         ),
       ),
+      _featureSwitch(
+        title: L.pick(
+          en: 'Model-generated home greeting',
+          zhTW: '模型輸出問候語',
+          zhCN: '模型输出问候语',
+        ),
+        description: L.pick(
+          en: 'Allow the model to leave one short homepage greeting through the hidden <home> marker. This is independent from other tool prompts.',
+          zhTW: '允許模型透過隱藏的 <home> 標記在首頁留下短問候語；此開關與其他工具提示詞分開。',
+          zhCN: '允许模型通过隐藏的 <home> 标记在首页留下短问候语；此开关与其他工具提示词分开。',
+        ),
+        value: _toolFeatures.modelGreetingEnabled,
+        onChanged: (value) => unawaited(
+          _toggleToolFeature(
+            _toolFeatures.copyWith(modelGreetingEnabled: value),
+            () => ToolFeatureSettings.setModelGreetingEnabled(value),
+          ),
+        ),
+      ),
+      _featureSwitch(
+        title: L.pick(en: 'Write email', zhTW: '撰寫郵件', zhCN: '撰写邮件'),
+        description: L.pick(
+          en: 'Allow the model to prepare email drafts through the app tool.',
+          zhTW: '允許模型使用 App 工具整理並建立郵件草稿。',
+          zhCN: '允许模型使用 App 工具整理并建立邮件草稿。',
+        ),
+        value: _toolFeatures.emailDraftEnabled,
+        onChanged: (value) => unawaited(
+          _toggleToolFeature(
+            _toolFeatures.copyWith(emailDraftEnabled: value),
+            () => ToolFeatureSettings.setEmailDraftEnabled(value),
+          ),
+        ),
+      ),
+      _featureSwitch(
+        title: L.pick(
+          en: 'Daily-life tools in RP',
+          zhTW: 'RP 中使用日常工具',
+          zhCN: 'RP 中使用日常工具',
+        ),
+        description: L.pick(
+          en: 'RP is a parallel world. When off, shells, shop, transfers, scratch cards, home notes, email drafts, X posts and marriage prompts are not sent in RP windows.',
+          zhTW: 'RP 是平行時空。關閉時，RP 窗口不會注入貝殼、商店、轉帳、刮刮卡、首頁便箋、郵件草稿、X 發文與婚姻提示。',
+          zhCN: 'RP 是平行时空。关闭时，RP 窗口不会注入贝壳、商店、转账、刮刮卡、首页便笺、邮件草稿、X 发文与婚姻提示。',
+        ),
+        value: _toolFeatures.rpDailyLifeToolsEnabled,
+        onChanged: (value) => unawaited(
+          _toggleToolFeature(
+            _toolFeatures.copyWith(rpDailyLifeToolsEnabled: value),
+            () => ToolFeatureSettings.setRpDailyLifeToolsEnabled(value),
+          ),
+        ),
+      ),
     ];
 
+    // UI_SLOT: feature_modules_direct_switches
+    // The dedicated sidebar destination is already the module group: no
+    // second disclosure or card is needed. Keep the legacy preferences fold.
+    if (widget.section == CostContextSection.modules) {
+      return Column(
+        children: [
+          for (var index = 0; index < rows.length; index++) ...[
+            if (index > 0) _softDivider(),
+            rows[index],
+          ],
+        ],
+      );
+    }
     return _buildGlassCard(
       child: Theme(
         data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
@@ -408,11 +502,7 @@ class _CostContextScreenState extends State<CostContextScreen> {
                     children: [
                       Center(
                         child: Text(
-                          L.pick(
-                            en: 'Preferences',
-                            zhTW: '偏好設定',
-                            zhCN: '偏好设置',
-                          ),
+                          _screenTitle,
                           textAlign: TextAlign.center,
                           style: YanciTheme.headingMedium,
                         ),
@@ -436,243 +526,287 @@ class _CostContextScreenState extends State<CostContextScreen> {
                 child: ListView(
                   padding: const EdgeInsets.fromLTRB(18, 10, 18, 32),
                   children: [
-                    _buildSectionTitle(
-                      L.pick(en: 'Behavior / Output', zhTW: '對話行為/輸出格式'),
-                    ),
-                    _buildGlassCard(
-                      child: Column(
-                        children: [
-                          FutureBuilder<bool>(
-                            future: ApiSettings.getConciseMode(),
-                            builder: (ctx, snap) => HelpSwitchTile(
-                              title: L.get('settings_concise'),
-                              description: L.get('settings_concise_desc'),
-                              value: snap.data ?? false,
-                              onChanged: (v) {
-                                ApiSettings.saveConciseMode(v);
-                                if (v) ApiSettings.saveFreeformMode(false);
-                                setState(() {});
-                                StaticTokenEstimator.showAfterToggle(context);
-                              },
-                            ),
-                          ),
-                          _softDivider(),
-                          FutureBuilder<bool>(
-                            future: ApiSettings.getFreeformMode(),
-                            builder: (ctx, snap) => HelpSwitchTile(
-                              title: L.get('settings_freeform'),
-                              description: L.get('settings_freeform_desc'),
-                              value: snap.data ?? false,
-                              onChanged: (v) {
-                                ApiSettings.saveFreeformMode(v);
-                                if (v) ApiSettings.saveConciseMode(false);
-                                setState(() {});
-                                StaticTokenEstimator.showAfterToggle(context);
-                              },
-                            ),
-                          ),
-                          _softDivider(),
-                          FutureBuilder<bool>(
-                            future: MemorySettings.getSplitReply(),
-                            builder: (ctx, snap) => HelpSwitchTile(
-                              title: L.get('settings_split'),
-                              description: L.get('settings_split_desc'),
-                              value: snap.data ?? false,
-                              onChanged: (v) {
-                                MemorySettings.saveSplitReply(v);
-                                setState(() {});
-                                StaticTokenEstimator.showAfterToggle(context);
-                              },
-                            ),
-                          ),
-                        ],
+                    if (widget.section == null ||
+                        widget.section == CostContextSection.behavior) ...[
+                      _buildSectionTitle(
+                        L.pick(en: 'Behavior / Output', zhTW: '對話行為/輸出格式'),
                       ),
-                    ),
-                    const SizedBox(height: 28),
-                    _buildSectionTitle(
-                      L.pick(
-                        en: 'Features & Token Usage',
-                        zhTW: '功能與 Token 消耗',
-                        zhCN: '功能与 Token 消耗',
+                      _buildGlassCard(
+                        child: Column(
+                          children: [
+                            FutureBuilder<bool>(
+                              future: ApiSettings.getConciseMode(),
+                              builder: (ctx, snap) => HelpSwitchTile(
+                                title: L.get('settings_concise'),
+                                description: L.get('settings_concise_desc'),
+                                value: snap.data ?? false,
+                                onChanged: (v) {
+                                  ApiSettings.saveConciseMode(v);
+                                  if (v) ApiSettings.saveFreeformMode(false);
+                                  setState(() {});
+                                  StaticTokenEstimator.showAfterToggle(context);
+                                },
+                              ),
+                            ),
+                            _softDivider(),
+                            FutureBuilder<bool>(
+                              future: ApiSettings.getFreeformMode(),
+                              builder: (ctx, snap) => HelpSwitchTile(
+                                title: L.get('settings_freeform'),
+                                description: L.get('settings_freeform_desc'),
+                                value: snap.data ?? false,
+                                onChanged: (v) {
+                                  ApiSettings.saveFreeformMode(v);
+                                  if (v) ApiSettings.saveConciseMode(false);
+                                  setState(() {});
+                                  StaticTokenEstimator.showAfterToggle(context);
+                                },
+                              ),
+                            ),
+                            _softDivider(),
+                            FutureBuilder<bool>(
+                              future: MemorySettings.getSplitReply(),
+                              builder: (ctx, snap) => HelpSwitchTile(
+                                title: L.get('settings_split'),
+                                description: L.get('settings_split_desc'),
+                                value: snap.data ?? false,
+                                onChanged: (v) {
+                                  MemorySettings.saveSplitReply(v);
+                                  setState(() {});
+                                  StaticTokenEstimator.showAfterToggle(context);
+                                },
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
-                    ),
-                    _buildFeatureModules(),
-                    const SizedBox(height: 28),
-                    _buildSectionTitle(
-                      L.pick(
-                        en: 'Memory & Role',
-                        zhTW: '記憶與角色功能',
-                        zhCN: '记忆与角色功能',
+                      const SizedBox(height: 28),
+                    ],
+                    if (widget.section == null ||
+                        widget.section == CostContextSection.modules) ...[
+                      _buildSectionTitle(
+                        L.pick(
+                          en: 'Features & Token Usage',
+                          zhTW: '功能與 Token 消耗',
+                          zhCN: '功能与 Token 消耗',
+                        ),
                       ),
-                    ),
-                    _buildGlassCard(
-                      child: Column(
-                        children: [
-                          KeyedSubtree(
-                            key: const Key('global_rp_mode_switch'),
-                            child: HelpSwitchTile(
+                      _buildFeatureModules(),
+                      const SizedBox(height: 28),
+                    ],
+                    if (widget.section == null ||
+                        widget.section == CostContextSection.memory) ...[
+                      _buildSectionTitle(
+                        L.pick(
+                          en: 'Memory & Role',
+                          zhTW: '記憶與角色功能',
+                          zhCN: '记忆与角色功能',
+                        ),
+                      ),
+                      _buildGlassCard(
+                        child: Column(
+                          children: [
+                            KeyedSubtree(
+                              key: const Key('global_rp_mode_switch'),
+                              child: HelpSwitchTile(
+                                title: L.pick(
+                                  en: 'Global RP mode',
+                                  zhTW: '全域 RP 模式',
+                                  zhCN: '全局 RP 模式',
+                                ),
+                                description: L.pick(
+                                  en: 'Only new windows change. Existing windows keep their original mode.',
+                                  zhTW: '只影響新窗口；既有窗口保持建立時的模式。',
+                                  zhCN: '只影响新窗口；已有窗口保持创建时的模式。',
+                                ),
+                                value: _globalRpEnabled,
+                                onChanged: (value) =>
+                                    unawaited(_setGlobalRp(value)),
+                              ),
+                            ),
+                            _softDivider(),
+                            _buildNavigationTile(
+                              icon: Icons.hub_outlined,
                               title: L.pick(
-                                en: 'Global RP mode',
-                                zhTW: '全域 RP 模式',
-                                zhCN: '全局 RP 模式',
+                                en: 'Memory mode',
+                                zhTW: '記憶模式',
+                                zhCN: '记忆模式',
                               ),
                               description: L.pick(
-                                en: 'Only new windows change. Existing windows keep their original mode.',
-                                zhTW: '只影響新窗口；既有窗口保持建立時的模式。',
-                                zhCN: '只影响新窗口；已有窗口保持创建时的模式。',
+                                en: 'Choose classic memory or Spider Web memory.',
+                                zhTW: '選擇經典記憶或蛛網記憶。',
+                                zhCN: '选择经典记忆或蛛网记忆。',
                               ),
-                              value: _globalRpEnabled,
-                              onChanged: (value) =>
-                                  unawaited(_setGlobalRp(value)),
+                              onTap: _openMemoryMode,
                             ),
-                          ),
-                          _softDivider(),
-                          _buildNavigationTile(
-                            icon: Icons.hub_outlined,
+                            _softDivider(),
+                            FutureBuilder<bool>(
+                              future: MemorySettings.isAbilityEnabled(
+                                'bioclock',
+                              ),
+                              builder: (ctx, snap) => HelpSwitchTile(
+                                title: L.pick(
+                                  en: 'Bio Clock',
+                                  zhTW: '生物鐘',
+                                  zhCN: '生物钟',
+                                ),
+                                description: L.pick(
+                                  en: 'Inject fatigue and daily-rhythm cues.',
+                                  zhTW: '注入疲勞與日常作息提示。',
+                                  zhCN: '注入疲劳与日常作息提示。',
+                                ),
+                                value: snap.data ?? true,
+                                onChanged: (v) {
+                                  MemorySettings.setAbilityEnabled(
+                                    'bioclock',
+                                    v,
+                                  );
+                                  setState(() {});
+                                  StaticTokenEstimator.showAfterToggle(context);
+                                },
+                              ),
+                            ),
+                            _softDivider(),
+                            FutureBuilder<bool>(
+                              future: MemorySettings.getTimelineEnabled(),
+                              builder: (ctx, snap) => HelpSwitchTile(
+                                title: L.pick(
+                                  en: 'Timeline',
+                                  zhTW: '時間線',
+                                  zhCN: '时间线',
+                                ),
+                                description: L.pick(
+                                  en: 'Show and inject character timeline context.',
+                                  zhTW: '顯示並注入角色時間線內容。',
+                                  zhCN: '显示并注入角色时间线内容。',
+                                ),
+                                value: snap.data ?? true,
+                                onChanged: (v) {
+                                  MemorySettings.saveTimelineEnabled(v);
+                                  setState(() {});
+                                },
+                              ),
+                            ),
+                            _softDivider(),
+                            FutureBuilder<bool>(
+                              future: MemorySettings.getSelfNotesEnabled(),
+                              builder: (ctx, snap) => HelpSwitchTile(
+                                title: L.pick(
+                                  en: 'Secretly remembering you',
+                                  zhTW: '偷偷記住你',
+                                  zhCN: '偷偷记住你',
+                                ),
+                                description: L.pick(
+                                  en: 'Keep the quiet self-notes panel and prompt.',
+                                  zhTW: '保留安靜的自我註記面板與提示。',
+                                  zhCN: '保留安静的自我注记面板与提示。',
+                                ),
+                                value: snap.data ?? true,
+                                onChanged: (v) {
+                                  MemorySettings.saveSelfNotesEnabled(v);
+                                  setState(() {});
+                                  StaticTokenEstimator.showAfterToggle(context);
+                                },
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 28),
+                    ],
+                    if (widget.section == null) ...[
+                      _buildSectionTitle(
+                        L.pick(en: 'UI & Feedback', zhTW: '介面互動與反饋'),
+                      ),
+                      _buildGlassCard(
+                        child: Column(
+                          children: [
+                            FutureBuilder<bool>(
+                              future: UserSettings.getEnableVibration(),
+                              builder: (ctx, snap) => HelpSwitchTile(
+                                title: L.get('settings_vibration'),
+                                description: L.get('settings_vibration_on'),
+                                value: snap.data ?? true,
+                                onChanged: (v) {
+                                  UserSettings.saveEnableVibration(v);
+                                  setState(() {});
+                                },
+                              ),
+                            ),
+                            _softDivider(),
+                            FutureBuilder<bool>(
+                              future: UserSettings.getShowChatAvatar(),
+                              builder: (ctx, snap) => HelpSwitchTile(
+                                title: L.pick(en: 'Chat Avatars', zhTW: '頭像顯示'),
+                                description: L.pick(
+                                  en: 'Shows avatars next to chat bubbles.',
+                                  zhTW: '在對話氣泡旁顯示使用者的頭像。',
+                                ),
+                                value: snap.data ?? false,
+                                onChanged: (v) {
+                                  UserSettings.saveShowChatAvatar(v);
+                                  setState(() {});
+                                },
+                              ),
+                            ),
+                            // 桌面像素精靈：已隱藏。僅在舊用戶仍開啟時顯示，讓他們能關閉；關閉後即消失。
+                            ValueListenableBuilder<bool>(
+                              valueListenable: SpriteOverlaySettings.enabled,
+                              builder: (ctx, on, _) {
+                                if (!on) return const SizedBox.shrink();
+                                return Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    _softDivider(),
+                                    HelpSwitchTile(
+                                      title: L.pick(
+                                        en: 'Pixel Companion',
+                                        zhTW: '桌面像素精靈',
+                                      ),
+                                      description: L.pick(
+                                        en: 'Shows a tiny animated companion overlay.',
+                                        zhTW: '在畫面邊緣顯示一隻會動的像素小精靈。',
+                                      ),
+                                      value: on,
+                                      onChanged: (v) =>
+                                          SpriteOverlaySettings.setEnabled(v),
+                                    ),
+                                  ],
+                                );
+                              },
+                            ),
+                          ],
+                        ),
+                      ),
+                    ] else if (widget.section ==
+                        CostContextSection.avatars) ...[
+                      // UI_SLOT: avatar_visibility_settings
+                      _buildSectionTitle(
+                        L.pick(en: 'Chat avatars', zhTW: '頭像顯示', zhCN: '头像显示'),
+                      ),
+                      _buildGlassCard(
+                        child: FutureBuilder<bool>(
+                          future: UserSettings.getShowChatAvatar(),
+                          builder: (ctx, snap) => HelpSwitchTile(
                             title: L.pick(
-                              en: 'Memory mode',
-                              zhTW: '記憶模式',
-                              zhCN: '记忆模式',
+                              en: 'Chat avatars',
+                              zhTW: '頭像顯示',
+                              zhCN: '头像显示',
                             ),
                             description: L.pick(
-                              en: 'Choose classic memory or Spider Web memory.',
-                              zhTW: '選擇經典記憶或蛛網記憶。',
-                              zhCN: '选择经典记忆或蛛网记忆。',
+                              en: 'Shows avatars next to chat bubbles.',
+                              zhTW: '在對話氣泡旁顯示使用者的頭像。',
+                              zhCN: '在对话气泡旁显示使用者的头像。',
                             ),
-                            onTap: _openMemoryMode,
-                          ),
-                          _softDivider(),
-                          FutureBuilder<bool>(
-                            future: MemorySettings.isAbilityEnabled('bioclock'),
-                            builder: (ctx, snap) => HelpSwitchTile(
-                              title: L.pick(
-                                en: 'Bio Clock',
-                                zhTW: '生物鐘',
-                                zhCN: '生物钟',
-                              ),
-                              description: L.pick(
-                                en: 'Inject fatigue and daily-rhythm cues.',
-                                zhTW: '注入疲勞與日常作息提示。',
-                                zhCN: '注入疲劳与日常作息提示。',
-                              ),
-                              value: snap.data ?? true,
-                              onChanged: (v) {
-                                MemorySettings.setAbilityEnabled('bioclock', v);
-                                setState(() {});
-                                StaticTokenEstimator.showAfterToggle(context);
-                              },
-                            ),
-                          ),
-                          _softDivider(),
-                          FutureBuilder<bool>(
-                            future: MemorySettings.getTimelineEnabled(),
-                            builder: (ctx, snap) => HelpSwitchTile(
-                              title: L.pick(
-                                en: 'Timeline',
-                                zhTW: '時間線',
-                                zhCN: '时间线',
-                              ),
-                              description: L.pick(
-                                en: 'Show and inject character timeline context.',
-                                zhTW: '顯示並注入角色時間線內容。',
-                                zhCN: '显示并注入角色时间线内容。',
-                              ),
-                              value: snap.data ?? true,
-                              onChanged: (v) {
-                                MemorySettings.saveTimelineEnabled(v);
-                                setState(() {});
-                              },
-                            ),
-                          ),
-                          _softDivider(),
-                          FutureBuilder<bool>(
-                            future: MemorySettings.getSelfNotesEnabled(),
-                            builder: (ctx, snap) => HelpSwitchTile(
-                              title: L.pick(
-                                en: 'Secretly remembering you',
-                                zhTW: '偷偷記住你',
-                                zhCN: '偷偷记住你',
-                              ),
-                              description: L.pick(
-                                en: 'Keep the quiet self-notes panel and prompt.',
-                                zhTW: '保留安靜的自我註記面板與提示。',
-                                zhCN: '保留安静的自我注记面板与提示。',
-                              ),
-                              value: snap.data ?? true,
-                              onChanged: (v) {
-                                MemorySettings.saveSelfNotesEnabled(v);
-                                setState(() {});
-                                StaticTokenEstimator.showAfterToggle(context);
-                              },
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 28),
-                    _buildSectionTitle(
-                      L.pick(en: 'UI & Feedback', zhTW: '介面互動與反饋'),
-                    ),
-                    _buildGlassCard(
-                      child: Column(
-                        children: [
-                          FutureBuilder<bool>(
-                            future: UserSettings.getEnableVibration(),
-                            builder: (ctx, snap) => HelpSwitchTile(
-                              title: L.get('settings_vibration'),
-                              description: L.get('settings_vibration_on'),
-                              value: snap.data ?? true,
-                              onChanged: (v) {
-                                UserSettings.saveEnableVibration(v);
-                                setState(() {});
-                              },
-                            ),
-                          ),
-                          _softDivider(),
-                          FutureBuilder<bool>(
-                            future: UserSettings.getShowChatAvatar(),
-                            builder: (ctx, snap) => HelpSwitchTile(
-                              title: L.pick(en: 'Chat Avatars', zhTW: '頭像顯示'),
-                              description: L.pick(
-                                en: 'Shows avatars next to chat bubbles.',
-                                zhTW: '在對話氣泡旁顯示使用者的頭像。',
-                              ),
-                              value: snap.data ?? false,
-                              onChanged: (v) {
-                                UserSettings.saveShowChatAvatar(v);
-                                setState(() {});
-                              },
-                            ),
-                          ),
-                          // 桌面像素精靈：已隱藏。僅在舊用戶仍開啟時顯示，讓他們能關閉；關閉後即消失。
-                          ValueListenableBuilder<bool>(
-                            valueListenable: SpriteOverlaySettings.enabled,
-                            builder: (ctx, on, _) {
-                              if (!on) return const SizedBox.shrink();
-                              return Column(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  _softDivider(),
-                                  HelpSwitchTile(
-                                    title: L.pick(
-                                      en: 'Pixel Companion',
-                                      zhTW: '桌面像素精靈',
-                                    ),
-                                    description: L.pick(
-                                      en: 'Shows a tiny animated companion overlay.',
-                                      zhTW: '在畫面邊緣顯示一隻會動的像素小精靈。',
-                                    ),
-                                    value: on,
-                                    onChanged: (v) =>
-                                        SpriteOverlaySettings.setEnabled(v),
-                                  ),
-                                ],
-                              );
+                            value: snap.data ?? false,
+                            onChanged: (value) {
+                              UserSettings.saveShowChatAvatar(value);
+                              setState(() {});
                             },
                           ),
-                        ],
+                        ),
                       ),
-                    ),
+                    ],
                     const SizedBox(height: YanciTheme.spacingXxl),
                   ],
                 ),

@@ -27,4 +27,22 @@ void main() {
   test('short generic latin fragments do not trigger memories', () {
     expect(RecallTextMatcher.bestKeywordMatch('today is nice', 'is'), isNull);
   });
+
+  test('batch matching preserves single-row scoring and order', () {
+    const query = '想起渡口交換青鸞印信，之後去書院會合';
+    const rows = <String>[
+      '渡口交換信物, 青鸞印信交付',
+      '翌日書院會合',
+      '完全無關事件',
+    ];
+
+    final batch = RecallTextMatcher.bestKeywordMatches(query, rows);
+
+    expect(batch, hasLength(rows.length));
+    for (var index = 0; index < rows.length; index++) {
+      final single = RecallTextMatcher.bestKeywordMatch(query, rows[index]);
+      expect(batch[index]?.keyword, single?.keyword);
+      expect(batch[index]?.score, single?.score);
+    }
+  });
 }

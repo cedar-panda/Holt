@@ -62,11 +62,13 @@ extension _ChatScreenWebSearchFollowUp on _ChatScreenState {
         buffer.write(chunk);
         if (mounted) _onStreamChunk(chunk);
       }
+      if (mounted) _closeModelStreamInput();
       await _tokenTracker.recordRealUsage(
         provider: providerName,
         model: model,
         usage: usage,
         characterId: _activeCharacterId,
+        conversationId: widget.conversationId,
         requestKind: ApiRequestKind.chat,
       );
       final reply = WebSearchFollowUp.sanitizeReply(buffer.toString());

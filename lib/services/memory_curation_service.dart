@@ -90,6 +90,7 @@ Rules:
     List<MemoryVectorPairCandidate> vectorCandidates =
         const <MemoryVectorPairCandidate>[],
     bool applyImmediately = false,
+    bool persistSuggestions = true,
   }) async {
     final unique = <int, Memory>{
       for (final memory in memories)
@@ -237,7 +238,7 @@ Rules:
         protected += applied.protectedLinks;
         duplicateProposals += applied.protectedProposals;
         mergedGroups += applied.mergedGroups;
-      } else {
+      } else if (persistSuggestions) {
         for (final relation in relations) {
           if (scope.contextMode.storageValue != 'rp') {
             final writeResult =
@@ -327,6 +328,31 @@ Rules:
       mergedGroups: mergedGroups,
       relations: List<MemoryRelationProposal>.unmodifiable(relationReports),
       dreamSummary: dreamSummary,
+    );
+  }
+
+  /// Applies exactly the relations that were already shown to the user.
+  /// Analysis itself stays read-only; this is the sole mutation boundary for
+  /// the manual curation preview flow.
+  static Future<MemoryCurationResult> applyReviewedRelations({
+    required String characterId,
+    required List<Memory> memories,
+    required List<MemoryRelationProposal> relations,
+  }) async {
+    final applied = await _applyReviewedRelations(
+      characterId: characterId,
+      memories: memories,
+      relations: relations,
+    );
+    return MemoryCurationResult(
+      proposedRelations: relations.length,
+      createdLinks: applied.confirmedLinks,
+      updatedLinks: applied.updatedLinks,
+      unchangedLinks: applied.unchangedLinks,
+      protectedLinks: applied.protectedLinks,
+      duplicateProposals: applied.protectedProposals,
+      mergedGroups: applied.mergedGroups,
+      relations: List<MemoryRelationProposal>.unmodifiable(relations),
     );
   }
 

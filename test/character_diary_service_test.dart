@@ -1,7 +1,11 @@
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:project_yanci/memory/database.dart';
 import 'package:project_yanci/models/context_mode.dart';
 import 'package:project_yanci/services/character_diary_service.dart';
+import 'package:project_yanci/services/locale_strings.dart';
+import 'package:project_yanci/services/model_action_protocol.dart';
+import 'package:project_yanci/widgets/character_diary_entry.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
@@ -55,7 +59,7 @@ void main() {
         characterId: 'char-a',
         conversationId: 'rp-window',
         sourceMessageId: 1,
-        userName: '昭昭',
+        userName: '小禾',
         currentUserContent: '今天發生了一件事',
         contextMode: ContextMode.rp,
         enabled: true,
@@ -68,15 +72,42 @@ void main() {
         characterId: 'char-a',
         conversationId: 'daily-window',
         sourceMessageId: 2,
-        userName: '昭昭',
+        userName: '小禾',
         currentUserContent: '今天發生了一件事',
         contextMode: ContextMode.daily,
         enabled: true,
         now: now,
         chanceRoll: 0,
       );
-      expect(dailyPrompt.text, contains('昭昭'));
-      expect(dailyPrompt.text, contains('<holt_diary'));
+      expect(dailyPrompt.text, contains('小禾'));
+      expect(dailyPrompt.text, contains('"type":"diary.write"'));
+      expect(dailyPrompt.text, isNot(contains('<holt_diary')));
+    },
+  );
+
+  test(
+    'JSON diary action normalizes and stores through the same path',
+    () async {
+      const raw = '''晚安。
+[[HOLT_ACTIONS]]
+{"actions":[{"type":"diary.write","arguments":{"title":"秋夜","body":"今天很安心。"}}]}
+[[/HOLT_ACTIONS]]''';
+      final normalized = ModelActionProtocol.normalizeForLegacyProcessors(raw);
+      final result = await CharacterDiaryService.processReply(
+        text: normalized,
+        characterId: 'char-a',
+        conversationId: 'daily-window',
+        sourceMessageId: 9,
+        contextMode: ContextMode.daily,
+        enabled: true,
+        now: DateTime(2026, 10, 4, 21),
+      );
+
+      expect(result.visibleText, '晚安。');
+      expect(result.saved, isTrue);
+      final entries = await CharacterDiaryService.listEntries('char-a');
+      expect(entries.single.title, '秋夜');
+      expect(entries.single.body, '今天很安心。');
     },
   );
 
@@ -84,7 +115,7 @@ void main() {
     final now = DateTime(2026, 10, 4, 22);
     const xml =
         '晚安。\n<holt_diary version="1">'
-        '<title>今天</title><body>和昭昭聊了很久 &amp; 很安心。</body>'
+        '<title>今天</title><body>和小禾聊了很久 &amp; 很安心。</body>'
         '</holt_diary>';
     final first = await CharacterDiaryService.processReply(
       text: xml,
@@ -115,7 +146,7 @@ void main() {
     final entries = await CharacterDiaryService.listEntries('char-a');
     expect(entries, hasLength(1));
     expect(entries.single.title, '今天');
-    expect(entries.single.body, '和昭昭聊了很久 & 很安心。');
+    expect(entries.single.body, '和小禾聊了很久 & 很安心。');
   });
 
   test('an existing diary suppresses the nightly prompt', () async {
@@ -135,7 +166,7 @@ void main() {
       characterId: 'char-a',
       conversationId: 'daily-window',
       sourceMessageId: 13,
-      userName: '昭昭',
+      userName: '小禾',
       currentUserContent: '還想再聊一會兒',
       contextMode: ContextMode.daily,
       enabled: true,
@@ -170,5 +201,64 @@ void main() {
     );
     expect(disabled.visibleText, '正文');
     expect(await CharacterDiaryService.countEntries('char-a'), 0);
+  });
+
+  testWidgets('empty daily diary keeps its archive heading visible', (
+    tester,
+  ) async {
+    await L.setLocale('zh_TW');
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(body: CharacterDiaryReader(characterId: 'char-a')),
+      ),
+    );
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 100)),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(find.text('日記'), findsOneWidget);
+    expect(find.text('還沒有日記'), findsOneWidget);
+  });
+
+  testWidgets('daily diary preview shows title without exposing the body', (
+    tester,
+  ) async {
+    await L.setLocale('zh_TW');
+    await tester.runAsync(
+      () => CharacterDiaryService.processReply(
+        text:
+            '<holt_diary version="1"><title>秋夜小記</title>'
+            '<body>這段正文預設不應直接顯示。</body></holt_diary>',
+        characterId: 'char-a',
+        conversationId: 'daily-window',
+        sourceMessageId: 16,
+        contextMode: ContextMode.daily,
+        enabled: true,
+        now: DateTime(2026, 10, 5, 22),
+      ),
+    );
+
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(body: CharacterDiaryReader(characterId: 'char-a')),
+      ),
+    );
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 100)),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('秋夜小記'), findsOneWidget);
+    expect(find.text('這段正文預設不應直接顯示。'), findsNothing);
+
+    await tester.tap(find.text('秋夜小記'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(find.text('這段正文預設不應直接顯示。'), findsOneWidget);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
   });
 }

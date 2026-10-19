@@ -48,6 +48,9 @@ class ChatBubble extends StatefulWidget {
   final String? characterId;
   final String? avatarPath;
   final bool showAvatar;
+  final bool showAvatarImage;
+  final bool groupedWithPrevious;
+  final bool groupedWithNext;
   final bool showToolbar;
   final bool cacheHit;
   final bool incomplete;
@@ -56,6 +59,7 @@ class ChatBubble extends StatefulWidget {
   final bool selected;
   final VoidCallback? onSelectionToggle;
   final bool captureMode;
+  final bool forceThemeBubbleColors;
   final bool? thinkingExpandedOverride;
   final bool includeThinkingDetails;
   final bool includeMemoryDetails;
@@ -105,6 +109,9 @@ class ChatBubble extends StatefulWidget {
     this.characterId,
     this.avatarPath,
     this.showAvatar = false,
+    this.showAvatarImage = true,
+    this.groupedWithPrevious = false,
+    this.groupedWithNext = false,
     this.showToolbar = true,
     this.cacheHit = false,
     this.incomplete = false,
@@ -113,6 +120,7 @@ class ChatBubble extends StatefulWidget {
     this.selected = false,
     this.onSelectionToggle,
     this.captureMode = false,
+    this.forceThemeBubbleColors = false,
     this.thinkingExpandedOverride,
     this.includeThinkingDetails = true,
     this.includeMemoryDetails = true,
@@ -475,7 +483,9 @@ class _ChatBubbleState extends State<ChatBubble>
   Future<void> _speakText(String text) async {
     final provider = await TtsSettings.getTtsProvider();
     final model = await TtsSettings.getTtsElevenlabsModel();
-    final keepTags = provider == 'elevenlabs' && model == 'eleven_v3';
+    final keepTags =
+        provider == 'elevenlabs' &&
+        (model == 'eleven_v3' || model == 'eleven_v4');
     final clean = TtsService.extractSpeechContent(
       text,
       keepAudioTags: keepTags,
@@ -597,9 +607,11 @@ class _ChatBubbleState extends State<ChatBubble>
     final sw = MediaQuery.of(context).size.width;
     _chatBackgroundScope = ChatBackgroundPresetScope.of(context);
     _scopedBackgroundPreset = _chatBackgroundScope?.preset;
-    final hasCustomChatBackground = _chatBackgroundScope == null
-        ? _hasCustomChatBackground()
-        : _chatBackgroundScope!.palette != null;
+    final hasCustomChatBackground =
+        !widget.forceThemeBubbleColors &&
+        (_chatBackgroundScope == null
+            ? _hasCustomChatBackground()
+            : _chatBackgroundScope!.hasCustomImage);
     final r = widget.isUser
         ? YanciTheme.bubbleRadiusUser
         : YanciTheme.radiusBubble;
@@ -698,461 +710,576 @@ class _ChatBubbleState extends State<ChatBubble>
                 : aiFlatMode
                 ? sw * 0.05
                 : sw * (widget.showAvatar ? 0.15 : 0.2),
-            top: YanciTheme.spacingSm,
-            bottom: YanciTheme.spacingSm,
+            top: widget.groupedWithPrevious ? 2 : YanciTheme.spacingSm,
+            bottom: widget.groupedWithNext ? 2 : YanciTheme.spacingSm,
           ),
           child: Align(
             alignment: widget.isUser
                 ? Alignment.centerRight
                 : Alignment.centerLeft,
-            child: Row(
+            child: Column(
               mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
+              crossAxisAlignment: widget.isUser
+                  ? CrossAxisAlignment.end
+                  : CrossAxisAlignment.start,
               children: [
-                if (widget.selectable && !widget.isUser) ...[
-                  _buildSelectionMark(),
-                  const SizedBox(width: 8),
-                ],
-                if (widget.showAvatar && !widget.isUser && !aiFlatMode) ...[
-                  Opacity(opacity: _avatarOpacity.value, child: _buildAvatar()),
-                  const SizedBox(width: 8),
-                ],
-                Flexible(
-                  child: Column(
-                    crossAxisAlignment: widget.isUser
-                        ? CrossAxisAlignment.end
-                        : CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      if (aiFlatMode && widget.showAvatar) ...[
-                        Opacity(
-                          opacity: _avatarOpacity.value,
-                          child: _buildAvatar(),
-                        ),
-                        const SizedBox(height: 8),
-                      ],
-                      Opacity(
-                        opacity: _bubbleOpacity.value,
-                        child: Transform(
-                          alignment: origin,
-                          transform: Matrix4.diagonal3Values(
-                            _scaleX.value,
-                            _scaleY.value,
-                            1,
-                          ),
-                          child: IntrinsicWidth(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (widget.selectable && !widget.isUser) ...[
+                      _buildSelectionMark(),
+                      const SizedBox(width: 8),
+                    ],
+                    if (widget.showAvatar && !widget.isUser && !aiFlatMode) ...[
+                      SizedBox(
+                        width: 40,
+                        height: 40,
+                        child: widget.showAvatarImage
+                            ? Opacity(
+                                opacity: _avatarOpacity.value,
+                                child: _buildAvatar(),
+                              )
+                            : null,
+                      ),
+                      const SizedBox(width: 8),
+                    ],
+                    Flexible(
+                      child: Column(
+                        crossAxisAlignment: widget.isUser
+                            ? CrossAxisAlignment.end
+                            : CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (aiFlatMode && widget.showAvatar) ...[
+                            Row(
+                              mainAxisSize: MainAxisSize.min,
+                              crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                if (hasContextTree)
-                                  _buildContextTree(
-                                    thinking: widget.includeThinkingDetails
-                                        ? thinking
-                                        : null,
-                                    memoryLog: visibleMemoryLog,
-                                    emotionLog: visibleEmotionLog,
-                                    emotionCoordinate: visibleEmotionCoordinate,
+                                SizedBox(
+                                  width: 40,
+                                  height: 40,
+                                  child: widget.showAvatarImage
+                                      ? Opacity(
+                                          opacity: _avatarOpacity.value,
+                                          child: _buildAvatar(),
+                                        )
+                                      : null,
+                                ),
+                                if (hasContextTree) ...[
+                                  const SizedBox(width: 12),
+                                  Flexible(
+                                    child: RepaintBoundary(
+                                      key: const ValueKey(
+                                        'avatar-side-context-anchor',
+                                      ),
+                                      child: _buildContextTree(
+                                        thinking: widget.includeThinkingDetails
+                                            ? thinking
+                                            : null,
+                                        memoryLog: visibleMemoryLog,
+                                        emotionLog: visibleEmotionLog,
+                                        emotionCoordinate:
+                                            visibleEmotionCoordinate,
+                                      ),
+                                    ),
                                   ),
-                                if (hasImageContent)
-                                  ImageCardStack(
-                                    paths: imagePaths,
-                                    onTap: (path) => path == 'generating'
-                                        ? null
-                                        : _openFullScreenImage(context, path),
-                                    onLongPress: (path) => path == 'generating'
-                                        ? null
-                                        : _showImageMenu(context, path),
-                                  ),
-                                if (hasBubbleContent)
-                                  Builder(
-                                    builder: (context) {
-                                      final overlayAsset = widget.isUser
-                                          ? YanciTheme.bubbleUserAsset
-                                          : YanciTheme.bubbleAiAsset;
-                                      final imageBackgroundBubbleColor =
-                                          hasCustomChatBackground
-                                          ? (widget.isUser
-                                                ? _chatBackgroundUserBubbleColor()
-                                                : _chatBackgroundAiBubbleColor())
-                                          : null;
-                                      final imageBackgroundBubbleOpacity =
-                                          hasCustomChatBackground
-                                          ? _chatBackgroundBubbleOpacity()
-                                          : 1.0;
-                                      final bubbleRadius = overlayAsset != null
-                                          ? BorderRadius.circular(r)
-                                          : BorderRadius.only(
-                                              topLeft: Radius.circular(r),
-                                              topRight: Radius.circular(r),
-                                              bottomLeft: Radius.circular(
-                                                widget.isUser ? r : 4,
-                                              ),
-                                              bottomRight: Radius.circular(
-                                                widget.isUser ? 4 : r,
-                                              ),
-                                            );
-                                      final bubble = Container(
-                                        key: const ValueKey(
-                                          'chat-bubble-surface',
-                                        ),
-                                        padding: EdgeInsets.symmetric(
-                                          horizontal: aiFlatMode
-                                              ? 2.0
-                                              : YanciTheme.spacingMd,
-                                          vertical: aiFlatMode ? 6.0 : 12,
-                                        ),
-                                        decoration: aiFlatMode
+                                ],
+                              ],
+                            ),
+                            const SizedBox(height: 8),
+                          ] else if (hasContextTree)
+                            Padding(
+                              padding: const EdgeInsets.only(
+                                left: 4,
+                                bottom: 2,
+                              ),
+                              child: RepaintBoundary(
+                                key: const ValueKey(
+                                  'avatar-side-context-anchor',
+                                ),
+                                child: _buildContextTree(
+                                  thinking: widget.includeThinkingDetails
+                                      ? thinking
+                                      : null,
+                                  memoryLog: visibleMemoryLog,
+                                  emotionLog: visibleEmotionLog,
+                                  emotionCoordinate: visibleEmotionCoordinate,
+                                ),
+                              ),
+                            ),
+                          Opacity(
+                            opacity: _bubbleOpacity.value,
+                            child: Transform(
+                              alignment: origin,
+                              transform: Matrix4.diagonal3Values(
+                                _scaleX.value,
+                                _scaleY.value,
+                                1,
+                              ),
+                              child: IntrinsicWidth(
+                                child: Column(
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.stretch,
+                                  children: [
+                                    if (hasImageContent)
+                                      ImageCardStack(
+                                        paths: imagePaths,
+                                        onTap: (path) => path == 'generating'
                                             ? null
-                                            : BoxDecoration(
-                                                color:
-                                                    imageBackgroundBubbleColor ??
-                                                    (widget.isUser ||
-                                                            YanciTheme
-                                                                    .aiBubbleGradient ==
-                                                                null
-                                                        ? (widget.isUser
-                                                              ? YanciTheme
-                                                                    .userBubble
-                                                              : YanciTheme
-                                                                    .aiBubble)
-                                                        : null),
-                                                gradient:
-                                                    imageBackgroundBubbleColor ==
-                                                            null &&
-                                                        !widget.isUser
-                                                    ? YanciTheme
-                                                          .aiBubbleGradient
-                                                    : null,
-                                                borderRadius: bubbleRadius,
-                                                border: overlayAsset == null
-                                                    ? Border.all(
-                                                        color:
-                                                            (widget.isUser
-                                                                    ? YanciTheme
-                                                                          .userBubbleBorder
-                                                                    : YanciTheme
-                                                                          .aiBubbleBorder)
-                                                                .withValues(
-                                                                  alpha:
-                                                                      (widget.isUser
-                                                                          ? YanciTheme.userBubbleBorder.a
-                                                                          : YanciTheme.aiBubbleBorder.a) *
-                                                                      imageBackgroundBubbleOpacity,
-                                                                ),
-                                                        width: 0.5,
-                                                      )
-                                                    : null,
-                                                boxShadow: [
-                                                  BoxShadow(
-                                                    color: Colors.black.withValues(
-                                                      alpha: YanciTheme.isDark
-                                                          ? 0.20 *
-                                                                imageBackgroundBubbleOpacity
-                                                          : 0.05 *
-                                                                imageBackgroundBubbleOpacity,
-                                                    ),
-                                                    blurRadius: 10,
-                                                    offset: const Offset(0, 3),
+                                            : _openFullScreenImage(
+                                                context,
+                                                path,
+                                              ),
+                                        onLongPress: (path) =>
+                                            path == 'generating'
+                                            ? null
+                                            : _showImageMenu(context, path),
+                                      ),
+                                    if (hasBubbleContent)
+                                      Builder(
+                                        builder: (context) {
+                                          final overlayAsset = widget.isUser
+                                              ? YanciTheme.bubbleUserAsset
+                                              : YanciTheme.bubbleAiAsset;
+                                          final imageBackgroundBubbleColor =
+                                              hasCustomChatBackground
+                                              ? (widget.isUser
+                                                    ? _chatBackgroundUserBubbleColor()
+                                                    : _chatBackgroundAiBubbleColor())
+                                              : null;
+                                          final imageBackgroundBubbleOpacity =
+                                              hasCustomChatBackground
+                                              ? _chatBackgroundBubbleOpacity()
+                                              : 1.0;
+                                          final bubbleRadius =
+                                              BorderRadius.circular(r);
+                                          final bubble = Container(
+                                            key: const ValueKey(
+                                              'chat-bubble-surface',
+                                            ),
+                                            padding: EdgeInsets.symmetric(
+                                              horizontal: aiFlatMode
+                                                  ? 2.0
+                                                  : YanciTheme.spacingMd,
+                                              vertical: aiFlatMode ? 6.0 : 12,
+                                            ),
+                                            decoration: aiFlatMode
+                                                ? null
+                                                : BoxDecoration(
+                                                    color:
+                                                        imageBackgroundBubbleColor ??
+                                                        (widget.isUser ||
+                                                                YanciTheme
+                                                                        .aiBubbleGradient ==
+                                                                    null
+                                                            ? (widget.isUser
+                                                                  ? YanciTheme
+                                                                        .userBubble
+                                                                  : YanciTheme
+                                                                        .aiBubble)
+                                                            : null),
+                                                    gradient:
+                                                        imageBackgroundBubbleColor ==
+                                                                null &&
+                                                            !widget.isUser
+                                                        ? YanciTheme
+                                                              .aiBubbleGradient
+                                                        : null,
+                                                    borderRadius: bubbleRadius,
+                                                    border: overlayAsset == null
+                                                        ? Border.all(
+                                                            color:
+                                                                (widget.isUser
+                                                                        ? YanciTheme
+                                                                              .userBubbleBorder
+                                                                        : YanciTheme
+                                                                              .aiBubbleBorder)
+                                                                    .withValues(
+                                                                      alpha:
+                                                                          (widget.isUser
+                                                                              ? YanciTheme.userBubbleBorder.a
+                                                                              : YanciTheme.aiBubbleBorder.a) *
+                                                                          imageBackgroundBubbleOpacity,
+                                                                    ),
+                                                            width: 0.5,
+                                                          )
+                                                        : null,
+                                                    boxShadow: [
+                                                      BoxShadow(
+                                                        color: Colors.black.withValues(
+                                                          alpha:
+                                                              YanciTheme.isDark
+                                                              ? 0.20 *
+                                                                    imageBackgroundBubbleOpacity
+                                                              : 0.05 *
+                                                                    imageBackgroundBubbleOpacity,
+                                                        ),
+                                                        blurRadius: 10,
+                                                        offset: const Offset(
+                                                          0,
+                                                          3,
+                                                        ),
+                                                      ),
+                                                    ],
                                                   ),
+                                            child: Opacity(
+                                              opacity: _contentOpacity.value,
+                                              child: Column(
+                                                mainAxisSize: MainAxisSize.min,
+                                                crossAxisAlignment:
+                                                    widget.isUser
+                                                    ? CrossAxisAlignment.end
+                                                    : CrossAxisAlignment.start,
+                                                children: [
+                                                  if (displayText.isNotEmpty)
+                                                    Row(
+                                                      mainAxisSize:
+                                                          MainAxisSize.min,
+                                                      crossAxisAlignment:
+                                                          CrossAxisAlignment
+                                                              .end,
+                                                      children: [
+                                                        Flexible(
+                                                          child: _MixedContent(
+                                                            text: displayText,
+                                                            characterId: widget
+                                                                .characterId,
+                                                            color:
+                                                                hasCustomChatBackground
+                                                                ? _chatBackgroundBubbleTextColor()
+                                                                : YanciTheme
+                                                                      .textOnBubble,
+                                                            selectable:
+                                                                !widget.isUser,
+                                                          ),
+                                                        ),
+                                                      ],
+                                                    ),
+                                                  if (displayText.isEmpty &&
+                                                      widget.isStreaming)
+                                                    const _TypingIndicator(),
                                                 ],
                                               ),
-                                        child: Opacity(
-                                          opacity: _contentOpacity.value,
-                                          child: Column(
-                                            mainAxisSize: MainAxisSize.min,
-                                            crossAxisAlignment: widget.isUser
-                                                ? CrossAxisAlignment.end
-                                                : CrossAxisAlignment.start,
-                                            children: [
-                                              if (displayText.isNotEmpty)
-                                                Row(
-                                                  mainAxisSize:
-                                                      MainAxisSize.min,
-                                                  crossAxisAlignment:
-                                                      CrossAxisAlignment.end,
+                                            ),
+                                          );
+
+                                          final bubbleWithOverlay =
+                                              overlayAsset != null
+                                              ? Stack(
                                                   children: [
-                                                    Flexible(
-                                                      child: _MixedContent(
-                                                        text: displayText,
-                                                        characterId:
-                                                            widget.characterId,
-                                                        color:
-                                                            hasCustomChatBackground
-                                                            ? _chatBackgroundBubbleTextColor()
-                                                            : YanciTheme
-                                                                  .textOnBubble,
-                                                        selectable:
-                                                            !widget.isUser,
+                                                    bubble,
+                                                    Positioned.fill(
+                                                      child: IgnorePointer(
+                                                        child: Opacity(
+                                                          opacity:
+                                                              imageBackgroundBubbleOpacity,
+                                                          child: Image.asset(
+                                                            overlayAsset,
+                                                            key: const ValueKey(
+                                                              'themed-bubble-frame',
+                                                            ),
+                                                            scale: 16,
+                                                            fit: BoxFit.fill,
+                                                            centerSlice:
+                                                                const Rect.fromLTRB(
+                                                                  20,
+                                                                  20,
+                                                                  60,
+                                                                  60,
+                                                                ),
+                                                            filterQuality:
+                                                                FilterQuality
+                                                                    .high,
+                                                            errorBuilder:
+                                                                (_, _, _) =>
+                                                                    const SizedBox.shrink(),
+                                                          ),
+                                                        ),
                                                       ),
                                                     ),
                                                   ],
-                                                ),
-                                              if (displayText.isEmpty &&
-                                                  widget.isStreaming)
-                                                const _TypingIndicator(),
-                                            ],
-                                          ),
-                                        ),
-                                      );
+                                                )
+                                              : bubble;
 
-                                      final bubbleWithOverlay =
-                                          overlayAsset != null
-                                          ? Stack(
-                                              children: [
-                                                bubble,
-                                                Positioned.fill(
-                                                  child: IgnorePointer(
-                                                    child: Opacity(
-                                                      opacity:
-                                                          imageBackgroundBubbleOpacity,
-                                                      child: Image.asset(
-                                                        overlayAsset,
-                                                        key: const ValueKey(
-                                                          'themed-bubble-frame',
+                                          if (!widget.isUser ||
+                                              widget.captureMode) {
+                                            return bubbleWithOverlay;
+                                          }
+                                          return GestureDetector(
+                                            onLongPressStart: (d) =>
+                                                _showContextMenu(
+                                                  context,
+                                                  d.globalPosition,
+                                                ),
+                                            child: bubbleWithOverlay,
+                                          );
+                                        },
+                                      ),
+                                    if ((hasBubbleContent || hasImageContent) &&
+                                        widget.timestamp != null &&
+                                        !widget.isStreaming)
+                                      Opacity(
+                                        opacity: _contentOpacity.value,
+                                        child: Padding(
+                                          padding: const EdgeInsets.only(
+                                            top: 3,
+                                            left: 4,
+                                            right: 4,
+                                          ),
+                                          child: Row(
+                                            mainAxisSize: MainAxisSize.max,
+                                            mainAxisAlignment: widget.isUser
+                                                ? MainAxisAlignment.end
+                                                : MainAxisAlignment.start,
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.center,
+                                            children: [
+                                              Text(
+                                                _formatTime(widget.timestamp!),
+                                                style: TextStyle(
+                                                  fontSize: 10,
+                                                  color:
+                                                      _chatBackgroundScope
+                                                          ?.foreground
+                                                          ?.secondary ??
+                                                      YanciTheme.textSecondary
+                                                          .withValues(
+                                                            alpha: 0.4,
+                                                          ),
+                                                ),
+                                              ),
+                                              if (!widget.isUser &&
+                                                  widget.showToolbar) ...[
+                                                const SizedBox(width: 10),
+                                                GestureDetector(
+                                                  onTap: () {
+                                                    HapticFeedback.lightImpact();
+                                                    Clipboard.setData(
+                                                      ClipboardData(
+                                                        text: displayText,
+                                                      ),
+                                                    );
+                                                    showThemedPillNotice(
+                                                      context,
+                                                      L.get('chat_copied'),
+                                                      duration: const Duration(
+                                                        milliseconds: 800,
+                                                      ),
+                                                    );
+                                                  },
+                                                  child: _buildCopyIcon(),
+                                                ),
+                                                const SizedBox(width: 6),
+                                                GestureDetector(
+                                                  onTap: _toggleSave,
+                                                  child: _buildBookmarkIcon(
+                                                    color: _isSaved
+                                                        ? YanciTheme.accent
+                                                        : null,
+                                                  ),
+                                                ),
+                                                const SizedBox(width: 6),
+                                                GestureDetector(
+                                                  onTap: () =>
+                                                      _speakText(widget.text),
+                                                  child: _buildActionIconSlot(
+                                                    key: const ValueKey(
+                                                      'bubble-action-tts',
+                                                    ),
+                                                    child: TtsPlayButton(
+                                                      messageId:
+                                                          widget.messageId,
+                                                      idleColor:
+                                                          _chatBackgroundScope
+                                                              ?.foreground
+                                                              ?.secondary,
+                                                      onTap: () => _speakText(
+                                                        widget.text,
+                                                      ),
+                                                      size: 15,
+                                                    ),
+                                                  ),
+                                                ),
+                                              ],
+                                              if (widget.cacheHit) ...[
+                                                const SizedBox(width: 6),
+                                                Tooltip(
+                                                  message: L.pick(
+                                                    en: 'Context cache hit',
+                                                    zhTW: '命中上下文緩存',
+                                                    zhCN: '命中上下文缓存',
+                                                  ),
+                                                  child: Semantics(
+                                                    button: true,
+                                                    label: L.pick(
+                                                      en: 'Context cache hit',
+                                                      zhTW: '命中上下文緩存',
+                                                      zhCN: '命中上下文缓存',
+                                                    ),
+                                                    child: GestureDetector(
+                                                      behavior: HitTestBehavior
+                                                          .translucent,
+                                                      onTap: () {
+                                                        showThemedPillNotice(
+                                                          context,
+                                                          L.pick(
+                                                            en: '⚡ Context cache hit',
+                                                            zhTW: '⚡ 命中上下文緩存',
+                                                            zhCN: '⚡ 命中上下文缓存',
+                                                          ),
+                                                          duration:
+                                                              const Duration(
+                                                                milliseconds:
+                                                                    800,
+                                                              ),
+                                                        );
+                                                      },
+                                                      child: SizedBox.square(
+                                                        dimension: 18,
+                                                        child: Center(
+                                                          child: Icon(
+                                                            Icons.bolt_rounded,
+                                                            size: 16,
+                                                            color:
+                                                                _cacheHitColor(),
+                                                          ),
                                                         ),
-                                                        scale: 16,
-                                                        fit: BoxFit.fill,
-                                                        centerSlice:
-                                                            const Rect.fromLTRB(
-                                                              20,
-                                                              20,
-                                                              60,
-                                                              60,
-                                                            ),
-                                                        filterQuality:
-                                                            FilterQuality.high,
-                                                        errorBuilder: (_, _, _) =>
-                                                            const SizedBox.shrink(),
                                                       ),
                                                     ),
                                                   ),
                                                 ),
                                               ],
-                                            )
-                                          : bubble;
-
-                                      if (!widget.isUser ||
-                                          widget.captureMode) {
-                                        return bubbleWithOverlay;
-                                      }
-                                      return GestureDetector(
-                                        onLongPressStart: (d) =>
-                                            _showContextMenu(
-                                              context,
-                                              d.globalPosition,
-                                            ),
-                                        child: bubbleWithOverlay,
-                                      );
-                                    },
-                                  ),
-                                if ((hasBubbleContent || hasImageContent) &&
-                                    widget.timestamp != null &&
-                                    !widget.isStreaming)
-                                  Opacity(
-                                    opacity: _contentOpacity.value,
-                                    child: Padding(
-                                      padding: const EdgeInsets.only(
-                                        top: 3,
-                                        left: 4,
-                                        right: 4,
-                                      ),
-                                      child: Row(
-                                        mainAxisSize: MainAxisSize.max,
-                                        mainAxisAlignment: widget.isUser
-                                            ? MainAxisAlignment.end
-                                            : MainAxisAlignment.start,
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.center,
-                                        children: [
-                                          Text(
-                                            _formatTime(widget.timestamp!),
-                                            style: TextStyle(
-                                              fontSize: 10,
-                                              color:
-                                                  _chatBackgroundScope
-                                                      ?.foreground
-                                                      ?.secondary ??
-                                                  YanciTheme.textSecondary
-                                                      .withValues(alpha: 0.4),
-                                            ),
-                                          ),
-                                          if (!widget.isUser &&
-                                              widget.showToolbar) ...[
-                                            const SizedBox(width: 10),
-                                            GestureDetector(
-                                              onTap: () {
-                                                HapticFeedback.lightImpact();
-                                                Clipboard.setData(
-                                                  ClipboardData(
-                                                    text: displayText,
-                                                  ),
-                                                );
-                                                showThemedPillNotice(
-                                                  context,
-                                                  L.get('chat_copied'),
-                                                  duration: const Duration(
-                                                    milliseconds: 800,
-                                                  ),
-                                                );
-                                              },
-                                              child: _buildCopyIcon(),
-                                            ),
-                                            const SizedBox(width: 6),
-                                            GestureDetector(
-                                              onTap: _toggleSave,
-                                              child: _buildBookmarkIcon(
-                                                color: _isSaved
-                                                    ? YanciTheme.accent
-                                                    : null,
-                                              ),
-                                            ),
-                                            const SizedBox(width: 6),
-                                            GestureDetector(
-                                              onTap: () =>
-                                                  _speakText(widget.text),
-                                              child: _buildActionIconSlot(
-                                                key: const ValueKey(
-                                                  'bubble-action-tts',
+                                              if (widget.incomplete) ...[
+                                                const SizedBox(width: 7),
+                                                Icon(
+                                                  Icons.error_outline_rounded,
+                                                  size: 14,
+                                                  color: Colors.orange
+                                                      .withValues(alpha: 0.8),
                                                 ),
-                                                child: TtsPlayButton(
-                                                  messageId: widget.messageId,
-                                                  idleColor:
-                                                      _chatBackgroundScope
-                                                          ?.foreground
-                                                          ?.secondary,
-                                                  onTap: () =>
-                                                      _speakText(widget.text),
-                                                  size: 18,
-                                                ),
-                                              ),
-                                            ),
-                                          ],
-                                          if (widget.cacheHit) ...[
-                                            const SizedBox(width: 6),
-                                            Icon(
-                                              Icons.bolt_rounded,
-                                              size: 16,
-                                              color: _cacheHitColor(),
-                                            ),
-                                          ],
-                                          if (widget.incomplete) ...[
-                                            const SizedBox(width: 7),
-                                            Icon(
-                                              Icons.error_outline_rounded,
-                                              size: 14,
-                                              color: Colors.orange.withValues(
-                                                alpha: 0.8,
-                                              ),
-                                            ),
-                                            const SizedBox(width: 3),
-                                            Text(
-                                              L.pick(
-                                                en: 'Interrupted',
-                                                zhTW: '回覆中斷',
-                                              ),
-                                              style: TextStyle(
-                                                fontSize: 10,
-                                                color: Colors.orange.withValues(
-                                                  alpha: 0.8,
-                                                ),
-                                              ),
-                                            ),
-                                            if (widget.onRetryIncomplete !=
-                                                null) ...[
-                                              const SizedBox(width: 5),
-                                              GestureDetector(
-                                                onTap: widget.onRetryIncomplete,
-                                                child: Text(
+                                                const SizedBox(width: 3),
+                                                Text(
                                                   L.pick(
-                                                    en: 'Retry',
-                                                    zhTW: '重試',
+                                                    en: 'Interrupted',
+                                                    zhTW: '回覆中斷',
                                                   ),
                                                   style: TextStyle(
                                                     fontSize: 10,
-                                                    fontWeight: FontWeight.w600,
-                                                    color: YanciTheme.accent,
+                                                    color: Colors.orange
+                                                        .withValues(alpha: 0.8),
                                                   ),
                                                 ),
-                                              ),
+                                                if (widget.onRetryIncomplete !=
+                                                    null) ...[
+                                                  const SizedBox(width: 5),
+                                                  GestureDetector(
+                                                    onTap: widget
+                                                        .onRetryIncomplete,
+                                                    child: Text(
+                                                      L.pick(
+                                                        en: 'Retry',
+                                                        zhTW: '重試',
+                                                      ),
+                                                      style: TextStyle(
+                                                        fontSize: 10,
+                                                        fontWeight:
+                                                            FontWeight.w600,
+                                                        color:
+                                                            YanciTheme.accent,
+                                                      ),
+                                                    ),
+                                                  ),
+                                                ],
+                                              ],
                                             ],
-                                          ],
-                                        ],
+                                          ),
+                                        ),
                                       ),
-                                    ),
-                                  ),
-                              ],
+                                  ],
+                                ),
+                              ),
                             ),
                           ),
-                        ),
+                          if (shouldShowScratch || shouldShowTransfer)
+                            Opacity(
+                              opacity: _bubbleOpacity.value,
+                              child: Transform(
+                                alignment: origin,
+                                transform: Matrix4.diagonal3Values(
+                                  _scaleX.value,
+                                  _scaleY.value,
+                                  1,
+                                ),
+                                child: Column(
+                                  crossAxisAlignment: widget.isUser
+                                      ? CrossAxisAlignment.end
+                                      : CrossAxisAlignment.start,
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    if (shouldShowScratch &&
+                                        widget.messageId != null &&
+                                        widget.characterId != null)
+                                      IntrinsicWidth(
+                                        child: ScratchMiniCard(
+                                          messageId: widget.messageId!,
+                                          data: widget.scratchData!,
+                                          characterId: widget.characterId!,
+                                        ),
+                                      ),
+                                    if (shouldShowTransfer &&
+                                        widget.messageId != null &&
+                                        widget.characterId != null)
+                                      TransferMiniCard(
+                                        messageId: widget.messageId!,
+                                        data: widget.transferData!,
+                                        characterId: widget.characterId!,
+                                        canAct:
+                                            widget.transferData!.direction ==
+                                                'toUser' &&
+                                            widget.transferData!.status ==
+                                                'pending',
+                                        onUpdated: widget.onTransferUpdated,
+                                      ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          if (shouldShowGift)
+                            GiftMiniCard(
+                              giftName: widget.giftName!,
+                              accepted: widget.giftAccepted,
+                            ),
+                          if (shouldShowMarriageCert)
+                            MarriageCertCard(
+                              userName: widget.marriageCert!.userName,
+                              charName: widget.marriageCert!.charName,
+                              signed: widget.marriageCert!.signed,
+                              date: widget.marriageCert!.date,
+                              onSignTap: widget.onCertSignTap,
+                            ),
+                        ],
                       ),
-                      if (shouldShowScratch || shouldShowTransfer)
-                        Opacity(
-                          opacity: _bubbleOpacity.value,
-                          child: Transform(
-                            alignment: origin,
-                            transform: Matrix4.diagonal3Values(
-                              _scaleX.value,
-                              _scaleY.value,
-                              1,
-                            ),
-                            child: Column(
-                              crossAxisAlignment: widget.isUser
-                                  ? CrossAxisAlignment.end
-                                  : CrossAxisAlignment.start,
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                if (shouldShowScratch &&
-                                    widget.messageId != null &&
-                                    widget.characterId != null)
-                                  IntrinsicWidth(
-                                    child: ScratchMiniCard(
-                                      messageId: widget.messageId!,
-                                      data: widget.scratchData!,
-                                      characterId: widget.characterId!,
-                                    ),
-                                  ),
-                                if (shouldShowTransfer &&
-                                    widget.messageId != null &&
-                                    widget.characterId != null)
-                                  TransferMiniCard(
-                                    messageId: widget.messageId!,
-                                    data: widget.transferData!,
-                                    characterId: widget.characterId!,
-                                    canAct:
-                                        widget.transferData!.direction ==
-                                            'toUser' &&
-                                        widget.transferData!.status ==
-                                            'pending',
-                                    onUpdated: widget.onTransferUpdated,
-                                  ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      if (shouldShowGift)
-                        GiftMiniCard(
-                          giftName: widget.giftName!,
-                          accepted: widget.giftAccepted,
-                        ),
-                      if (shouldShowMarriageCert)
-                        MarriageCertCard(
-                          userName: widget.marriageCert!.userName,
-                          charName: widget.marriageCert!.charName,
-                          signed: widget.marriageCert!.signed,
-                          date: widget.marriageCert!.date,
-                          onSignTap: widget.onCertSignTap,
-                        ),
+                    ),
+                    if (widget.showAvatar && widget.isUser) ...[
+                      const SizedBox(width: 8),
+                      SizedBox(
+                        width: 40,
+                        height: 40,
+                        child: widget.showAvatarImage
+                            ? Opacity(
+                                opacity: _avatarOpacity.value,
+                                child: _buildAvatar(),
+                              )
+                            : null,
+                      ),
                     ],
-                  ),
+                    if (widget.selectable && widget.isUser) ...[
+                      const SizedBox(width: 8),
+                      _buildSelectionMark(),
+                    ],
+                  ],
                 ),
-                if (widget.showAvatar && widget.isUser) ...[
-                  const SizedBox(width: 8),
-                  Opacity(opacity: _avatarOpacity.value, child: _buildAvatar()),
-                ],
-                if (widget.selectable && widget.isUser) ...[
-                  const SizedBox(width: 8),
-                  _buildSelectionMark(),
-                ],
               ],
             ),
           ),
@@ -1199,7 +1326,11 @@ class _ChatBubbleState extends State<ChatBubble>
   }
 
   double _chatBackgroundBubbleOpacity() {
+    if (widget.forceThemeBubbleColors) return YanciTheme.bubbleOpacity;
     if (_chatBackgroundScope != null) {
+      if (!_chatBackgroundScope!.hasCustomImage) {
+        return YanciTheme.bubbleOpacity;
+      }
       return _scopedBackgroundPreset?.chatBubbleOpacity ??
           _chatBackgroundScope?.palette?.bubbleOpacity ??
           YanciTheme.bubbleOpacity;
@@ -1210,7 +1341,9 @@ class _ChatBubbleState extends State<ChatBubble>
   }
 
   Color _chatBackgroundAiBubbleColor() {
+    if (widget.forceThemeBubbleColors) return YanciTheme.aiBubble;
     if (_chatBackgroundScope != null) {
+      if (!_chatBackgroundScope!.hasCustomImage) return YanciTheme.aiBubble;
       final base = _scopedBackgroundPreset?.chatAiBubbleColor == null
           ? YanciTheme.bubbleColorOverride(
                   YanciTheme.presetId,
@@ -1232,7 +1365,9 @@ class _ChatBubbleState extends State<ChatBubble>
   }
 
   Color _chatBackgroundUserBubbleColor() {
+    if (widget.forceThemeBubbleColors) return YanciTheme.userBubble;
     if (_chatBackgroundScope != null) {
+      if (!_chatBackgroundScope!.hasCustomImage) return YanciTheme.userBubble;
       final base = _scopedBackgroundPreset?.chatUserBubbleColor == null
           ? YanciTheme.bubbleColorOverride(
                   YanciTheme.presetId,
@@ -1254,7 +1389,9 @@ class _ChatBubbleState extends State<ChatBubble>
   }
 
   Color _chatBackgroundBubbleTextColor() {
+    if (widget.forceThemeBubbleColors) return YanciTheme.textOnBubble;
     if (_chatBackgroundScope != null) {
+      if (!_chatBackgroundScope!.hasCustomImage) return YanciTheme.textOnBubble;
       final manual = _scopedBackgroundPreset?.chatBubbleTextColor;
       return manual == null
           ? YanciTheme.bubbleColorOverride(
@@ -1273,7 +1410,21 @@ class _ChatBubbleState extends State<ChatBubble>
   }
 
   Color _chatBackgroundThinkingTextColor() {
+    if (widget.forceThemeBubbleColors) {
+      return Color.lerp(
+        YanciTheme.textSecondary,
+        YanciTheme.textPrimary,
+        0.34,
+      )!;
+    }
     if (_chatBackgroundScope != null) {
+      if (!_chatBackgroundScope!.hasCustomImage) {
+        return Color.lerp(
+          YanciTheme.textSecondary,
+          YanciTheme.textPrimary,
+          0.34,
+        )!;
+      }
       final manual = _scopedBackgroundPreset?.chatThinkingTextColor;
       return manual == null
           ? _chatBackgroundScope?.palette?.thinkingText ??
@@ -1292,9 +1443,23 @@ class _ChatBubbleState extends State<ChatBubble>
   }
 
   Color _thinkingTreeLabelColor() {
+    if (widget.forceThemeBubbleColors) {
+      return Color.lerp(
+        YanciTheme.textSecondary,
+        YanciTheme.textPrimary,
+        0.12,
+      )!;
+    }
     final scopedColor = _scopedBackgroundPreset?.chatThinkingTextColor;
-    if (scopedColor != null) return Color(scopedColor);
     if (_chatBackgroundScope != null) {
+      if (!_chatBackgroundScope!.hasCustomImage) {
+        return Color.lerp(
+          YanciTheme.textSecondary,
+          YanciTheme.textPrimary,
+          0.12,
+        )!;
+      }
+      if (scopedColor != null) return Color(scopedColor);
       return _chatBackgroundScope?.palette?.thinkingText ??
           Color.lerp(YanciTheme.textSecondary, YanciTheme.textPrimary, 0.12)!;
     }
@@ -1452,6 +1617,8 @@ class _ChatBubbleState extends State<ChatBubble>
     final hasExisting = existing.isNotEmpty;
     final busy = _inlineMemoryBusyId == proposal.id;
     final buttonDisabled = busy || widget.onInlineMemoryProposal == null;
+    final proposalTextColor = _chatBackgroundBubbleTextColor();
+    final proposalMutedColor = proposalTextColor.withValues(alpha: 0.68);
 
     return Container(
       key: ValueKey('inline-memory-proposal-${proposal.id}'),
@@ -1459,7 +1626,10 @@ class _ChatBubbleState extends State<ChatBubble>
       margin: const EdgeInsets.only(right: 8, top: 7),
       padding: const EdgeInsets.all(11),
       decoration: BoxDecoration(
-        color: YanciTheme.accent.withValues(alpha: 0.08),
+        // Keep pending memory proposals on the same visual surface as the
+        // user's bubble. This respects both the theme and the custom-image
+        // bubble-opacity slider instead of becoming illegibly transparent.
+        color: _chatBackgroundUserBubbleColor(),
         borderRadius: BorderRadius.circular(12),
         border: Border.all(
           color: YanciTheme.accent.withValues(alpha: 0.24),
@@ -1510,13 +1680,13 @@ class _ChatBubbleState extends State<ChatBubble>
             style: TextStyle(
               fontSize: 12,
               height: 1.45,
-              color: YanciTheme.textPrimary,
+              color: proposalTextColor,
             ),
           ),
           if (triggers.isNotEmpty)
             Text(
               '@$triggers',
-              style: TextStyle(fontSize: 11, color: YanciTheme.textSecondary),
+              style: TextStyle(fontSize: 11, color: proposalMutedColor),
             ),
           if (hasExisting) ...[
             const SizedBox(height: 5),
@@ -1528,7 +1698,7 @@ class _ChatBubbleState extends State<ChatBubble>
               style: TextStyle(
                 fontSize: 10,
                 height: 1.4,
-                color: YanciTheme.textSecondary,
+                color: proposalMutedColor,
               ),
             ),
           ],
@@ -2224,7 +2394,7 @@ class _ChatBubbleState extends State<ChatBubble>
       child: BubbleActionGlyph(
         type: BubbleActionGlyphType.copy,
         color: c,
-        size: 13.5,
+        size: 15,
       ),
     );
   }
@@ -2431,20 +2601,8 @@ class _StickerImage extends StatelessWidget {
   }
 
   Future<List<StickerInfo>> _findSticker() async {
-    final cid = characterId ?? 'default';
-    final buckets = <String>[
-      cid,
-      StickerService.userBucket,
-      StickerService.legacyDefaultBucket,
-    ];
-    final seen = <String>{};
-    for (final bucket in buckets) {
-      if (!seen.add(bucket)) continue;
-      final stickers = await StickerService.getStickers(characterId: bucket);
-      final match = stickers.where((s) => s.id == stickerId).toList();
-      if (match.isNotEmpty) return match;
-    }
-    return const [];
+    final sticker = await StickerService.getStickerById(stickerId);
+    return sticker == null ? const [] : <StickerInfo>[sticker];
   }
 }
 

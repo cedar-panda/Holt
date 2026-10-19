@@ -792,6 +792,7 @@ class KeepAliveService {
         model: model,
         usage: usage ?? const ApiUsage(),
         characterId: charId,
+        conversationId: convId,
         requestKind: ApiRequestKind.keepAlive,
       );
 

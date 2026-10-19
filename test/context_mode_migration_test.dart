@@ -67,7 +67,7 @@ void main() {
   test('fresh schema enforces context values and creates RP indexes', () async {
     await DatabaseHelper.createSchemaForTesting(db);
 
-    expect(DatabaseHelper.schemaVersionForTesting, 77);
+    expect(DatabaseHelper.schemaVersionForTesting, 82);
     expect(
       await _columnNames(db, 'conversations'),
       containsAll(<String>[
@@ -140,6 +140,64 @@ void main() {
       throwsA(isA<DatabaseException>()),
     );
   });
+
+  test(
+    'v82 collapses mode-scoped persona bindings into one shared pair',
+    () async {
+      await DatabaseHelper.createSchemaForTesting(db);
+      final older = DateTime.utc(2026, 9, 1).toIso8601String();
+      final newer = DateTime.utc(2026, 9, 2).toIso8601String();
+      for (final characterId in <String>['char-a', 'char-b']) {
+        await db.insert('characters', <String, Object?>{
+          'id': characterId,
+          'name': characterId,
+          'created_at': older,
+          'updated_at': older,
+        });
+      }
+      for (final personaId in <String>['persona-old', 'persona-new']) {
+        await db.insert('user_personas', <String, Object?>{
+          'id': personaId,
+          'display_name': personaId,
+          'created_at': older,
+          'updated_at': older,
+        });
+      }
+      await db.insert('character_persona_bindings', <String, Object?>{
+        'character_id': 'char-a',
+        'context_mode': 'daily',
+        'continuity_id': 'main',
+        'user_persona_id': 'persona-old',
+        'created_at': older,
+        'updated_at': older,
+      });
+      await db.insert('character_persona_bindings', <String, Object?>{
+        'character_id': 'char-a',
+        'context_mode': 'rp',
+        'continuity_id': 'route-b',
+        'user_persona_id': 'persona-new',
+        'created_at': newer,
+        'updated_at': newer,
+      });
+      await db.insert('character_persona_bindings', <String, Object?>{
+        'character_id': 'char-b',
+        'context_mode': 'daily',
+        'continuity_id': 'main',
+        'user_persona_id': 'persona-new',
+        'created_at': older,
+        'updated_at': older,
+      });
+
+      await DatabaseHelper.upgradeSchemaForTesting(db, 81);
+
+      final bindings = await db.query('character_persona_bindings');
+      expect(bindings, hasLength(1));
+      expect(bindings.single['character_id'], 'char-a');
+      expect(bindings.single['user_persona_id'], 'persona-new');
+      expect(bindings.single['context_mode'], 'daily');
+      expect(bindings.single['continuity_id'], 'main');
+    },
+  );
 
   test('v69 registers existing RP continuity as a storyline', () async {
     await DatabaseHelper.createSchemaForTesting(db);

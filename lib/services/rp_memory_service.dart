@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart' show debugPrint;
 import '../models/context_mode.dart';
 import 'deferred_prompt.dart';
 import 'memory_actions.dart';
+import 'rp_story_correction_service.dart';
 
 /// RP memory facade. The storage/search primitives are shared, while this
 /// boundary permanently selects the ordinary engine and RP scope.
@@ -48,6 +49,10 @@ abstract final class RpMemoryService {
     required String continuityId,
     bool emotionEnabled = true,
     bool resetState = true,
+    String provider = '',
+    String modelId = '',
+    String modelVersion = '',
+    int? sourceMessageId,
   }) async {
     final visible = await MemoryActions.processReply(
       text,
@@ -58,7 +63,21 @@ abstract final class RpMemoryService {
       resetState: resetState,
       contextMode: ContextMode.rp,
       continuityId: continuityId,
+      provider: provider,
+      modelId: modelId,
+      modelVersion: modelVersion,
+      sourceMessageId: sourceMessageId,
     );
+    final correctionLogs = await RpStoryCorrectionService.applyReplyActions(
+      text,
+      characterId: characterId,
+      continuityId: continuityId,
+      sourceConversationId: windowId,
+      sourceMessageId: sourceMessageId,
+    );
+    for (final log in correctionLogs) {
+      MemoryActions.registerExternalAction(windowId, log);
+    }
     debugPrint(
       '[RpMemoryDebug] phase=write character=$characterId '
       'continuity=$continuityId actions='

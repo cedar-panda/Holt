@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:developer' as developer;
 
+import 'package:flutter/foundation.dart' show ValueNotifier;
 import 'package:sqflite/sqflite.dart';
 import 'package:uuid/uuid.dart';
 
@@ -28,6 +29,7 @@ typedef RpWorldbookModelCall =
 class RpWorldbookService {
   const RpWorldbookService._();
 
+  static final ValueNotifier<int> revision = ValueNotifier<int>(0);
   static final Map<String, Future<void>> _scopeTails = <String, Future<void>>{};
   static const Uuid _uuid = Uuid();
   static const Set<String> _operations = <String>{
@@ -51,9 +53,12 @@ class RpWorldbookService {
     'other',
   };
 
+  static void _notifyChanged() => revision.value += 1;
+
   static Future<void> maybeProcessAfterSummary({
     required String characterId,
     required String continuityId,
+    String triggerConversationId = '',
     RpWorldbookModelCall? callModel,
   }) {
     final scope = '$characterId\u0000$continuityId';
@@ -63,6 +68,7 @@ class RpWorldbookService {
         await _processOneBatch(
           characterId: characterId,
           continuityId: continuityId,
+          triggerConversationId: triggerConversationId,
           callModel: callModel,
         );
       } catch (error, stackTrace) {
@@ -85,6 +91,7 @@ class RpWorldbookService {
   static Future<void> _processOneBatch({
     required String characterId,
     required String continuityId,
+    required String triggerConversationId,
     RpWorldbookModelCall? callModel,
   }) async {
     if (!await MemorySettings.getRpWorldbookAutoWriteEnabled()) return;
@@ -149,6 +156,7 @@ class RpWorldbookService {
             ({required systemPrompt, required userMessage}) =>
                 _callSummaryModel(
                   characterId: characterId,
+                  conversationId: triggerConversationId,
                   systemPrompt: systemPrompt,
                   userMessage: userMessage,
                 ))(
@@ -172,6 +180,7 @@ class RpWorldbookService {
     final sourceText = summaries
         .map((row) => row['content']?.toString() ?? '')
         .join('\n');
+    var committed = false;
     await db.transaction((txn) async {
       // An edit/re-roll may invalidate a summary while the independent model
       // call is in flight. In that case discard this response and leave the
@@ -219,7 +228,9 @@ class RpWorldbookService {
         'last_processed_summary_id': batchIds.reduce((a, b) => a > b ? a : b),
         'updated_at': now,
       }, conflictAlgorithm: ConflictAlgorithm.replace);
+      committed = true;
     });
+    if (committed) _notifyChanged();
   }
 
   static Future<void> _applyUpdate(
@@ -372,7 +383,6 @@ class RpWorldbookService {
       where: "character_id = ? AND continuity_id = ? AND status = 'active'",
       whereArgs: <Object?>[characterId, continuityId],
       orderBy: 'updated_at DESC',
-      limit: 80,
     );
     if (rows.isEmpty) return '';
     final terms = RecallTextMatcher.relevanceTerms(query.toLowerCase());
@@ -391,11 +401,19 @@ class RpWorldbookService {
     final ranked =
         rows
             .map((row) {
-              final haystack =
-                  '${row['name']} ${row['content']} '
-                          '${row['triggers_json']} ${row['scope']}'
-                      .toLowerCase();
-              final score = terms.where(haystack.contains).length;
+              final triggerText = (row['triggers_json']?.toString() ?? '')
+                  .toLowerCase();
+              final scopeText = (row['scope']?.toString() ?? '').toLowerCase();
+              // Entry prose often contains both lead names. Matching prose or
+              // title directly made those names behave as universal triggers.
+              // Only explicit model/user triggers and a concrete scope may
+              // activate a non-global worldbook entry.
+              final score = terms
+                  .where(
+                    (term) =>
+                        triggerText.contains(term) || scopeText.contains(term),
+                  )
+                  .length;
               return (row: row, score: score, global: isGlobalScope(row));
             })
             .where((item) => item.global || item.score > 0)
@@ -603,8 +621,173 @@ class RpWorldbookService {
     );
   }
 
+  /// Keeps a user-edited review draft pending without touching the worldbook.
+  static Future<void> updatePendingReviewDraft({
+    required String id,
+    required String characterId,
+    required String continuityId,
+    required String name,
+    required String content,
+    required String category,
+    required String scope,
+    required String visibility,
+    required List<String> triggers,
+  }) async {
+    final db = await DatabaseHelper.database;
+    final rows = await db.query(
+      'rp_worldbook_review_items',
+      columns: const <String>['payload_json'],
+      where:
+          "id = ? AND character_id = ? AND continuity_id = ? AND status = 'pending'",
+      whereArgs: <Object?>[id, characterId, continuityId],
+      limit: 1,
+    );
+    if (rows.isEmpty) return;
+    final decoded = _decodeJson(rows.single['payload_json']);
+    final payload = decoded is Map
+        ? decoded.map<String, Object?>(
+            (key, value) => MapEntry(key.toString(), value),
+          )
+        : <String, Object?>{};
+    payload
+      ..['candidate_name'] = name.trim()
+      ..['candidate_content'] = content.trim()
+      ..['category'] = _category(category)
+      ..['scope'] = _textOr(scope, 'global')
+      ..['visibility'] = _textOr(visibility, 'public')
+      ..['triggers'] = triggers
+          .map((item) => item.trim())
+          .where((item) => item.isNotEmpty)
+          .toSet()
+          .toList(growable: false);
+    await db.update(
+      'rp_worldbook_review_items',
+      <String, Object?>{
+        'payload_json': jsonEncode(payload),
+        'updated_at': DateTime.now().toIso8601String(),
+      },
+      where:
+          "id = ? AND character_id = ? AND continuity_id = ? AND status = 'pending'",
+      whereArgs: <Object?>[id, characterId, continuityId],
+    );
+  }
+
+  /// Resolves a review deterministically after the user has inspected the
+  /// final text. With [targetEntryKey], the draft is merged into that entry;
+  /// otherwise it becomes a new manually protected entry.
+  static Future<String> resolvePendingReview({
+    required String id,
+    required String characterId,
+    required String continuityId,
+    required String name,
+    required String content,
+    required String category,
+    required String scope,
+    required String visibility,
+    required List<String> triggers,
+    String targetEntryKey = '',
+  }) async {
+    final normalizedName = name.trim();
+    final normalizedContent = content.trim();
+    if (normalizedName.isEmpty || normalizedContent.isEmpty) {
+      throw ArgumentError('Worldbook name and content are required');
+    }
+    final db = await DatabaseHelper.database;
+    return db.transaction<String>((txn) async {
+      final reviews = await txn.query(
+        'rp_worldbook_review_items',
+        where:
+            "id = ? AND character_id = ? AND continuity_id = ? AND status = 'pending'",
+        whereArgs: <Object?>[id, characterId, continuityId],
+        limit: 1,
+      );
+      if (reviews.isEmpty) {
+        throw StateError('Worldbook review is no longer pending');
+      }
+      final payload = _decodeJson(reviews.single['payload_json']);
+      final reviewSources = _intList(
+        payload is Map ? payload['source_summary_ids'] : null,
+      );
+      final normalizedTriggers = triggers
+          .map((item) => item.trim())
+          .where((item) => item.isNotEmpty)
+          .toSet()
+          .toList(growable: false);
+      final now = DateTime.now().toIso8601String();
+      var resolvedKey = targetEntryKey.trim();
+
+      if (resolvedKey.isEmpty) {
+        resolvedKey = await _nextEntryKey(txn, characterId, continuityId);
+        await txn.insert('rp_worldbook_entries', <String, Object?>{
+          'id': _uuid.v4(),
+          'entry_key': resolvedKey,
+          'character_id': characterId,
+          'continuity_id': continuityId,
+          'name': normalizedName,
+          'category': _category(category),
+          'content': normalizedContent,
+          'scope': _textOr(scope, 'global'),
+          'visibility': _textOr(visibility, 'public'),
+          'status': 'active',
+          'ended_reason': '',
+          'triggers_json': jsonEncode(normalizedTriggers),
+          'source_summary_ids': jsonEncode(reviewSources),
+          'user_edited': 1,
+          'created_at': now,
+          'updated_at': now,
+        });
+      } else {
+        final targets = await txn.query(
+          'rp_worldbook_entries',
+          where: 'character_id = ? AND continuity_id = ? AND entry_key = ?',
+          whereArgs: <Object?>[characterId, continuityId, resolvedKey],
+          limit: 1,
+        );
+        if (targets.isEmpty) {
+          throw StateError('Worldbook merge target was not found');
+        }
+        final target = targets.single;
+        final mergedSources = <int>{
+          ..._intList(_decodeJson(target['source_summary_ids'])),
+          ...reviewSources,
+        }.toList()..sort();
+        final mergedTriggers = <String>{
+          ..._stringList(_decodeJson(target['triggers_json'])),
+          ...normalizedTriggers,
+        }.toList(growable: false);
+        await txn.update(
+          'rp_worldbook_entries',
+          <String, Object?>{
+            'name': normalizedName,
+            'category': _category(category),
+            'content': normalizedContent,
+            'scope': _textOr(scope, 'global'),
+            'visibility': _textOr(visibility, 'public'),
+            'status': 'active',
+            'ended_reason': '',
+            'triggers_json': jsonEncode(mergedTriggers),
+            'source_summary_ids': jsonEncode(mergedSources),
+            'user_edited': 1,
+            'updated_at': now,
+          },
+          where: 'id = ?',
+          whereArgs: <Object?>[target['id']],
+        );
+      }
+
+      await txn.update(
+        'rp_worldbook_review_items',
+        <String, Object?>{'status': 'resolved', 'updated_at': now},
+        where: 'id = ?',
+        whereArgs: <Object?>[id],
+      );
+      return resolvedKey;
+    });
+  }
+
   static Future<String> _callSummaryModel({
     required String characterId,
+    required String conversationId,
     required String systemPrompt,
     required String userMessage,
   }) async {
@@ -636,6 +819,7 @@ class RpWorldbookService {
       model: model,
       usage: usage ?? const ApiUsage(),
       characterId: characterId,
+      conversationId: conversationId,
       requestKind: ApiRequestKind.worldbook,
     );
     return response;

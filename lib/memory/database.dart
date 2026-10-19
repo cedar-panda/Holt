@@ -10,15 +10,18 @@ import 'package:path/path.dart';
 import 'package:flutter/foundation.dart';
 import 'package:uuid/uuid.dart';
 import '../models/message.dart';
+import '../models/guide_persona_draft.dart';
 import '../models/memory.dart';
 import '../models/context_mode.dart';
 import '../models/chat_diagnostic_event.dart';
+import '../models/character_self_note.dart';
 import '../utils/app_file_safety.dart';
 import '../utils/iso_week.dart';
 import '../services/memory_debug_log.dart';
 
 part 'database_schema.dart';
 part 'database_memory_search.dart';
+part 'database_reply_variants.dart';
 
 enum WebSearchUsageReservationResult {
   reserved,
@@ -41,13 +44,37 @@ enum SpiderWebRelationWriteResult {
 
 typedef ConversationCoinSnapshot = ({int characterCoins, int userCoins});
 
+class ContextSummarySegmentDraft {
+  final int order;
+  final String title;
+  final String content;
+  final List<String> keywords;
+  final int tokenCount;
+
+  const ContextSummarySegmentDraft({
+    required this.order,
+    required this.content,
+    required this.tokenCount,
+    this.title = '',
+    this.keywords = const <String>[],
+  });
+}
+
 /// 本地數據庫
 class DatabaseHelper {
   static Database? _database;
   static Future<Database>? _dbInitFuture;
   static Future<Database> Function() _databaseInitializer = _initDatabase;
   static const String _dbName = 'yanci.db';
-  static const int _dbVersion = 77;
+  static const int _dbVersion = 82;
+
+  /// The label index stores retrieval phrases, not every archived paragraph.
+  /// Keep this shared with ContextCompressor so invalidation recovery and the
+  /// normal recycler apply the same budget.
+  /// Retained for compatibility with old diagnostics only. Archived summary
+  /// labels are no longer evicted by this value; all labels stay searchable
+  /// while only matched event segments are injected into prompts.
+  static const int contextKeywordIndexTokenCap = 1800;
   static const String _keepAlivePingGuardTable = 'keepalive_ping_guard';
   static final Random _windowIdRandom = Random.secure();
 
@@ -362,6 +389,7 @@ class DatabaseHelper {
     _database = db;
     _dbInitFuture = db == null ? null : Future<Database>.value(db);
     _noteColumnEnsured = false;
+    _recallIndexHealedScopes.clear();
   }
 
   @visibleForTesting
@@ -371,6 +399,7 @@ class DatabaseHelper {
     _database = null;
     _dbInitFuture = null;
     _databaseInitializer = initializer ?? _initDatabase;
+    _recallIndexHealedScopes.clear();
   }
 
   // ═══ 上下文壓縮表 ═══
@@ -424,6 +453,39 @@ class DatabaseHelper {
         created_at TEXT NOT NULL
       )
     ''');
+    // The RP summary model emits this recall index in the same response as the
+    // summary. Retirement therefore needs no second model request.
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS context_summary_segments (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        source_summary_id INTEGER NOT NULL,
+        character_id TEXT NOT NULL,
+        context_mode TEXT NOT NULL DEFAULT 'rp'
+          CHECK(context_mode IN ('daily', 'rp')),
+        continuity_id TEXT NOT NULL DEFAULT 'main'
+          CHECK(length(trim(continuity_id)) > 0),
+        source_window_id TEXT DEFAULT '',
+        source_conversation_id TEXT DEFAULT '',
+        segment_order INTEGER NOT NULL,
+        title TEXT NOT NULL DEFAULT '',
+        content TEXT NOT NULL,
+        keywords TEXT NOT NULL,
+        token_count INTEGER NOT NULL,
+        created_at TEXT NOT NULL,
+        UNIQUE(source_summary_id, segment_order),
+        FOREIGN KEY(source_summary_id) REFERENCES context_summaries(id)
+          ON DELETE CASCADE
+      )
+    ''');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_context_summary_segment_scope '
+      'ON context_summary_segments('
+      'character_id, context_mode, continuity_id, created_at DESC)',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_context_summary_segment_source '
+      'ON context_summary_segments(source_summary_id, segment_order)',
+    );
   }
 
   static Future<void> _createCharacterSignatureTable(Database db) async {
@@ -724,15 +786,33 @@ class DatabaseHelper {
   /// 返回 false 表示 incoming 沒有為註記集合增加任何資訊；即使如此，
   /// transaction 仍會順手清理舊資料中已經存在的重複條目。
   static Future<bool> appendSelfNote(String characterId, String note) async {
+    final result = await appendSelfNoteDetailed(
+      characterId,
+      note,
+      retainLongTerm: false,
+    );
+    return result.accepted;
+  }
+
+  static Future<({bool accepted, int? recordId})> appendSelfNoteDetailed(
+    String characterId,
+    String note, {
+    required bool retainLongTerm,
+    String provider = '',
+    String modelId = '',
+    String modelVersion = '',
+    String sourceConversationId = '',
+    List<int> sourceMessageIds = const <int>[],
+  }) async {
     final db = await database;
-    return db.transaction<bool>((txn) async {
+    return db.transaction<({bool accepted, int? recordId})>((txn) async {
       final rows = await txn.query(
         'characters',
         columns: ['self_notes'],
         where: 'id = ?',
         whereArgs: [characterId],
       );
-      if (rows.isEmpty) return false;
+      if (rows.isEmpty) return (accepted: false, recordId: null);
       final existing = (rows.first['self_notes'] as String?) ?? '';
       final result = _mergeSelfNotesDetailed(existing, note);
       if (result.text != existing) {
@@ -743,7 +823,126 @@ class DatabaseHelper {
           whereArgs: [characterId],
         );
       }
-      return result.acceptedIncoming;
+      if (!result.acceptedIncoming) {
+        return (accepted: false, recordId: null);
+      }
+      final clean = _cleanSelfNote(note);
+      final now = DateTime.now().toIso8601String();
+      final records = await txn.query(
+        'character_self_notes',
+        where: 'character_id = ?',
+        whereArgs: <Object?>[characterId],
+      );
+      final overlappingRecords = records
+          .where(
+            (row) => _selfNotesOverlap(row['content']?.toString() ?? '', clean),
+          )
+          .toList(growable: false);
+      final exactRecord = overlappingRecords
+          .cast<Map<String, Object?>>()
+          .firstWhere(
+            (row) => row['content']?.toString() == clean,
+            orElse: () => <String, Object?>{},
+          );
+      final primaryRecord = exactRecord.isNotEmpty
+          ? exactRecord
+          : overlappingRecords.isEmpty
+          ? <String, Object?>{}
+          : overlappingRecords.first;
+      final preservedMessageIds = <int>{...sourceMessageIds};
+      var preservedLocked = false;
+      var preservedLongTerm = retainLongTerm;
+      for (final row in overlappingRecords) {
+        preservedLocked = preservedLocked || row['locked'] == 1;
+        preservedLongTerm = preservedLongTerm || row['long_term'] == 1;
+        try {
+          final decoded = jsonDecode(
+            row['source_message_ids_json']?.toString() ?? '[]',
+          );
+          if (decoded is List) {
+            preservedMessageIds.addAll(
+              decoded
+                  .map((item) => item is int ? item : int.tryParse('$item'))
+                  .whereType<int>(),
+            );
+          }
+        } catch (_) {}
+      }
+      int recordId;
+      if (primaryRecord.isEmpty) {
+        recordId = await txn.insert('character_self_notes', <String, Object?>{
+          'character_id': characterId,
+          'content': clean,
+          'provider': provider.trim(),
+          'model_id': modelId.trim(),
+          'model_version': modelVersion.trim(),
+          'source_conversation_id': sourceConversationId.trim(),
+          'source_message_ids_json': jsonEncode(
+            preservedMessageIds.toList()..sort(),
+          ),
+          'locked': preservedLocked ? 1 : 0,
+          'long_term': preservedLongTerm ? 1 : 0,
+          'created_at': now,
+          'updated_at': now,
+        });
+      } else {
+        recordId = primaryRecord['id'] as int;
+        final storedProvider = primaryRecord['provider']?.toString() ?? '';
+        final storedModelId = primaryRecord['model_id']?.toString() ?? '';
+        final storedModelVersion =
+            primaryRecord['model_version']?.toString() ?? '';
+        final storedConversationId =
+            primaryRecord['source_conversation_id']?.toString() ?? '';
+        await txn.update(
+          'character_self_notes',
+          <String, Object?>{
+            'content': clean,
+            'provider': provider.trim().isEmpty
+                ? storedProvider
+                : provider.trim(),
+            'model_id': modelId.trim().isEmpty ? storedModelId : modelId.trim(),
+            'model_version': modelVersion.trim().isEmpty
+                ? storedModelVersion
+                : modelVersion.trim(),
+            'source_conversation_id': sourceConversationId.trim().isEmpty
+                ? storedConversationId
+                : sourceConversationId.trim(),
+            'source_message_ids_json': jsonEncode(
+              preservedMessageIds.toList()..sort(),
+            ),
+            'locked': preservedLocked ? 1 : 0,
+            'long_term': preservedLongTerm ? 1 : 0,
+            'updated_at': now,
+          },
+          where: 'id = ?',
+          whereArgs: <Object?>[recordId],
+        );
+      }
+      final redundantIds = overlappingRecords
+          .map((row) => row['id'])
+          .whereType<int>()
+          .where((id) => id != recordId)
+          .toList(growable: false);
+      for (final id in redundantIds) {
+        await txn.delete(
+          'character_self_notes',
+          where: 'id = ?',
+          whereArgs: <Object?>[id],
+        );
+      }
+      if (!retainLongTerm) {
+        await txn.rawDelete(
+          '''DELETE FROM character_self_notes
+             WHERE character_id = ? AND locked = 0 AND long_term = 0
+               AND id NOT IN (
+                 SELECT id FROM character_self_notes
+                 WHERE character_id = ?
+                 ORDER BY created_at DESC, id DESC LIMIT 12
+               )''',
+          <Object?>[characterId, characterId],
+        );
+      }
+      return (accepted: true, recordId: recordId);
     });
   }
 
@@ -771,6 +970,11 @@ class DatabaseHelper {
         {'self_notes': _formatSelfNotes(lines)},
         where: 'id = ?',
         whereArgs: [characterId],
+      );
+      await txn.delete(
+        'character_self_notes',
+        where: 'character_id = ? AND content = ?',
+        whereArgs: <Object?>[characterId, target],
       );
       return true;
     });
@@ -998,6 +1202,148 @@ class DatabaseHelper {
     });
   }
 
+  static Future<String> getSelfNotesForPrompt(
+    String characterId, {
+    required int limit,
+  }) async {
+    final stored = await getSelfNotes(characterId);
+    final lines = _selfNoteLines(stored);
+    final bounded = limit.clamp(1, 12);
+    final selected = lines.length <= bounded
+        ? lines
+        : lines.sublist(lines.length - bounded);
+    return _formatSelfNotes(selected);
+  }
+
+  static Future<List<CharacterSelfNote>> getSelfNoteRecords(
+    String characterId,
+  ) async {
+    final db = await database;
+    await _backfillCharacterSelfNotes(db, characterId: characterId);
+    final rows = await db.query(
+      'character_self_notes',
+      where: 'character_id = ?',
+      whereArgs: <Object?>[characterId],
+      orderBy: 'created_at ASC, id ASC',
+    );
+    return rows.map(CharacterSelfNote.fromMap).toList(growable: false);
+  }
+
+  static Future<bool> setSelfNoteLocked(int id, bool locked) async {
+    final db = await database;
+    final target = await db.query(
+      'character_self_notes',
+      columns: const <String>['character_id', 'locked'],
+      where: 'id = ?',
+      whereArgs: <Object?>[id],
+      limit: 1,
+    );
+    if (target.isEmpty) return false;
+    final currentlyLocked = target.first['locked'] == 1;
+    if (currentlyLocked == locked) return true;
+    if (locked) {
+      final rows = await db.rawQuery(
+        '''SELECT COUNT(*) AS total FROM character_self_notes
+           WHERE character_id = ? AND locked = 1 AND id <> ?''',
+        <Object?>[target.first['character_id'], id],
+      );
+      final total = (rows.first['total'] as int?) ?? 0;
+      if (total >= 10) return false;
+    }
+    return await db.update(
+          'character_self_notes',
+          <String, Object?>{
+            'locked': locked ? 1 : 0,
+            'updated_at': DateTime.now().toIso8601String(),
+          },
+          where: 'id = ?',
+          whereArgs: <Object?>[id],
+        ) >
+        0;
+  }
+
+  static Future<void> bindSelfNotesToMessage(
+    Iterable<int> ids,
+    int messageId,
+  ) async {
+    final noteIds = ids.toSet().toList(growable: false);
+    if (noteIds.isEmpty) return;
+    final db = await database;
+    await db.transaction((txn) async {
+      for (final id in noteIds) {
+        final rows = await txn.query(
+          'character_self_notes',
+          columns: const <String>['source_message_ids_json'],
+          where: 'id = ?',
+          whereArgs: <Object?>[id],
+          limit: 1,
+        );
+        if (rows.isEmpty) continue;
+        final values = <int>{};
+        try {
+          final decoded = jsonDecode(
+            rows.first['source_message_ids_json']?.toString() ?? '[]',
+          );
+          if (decoded is List) {
+            values.addAll(
+              decoded
+                  .map((item) => item is int ? item : int.tryParse('$item'))
+                  .whereType<int>(),
+            );
+          }
+        } catch (_) {}
+        values.add(messageId);
+        await txn.update(
+          'character_self_notes',
+          <String, Object?>{
+            'source_message_ids_json': jsonEncode(values.toList()..sort()),
+            'updated_at': DateTime.now().toIso8601String(),
+          },
+          where: 'id = ?',
+          whereArgs: <Object?>[id],
+        );
+      }
+    });
+  }
+
+  static Future<void> _backfillCharacterSelfNotes(
+    DatabaseExecutor db, {
+    String? characterId,
+  }) async {
+    final characterTables = await db.rawQuery(
+      "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'characters' LIMIT 1",
+    );
+    if (characterTables.isEmpty) return;
+    final characterColumns = await db.rawQuery('PRAGMA table_info(characters)');
+    if (!characterColumns.any((row) => row['name'] == 'self_notes')) return;
+    final rows = await db.query(
+      'characters',
+      columns: const <String>['id', 'self_notes'],
+      where: characterId == null ? null : 'id = ?',
+      whereArgs: characterId == null ? null : <Object?>[characterId],
+    );
+    final now = DateTime.now();
+    for (final row in rows) {
+      final id = row['id']?.toString() ?? '';
+      if (id.isEmpty) continue;
+      final notes = _selfNoteLines(
+        row['self_notes']?.toString() ?? '',
+      ).toList(growable: false);
+      final firstStamp = now.subtract(Duration(microseconds: notes.length));
+      for (var index = 0; index < notes.length; index++) {
+        final stamp = firstStamp
+            .add(Duration(microseconds: index))
+            .toIso8601String();
+        await db.insert('character_self_notes', <String, Object?>{
+          'character_id': id,
+          'content': notes[index],
+          'created_at': stamp,
+          'updated_at': stamp,
+        }, conflictAlgorithm: ConflictAlgorithm.ignore);
+      }
+    }
+  }
+
   /// One-time/lifecycle cleanup for existing characters. This deliberately
   /// touches only the authoritative character record; conversation-pinned
   /// snapshots remain immutable so an old cache prefix is never rewritten.
@@ -1035,6 +1381,11 @@ class DatabaseHelper {
       {'self_notes': ''},
       where: 'id = ?',
       whereArgs: [characterId],
+    );
+    await db.delete(
+      'character_self_notes',
+      where: 'character_id = ?',
+      whereArgs: <Object?>[characterId],
     );
   }
 
@@ -1173,6 +1524,7 @@ class DatabaseHelper {
           whereArgs: [cid],
         );
         files.addAll(images.expand(_imagePathsFromRow));
+        files.addAll(await ReplyVariants._archivedMedia(txn, cid));
       }
       final voices = await txn.query(
         'saved_voices',
@@ -1237,16 +1589,20 @@ class DatabaseHelper {
       batch.rawDelete(
         'DELETE FROM emotion_points '
         'WHERE character_id = ? '
+        // RP 故事線的情緒範圍存成「角色id#rp:故事線」（見 EmotionCoordinates.rpScopeMark），一併刪除。
+        'OR character_id LIKE ? '
         'OR memory_id IN '
         '(SELECT id FROM memories WHERE character_id = ?)',
-        [id, id],
+        [id, '$id#rp:%', id],
       );
       batch.rawDelete(
         'DELETE FROM grudge_seals '
         'WHERE character_id = ? '
+        // RP 故事線的情緒範圍存成「角色id#rp:故事線」（見 EmotionCoordinates.rpScopeMark），一併刪除。
+        'OR character_id LIKE ? '
         'OR memory_id IN '
         '(SELECT id FROM memories WHERE character_id = ?)',
-        [id, id],
+        [id, '$id#rp:%', id],
       );
       batch.rawDelete(
         'DELETE FROM character_timeline '
@@ -1841,7 +2197,8 @@ class DatabaseHelper {
   }
 
   /// 新窗口可續接的同模式來源窗口。候選依最後一條消息時間排序；
-  /// 每個候選只攜帶最後四條正文與最後兩條摘要。
+  /// 每個候選只攜帶最後一個完整回合（兩條正文）與該時間點最新一份
+  /// 完整滾動摘要。摘要本身已經是替換式卷宗，不再疊加兩份造成重複。
   static Future<List<RpChapterContinuationSource>>
   getRpChapterContinuationSources({
     required String currentConversationId,
@@ -1966,7 +2323,7 @@ class DatabaseHelper {
         ?throughMessageId,
       ],
       orderBy: 'created_at DESC, id DESC',
-      // 多取一些再組成兩個完整回合，避免最後四條剛好含連續同角色消息。
+      // 多取一些再組成最後一個完整回合，避免末尾剛好是半個回合。
       limit: 12,
     );
     final messageCandidates = messageRows
@@ -1976,36 +2333,59 @@ class DatabaseHelper {
         .toList(growable: false);
     final completeTurns = _latestCompleteConversationTurns(
       messageCandidates,
-      2,
+      1,
     );
     // 很短的新章可能尚未形成完整回合；仍允許續接唯一已有的內容。
     final messages = completeTurns.isNotEmpty
         ? completeTurns
         : messageCandidates
-              .skip(max(0, messageCandidates.length - 4))
+              .skip(max(0, messageCandidates.length - 2))
               .toList(growable: false);
     if (messages.isEmpty) return null;
-    final summaryRows = await db.query(
+    final effectiveThroughMessageId =
+        throughMessageId ??
+        messageCandidates.map((message) => message.id ?? 0).fold<int>(0, max);
+    var summaryRows = await db.query(
       'context_summaries',
       columns: const <String>['content'],
       where:
           'source_conversation_id = ? AND context_mode = ? '
           "AND continuity_id = ? AND revision_status = 'valid' "
+          '${effectiveThroughMessageId <= 0 ? '' : 'AND (source_message_end_id IS NULL OR source_message_end_id <= ?) '}'
           '${summariesThrough == null ? '' : 'AND created_at <= ?'}',
       whereArgs: <Object?>[
         conversation.id,
         contextMode.storageValue,
         continuityId,
-        ?summariesThrough?.toIso8601String(),
+        if (effectiveThroughMessageId > 0) effectiveThroughMessageId,
+        if (summariesThrough != null) summariesThrough.toIso8601String(),
       ],
       orderBy: 'created_at DESC, id DESC',
-      limit: 2,
+      limit: 1,
     );
+    if (summaryRows.isEmpty) {
+      final lastMessageAt =
+          DateTime.tryParse(row['last_message_at']?.toString() ?? '') ??
+          conversation.updatedAt;
+      summaryRows = await db.query(
+        'context_summaries',
+        columns: const <String>['content'],
+        where:
+            'character_id = ? AND context_mode = ? AND continuity_id = ? '
+            "AND revision_status = 'valid' AND created_at <= ?",
+        whereArgs: <Object?>[
+          conversation.characterId,
+          contextMode.storageValue,
+          continuityId,
+          (summariesThrough ?? lastMessageAt).toIso8601String(),
+        ],
+        orderBy: 'created_at DESC, id DESC',
+        limit: 1,
+      );
+    }
     final summaries = summaryRows
         .map((item) => item['content']?.toString().trim() ?? '')
         .where((item) => item.isNotEmpty)
-        .toList(growable: false)
-        .reversed
         .toList(growable: false);
     return RpChapterContinuationSource(
       conversation: conversation,
@@ -2337,6 +2717,7 @@ class DatabaseHelper {
       final files = <String>{
         ...voices.map((row) => row['file_path']).whereType<String>(),
         ...images.expand(_imagePathsFromRow),
+        ...await ReplyVariants._archivedMedia(txn, id),
       };
       await txn.delete(
         'saved_voices',
@@ -2368,6 +2749,17 @@ class DatabaseHelper {
         whereArgs: [id],
       );
       await txn.delete('conversations', where: 'id = ?', whereArgs: [id]);
+      await txn.delete(
+        'message_revisions',
+        where: 'conversation_id = ?',
+        whereArgs: [id],
+      );
+      await txn.delete(
+        'pending_memory_actions',
+        where:
+            "source_conversation_id = ? AND status IN ('pending','snoozed','failed','stale')",
+        whereArgs: [id],
+      );
       return files;
     });
     await AppFileSafety.deleteOwnedFiles(filesToDelete);
@@ -2379,7 +2771,16 @@ class DatabaseHelper {
 
   static Future<int> insertMessage(Message msg) async {
     final db = await database;
-    final id = await db.insert('messages', msg.toMap());
+    final id = await db.transaction<int>((txn) async {
+      final row = msg.toMap();
+      if (!msg.isUser) {
+        row['reply_to_message_id'] = await ReplyVariants._precedingUser(
+          txn,
+          msg.conversationId,
+        );
+      }
+      return txn.insert('messages', row);
+    });
     await updateConversation(msg.conversationId);
     return id;
   }
@@ -2694,6 +3095,14 @@ class DatabaseHelper {
       );
       if (rows.isEmpty) return const <String>[];
       final row = rows.single;
+      await ReplyVariants._clearPending(txn, id);
+      if (row['is_user'] == 1) {
+        await txn.delete(
+          'message_revisions',
+          where: 'reply_user_message_id = ?',
+          whereArgs: [id],
+        );
+      }
       await _archiveMessageRevision(txn, row, reason: reason);
       await _invalidateSummaryChainForMessage(
         txn,
@@ -2702,7 +3111,10 @@ class DatabaseHelper {
         reason: reason,
       );
       await txn.delete('messages', where: 'id = ?', whereArgs: [id]);
-      return rows.expand(_imagePathsFromRow).toSet().toList();
+      // Regenerated replies may be selected again; keep their referenced media.
+      return reason == 'reroll' && row['is_user'] == 0
+          ? const <String>[]
+          : rows.expand(_imagePathsFromRow).toSet().toList();
     });
     await AppFileSafety.deleteOwnedFiles(imagePaths);
   }
@@ -2728,6 +3140,7 @@ class DatabaseHelper {
         final messageId = row['id'] as int?;
         final conversationId = row['conversation_id'] as String?;
         if (messageId == null || conversationId == null) continue;
+        await ReplyVariants._clearPending(txn, messageId);
         await _archiveMessageRevision(txn, row, reason: reason);
         await _invalidateSummaryChainForMessage(
           txn,
@@ -2896,6 +3309,14 @@ class DatabaseHelper {
       if (rows.isEmpty) return;
       final row = rows.single;
       if ((row['text'] as String? ?? '') == newText) return;
+      await ReplyVariants._clearPending(txn, id);
+      if (row['is_user'] == 1) {
+        await txn.delete(
+          'message_revisions',
+          where: 'reply_user_message_id = ?',
+          whereArgs: [id],
+        );
+      }
       await _archiveMessageRevision(txn, row, reason: 'edit');
       await _invalidateSummaryChainForMessage(
         txn,
@@ -2905,9 +3326,55 @@ class DatabaseHelper {
       );
       await txn.rawUpdate(
         'UPDATE messages SET text = ?, revision = revision + 1, '
-        'summary_recorded = 0 WHERE id = ?',
-        <Object?>[newText, id],
+        'summary_recorded = 0, persona_card_json = ? WHERE id = ?',
+        <Object?>[newText, '', id],
       );
+    });
+  }
+
+  static Future<bool> updateMessagePersonaCard(
+    int messageId,
+    PersonaCardState state,
+  ) async {
+    final db = await database;
+    final updated = await db.update(
+      'messages',
+      <String, Object?>{'persona_card_json': state.encode()},
+      where: 'id = ? AND is_user = 0',
+      whereArgs: <Object?>[messageId],
+    );
+    return updated == 1;
+  }
+
+  /// Atomically creates the character and converts its source reply's draft
+  /// card into the persistent "added" state. If that reply was removed first,
+  /// nothing is created, preventing an orphan character from a stale card tap.
+  static Future<bool> addCharacterFromPersonaCard({
+    required int messageId,
+    required Map<String, Object?> character,
+    required PersonaCardState cardState,
+  }) async {
+    final db = await database;
+    return db.transaction<bool>((txn) async {
+      final rows = await txn.query(
+        'messages',
+        columns: <String>['id'],
+        where: 'id = ? AND is_user = 0',
+        whereArgs: <Object?>[messageId],
+        limit: 1,
+      );
+      if (rows.isEmpty) return false;
+      await txn.insert('characters', character);
+      final updated = await txn.update(
+        'messages',
+        <String, Object?>{'persona_card_json': cardState.encode()},
+        where: 'id = ? AND is_user = 0',
+        whereArgs: <Object?>[messageId],
+      );
+      if (updated != 1) {
+        throw StateError('Source reply disappeared while adding character.');
+      }
+      return true;
     });
   }
 
@@ -2919,11 +3386,30 @@ class DatabaseHelper {
     final messageId = row['id'] as int?;
     final conversationId = row['conversation_id'] as String?;
     if (messageId == null || conversationId == null) return;
+    final userId = row['is_user'] == 0
+        ? row['reply_to_message_id'] ??
+              await ReplyVariants._precedingUser(
+                db,
+                conversationId,
+                beforeId: messageId,
+              )
+        : null;
+    final snapshot = Map<String, Object?>.from(row);
+    if (userId != null) {
+      final prompts = await db.query(
+        'messages',
+        where: 'id = ? AND conversation_id = ? AND is_user = 1',
+        whereArgs: [userId, conversationId],
+        limit: 1,
+      );
+      if (prompts.isNotEmpty) snapshot['reply_user_snapshot'] = prompts.single;
+    }
     await db.insert('message_revisions', <String, Object?>{
       'message_id': messageId,
       'conversation_id': conversationId,
+      'reply_user_message_id': userId,
       'revision': row['revision'] as int? ?? 1,
-      'snapshot_json': jsonEncode(row),
+      'snapshot_json': jsonEncode(snapshot),
       'archive_reason': reason,
       'archived_at': DateTime.now().toIso8601String(),
     }, conflictAlgorithm: ConflictAlgorithm.ignore);
@@ -3037,6 +3523,10 @@ class DatabaseHelper {
       'DELETE FROM context_keywords WHERE source_summary_id IN ($placeholders)',
       <Object?>[...invalidIds],
     );
+    // Keep the immutable segment snapshot for audit and repair. All recall
+    // readers join against context_summaries.revision_status='valid', so these
+    // rows cannot leak stale story facts. Deleting them here used to make a
+    // temporarily failed repair permanently lose its recall labels.
     // RP mutable state is a projection of one summary revision. Once that
     // revision is invalid, keeping its machine-written state would leak a
     // ghost injury, promise, identity or scene into the next reply. User edits
@@ -3056,6 +3546,31 @@ class DatabaseHelper {
       editedConversationId: conversationId,
       editedMessageId: messageId,
     );
+
+    // Invalidating a newer archived summary removes its active keyword rows.
+    // Refill every missing label from still-valid archived summaries; otherwise
+    // earlier labels lost under the legacy bounded index never return.
+    final affectedScopes = <String, Map<String, Object?>>{};
+    for (final summary in affected) {
+      final characterId = summary['character_id']?.toString().trim() ?? '';
+      final mode = summary['context_mode']?.toString().trim() ?? 'daily';
+      final continuity = summary['continuity_id']?.toString().trim() ?? 'main';
+      if (characterId.isEmpty) continue;
+      affectedScopes['$characterId\u0000$mode\u0000$continuity'] =
+          <String, Object?>{
+            'character_id': characterId,
+            'context_mode': mode,
+            'continuity_id': continuity,
+          };
+    }
+    for (final scope in affectedScopes.values) {
+      await _restoreArchivedSummaryKeywords(
+        db,
+        characterId: scope['character_id']! as String,
+        contextMode: ContextMode.fromStorage(scope['context_mode']?.toString()),
+        continuityId: scope['continuity_id']! as String,
+      );
+    }
 
     final anchorsByConversation = <String, Set<int>>{};
     for (final row in affected) {
@@ -4024,13 +4539,15 @@ class DatabaseHelper {
     );
     await txn.delete(
       'emotion_points',
-      where: 'character_id = ? AND memory_id = ?',
-      whereArgs: [characterId, memoryId],
+      // memory id 全域唯一；不能再限角色 id，否則會漏掉 RP 範圍的情緒點。
+      where: 'memory_id = ?',
+      whereArgs: [memoryId],
     );
     await txn.delete(
       'grudge_seals',
-      where: 'character_id = ? AND memory_id = ?',
-      whereArgs: [characterId, memoryId],
+      // memory id 全域唯一；不能再限角色 id，否則會漏掉 RP 範圍的情緒點。
+      where: 'memory_id = ?',
+      whereArgs: [memoryId],
     );
     await txn.delete(
       'character_timeline',
@@ -4458,6 +4975,7 @@ class DatabaseHelper {
     required String provider,
     required String model,
     String characterId = 'default',
+    String conversationId = '',
     int promptTokens = 0,
     int completionTokens = 0,
     int cacheHitTokens = 0,
@@ -4472,6 +4990,7 @@ class DatabaseHelper {
       'provider': provider,
       'model': model,
       'character_id': characterId,
+      'conversation_id': conversationId,
       'prompt_tokens': promptTokens,
       'completion_tokens': completionTokens,
       'cache_hit_tokens': cacheHitTokens,
@@ -4862,6 +5381,8 @@ class DatabaseHelper {
     bool allowPendingRepairs = false,
     ContextMode contextMode = ContextMode.daily,
     String continuityId = 'main',
+    List<ContextSummarySegmentDraft> recallSegments =
+        const <ContextSummarySegmentDraft>[],
   }) async {
     final db = await database;
     return db.transaction<int>((txn) async {
@@ -4998,6 +5519,17 @@ class DatabaseHelper {
         'revision': (replacement?['revision'] as int? ?? 0) + 1,
         'created_at': createdAt,
       });
+      await _replaceContextSummarySegments(
+        txn,
+        summaryId: id,
+        characterId: characterId,
+        contextMode: contextMode,
+        continuityId: continuityId,
+        sourceWindowId: sourceWindowId,
+        sourceConversationId: sourceConversationId,
+        createdAt: createdAt,
+        segments: recallSegments,
+      );
       final anchor = displayAnchor ?? displayAnchorMessageId;
       if (anchor != null && sourceConversationId.isNotEmpty) {
         await txn.update(
@@ -5028,6 +5560,8 @@ class DatabaseHelper {
     bool allowPendingRepairs = false,
     ContextMode contextMode = ContextMode.daily,
     String continuityId = 'main',
+    List<ContextSummarySegmentDraft> recallSegments =
+        const <ContextSummarySegmentDraft>[],
   }) async {
     final db = await database;
     return db.transaction<int>((txn) async {
@@ -5075,6 +5609,7 @@ class DatabaseHelper {
         continuityId: continuityId,
       );
       final displayAnchorId = displayAnchorMessageId ?? cursorMessageId;
+      final createdAt = DateTime.now().toIso8601String();
       final id = await txn.insert('context_summaries', {
         'character_id': characterId,
         'source_window_id': sourceWindowId,
@@ -5089,8 +5624,19 @@ class DatabaseHelper {
         'story_time_text': storyTimeText,
         'content': content,
         'token_count': tokenCount,
-        'created_at': DateTime.now().toIso8601String(),
+        'created_at': createdAt,
       });
+      await _replaceContextSummarySegments(
+        txn,
+        summaryId: id,
+        characterId: characterId,
+        contextMode: contextMode,
+        continuityId: continuityId,
+        sourceWindowId: sourceWindowId,
+        sourceConversationId: conversationId,
+        createdAt: createdAt,
+        segments: recallSegments,
+      );
       final changed = await txn.rawUpdate(
         '''
         UPDATE conversations
@@ -5135,6 +5681,191 @@ class DatabaseHelper {
       limit: 1,
     );
     return rows.isEmpty ? null : rows.first['id'] as int?;
+  }
+
+  static Future<void> _replaceContextSummarySegments(
+    DatabaseExecutor db, {
+    required int summaryId,
+    required String characterId,
+    required ContextMode contextMode,
+    required String continuityId,
+    required String sourceWindowId,
+    required String sourceConversationId,
+    required String createdAt,
+    required List<ContextSummarySegmentDraft> segments,
+  }) async {
+    await db.delete(
+      'context_summary_segments',
+      where: 'source_summary_id = ?',
+      whereArgs: <Object?>[summaryId],
+    );
+    final usedOrders = <int>{};
+    for (final segment in segments) {
+      final content = segment.content.trim();
+      final keywords = segment.keywords
+          .map((value) => value.trim())
+          .where((value) => value.isNotEmpty)
+          .toSet()
+          .take(1)
+          .toList(growable: false);
+      if (content.isEmpty ||
+          keywords.isEmpty ||
+          !usedOrders.add(segment.order)) {
+        continue;
+      }
+      await db.insert('context_summary_segments', <String, Object?>{
+        'source_summary_id': summaryId,
+        'character_id': characterId,
+        'context_mode': contextMode.storageValue,
+        'continuity_id': continuityId,
+        'source_window_id': sourceWindowId,
+        'source_conversation_id': sourceConversationId,
+        'segment_order': segment.order,
+        'title': segment.title.trim(),
+        'content': content,
+        'keywords': keywords.join(', '),
+        'token_count': segment.tokenCount,
+        'created_at': createdAt,
+      });
+    }
+  }
+
+  static Future<List<Map<String, dynamic>>> getContextSummarySegments(
+    String characterId, {
+    required ContextMode contextMode,
+    required String continuityId,
+    bool archivedOnly = false,
+  }) async {
+    final db = await database;
+    return db.rawQuery(
+      '''
+      SELECT segment.*, summary.archived, summary.revision_status
+      FROM context_summary_segments AS segment
+      INNER JOIN context_summaries AS summary
+        ON summary.id = segment.source_summary_id
+      WHERE segment.character_id = ?
+        AND segment.context_mode = ?
+        AND segment.continuity_id = ?
+        AND summary.revision_status = 'valid'
+        ${archivedOnly ? 'AND summary.archived = 1' : ''}
+      ORDER BY segment.created_at ASC, segment.source_summary_id ASC,
+        segment.segment_order ASC
+      ''',
+      <Object?>[characterId, contextMode.storageValue, continuityId],
+    );
+  }
+
+  /// 已在本次 App 生命週期內跑過標籤自修復的 RP 範圍（角色|故事線）。
+  /// 修復本身是寫入路徑，不該每輪聊天都跑；歸檔與手動摘要會另外主動呼叫。
+  static final Set<String> _recallIndexHealedScopes = <String>{};
+
+  /// 關鍵詞召回的輕量索引：只撈比對需要的欄位，**不撈摘要全文**。
+  /// RP：有效 segment ＋ 尚未被 segment 覆蓋的舊版標籤；日常：標籤。
+  /// 命中後再用 [fillRecallContents] 只撈候選的全文。
+  static Future<List<Map<String, dynamic>>> getRecallIndexRows(
+    String characterId, {
+    required ContextMode contextMode,
+    required String continuityId,
+  }) async {
+    final db = await database;
+    final rows = <Map<String, dynamic>>[];
+    if (contextMode == ContextMode.rp) {
+      if (_recallIndexHealedScopes.add('$characterId|$continuityId')) {
+        await restoreArchivedSummaryKeywords(
+          characterId: characterId,
+          contextMode: contextMode,
+          continuityId: continuityId,
+        );
+      }
+      final segments = await db.rawQuery(
+        '''
+        SELECT segment.id, segment.source_summary_id, segment.segment_order,
+          segment.title, segment.keywords, segment.source_window_id,
+          segment.created_at
+        FROM context_summary_segments AS segment
+        INNER JOIN context_summaries AS summary
+          ON summary.id = segment.source_summary_id
+        WHERE segment.character_id = ?
+          AND segment.context_mode = ?
+          AND segment.continuity_id = ?
+          AND summary.revision_status = 'valid'
+        ORDER BY segment.created_at ASC, segment.source_summary_id ASC,
+          segment.segment_order ASC
+        ''',
+        <Object?>[characterId, contextMode.storageValue, continuityId],
+      );
+      for (final row in segments) {
+        rows.add(<String, dynamic>{...row, 'recall_kind': 'segment'});
+      }
+    }
+    final indexedSummaryIds = rows
+        .map((row) => row['source_summary_id'])
+        .whereType<int>()
+        .toSet();
+    final labels = await db.query(
+      'context_keywords',
+      columns: const <String>[
+        'id',
+        'source_summary_id',
+        'keywords',
+        'source_window_id',
+        'created_at',
+      ],
+      where: 'character_id = ? AND context_mode = ? AND continuity_id = ?',
+      whereArgs: <Object?>[
+        characterId,
+        contextMode.storageValue,
+        continuityId,
+      ],
+      orderBy: 'created_at ASC',
+    );
+    for (final row in labels) {
+      if (indexedSummaryIds.contains(row['source_summary_id'])) continue;
+      rows.add(<String, dynamic>{...row, 'recall_kind': 'keyword'});
+    }
+    return rows;
+  }
+
+  /// 只替召回候選補上全文（`source_summary_content`），保持傳入順序。
+  static Future<List<Map<String, dynamic>>> fillRecallContents(
+    List<Map<String, dynamic>> candidates,
+  ) async {
+    if (candidates.isEmpty) return const <Map<String, dynamic>>[];
+    final db = await database;
+    Future<Map<int, String>> load(String sql, List<int> ids) async {
+      if (ids.isEmpty) return const <int, String>{};
+      final placeholders = List.filled(ids.length, '?').join(',');
+      final result = await db.rawQuery('$sql ($placeholders)', ids);
+      return <int, String>{
+        for (final row in result)
+          row['id'] as int: row['content'] as String? ?? '',
+      };
+    }
+
+    List<int> idsOf(String kind) => <int>[
+      for (final row in candidates)
+        if (row['recall_kind'] == kind && row['id'] is int) row['id'] as int,
+    ];
+    final segmentContents = await load(
+      'SELECT id, content FROM context_summary_segments WHERE id IN',
+      idsOf('segment'),
+    );
+    final labelContents = await load(
+      'SELECT id, source_summary_content AS content '
+      'FROM context_keywords WHERE id IN',
+      idsOf('keyword'),
+    );
+    return <Map<String, dynamic>>[
+      for (final row in candidates)
+        <String, dynamic>{
+          ...row,
+          'source_summary_content':
+              (row['recall_kind'] == 'segment'
+                  ? segmentContents
+                  : labelContents)[row['id']] ??
+              '',
+        },
+    ];
   }
 
   static Future<bool> _sourceMessagesMatch(
@@ -5201,14 +5932,41 @@ class DatabaseHelper {
     bool includeArchived = false,
   }) async {
     final db = await database;
-    return await db.query(
-      'context_summaries',
-      where:
-          'character_id = ? AND context_mode = ? AND continuity_id = ?'
-          " AND revision_status = 'valid'"
-          '${includeArchived ? '' : ' AND archived = 0'}',
-      whereArgs: [characterId, contextMode.storageValue, continuityId],
-      orderBy: 'created_at ASC, id ASC',
+    return await db.rawQuery(
+      '''
+      SELECT summary.*,
+             COALESCE(
+               source_end.created_at,
+               source_anchor.created_at,
+               source_start.created_at,
+               summary.created_at
+             ) AS source_chronology_at,
+             COALESCE(
+               summary.source_message_end_id,
+               summary.display_anchor_message_id,
+               summary.source_message_start_id,
+               summary.id
+             ) AS source_chronology_id
+      FROM context_summaries AS summary
+      LEFT JOIN messages AS source_end
+        ON source_end.id = summary.source_message_end_id
+       AND source_end.conversation_id = summary.source_conversation_id
+      LEFT JOIN messages AS source_anchor
+        ON source_anchor.id = summary.display_anchor_message_id
+       AND source_anchor.conversation_id = summary.source_conversation_id
+      LEFT JOIN messages AS source_start
+        ON source_start.id = summary.source_message_start_id
+       AND source_start.conversation_id = summary.source_conversation_id
+      WHERE summary.character_id = ?
+        AND summary.context_mode = ?
+        AND summary.continuity_id = ?
+        AND summary.revision_status = 'valid'
+        ${includeArchived ? '' : 'AND summary.archived = 0'}
+      ORDER BY source_chronology_at ASC,
+               source_chronology_id ASC,
+               summary.id ASC
+      ''',
+      <Object?>[characterId, contextMode.storageValue, continuityId],
     );
   }
 
@@ -5255,8 +6013,9 @@ class DatabaseHelper {
   }) async {
     final db = await database;
     final where = StringBuffer(
-      'character_id = ? AND context_mode = ? AND continuity_id = ? AND archived = 0',
-    )..write(" AND revision_status = 'valid'");
+      'summary.character_id = ? AND summary.context_mode = ? '
+      'AND summary.continuity_id = ? AND summary.archived = 0',
+    )..write(" AND summary.revision_status = 'valid'");
     final args = <Object?>[characterId, contextMode.storageValue, continuityId];
     final excluded = (excludeWindowId ?? '').trim();
     if (excluded.isNotEmpty) {
@@ -5265,12 +6024,38 @@ class DatabaseHelper {
       );
       args.add(excluded);
     }
-    return await db.query(
-      'context_summaries',
-      where: where.toString(),
-      whereArgs: args,
-      orderBy: 'created_at DESC, id DESC',
-      limit: limit,
+    return await db.rawQuery(
+      '''
+      SELECT summary.*,
+             COALESCE(
+               source_end.created_at,
+               source_anchor.created_at,
+               source_start.created_at,
+               summary.created_at
+             ) AS source_chronology_at,
+             COALESCE(
+               summary.source_message_end_id,
+               summary.display_anchor_message_id,
+               summary.source_message_start_id,
+               summary.id
+             ) AS source_chronology_id
+      FROM context_summaries AS summary
+      LEFT JOIN messages AS source_end
+        ON source_end.id = summary.source_message_end_id
+       AND source_end.conversation_id = summary.source_conversation_id
+      LEFT JOIN messages AS source_anchor
+        ON source_anchor.id = summary.display_anchor_message_id
+       AND source_anchor.conversation_id = summary.source_conversation_id
+      LEFT JOIN messages AS source_start
+        ON source_start.id = summary.source_message_start_id
+       AND source_start.conversation_id = summary.source_conversation_id
+      WHERE ${where.toString()}
+      ORDER BY source_chronology_at DESC,
+               source_chronology_id DESC,
+               summary.id DESC
+      LIMIT ?
+      ''',
+      <Object?>[...args, limit],
     );
   }
 
@@ -5288,22 +6073,50 @@ class DatabaseHelper {
         .toSet()
         .toList(growable: false);
     final where = StringBuffer(
-      "character_id = ? AND context_mode = ? AND continuity_id = ? "
-      "AND revision_status = 'valid'",
+      "summary.character_id = ? AND summary.context_mode = ? "
+      "AND summary.continuity_id = ? "
+      "AND summary.revision_status = 'valid'",
     );
     final args = <Object?>[characterId, contextMode.storageValue, continuityId];
     if (ids.isNotEmpty) {
       where.write(
-        ' AND source_conversation_id IN (${List.filled(ids.length, '?').join(',')})',
+        ' AND summary.source_conversation_id IN '
+        '(${List.filled(ids.length, '?').join(',')})',
       );
       args.addAll(ids);
     }
-    final rows = await db.query(
-      'context_summaries',
-      where: where.toString(),
-      whereArgs: args,
-      orderBy: 'created_at DESC, id DESC',
-      limit: limit.clamp(1, 10),
+    final rows = await db.rawQuery(
+      '''
+      SELECT summary.*,
+             COALESCE(
+               source_end.created_at,
+               source_anchor.created_at,
+               source_start.created_at,
+               summary.created_at
+             ) AS source_chronology_at,
+             COALESCE(
+               summary.source_message_end_id,
+               summary.display_anchor_message_id,
+               summary.source_message_start_id,
+               summary.id
+             ) AS source_chronology_id
+      FROM context_summaries AS summary
+      LEFT JOIN messages AS source_end
+        ON source_end.id = summary.source_message_end_id
+       AND source_end.conversation_id = summary.source_conversation_id
+      LEFT JOIN messages AS source_anchor
+        ON source_anchor.id = summary.display_anchor_message_id
+       AND source_anchor.conversation_id = summary.source_conversation_id
+      LEFT JOIN messages AS source_start
+        ON source_start.id = summary.source_message_start_id
+       AND source_start.conversation_id = summary.source_conversation_id
+      WHERE ${where.toString()}
+      ORDER BY source_chronology_at DESC,
+               source_chronology_id DESC,
+               summary.id DESC
+      LIMIT ?
+      ''',
+      <Object?>[...args, limit.clamp(1, 10)],
     );
     if (rows.isNotEmpty || ids.isEmpty) return rows;
     return getLatestContextSummaries(
@@ -5471,6 +6284,238 @@ class DatabaseHelper {
     });
   }
 
+  /// Archives one RP summary using the segment labels emitted alongside that
+  /// summary. No follow-up model call is allowed in this path.
+  static Future<bool> archiveContextSummaryWithStoredSegments({
+    required int summaryId,
+    required String characterId,
+    required ContextMode contextMode,
+    required String continuityId,
+  }) async {
+    final db = await database;
+    return db.transaction<bool>((txn) async {
+      final rows = await txn.query(
+        'context_summaries',
+        where:
+            'id = ? AND character_id = ? AND context_mode = ? '
+            "AND continuity_id = ? AND archived = 0 "
+            "AND revision_status = 'valid' AND COALESCE(locked, 0) = 0",
+        whereArgs: <Object?>[
+          summaryId,
+          characterId,
+          contextMode.storageValue,
+          continuityId,
+        ],
+        limit: 1,
+      );
+      if (rows.isEmpty) return false;
+      final newest = await txn.query(
+        'context_summaries',
+        columns: const <String>['id'],
+        where:
+            'character_id = ? AND context_mode = ? AND continuity_id = ? '
+            "AND archived = 0 AND revision_status = 'valid'",
+        whereArgs: <Object?>[
+          characterId,
+          contextMode.storageValue,
+          continuityId,
+        ],
+        orderBy: 'created_at DESC, id DESC',
+        limit: 1,
+      );
+      if (newest.isEmpty || newest.first['id'] == summaryId) return false;
+      final segments = await txn.query(
+        'context_summary_segments',
+        where: 'source_summary_id = ?',
+        whereArgs: <Object?>[summaryId],
+        orderBy: 'segment_order ASC',
+      );
+      if (segments.isEmpty) return false;
+      final row = rows.single;
+      for (final segment in segments) {
+        final keywords = segment['keywords']?.toString().trim() ?? '';
+        if (keywords.isEmpty) continue;
+        await txn.insert('context_keywords', <String, Object?>{
+          'character_id': characterId,
+          'source_window_id': row['source_window_id'] as String? ?? '',
+          'source_conversation_id':
+              row['source_conversation_id'] as String? ?? '',
+          'context_mode': contextMode.storageValue,
+          'continuity_id': continuityId,
+          'keywords': keywords,
+          // This cap describes the always-loaded lookup index. The archived
+          // paragraph is injected only after a match, so charging its full
+          // token count here caused valid labels to evict one another.
+          'token_count': _estimateContextKeywordTokens(keywords),
+          'source_summary_id': summaryId,
+          'source_summary_content': segment['content'] as String? ?? '',
+          'created_at':
+              row['created_at'] as String? ?? DateTime.now().toIso8601String(),
+        });
+      }
+      await txn.update(
+        'context_summaries',
+        <String, Object?>{'archived': 1},
+        where: 'id = ?',
+        whereArgs: <Object?>[summaryId],
+      );
+      return true;
+    });
+  }
+
+  /// Marks stale repair jobs covered by a successful user-requested summary.
+  /// Only exact source spans fully contained by the new summary are closed.
+  static Future<int> completeCoveredSummaryRepairs({
+    required String characterId,
+    required ContextMode contextMode,
+    required String continuityId,
+    required String conversationId,
+    required int sourceMessageStartId,
+    required int sourceMessageEndId,
+    required int replacementSummaryId,
+  }) async {
+    final db = await database;
+    return db.update(
+      'context_summary_repairs',
+      <String, Object?>{
+        'status': 'completed',
+        'last_error': 'superseded_by_summary:$replacementSummaryId',
+        'updated_at': DateTime.now().toIso8601String(),
+      },
+      where:
+          'character_id = ? AND context_mode = ? AND continuity_id = ? '
+          'AND source_conversation_id = ? AND status != ? '
+          'AND source_message_start_id >= ? AND source_message_end_id <= ?',
+      whereArgs: <Object?>[
+        characterId,
+        contextMode.storageValue,
+        continuityId,
+        conversationId,
+        'completed',
+        sourceMessageStartId,
+        sourceMessageEndId,
+      ],
+    );
+  }
+
+  /// Rebuilds missing active labels from immutable segments of valid archived
+  /// summaries. This performs no model call and never revives invalid content.
+  static Future<int> restoreArchivedSummaryKeywords({
+    required String characterId,
+    required ContextMode contextMode,
+    required String continuityId,
+  }) async {
+    final db = await database;
+    return db.transaction<int>(
+      (txn) => _restoreArchivedSummaryKeywords(
+        txn,
+        characterId: characterId,
+        contextMode: contextMode,
+        continuityId: continuityId,
+      ),
+    );
+  }
+
+  static Future<int> _restoreArchivedSummaryKeywords(
+    DatabaseExecutor db, {
+    required String characterId,
+    required ContextMode contextMode,
+    required String continuityId,
+  }) async {
+    final existing = await db.query(
+      'context_keywords',
+      where: 'character_id = ? AND context_mode = ? AND continuity_id = ?',
+      whereArgs: <Object?>[characterId, contextMode.storageValue, continuityId],
+    );
+    for (final row in existing) {
+      final keywords = row['keywords']?.toString().trim() ?? '';
+      final corrected = _estimateContextKeywordTokens(keywords);
+      if ((row['token_count'] as int? ?? 0) != corrected) {
+        await db.update(
+          'context_keywords',
+          <String, Object?>{'token_count': corrected},
+          where: 'id = ?',
+          whereArgs: <Object?>[row['id']],
+        );
+      }
+    }
+
+    final summaries = await db.rawQuery(
+      '''
+      SELECT summary.*
+      FROM context_summaries AS summary
+      WHERE summary.character_id = ?
+        AND summary.context_mode = ?
+        AND summary.continuity_id = ?
+        AND summary.archived = 1
+        AND summary.revision_status = 'valid'
+        AND EXISTS (
+          SELECT 1 FROM context_summary_segments AS segment
+          WHERE segment.source_summary_id = summary.id
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM context_keywords AS keyword
+          WHERE keyword.source_summary_id = summary.id
+        )
+      ORDER BY summary.created_at DESC, summary.id DESC
+      ''',
+      <Object?>[characterId, contextMode.storageValue, continuityId],
+    );
+
+    var inserted = 0;
+    for (final summary in summaries) {
+      final summaryId = summary['id'] as int?;
+      if (summaryId == null) continue;
+      final segments = await db.query(
+        'context_summary_segments',
+        where: 'source_summary_id = ?',
+        whereArgs: <Object?>[summaryId],
+        orderBy: 'segment_order ASC',
+      );
+      for (final segment in segments) {
+        final keywords = segment['keywords']?.toString().trim() ?? '';
+        final content = segment['content']?.toString().trim() ?? '';
+        if (keywords.isEmpty || content.isEmpty) continue;
+        final cost = _estimateContextKeywordTokens(keywords);
+        await db.insert('context_keywords', <String, Object?>{
+          'character_id': characterId,
+          'source_window_id': summary['source_window_id'] as String? ?? '',
+          'source_conversation_id':
+              summary['source_conversation_id'] as String? ?? '',
+          'context_mode': contextMode.storageValue,
+          'continuity_id': continuityId,
+          'keywords': keywords,
+          'token_count': cost,
+          'source_summary_id': summaryId,
+          'source_summary_content': content,
+          'created_at':
+              summary['created_at']?.toString() ??
+              DateTime.now().toIso8601String(),
+        });
+        inserted++;
+      }
+    }
+    return inserted;
+  }
+
+  static int _estimateContextKeywordTokens(String text) {
+    final trimmed = text.trim();
+    if (trimmed.isEmpty) return 0;
+    // Retrieval labels are mostly CJK phrases. Four Latin characters per token
+    // underestimates CJK badly, so count CJK runes directly and group the rest.
+    var cjk = 0;
+    var other = 0;
+    for (final rune in trimmed.runes) {
+      if ((rune >= 0x3400 && rune <= 0x9fff) ||
+          (rune >= 0xf900 && rune <= 0xfaff)) {
+        cjk++;
+      } else if (rune > 0x20) {
+        other++;
+      }
+    }
+    return max(1, cjk + ((other + 3) ~/ 4));
+  }
+
   /// 更新摘要鎖定狀態
   static Future<void> updateSummaryLockState({
     required int id,
@@ -5491,6 +6536,11 @@ class DatabaseHelper {
     await db.transaction((txn) async {
       await txn.delete(
         'context_keywords',
+        where: 'source_summary_id = ?',
+        whereArgs: [id],
+      );
+      await txn.delete(
+        'context_summary_segments',
         where: 'source_summary_id = ?',
         whereArgs: [id],
       );
@@ -5556,6 +6606,17 @@ class DatabaseHelper {
     ContextMode contextMode = ContextMode.daily,
     String continuityId = 'main',
   }) async {
+    // One-time/idempotent self-heal for databases whose older RP labels were
+    // evicted by the former 1800-token cap. Keep it out of repeated UI reads
+    // and the per-message recall path after this scope has been healed once.
+    if (contextMode == ContextMode.rp &&
+        _recallIndexHealedScopes.add('$characterId|$continuityId')) {
+      await restoreArchivedSummaryKeywords(
+        characterId: characterId,
+        contextMode: contextMode,
+        continuityId: continuityId,
+      );
+    }
     final db = await database;
     return await db.query(
       'context_keywords',

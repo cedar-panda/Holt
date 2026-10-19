@@ -31,8 +31,6 @@ void main() {
       await image.writeAsBytes(<int>[1, 2, 3, 4, 5]);
       final secondImage = File(p.join(owned.path, 'chat image 2.png'));
       await secondImage.writeAsBytes(<int>[6, 7, 8, 9]);
-      final outside = File(p.join(root.path, 'outside.png'));
-      await outside.writeAsBytes(<int>[9, 9, 9]);
       final database = File(p.join(root.path, 'yanci.db'));
       await database.writeAsBytes(<int>[83, 81, 76, 105, 116, 101]);
       final output = File(p.join(root.path, 'backup.holt.zip'));
@@ -51,8 +49,22 @@ void main() {
           'stickers': <Object?>[
             <String, Object?>{'file_path': image.path},
           ],
+          'message_revisions': [
+            {
+              'snapshot_json': jsonEncode({
+                'text': 'archived reply',
+                'image_path': secondImage.path,
+                'image_paths_json': jsonEncode([secondImage.path]),
+                'reply_user_snapshot': {
+                  'text': 'original prompt',
+                  'image_path': image.path,
+                  'image_paths_json': jsonEncode([image.path]),
+                },
+              }),
+            },
+          ],
           'characters': <Object?>[
-            <String, Object?>{'avatar_path': outside.path},
+            <String, Object?>{'avatar_path': secondImage.path},
           ],
           'preferences': <String, Object?>{'user_avatar_path': image.path},
         },
@@ -90,15 +102,48 @@ void main() {
       final restoredImages =
           jsonDecode(messageRow['image_paths_json'] as String) as List<dynamic>;
       expect(restoredImages, hasLength(2));
+      final revision =
+          (extracted.data['message_revisions'] as List).single as Map;
+      final oldReply = jsonDecode(revision['snapshot_json'] as String) as Map;
+      expect(oldReply['image_path'], restoredImages[1]);
+      expect(
+        (oldReply['reply_user_snapshot'] as Map)['image_path'],
+        messagePath,
+      );
       expect(await File(restoredImages[1] as String).readAsBytes(), <int>[
         6,
         7,
         8,
         9,
       ]);
-      expect(
-        ((extracted.data['characters'] as List).single as Map)['avatar_path'],
-        isNull,
+      final characterPath =
+          ((extracted.data['characters'] as List).single as Map)['avatar_path']
+              as String;
+      expect(characterPath, restoredImages[1]);
+    },
+  );
+
+  test(
+    'portable bundle refuses to silently drop required user media',
+    () async {
+      final outside = File(p.join(root.path, 'outside.png'));
+      await outside.writeAsBytes(<int>[9, 9, 9]);
+      final database = File(p.join(root.path, 'yanci.db'));
+      await database.writeAsBytes(<int>[83, 81, 76, 105, 116, 101]);
+
+      await expectLater(
+        PortableBackupBundle.create(
+          backupData: <String, Object?>{
+            'characters': <Object?>[
+              <String, Object?>{'avatar_path': outside.path},
+            ],
+          },
+          databaseSnapshot: database,
+          ownedRoot: owned,
+          workingRoot: working,
+          outputFile: File(p.join(root.path, 'should_not_exist.holt.zip')),
+        ),
+        throwsA(isA<StateError>()),
       );
     },
   );

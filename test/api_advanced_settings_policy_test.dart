@@ -29,13 +29,13 @@ void main() {
     },
   );
 
-  testWidgets('cache summary exposes its token trigger control', (
+  testWidgets('cache summary exposes its message trigger control', (
     tester,
   ) async {
     SharedPreferences.setMockInitialValues(<String, Object>{
       'enable_prompt_caching': true,
       'cache_window_summary_enabled': true,
-      'context_window_summary_trigger_tokens': 4321,
+      'cache_summary_trigger_messages_v1': 18,
     });
     await L.setLocale('zh_TW');
 
@@ -54,7 +54,7 @@ void main() {
     expect(find.text('累積至'), findsOneWidget);
     expect(
       tester.widget<TextField>(find.byType(TextField).first).controller!.text,
-      '4321',
+      '18',
     );
   });
 

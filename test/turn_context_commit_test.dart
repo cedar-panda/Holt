@@ -217,21 +217,31 @@ void main() {
     expect(await _mentionCount(db, id), 1);
   });
 
+  test('memory prompt is empty when no memory is recalled', () async {
+    final draft = await Retriever.buildMemoryPrompt(
+      currentMessage: '全新的話題',
+      characterId: 'char-without-memory',
+      windowId: 'window-without-memory',
+    );
+
+    expect(draft.isNotEmpty, isFalse);
+  });
+
   test('self notes discard exact and 90-percent duplicate variants', () async {
     expect(
-      await DatabaseHelper.appendSelfNote('char-a', '我會在昭昭難過的時候先安靜地陪著他。'),
+      await DatabaseHelper.appendSelfNote('char-a', '我會在小禾難過的時候先安靜地陪著他。'),
       isTrue,
     );
     expect(
-      await DatabaseHelper.appendSelfNote('char-a', '我會在昭昭難過的時候先安靜地陪著他'),
+      await DatabaseHelper.appendSelfNote('char-a', '我會在小禾難過的時候先安靜地陪著他'),
       isFalse,
     );
     expect(
-      await DatabaseHelper.appendSelfNote('char-a', '我會在昭昭難過的時候先安靜地陪着他'),
+      await DatabaseHelper.appendSelfNote('char-a', '我會在小禾難過的時候先安靜地陪着他'),
       isFalse,
     );
     expect(
-      await DatabaseHelper.appendSelfNote('char-a', '我發現自己其實很依賴昭昭給我的安全感'),
+      await DatabaseHelper.appendSelfNote('char-a', '我發現自己其實很依賴小禾給我的安全感'),
       isTrue,
     );
 
@@ -242,23 +252,23 @@ void main() {
   test(
     'deleting a self note leaves the conversation static snapshot intact',
     () async {
-      await DatabaseHelper.appendSelfNote('char-a', '昭昭喜歡下雨天');
-      await DatabaseHelper.appendSelfNote('char-a', '昭昭嘴硬時其實想被抱住');
+      await DatabaseHelper.appendSelfNote('char-a', '小禾喜歡下雨天');
+      await DatabaseHelper.appendSelfNote('char-a', '小禾嘴硬時其實想被抱住');
       await DatabaseHelper.createConversation(
         Conversation(id: 'conv-a', characterId: 'char-a'),
       );
       await db.update(
         'conversations',
-        {'pinned_static_self_notes': '· 昭昭喜歡下雨天\n· 昭昭嘴硬時其實想被抱住'},
+        {'pinned_static_self_notes': '· 小禾喜歡下雨天\n· 小禾嘴硬時其實想被抱住'},
         where: 'id = ?',
         whereArgs: ['conv-a'],
       );
 
-      expect(await DatabaseHelper.deleteSelfNote('char-a', '昭昭喜歡下雨天'), isTrue);
-      expect(await DatabaseHelper.getSelfNotes('char-a'), '· 昭昭嘴硬時其實想被抱住');
+      expect(await DatabaseHelper.deleteSelfNote('char-a', '小禾喜歡下雨天'), isTrue);
+      expect(await DatabaseHelper.getSelfNotes('char-a'), '· 小禾嘴硬時其實想被抱住');
       expect(
         await DatabaseHelper.getConversationPinnedSelfNotes('conv-a'),
-        '· 昭昭喜歡下雨天\n· 昭昭嘴硬時其實想被抱住',
+        '· 小禾喜歡下雨天\n· 小禾嘴硬時其實想被抱住',
       );
     },
   );
@@ -270,12 +280,12 @@ void main() {
         'characters',
         {
           'self_notes': '''
-· 我會在昭昭難過的時候先安靜地陪著他
-· 我會在昭昭難過的時候先安靜地陪著他。
-· 我會在昭昭難過的時候先安靜地陪着他
-· 我不會在昭昭難過的時候先安靜地陪著他
-· 我會記得昭昭每天要吃2顆藥
-· 我會記得昭昭每天要吃3顆藥
+· 我會在小禾難過的時候先安靜地陪著他
+· 我會在小禾難過的時候先安靜地陪著他。
+· 我會在小禾難過的時候先安靜地陪着他
+· 我不會在小禾難過的時候先安靜地陪著他
+· 我會記得小禾每天要吃2顆藥
+· 我會記得小禾每天要吃3顆藥
 ''',
         },
         where: 'id = ?',
@@ -284,8 +294,8 @@ void main() {
 
       final notes = await DatabaseHelper.getSelfNotes('char-a');
       expect(notes.split('\n'), hasLength(4));
-      expect(notes, contains('我會在昭昭難過的時候先安靜地陪著他'));
-      expect(notes, contains('我不會在昭昭難過的時候先安靜地陪著他'));
+      expect(notes, contains('我會在小禾難過的時候先安靜地陪著他'));
+      expect(notes, contains('我不會在小禾難過的時候先安靜地陪著他'));
       expect(notes, contains('每天要吃2顆藥'));
       expect(notes, contains('每天要吃3顆藥'));
       final stored = (await db.query(

@@ -688,6 +688,7 @@ class _VoiceCallScreenState extends State<VoiceCallScreen> {
                                             'eleven_multilingual_v2':
                                                 'Multi v2',
                                             'eleven_v3': 'v3',
+                                            'eleven_v4': 'v4',
                                           }.entries.map((e) {
                                             final isActive =
                                                 _ttsElevenlabsModel == e.key;

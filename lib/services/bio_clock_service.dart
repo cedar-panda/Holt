@@ -982,16 +982,16 @@ class BioClockService {
   static String abilityPrompt() {
     if (L.locale == 'en') {
       return '''■ Bio Clock
-  <clock>HH:MM activity @keyword1,keyword2</clock>
+  {"type":"clock.record","arguments":{"time":"HH:MM","content":"activity","keywords":["keyword"]}}
   Record stable routines when they naturally appear: sleep, meals, shower, work, commute, exercise, medicine, recurring care.
-  Put tags at the very end. Tags are invisible; never explain them in the normal reply. Up to 10 habits.''';
+  Private actions are invisible; never explain them in the normal reply. Up to 10 habits.''';
     }
     return L.pick(
       en: '',
       zhTW: '''■ 生物鐘
-  <clock>HH:MM 活動內容 @關鍵詞1,關鍵詞2</clock>
+  {"type":"clock.record","arguments":{"time":"HH:MM","content":"活動內容","keywords":["關鍵詞"]}}
   自然出現穩定作息時記錄：睡覺、吃飯、洗澡、工作、通勤、運動、吃藥、固定照顧等。
-  標籤放在回覆末尾，對 user 不可見；正文不要解釋你在記錄。上限 10 條。''',
+  私有動作對 user 不可見；正文不要解釋你在記錄。上限 10 條。''',
     );
   }
 

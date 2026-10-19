@@ -97,6 +97,7 @@ extension _ChatEmailDraftMethods on _ChatScreenState {
       memoryLog: message.memoryLog,
       webSearchTrace: message.webSearchTrace,
       emailDraft: draft,
+      personaCard: message.personaCard,
       createdAt: message.createdAt,
     );
   }

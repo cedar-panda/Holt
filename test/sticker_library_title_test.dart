@@ -10,11 +10,15 @@ void main() {
     );
     final characterTitle = stickerLibraryTitle(
       characterId: 'character-1',
-      characterName: '晏辭',
+      characterName: '顧遠',
+    );
+    final personaTitle = stickerLibraryTitle(
+      characterId: StickerService.userBucketForPersona('persona-1'),
     );
 
     expect(userTitle, L.get('me_sticker'));
-    expect(characterTitle, contains('晏辭'));
+    expect(personaTitle, L.get('me_sticker'));
+    expect(characterTitle, contains('顧遠'));
     expect(characterTitle, isNot(userTitle));
   });
 

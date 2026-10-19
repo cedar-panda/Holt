@@ -34,11 +34,17 @@ class _RpStoryRelationshipScreenState extends State<RpStoryRelationshipScreen> {
   @override
   void initState() {
     super.initState();
+    RpStoryService.revision.addListener(_handleStoryRevision);
     _load();
+  }
+
+  void _handleStoryRevision() {
+    if (mounted) _load();
   }
 
   @override
   void dispose() {
+    RpStoryService.revision.removeListener(_handleStoryRevision);
     _searchController.dispose();
     super.dispose();
   }
@@ -761,7 +767,7 @@ class _RpStoryRelationshipScreenState extends State<RpStoryRelationshipScreen> {
                   Padding(
                     padding: const EdgeInsets.only(top: 5),
                     child: Text(
-                      '「${row['evidence']}」 · #${row['source_conversation_id']} · msg ${row['source_message_ids']}',
+                      '「${row['evidence']}」',
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                       style: YanciTheme.bodySmall.copyWith(
@@ -813,6 +819,16 @@ class _RpStoryRelationshipScreenState extends State<RpStoryRelationshipScreen> {
               color: YanciTheme.textSecondary,
             ),
           ),
+          if ('${row['latest_change'] ?? ''}'.trim().isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: _markdown(
+                '${L.pick(en: 'Latest change', zhTW: '最新變化', zhCN: '最新变化')}：${row['latest_change']}',
+                style: YanciTheme.bodySmall.copyWith(
+                  color: YanciTheme.textSecondary.withValues(alpha: 0.84),
+                ),
+              ),
+            ),
           if ('${row['origin'] ?? ''}'.trim().isNotEmpty)
             Padding(
               padding: const EdgeInsets.only(top: 3),
@@ -827,7 +843,7 @@ class _RpStoryRelationshipScreenState extends State<RpStoryRelationshipScreen> {
             Padding(
               padding: const EdgeInsets.only(top: 4),
               child: Text(
-                '「${row['evidence']}」 · #${row['source_conversation_id']} · msg ${row['source_message_ids']}',
+                '「${row['evidence']}」',
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
                 style: YanciTheme.bodySmall.copyWith(

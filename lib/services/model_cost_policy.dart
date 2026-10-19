@@ -1,20 +1,25 @@
 import 'settings/memory_settings.dart';
 import 'settings/api_settings.dart';
+import 'cache/gemini_cache_policy.dart';
 import 'token_estimator.dart';
 
 enum ModelCostPolicyNotice {
   none,
-  inklingContextLimitEnabled,
+  inklingContextLimitRecommended,
   claudeCacheRecommended,
 }
+
+enum ModelCostModeRecommendation { promptCache, contextLimit }
 
 class ModelCostPolicyResult {
   final ModelCostPolicyNotice notice;
   final bool changed;
+  final ModelCostModeRecommendation? recommendation;
 
   const ModelCostPolicyResult({
     this.notice = ModelCostPolicyNotice.none,
     this.changed = false,
+    this.recommendation,
   });
 }
 
@@ -34,17 +39,14 @@ class ModelCostPolicy {
   }
 
   static Future<void> setPromptCachingEnabled(bool enabled) async {
-    final wasEnabled = await MemorySettings.getEnablePromptCaching();
-
-    if (enabled && !wasEnabled) {
-      // 母開關重新開啟時，子開關保持關閉，交由用戶明確選擇。
-      await MemorySettings.saveCacheWindowSummaryEnabled(false);
-    }
     await MemorySettings.saveEnablePromptCaching(enabled);
 
     if (enabled) {
       await MemorySettings.saveContextLimitEnabled(false);
       await MemorySettings.saveContextWindowSummaryEnabled(false);
+      await MemorySettings.saveCacheWindowSummaryEnabled(
+        await _hasSummaryModel(),
+      );
     } else {
       await MemorySettings.saveCacheWindowSummaryEnabled(false);
       await MemorySettings.saveKeepAliveEnabled(false);
@@ -52,21 +54,46 @@ class ModelCostPolicy {
   }
 
   static Future<void> setContextLimitEnabled(bool enabled) async {
-    final wasEnabled = await MemorySettings.getContextLimitEnabled();
-
-    if (enabled && !wasEnabled) {
-      // 母開關重新開啟時，不恢復先前遺留的動態摘要狀態。
-      await MemorySettings.saveContextWindowSummaryEnabled(false);
-    }
     await MemorySettings.saveContextLimitEnabled(enabled);
 
     if (enabled) {
       await MemorySettings.saveEnablePromptCaching(false);
       await MemorySettings.saveCacheWindowSummaryEnabled(false);
       await MemorySettings.saveKeepAliveEnabled(false);
+      await MemorySettings.saveContextWindowSummaryEnabled(
+        await _hasSummaryModel(),
+      );
     } else {
       await MemorySettings.saveContextWindowSummaryEnabled(false);
     }
+  }
+
+  static Future<bool> _hasSummaryModel() async {
+    return (await MemorySettings.getSummaryModel()).trim().isNotEmpty;
+  }
+
+  static Future<ModelCostModeRecommendation?> recommendationForSelection({
+    required String provider,
+    required String model,
+  }) async {
+    final normalizedProvider = provider.trim().toLowerCase();
+    if (normalizedProvider == 'local' || model.trim().isEmpty) return null;
+
+    final cacheInfo = TokenEstimator.cacheThresholdInfoForModel(
+      provider: normalizedProvider,
+      model: model,
+    );
+    final cacheAvailable =
+        cacheInfo.kind == CacheThresholdKind.fixed ||
+        cacheInfo.kind == CacheThresholdKind.automaticWithoutPublishedMinimum;
+    if (cacheAvailable) {
+      return await MemorySettings.getEnablePromptCaching()
+          ? null
+          : ModelCostModeRecommendation.promptCache;
+    }
+    return await MemorySettings.getContextLimitEnabled()
+        ? null
+        : ModelCostModeRecommendation.contextLimit;
   }
 
   static Future<ModelCostPolicyResult> applySelection({
@@ -88,21 +115,38 @@ class ModelCostPolicy {
           !contextEnabled &&
           await MemorySettings.getContextWindowSummaryEnabled();
 
-      await setPromptCachingEnabled(false);
-      await setContextLimitEnabled(true);
+      if (cacheEnabled || cacheSummaryEnabled || keepAliveEnabled) {
+        await setPromptCachingEnabled(false);
+      }
+      if (staleContextSummary) {
+        await MemorySettings.saveContextWindowSummaryEnabled(false);
+      }
 
       final changed =
           cacheEnabled ||
           cacheSummaryEnabled ||
           keepAliveEnabled ||
-          !contextEnabled ||
           staleContextSummary;
       return ModelCostPolicyResult(
-        notice: changed
-            ? ModelCostPolicyNotice.inklingContextLimitEnabled
-            : ModelCostPolicyNotice.none,
+        notice: contextEnabled
+            ? ModelCostPolicyNotice.none
+            : ModelCostPolicyNotice.inklingContextLimitRecommended,
         changed: changed,
+        recommendation: contextEnabled
+            ? null
+            : ModelCostModeRecommendation.contextLimit,
       );
+    }
+
+    // Gemini 4 Argon only exposes provider-managed implicit caching. It has no
+    // client-renewable 1h TTL, so Keep-Alive cannot extend its cache lifetime.
+    // Apply this at the shared model-selection layer so Gemini direct,
+    // OpenRouter, startup restore, and every model picker behave identically.
+    var changed = false;
+    if (GeminiCachePolicy.usesImplicitCaching(model) &&
+        await MemorySettings.getKeepAliveEnabled()) {
+      await MemorySettings.saveKeepAliveEnabled(false);
+      changed = true;
     }
 
     if (TokenEstimator.isClaudePromptCacheModel(
@@ -111,12 +155,11 @@ class ModelCostPolicy {
     )) {
       final cacheEnabled = await MemorySettings.getEnablePromptCaching();
       if (!cacheEnabled) {
-        return const ModelCostPolicyResult(
-          notice: ModelCostPolicyNotice.claudeCacheRecommended,
-        );
+        await setPromptCachingEnabled(true);
+        return const ModelCostPolicyResult(changed: true);
       }
     }
 
-    return const ModelCostPolicyResult();
+    return ModelCostPolicyResult(changed: changed);
   }
 }

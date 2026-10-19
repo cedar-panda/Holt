@@ -21,8 +21,23 @@ import 'context_mode_pill.dart';
 /// 左舊右新，可左右滑動
 class CharacterTimelinePanel extends StatefulWidget {
   final String characterId;
+  final ContextMode? modeOverride;
+  final String? rpContinuityId;
+  final String? rpStorylineLabel;
+  final bool showContextModeControl;
+  final bool showEconomyActions;
+  final bool initiallyCollapsed;
 
-  const CharacterTimelinePanel({super.key, required this.characterId});
+  const CharacterTimelinePanel({
+    super.key,
+    required this.characterId,
+    this.modeOverride,
+    this.rpContinuityId,
+    this.rpStorylineLabel,
+    this.showContextModeControl = true,
+    this.showEconomyActions = true,
+    this.initiallyCollapsed = false,
+  });
 
   @override
   State<CharacterTimelinePanel> createState() => _CharacterTimelinePanelState();
@@ -44,6 +59,7 @@ class _CharacterTimelinePanelState extends State<CharacterTimelinePanel> {
   List<Map<String, Object?>> _rpStorylines = const <Map<String, Object?>>[];
   String _rpContinuityId = 'main';
   String _rpStorylineLabel = '';
+  late bool _collapsed;
 
   // 佈局常量
   static const double _nodeWidth = 76.0;
@@ -57,6 +73,7 @@ class _CharacterTimelinePanelState extends State<CharacterTimelinePanel> {
   @override
   void initState() {
     super.initState();
+    _collapsed = widget.initiallyCollapsed;
     ContextModeSettings.revision.addListener(_handleContextModeChanged);
     ToolFeatureSettings.state.addListener(_handleToolFeaturesChanged);
     _load();
@@ -110,7 +127,10 @@ class _CharacterTimelinePanelState extends State<CharacterTimelinePanel> {
   @override
   void didUpdateWidget(covariant CharacterTimelinePanel oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.characterId != widget.characterId) {
+    if (oldWidget.characterId != widget.characterId ||
+        oldWidget.modeOverride != widget.modeOverride ||
+        oldWidget.rpContinuityId != widget.rpContinuityId ||
+        oldWidget.rpStorylineLabel != widget.rpStorylineLabel) {
       _load();
       _loadCoins();
     }
@@ -140,10 +160,10 @@ class _CharacterTimelinePanelState extends State<CharacterTimelinePanel> {
     final preferred = ContextModeSettings.preferredModeFromCharacter(
       await DatabaseHelper.getCharacter(characterId),
     );
-    final mode = globalRp ? ContextMode.rp : preferred;
+    final mode = widget.modeOverride ?? (globalRp ? ContextMode.rp : preferred);
     var rpStorylines = const <Map<String, Object?>>[];
-    var rpContinuityId = _rpContinuityId;
-    var rpStorylineLabel = _rpStorylineLabel;
+    var rpContinuityId = widget.rpContinuityId ?? _rpContinuityId;
+    var rpStorylineLabel = widget.rpStorylineLabel?.trim() ?? _rpStorylineLabel;
     if (mode == ContextMode.rp) {
       await DatabaseHelper.ensureDefaultRpStoryline(characterId);
       rpStorylines = await DatabaseHelper.getRpStorylines(characterId);
@@ -154,9 +174,11 @@ class _CharacterTimelinePanelState extends State<CharacterTimelinePanel> {
         );
         rpContinuityId = selected['id']?.toString() ?? 'main';
         final storedName = selected['name']?.toString().trim() ?? '';
-        rpStorylineLabel = storedName.isEmpty
-            ? L.pick(en: 'Main storyline', zhTW: '主要故事線', zhCN: '主要故事线')
-            : storedName;
+        if (rpStorylineLabel.isEmpty) {
+          rpStorylineLabel = storedName.isEmpty
+              ? L.pick(en: 'Main storyline', zhTW: '主要故事線', zhCN: '主要故事线')
+              : storedName;
+        }
       }
     }
     final states = mode == ContextMode.daily
@@ -208,7 +230,9 @@ class _CharacterTimelinePanelState extends State<CharacterTimelinePanel> {
           id: e['id'] as int,
           type: _NodeType.event,
           key: '',
-          value: e['value'] as String? ?? '',
+          value:
+              '${e['value'] as String? ?? ''}'
+              '${e['scene'] == 'model_user_correction' ? L.pick(en: ' (corrected)', zhTW: '（修正）', zhCN: '（修正）') : ''}',
           date: dt,
           storyTimeText: storyTime,
           sequenceOrder: e['sequence_order'] as int? ?? e['id'] as int? ?? 0,
@@ -473,7 +497,7 @@ class _CharacterTimelinePanelState extends State<CharacterTimelinePanel> {
       mainAxisSize: MainAxisSize.min,
       children: [
         // ═══ 角色貝殼餘額 ═══
-        if (_shellEconomyEnabled || _shopEnabled)
+        if (widget.showEconomyActions && (_shellEconomyEnabled || _shopEnabled))
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 24),
             child: Row(
@@ -534,24 +558,21 @@ class _CharacterTimelinePanelState extends State<CharacterTimelinePanel> {
               ],
             ),
           ),
-        if (_shellEconomyEnabled || _shopEnabled) const SizedBox(height: 14),
+        if (widget.showEconomyActions && (_shellEconomyEnabled || _shopEnabled))
+          const SizedBox(height: 14),
         // ═══ 標題行 ═══
         Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 24),
+          padding: const EdgeInsets.symmetric(horizontal: 28),
           child: Row(
             children: [
-              ContextModePill(
-                mode: _mode,
-                enabled: !_globalRpEnabled,
-                onChanged: (mode) => unawaited(_setMode(mode)),
-              ),
-              const SizedBox(width: 10),
-              Icon(
-                Icons.timeline_rounded,
-                size: 14,
-                color: YanciTheme.accent.withValues(alpha: 0.5),
-              ),
-              const SizedBox(width: 6),
+              if (widget.showContextModeControl) ...[
+                ContextModePill(
+                  mode: _mode,
+                  enabled: !_globalRpEnabled,
+                  onChanged: (mode) => unawaited(_setMode(mode)),
+                ),
+                const SizedBox(width: 10),
+              ],
               Text(
                 L.pick(en: 'Timeline', zhTW: '時間線'),
                 style: TextStyle(
@@ -561,11 +582,52 @@ class _CharacterTimelinePanelState extends State<CharacterTimelinePanel> {
                   color: YanciTheme.textPrimary.withValues(alpha: 0.7),
                 ),
               ),
+              const SizedBox(width: 2),
+              Semantics(
+                button: true,
+                expanded: !_collapsed,
+                label: _collapsed
+                    ? L.pick(
+                        en: 'Expand timeline',
+                        zhTW: '展開時間線',
+                        zhCN: '展开时间线',
+                      )
+                    : L.pick(
+                        en: 'Collapse timeline',
+                        zhTW: '收起時間線',
+                        zhCN: '收起时间线',
+                      ),
+                child: IconButton(
+                  key: const ValueKey('character-timeline-collapse'),
+                  onPressed: () => setState(() => _collapsed = !_collapsed),
+                  visualDensity: VisualDensity.compact,
+                  constraints: const BoxConstraints(
+                    minWidth: 32,
+                    minHeight: 32,
+                  ),
+                  padding: EdgeInsets.zero,
+                  icon: AnimatedRotation(
+                    turns: _collapsed ? 0 : .5,
+                    duration: MediaQuery.disableAnimationsOf(context)
+                        ? Duration.zero
+                        : const Duration(milliseconds: 180),
+                    curve: Curves.easeOutCubic,
+                    child: Icon(
+                      Icons.keyboard_arrow_down_rounded,
+                      size: 17,
+                      color: YanciTheme.accent.withValues(alpha: .58),
+                    ),
+                  ),
+                ),
+              ),
               const Spacer(),
               if (_mode == ContextMode.rp)
                 GestureDetector(
                   behavior: HitTestBehavior.opaque,
-                  onTap: _rpStorylines.length > 1 ? _pickRpStoryline : null,
+                  onTap:
+                      widget.rpContinuityId == null && _rpStorylines.length > 1
+                      ? _pickRpStoryline
+                      : null,
                   child: ConstrainedBox(
                     constraints: const BoxConstraints(minHeight: 44),
                     child: Row(
@@ -585,7 +647,8 @@ class _CharacterTimelinePanelState extends State<CharacterTimelinePanel> {
                             ),
                           ),
                         ),
-                        if (_rpStorylines.length > 1) ...[
+                        if (widget.rpContinuityId == null &&
+                            _rpStorylines.length > 1) ...[
                           const SizedBox(width: 3),
                           Icon(
                             Icons.unfold_more_rounded,
@@ -626,81 +689,86 @@ class _CharacterTimelinePanelState extends State<CharacterTimelinePanel> {
           ),
         ),
 
-        const SizedBox(height: 8),
+        if (!_collapsed) const SizedBox(height: 8),
 
         // ═══ 橫軸時間線 ═══
-        SizedBox(
-          height: _totalHeight,
-          child: _loading
-              ? Center(
-                  child: SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 1.5,
-                      color: YanciTheme.accent.withValues(alpha: 0.4),
+        if (!_collapsed)
+          SizedBox(
+            height: _totalHeight,
+            child: _loading
+                ? Center(
+                    child: SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 1.5,
+                        color: YanciTheme.accent.withValues(alpha: 0.4),
+                      ),
                     ),
-                  ),
-                )
-              : _nodes.isEmpty
-              ? Center(
-                  child: Text(
-                    _mode == ContextMode.rp
-                        ? L.pick(
-                            en: 'No story events yet',
-                            zhTW: '這條故事線還沒有事件',
-                            zhCN: '这条故事线还没有事件',
-                          )
-                        : L.pick(
-                            en: 'Nothing this month yet',
-                            zhTW: '這個月還沒有足跡',
-                            zhCN: '这个月还没有足迹',
+                  )
+                : _nodes.isEmpty
+                ? Center(
+                    child: Text(
+                      _mode == ContextMode.rp
+                          ? L.pick(
+                              en: 'No story events yet',
+                              zhTW: '這條故事線還沒有事件',
+                              zhCN: '这条故事线还没有事件',
+                            )
+                          : L.pick(
+                              en: 'Nothing this month yet',
+                              zhTW: '這個月還沒有足跡',
+                              zhCN: '这个月还没有足迹',
+                            ),
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontFamily: YanciTheme.fontFamily,
+                        color: YanciTheme.textSecondary.withValues(alpha: 0.35),
+                      ),
+                    ),
+                  )
+                : LayoutBuilder(
+                    builder: (ctx, constraints) {
+                      return SingleChildScrollView(
+                        controller: _scrollCtrl,
+                        scrollDirection: Axis.horizontal,
+                        padding: const EdgeInsets.symmetric(horizontal: 24),
+                        child: CustomPaint(
+                          painter: _TimelineAxisPainter(
+                            nodeCount: _nodes.length,
+                            nodeWidth: _nodeWidth,
+                            lineGap: _lineGap,
+                            totalHeight: _totalHeight,
+                            contentHeight: _contentHeight,
+                            stalkHeight: _stalkHeight,
+                            lineZoneHeight: _lineZoneHeight,
+                            lineColor: YanciTheme.accent.withValues(
+                              alpha: 0.15,
+                            ),
+                            dotColor: YanciTheme.accent,
+                            dotColorAlt: YanciTheme.accent.withValues(
+                              alpha: 0.5,
+                            ),
+                            nodes: _nodes,
                           ),
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontFamily: YanciTheme.fontFamily,
-                      color: YanciTheme.textSecondary.withValues(alpha: 0.35),
-                    ),
-                  ),
-                )
-              : LayoutBuilder(
-                  builder: (ctx, constraints) {
-                    return SingleChildScrollView(
-                      controller: _scrollCtrl,
-                      scrollDirection: Axis.horizontal,
-                      padding: const EdgeInsets.symmetric(horizontal: 24),
-                      child: CustomPaint(
-                        painter: _TimelineAxisPainter(
-                          nodeCount: _nodes.length,
-                          nodeWidth: _nodeWidth,
-                          lineGap: _lineGap,
-                          totalHeight: _totalHeight,
-                          contentHeight: _contentHeight,
-                          stalkHeight: _stalkHeight,
-                          lineZoneHeight: _lineZoneHeight,
-                          lineColor: YanciTheme.accent.withValues(alpha: 0.15),
-                          dotColor: YanciTheme.accent,
-                          dotColorAlt: YanciTheme.accent.withValues(alpha: 0.5),
-                          nodes: _nodes,
-                        ),
-                        child: SizedBox(
-                          width:
-                              _nodes.length * (_nodeWidth + _lineGap) -
-                              _lineGap +
-                              8, // 尾部留點空間
-                          height: _totalHeight,
-                          child: Stack(
-                            children: List.generate(
-                              _nodes.length,
-                              (i) => _buildNodeContent(i),
+                          child: SizedBox(
+                            width:
+                                _nodes.length * (_nodeWidth + _lineGap) -
+                                _lineGap +
+                                8, // 尾部留點空間
+                            height: _totalHeight,
+                            child: Stack(
+                              children: List.generate(
+                                _nodes.length,
+                                (i) => _buildNodeContent(i),
+                              ),
                             ),
                           ),
                         ),
-                      ),
-                    );
-                  },
-                ),
-        ),
+                      );
+                    },
+                  ),
+          ),
       ],
     );
   }

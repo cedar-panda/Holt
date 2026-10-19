@@ -7,6 +7,7 @@ import 'package:uuid/uuid.dart';
 import '../theme/app_theme.dart';
 import '../services/locale_strings.dart';
 import '../widgets/gradient_background.dart';
+import '../widgets/character_quick_picker.dart';
 import '../memory/database.dart';
 import '../services/marriage_service.dart';
 import '../services/settings_manager.dart';
@@ -16,18 +17,27 @@ import '../widgets/character_diary_entry.dart';
 import '../widgets/character_self_notes_panel.dart';
 import '../widgets/character_signature_panel.dart';
 import '../widgets/character_signature_history_sheet.dart';
-import '../widgets/emotion_panel.dart';
-import '../widgets/rp_story_relationship_entry.dart';
 import '../widgets/rp_storyline_entry.dart';
-import '../widgets/rp_worldbook_entry.dart';
+import '../widgets/context_mode_pill.dart';
 import '../models/context_mode.dart';
 import '../services/settings/context_mode_settings.dart';
-import '../services/tool_feature_settings.dart';
 import '../utils/latest_request_gate.dart';
 
 /// 角色管理 — 橫向卡片輪盤 + 關聯資源入口
 class CharacterListScreen extends StatefulWidget {
-  const CharacterListScreen({super.key});
+  const CharacterListScreen({
+    super.key,
+    this.embedded = false,
+    this.activeCharacterId,
+    this.onActiveCharacterChanged,
+  });
+
+  final bool embedded;
+
+  /// The character selected by the parent surface. Browsing this carousel does
+  /// not write back; only the explicit "交流" action commits a new selection.
+  final String? activeCharacterId;
+  final ValueChanged<String>? onActiveCharacterChanged;
 
   @override
   State<CharacterListScreen> createState() => _CharacterListScreenState();
@@ -43,7 +53,6 @@ class _CharacterListScreenState extends State<CharacterListScreen> {
   bool _timelineEnabled = true;
   bool _selfNotesEnabled = true;
   bool _globalRpEnabled = false;
-  bool _diaryEnabled = true;
   final LatestRequestGate _loadGate = LatestRequestGate();
 
   @override
@@ -51,55 +60,146 @@ class _CharacterListScreenState extends State<CharacterListScreen> {
     super.initState();
     _pageCtrl = PageController(viewportFraction: 0.82);
     ContextModeSettings.revision.addListener(_load);
-    ToolFeatureSettings.state.addListener(_syncToolFeatures);
     _load();
+  }
+
+  @override
+  void didUpdateWidget(covariant CharacterListScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.activeCharacterId != widget.activeCharacterId) {
+      _syncToExternalActive(widget.activeCharacterId);
+    }
   }
 
   @override
   void dispose() {
     _loadGate.invalidate();
     ContextModeSettings.revision.removeListener(_load);
-    ToolFeatureSettings.state.removeListener(_syncToolFeatures);
     _pageCtrl.dispose();
     super.dispose();
   }
 
   Future<void> _load() async {
     final generation = _loadGate.begin();
+    final previousVisibleId =
+        _characters.isNotEmpty &&
+            _currentPage >= 0 &&
+            _currentPage < _characters.length
+        ? _characters[_currentPage]['id']?.toString()
+        : null;
     final chars = await DatabaseHelper.getCharacters();
-    final activeId = await UserSettings.getActiveCharacterId();
+    final savedActiveId = await UserSettings.getActiveCharacterId();
+    final externalActiveId = widget.activeCharacterId?.trim();
+    final activeId = externalActiveId != null && externalActiveId.isNotEmpty
+        ? externalActiveId
+        : savedActiveId;
     final timelineEnabled = await MemorySettings.getTimelineEnabled();
     final selfNotesEnabled = await MemorySettings.getSelfNotesEnabled();
     final globalRpEnabled = await ContextModeSettings.getGlobalRpEnabled();
-    final toolFeatures = await ToolFeatureSettings.load();
+    final previousVisibleIndex = previousVisibleId == null
+        ? -1
+        : chars.indexWhere((c) => c['id'] == previousVisibleId);
     final activeIndex = chars.indexWhere((c) => c['id'] == activeId);
+    final externalSelectionChanged =
+        externalActiveId != null &&
+        externalActiveId.isNotEmpty &&
+        externalActiveId != previousVisibleId;
+    final targetIndex = externalSelectionChanged
+        ? (activeIndex >= 0 ? activeIndex : 0)
+        : previousVisibleIndex >= 0
+        ? previousVisibleIndex
+        : (activeIndex >= 0 ? activeIndex : 0);
     if (!mounted || !_loadGate.isCurrent(generation)) return;
     setState(() {
       _characters = chars;
       _activeId = activeId;
       _isLoading = false;
-      _currentPage = activeIndex >= 0 ? activeIndex : 0;
+      _currentPage = targetIndex;
       _timelineEnabled = timelineEnabled;
       _selfNotesEnabled = selfNotesEnabled;
       _globalRpEnabled = globalRpEnabled;
-      _diaryEnabled = toolFeatures.diaryEnabled;
     });
     // 等一幀再跳，確保 PageController 已掛載
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted &&
           _loadGate.isCurrent(generation) &&
           _pageCtrl.hasClients &&
-          activeIndex >= 0) {
-        _pageCtrl.jumpToPage(activeIndex);
+          chars.isNotEmpty &&
+          _pageCtrl.page?.round() != targetIndex) {
+        _pageCtrl.jumpToPage(targetIndex);
       }
     });
   }
 
-  void _syncToolFeatures() {
+  void _syncToExternalActive(String? characterId) {
+    final id = characterId?.trim();
+    if (id == null || id.isEmpty || _characters.isEmpty) return;
+    final targetIndex = _characters.indexWhere(
+      (character) => character['id']?.toString() == id,
+    );
+    if (targetIndex < 0) return;
+
+    if (_activeId != id || _currentPage != targetIndex) {
+      setState(() {
+        _activeId = id;
+        _currentPage = targetIndex;
+      });
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_pageCtrl.hasClients) return;
+      if (_pageCtrl.page?.round() != targetIndex) {
+        // The tab can be offstage while Home changes character. Jumping keeps
+        // the next reveal deterministic without animating an invisible page.
+        _pageCtrl.jumpToPage(targetIndex);
+      }
+    });
+  }
+
+  Future<void> _setCurrentMode(ContextMode mode) async {
+    if (_characters.isEmpty) return;
+    if (_globalRpEnabled) {
+      showContextModeNotice(
+        context,
+        L.pick(
+          en: 'Global RP mode currently controls this character.',
+          zhTW: '目前由全域 RP 模式控制該夥伴。',
+          zhCN: '目前由全局 RP 模式控制该伙伴。',
+        ),
+      );
+      return;
+    }
+    final characterId = _currentCharId;
+    await ContextModeSettings.setCharacterPreferredMode(characterId, mode);
+    final differs = await ContextModeSettings.latestWindowDiffers(
+      characterId,
+      mode,
+    );
     if (!mounted) return;
-    final enabled = ToolFeatureSettings.state.value.diaryEnabled;
-    if (_diaryEnabled == enabled) return;
-    setState(() => _diaryEnabled = enabled);
+    final base = mode == ContextMode.rp
+        ? L.pick(
+            en: 'This companion is now in RP mode.',
+            zhTW: '該夥伴已打開 RP 模式。',
+            zhCN: '该伙伴已打开 RP 模式。',
+          )
+        : L.pick(
+            en: 'This companion has returned to daily mode.',
+            zhTW: '該夥伴已回歸日常。',
+            zhCN: '该伙伴已回归日常。',
+          );
+    final next = !differs
+        ? ''
+        : mode == ContextMode.rp
+        ? L.pick(
+            en: ' Open a new window to begin RP.',
+            zhTW: ' 請開啟新窗口進行 RP。',
+            zhCN: ' 请开启新窗口进行 RP。',
+          )
+        : L.pick(
+            en: ' Open a new window to begin your daily life.',
+            zhTW: ' 請開啟新窗口開始你們的日常。',
+            zhCN: ' 请开启新窗口开始你们的日常。',
+          );
+    showContextModeNotice(context, '$base$next');
   }
 
   Future<void> _showSignatureHistoryFor(String characterId) async {
@@ -129,215 +229,257 @@ class _CharacterListScreenState extends State<CharacterListScreen> {
         ContextMode.rp;
   }
 
+  Future<void> _showAllCharacters() async {
+    if (_characters.isEmpty) return;
+    final selectedIndex = await showCharacterQuickPicker(
+      context,
+      characters: _characters,
+      selectedIndex: _currentPage,
+    );
+    if (!mounted || selectedIndex == null || selectedIndex == _currentPage) {
+      return;
+    }
+    setState(() => _currentPage = selectedIndex);
+    if (!_pageCtrl.hasClients) return;
+    if (MediaQuery.disableAnimationsOf(context)) {
+      _pageCtrl.jumpToPage(selectedIndex);
+      return;
+    }
+    await _pageCtrl.animateToPage(
+      selectedIndex,
+      duration: const Duration(milliseconds: 240),
+      curve: Curves.easeOutCubic,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      // 填帳號等彈鍵盤時，底層畫面不縮高 → 不再擠爆這條 Column（Spacer 吸不住 43px）
-      resizeToAvoidBottomInset: false,
-      body: GradientBackground(
-        child: SafeArea(
-          child: Column(
-            children: [
-              // ═══ 頂部欄 ═══
-              Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: YanciTheme.spacingSm,
-                  vertical: YanciTheme.spacingXs,
-                ),
-                child: Row(
-                  children: [
-                    IconButton(
-                      icon: Icon(
-                        Icons.arrow_back_ios_rounded,
-                        size: 20,
-                        color: YanciTheme.textPrimary,
-                      ),
-                      onPressed: () => Navigator.pop(context),
-                    ),
-                    const Spacer(),
-                    IconButton(
-                      icon: Icon(
-                        Icons.download_rounded,
-                        size: 20,
-                        color: YanciTheme.accent,
-                      ),
-                      onPressed: _importFromCode,
-                    ),
-                    IconButton(
-                      icon: Icon(
-                        Icons.add_rounded,
-                        size: 22,
-                        color: YanciTheme.accent,
-                      ),
-                      onPressed: () async {
-                        await Navigator.of(context).pushNamed('/character');
-                        if (!mounted) return;
-                        _load();
-                      },
-                    ),
-                  ],
-                ),
-              ),
-
-              Expanded(
-                child: SingleChildScrollView(
-                  padding: const EdgeInsets.only(bottom: 24),
-                  child: Column(
+    final content = Column(
+      children: [
+        // ═══ 頂部欄 ═══
+        Padding(
+          padding: const EdgeInsets.symmetric(
+            horizontal: YanciTheme.spacingSm,
+            vertical: YanciTheme.spacingXs,
+          ),
+          child: SizedBox(
+            height: 44,
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
                     children: [
-                      const SizedBox(height: 12),
-
-                      // ═══ 橫向卡片輪盤 ═══
-                      _isLoading
-                          ? const Padding(
-                              padding: EdgeInsets.all(40),
-                              child: CircularProgressIndicator(),
-                            )
-                          : _characters.isEmpty
-                          ? Padding(
-                              padding: const EdgeInsets.all(40),
-                              child: Column(
-                                children: [
-                                  Icon(
-                                    Icons.person_add_outlined,
-                                    size: 48,
-                                    color: YanciTheme.textSecondary.withValues(
-                                      alpha: 0.3,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 12),
-                                  Text(
-                                    L.get('char_empty_hint'),
-                                    textAlign: TextAlign.center,
-                                    style: YanciTheme.bodySmall.copyWith(
-                                      color: YanciTheme.textSecondary
-                                          .withValues(alpha: 0.5),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            )
-                          : SizedBox(
-                              height:
-                                  Theme.of(context).platform ==
-                                      TargetPlatform.iOS
-                                  ? 258
-                                  : 360,
-                              child: PageView.builder(
-                                controller: _pageCtrl,
-                                itemCount: _characters.length,
-                                onPageChanged: (i) {
-                                  HapticFeedback.selectionClick();
-                                  setState(() => _currentPage = i);
-                                },
-                                itemBuilder: (ctx, i) =>
-                                    _buildCard(_characters[i], i),
-                              ),
-                            ),
-
-                      // ═══ 頁面指示器 ═══
-                      if (_characters.length > 1)
-                        Padding(
-                          padding: const EdgeInsets.only(top: 12),
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: List.generate(_characters.length, (i) {
-                              final isActive = i == _currentPage;
-                              return AnimatedContainer(
-                                duration: const Duration(milliseconds: 200),
-                                margin: const EdgeInsets.symmetric(
-                                  horizontal: 3,
-                                ),
-                                width: isActive ? 18 : 6,
-                                height: 6,
-                                decoration: BoxDecoration(
-                                  color: isActive
-                                      ? YanciTheme.accent
-                                      : YanciTheme.textSecondary.withValues(
-                                          alpha: 0.2,
-                                        ),
-                                  borderRadius: BorderRadius.circular(3),
-                                ),
-                              );
-                            }),
+                      if (!widget.embedded)
+                        IconButton(
+                          icon: Icon(
+                            Icons.arrow_back_ios_rounded,
+                            size: 20,
+                            color: YanciTheme.textPrimary,
+                          ),
+                          onPressed: () => Navigator.pop(context),
+                        ),
+                      TextButton.icon(
+                        key: const ValueKey('show-all-characters'),
+                        onPressed: _characters.isEmpty
+                            ? null
+                            : _showAllCharacters,
+                        icon: Icon(
+                          Icons.person_outline_rounded,
+                          size: 18,
+                          color: YanciTheme.accent,
+                        ),
+                        label: Text(
+                          L.pick(en: 'All', zhTW: '全部', zhCN: '全部'),
+                          style: YanciTheme.bodySmall.copyWith(
+                            color: YanciTheme.accent,
+                            fontSize: 12,
                           ),
                         ),
-
-                      const SizedBox(height: 16),
-
-                      const SizedBox(height: 20),
-
-                      // ═══ 時間線 ═══
-                      if (_characters.isNotEmpty && _timelineEnabled)
-                        CharacterTimelinePanel(
-                          key: ValueKey('timeline-$_currentCharId'),
-                          characterId: _currentCharId,
-                        ),
-                      if (_characters.isNotEmpty &&
-                          !_currentCharacterIsRp &&
-                          _diaryEnabled)
-                        CharacterDiaryEntryPlaceholder(
-                          key: ValueKey('daily-diary-$_currentCharId'),
-                          characterId: _currentCharId,
-                        ),
-                      if (_characters.isNotEmpty && _currentCharacterIsRp)
-                        RpStorylineEntry(
-                          key: ValueKey('rp-storylines-$_currentCharId'),
-                          characterId: _currentCharId,
-                        ),
-                      if (_characters.isNotEmpty && _currentCharacterIsRp)
-                        RpStoryRelationshipEntry(
-                          key: ValueKey('rp-story-relations-$_currentCharId'),
-                          characterId: _currentCharId,
-                        ),
-                      if (_characters.isNotEmpty && _currentCharacterIsRp)
-                        RpWorldbookEntry(
-                          key: ValueKey('rp-worldbook-$_currentCharId'),
-                          characterId: _currentCharId,
-                        ),
-                      if (_characters.isNotEmpty && _selfNotesEnabled) ...[
-                        // 留出一段視線斷點；自我註記要滑過時間線後再進入視野。
-                        const SizedBox(height: 96),
-                        Padding(
-                          padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
-                          child: Align(
-                            alignment: Alignment.center,
-                            child: FractionallySizedBox(
-                              widthFactor: 0.88,
-                              child: CharacterSelfNotesPanel(
-                                key: ValueKey(
-                                  'self-notes-timeline-$_currentCharId',
-                                ),
-                                characterId: _currentCharId,
-                                embedded: true,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ],
-                      if (_characters.isNotEmpty && EmotionPanel.kVisible)
-                        Padding(
-                          padding: const EdgeInsets.fromLTRB(24, 0, 24, 32),
-                          child: Align(
-                            alignment: Alignment.center,
-                            child: FractionallySizedBox(
-                              widthFactor: 0.88,
-                              child: EmotionPanel(
-                                key: ValueKey(
-                                  'emotion-below-notes-$_currentCharId',
-                                ),
-                                characterId: _currentCharId,
-                              ),
-                            ),
-                          ),
-                        ),
+                      ),
                     ],
                   ),
                 ),
-              ),
-            ],
+                if (_characters.isNotEmpty)
+                  ContextModePill(
+                    key: ValueKey('character-mode-$_currentCharId'),
+                    mode: _currentCharacterIsRp
+                        ? ContextMode.rp
+                        : ContextMode.daily,
+                    enabled: !_globalRpEnabled,
+                    compact: true,
+                    onChanged: (mode) => unawaited(_setCurrentMode(mode)),
+                  ),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        icon: Icon(
+                          Icons.download_rounded,
+                          size: 20,
+                          color: YanciTheme.accent,
+                        ),
+                        onPressed: _importFromCode,
+                      ),
+                      IconButton(
+                        icon: Icon(
+                          Icons.add_rounded,
+                          size: 22,
+                          color: YanciTheme.accent,
+                        ),
+                        onPressed: () async {
+                          await Navigator.of(context).pushNamed('/character');
+                          if (!mounted) return;
+                          _load();
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
-      ),
+
+        Expanded(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.only(bottom: 24),
+            child: Column(
+              children: [
+                const SizedBox(height: 12),
+
+                // ═══ 橫向卡片輪盤 ═══
+                _isLoading
+                    ? const Padding(
+                        padding: EdgeInsets.all(40),
+                        child: CircularProgressIndicator(),
+                      )
+                    : _characters.isEmpty
+                    ? Padding(
+                        padding: const EdgeInsets.all(40),
+                        child: Column(
+                          children: [
+                            Icon(
+                              Icons.person_add_outlined,
+                              size: 48,
+                              color: YanciTheme.textSecondary.withValues(
+                                alpha: 0.3,
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+                            Text(
+                              L.get('char_empty_hint'),
+                              textAlign: TextAlign.center,
+                              style: YanciTheme.bodySmall.copyWith(
+                                color: YanciTheme.textSecondary.withValues(
+                                  alpha: 0.5,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      )
+                    : SizedBox(
+                        height: Theme.of(context).platform == TargetPlatform.iOS
+                            ? 310
+                            : 400,
+                        child: PageView.builder(
+                          controller: _pageCtrl,
+                          itemCount: _characters.length,
+                          onPageChanged: (i) {
+                            HapticFeedback.selectionClick();
+                            setState(() => _currentPage = i);
+                          },
+                          itemBuilder: (ctx, i) =>
+                              _buildCard(_characters[i], i),
+                        ),
+                      ),
+
+                // ═══ 頁面指示器 ═══
+                if (_characters.length > 1)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 12),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: List.generate(_characters.length, (i) {
+                        final isActive = i == _currentPage;
+                        return AnimatedContainer(
+                          duration: const Duration(milliseconds: 200),
+                          margin: const EdgeInsets.symmetric(horizontal: 3),
+                          width: isActive ? 18 : 6,
+                          height: 6,
+                          decoration: BoxDecoration(
+                            color: isActive
+                                ? YanciTheme.accent
+                                : YanciTheme.textSecondary.withValues(
+                                    alpha: 0.2,
+                                  ),
+                            borderRadius: BorderRadius.circular(3),
+                          ),
+                        );
+                      }),
+                    ),
+                  ),
+
+                const SizedBox(height: 16),
+
+                const SizedBox(height: 20),
+
+                // ═══ 時間線 ═══
+                if (_characters.isNotEmpty &&
+                    _timelineEnabled &&
+                    !_currentCharacterIsRp)
+                  CharacterTimelinePanel(
+                    key: ValueKey('timeline-$_currentCharId'),
+                    characterId: _currentCharId,
+                    modeOverride: ContextMode.daily,
+                    showContextModeControl: false,
+                    initiallyCollapsed: true,
+                  ),
+                // The diary archive is a stable Daily-mode destination.
+                // Its feature switch controls model writing only; it
+                // must not make previously written entries or the empty
+                // archive affordance disappear.
+                if (_characters.isNotEmpty && !_currentCharacterIsRp)
+                  CharacterDiaryReader(
+                    key: ValueKey('daily-diary-$_currentCharId'),
+                    characterId: _currentCharId,
+                  ),
+                if (_characters.isNotEmpty && _currentCharacterIsRp)
+                  RpStorylineEntry(
+                    key: ValueKey('rp-storylines-$_currentCharId'),
+                    characterId: _currentCharId,
+                  ),
+                if (_characters.isNotEmpty &&
+                    _selfNotesEnabled &&
+                    !_currentCharacterIsRp) ...[
+                  const SizedBox(height: 16),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(28, 0, 28, 24),
+                    child: CharacterSelfNotesPanel(
+                      key: ValueKey('self-notes-timeline-$_currentCharId'),
+                      characterId: _currentCharId,
+                      embedded: true,
+                      initiallyCollapsed: false,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+
+    if (widget.embedded) return content;
+    return Scaffold(
+      // 填帳號等彈鍵盤時，底層畫面不縮高 → 不再擠爆這條 Column（Spacer 吸不住 43px）
+      resizeToAvoidBottomInset: false,
+      body: GradientBackground(child: SafeArea(child: content)),
     );
   }
 
@@ -517,6 +659,7 @@ class _CharacterListScreenState extends State<CharacterListScreen> {
                             setState(() {
                               _activeId = id;
                             });
+                            widget.onActiveCharacterChanged?.call(id);
                           },
                           child: Container(
                             key: const ValueKey('character-card-talk-button'),

@@ -3,10 +3,10 @@ import 'locale_strings.dart';
 /// Private, standalone RP dossier prompt. It never inherits the daily summary
 /// style and deliberately contains no worldbook extraction instructions.
 abstract final class RpSummaryPrompt {
-  static const int defaultMaxChars = 3000;
+  static const int defaultMaxChars = 1600;
 
   static String compose([String? _, int maxChars = defaultMaxChars]) {
-    final bounded = maxChars.clamp(800, 12000);
+    final bounded = maxChars.clamp(800, 4000);
     return L.pick(
       en: _en.replaceAll('{{rp_summary_max_chars}}', '$bounded'),
       zhTW: _zhTw.replaceAll('{{rp_summary_max_chars}}', '$bounded'),
@@ -23,19 +23,21 @@ abstract final class RpSummaryPrompt {
 一、輸入資料
 系統可能提供以下內容，部分區塊可以為空：
 * 【當前故事線】：故事線 ID 與名稱。
-* 【既有劇情摘要】：目前仍有效的完整劇情卷宗。
+* 【既有劇情摘要】：最近兩份仍有效的劇情卷宗，按較早到最新排列；它們可能互相包含，必須先合併重複內容。
 * 【現有劇情狀態】：場景、承諾、身體、身份、知情狀態等。
 * 【現有劇情人物】：已建檔人物及穩定 entity_id。
 * 【現有人物關係】：已建立的逐對關係。
 * 【本輪參與劇情的具體人設】：當前主要角色卡、當前 User 身份，以及本輪相關劇情人物的具體設定。它們用於辨認人物與校準行為，不得覆寫正文已發生的事件。
 * 【本輪關鍵詞召回的世界書】：由本輪正文關鍵詞命中的當前故事線世界設定；它是事實參考，不是演繹指令。
-* 【本輪涉及人物】：本輪原文實際出現的人物參考。
+* 【本輪命中的既有人物】：依本輪正文命中、或目前仍標記 active 的既有人物卡。這份清單只用於沿用 entity_id 與既有設定，不代表本輪全部出場人物；仍須從【本輪待歸檔對話】辨認首次出現的新人物。
 * 【本輪待歸檔對話】：帶消息 ID、sender 與內部排序時間的正文。
 * 【摘要來源範圍】：本次摘要對應的故事線、來源窗口、起始消息 ID 與結束消息 ID。重新整理舊窗口時，這個範圍代表本次要覆蓋的既有摘要槽位。
 若既有資料全部為空，只能依本輪正文建立第一份卷宗。只能處理【當前故事線】，不同故事線的資料不得混合。
 
 二、資料層職責
-summary 是敘事地圖，保存事件的前因、關鍵過程、結果、關係形成與轉折原因、衝突與懸念的推進、事件留下的影響，以及仍可能被後續牽動的劇情線。summary 不重複抄寫人物卡、逐項狀態或關係表。每輪輸出的 summary 都是整合既有卷宗與本輪內容後的完整替換版本，不是增量附錄。
+summary 是敘事地圖，保存事件的前因、關鍵過程、結果、關係形成與轉折原因、衝突與懸念的推進、事件留下的影響，以及仍可能被後續牽動的劇情線。summary 不重複抄寫人物卡、逐項狀態或關係表。每輪輸出的 summary 都是整合最近兩份既有卷宗與本輪內容後的完整替換版本，不是增量附錄。既有卷宗中的每個重點事件都必須在新 summary 中繼續存在；即使壓縮成一句話，也要保留事件主體、發生內容、必要原因、結果與持續影響。
+
+recall_segments 是 summary 自身的分段召回索引。每個可召回事件段只覆蓋一個摘要段落；若單一段落含多個可獨立召回的事件，先在 summary 內按事件邊界拆段。content 必須逐字複製自 summary，每段只附一個高辨識度事件關鍵詞。它不是第二份摘要，也不新增任何事實。程式會把它與本次摘要及來源消息固定綁定，舊摘要退為標籤時直接使用，不再另行呼叫模型。
 
 timeline 只記錄已發生的離散事件與具敘事價值的轉折；持續成立的現況交由 story_states 保存。
 
@@ -84,9 +86,11 @@ summary 只使用非空的「### ——主線——」「### ——支線——�
 只有正文有劇情時間時才增加「[劇情位置] 劇情時間」。
 類別可用：世界觀、角色、關係、伏筆、衝突、物品、地點、懸念、時間線、不可逆、User 偏好、情感暗線、陣營情報、死亡／損失、種族資料。
 
+為完整 summary 建立 recall_segments：依閱讀順序編號，每段只覆蓋一個摘要段落；若單一段落含多個可獨立召回的事件，先在 summary 內按事件邊界拆段。content 必須是 summary 中連續且完全相同的原文。keywords 只輸出一個，使用能在後續正文中命中該事件的具體行動、結果、轉折、物品、地點或關聯對象；優先寫「對象＋事件／結果」或具有唯一辨識力的具體事件詞。只用人物姓名、稱謂、代詞、泛用情緒或抽象主題無法辨認事件。近義詞只保留辨識度最高的一個，段與段之間避免重複。
+
 八、內容與去重
 使用中性客觀第三人稱，不輸出第一人稱、前言、自我介紹、結語或對 User 的建議。使用具體事件，不用抽象文學語句代替實際原因。可以調整語序，但保持行動主體、先後、因果與立場。
-同一事件、關係轉折或身份對照在完整 summary 中只保留一份；新進展更新原條目。已被覆蓋的舊現況只保留持續影響；結束支線保留起因、結果與影響；兌現承諾保留結果及關係變化。
+同一事件、關係轉折或身份對照在完整 summary 中只保留一份；新進展更新原條目。兩份既有卷宗中的重複事件先合併，不重複堆疊。已被覆蓋的舊現況只保留持續影響；結束支線至少用一句話保留起因、結果與影響；兌現承諾保留結果及關係變化。既有事件條目的標題保持不變，除非 User 明確修正事件，方便程式確認重點事件沒有在滾動中消失。
 
 若【摘要來源範圍】指向既有摘要，將該摘要視為本次修訂目標：讀取其內容與來源正文，輸出同一範圍的完整替換版本，不把修訂內容追加成新的獨立事件。保留原本的故事線位置與仍有效的因果；只有本次正文證明已變更的部分才更新。程式會負責保存 revision、來源範圍與依賴關係。
 
@@ -109,7 +113,9 @@ summary 只使用非空的「### ——主線——」「### ——支線——�
 
 十一、story_states
 state_key 命名：scene.current；promise.{entity_id}.{slug}；body.{entity_id}.{slug}；identity.{entity_id}.{slug}；knowledge.{知情者 entity_id}.{被認知者 entity_id}.{slug}；plot.{slug}；item.{entity_id}.{slug}。slug 短且穩定；更新既有狀態時沿用既有 key。
+同一件事（同一傷病、同一身分、同一約定）優先沿用【現有劇情狀態】裡的 state_key。只有在必須改用新 key 時，才在 replaces_state_keys 填入被取代的舊 key（最多 3 個）；不同的傷病或不同的事不得互相取代。
 scene.current 保存當前地點、在場人物、正在進行的行動或對話、尚未回答的話、未完成動作及直接影響下一段的條件。只有場景或接續點實際改變時輸出 scene.current；沒有改變或只有 OOC 時不輸出，由程式沿用舊值。
+若【現有劇情狀態】中的計畫、承諾、任務或場景在本輪已完成、取消、違背、停滯或被新行動取代，必須沿用原 state_key 輸出其最新終止狀態；不能只新增後續事件而讓舊狀態繼續保持 active／pending。scene.current 只描述本輪結束時真正所在的位置與接續點，已經執行完的「準備前往／即將處理」不得殘留其中。
 promise status 只使用 pending、fulfilled、broken、cancelled。
 body status 只使用 permanent、recovering、healed。
 identity status 只使用 active、suspended、revoked、unknown。
@@ -120,11 +126,13 @@ scene 的 status 必須為空字串。每輪 story_states 最多 12 條；只輸
 
 十二、timeline、人物與關係輸出
 timeline 只提取本輪新增、明確修正或正式收束的離散事件，每輪最多 8 條。保留真正主體、敘事層級、劇情時間、有效消息 ID 與逐字 evidence；同一事件不重複建立。
-story_characters 每輪最多 6 個，只輸出首次出場，或本輪獲得新身份、別名、外貌、性格、立場、動機、陣營、身份對照修正的人物。證據不足的欄位填「不明」，不依職位或劇情需要補完。
+character_index 是人物落庫的精簡保險索引，必須在 summary 前先輸出。逐一核對本輪正文中具名人物與【現有人物】；凡正文明確寫出姓名、但現有人物中沒有該姓名或別名者，都輸出一筆，最多 24 筆。即使此人在故事時間上早已登場，也要補列，不能因「不是首次登場」而略過。每筆只寫 entity_id、name、source_message_ids、evidence；不得收錄只有職稱或親屬稱呼而沒有姓名的人物。已有完整 story_characters 項目的人仍可出現在索引中，程式會合併。
+story_characters 每輪最多 24 個，只輸出首次出場，或本輪獲得新身份、別名、外貌、性格、立場、動機、陣營、身份對照修正的人物。先輸出首次出場的新人物，再輸出既有人物更新；若候選超過 24 個，按首次出場順序保留新人物。證據不足的欄位填「不明」，不依職位或劇情需要補完。
+本輪正文中首次出現且可辨認的命名人物，必須輸出一筆 story_characters；即使只知道名字與出場情境，也先以 new 建檔，其餘欄位填「不明」。只有該姓名確實屬於【本輪命中的既有人物】中某個 entity_id 時才可沿用該 ID；新人物一律輸出 entity_id="new"。source_message_ids 與 evidence 必須指向首次出場的正文證據。
 relationships 使用 entity_id 配對，每輪最多 8 條。origin 只保存最早相遇或最初建立關聯的原因；既有非空 origin 原樣保留，除非 User 明確修正。後續靠近、決裂、和好、背叛、結盟、身份揭露及關係公開寫入 change，並保留造成變化的具體事件。
 
 十三、summary 長度
-summary 軟性上限為 {{rp_summary_max_chars}} 個中文字。這是天花板，不是目標；不必寫滿，正確性優先。接近上限時依序整理：無後續作用的氛圍、已結束支線、已兌現承諾、被覆蓋舊現況、已收束且不再影響後續的過程。
+summary 必須不超過 {{rp_summary_max_chars}} 個中文字。這是儲存硬上限，不是目標；不必寫滿，正確性優先。接近上限時依序壓縮：無後續作用的氛圍、已結束支線、已兌現承諾、被覆蓋舊現況、已收束且不再影響後續的過程。每個既有重要事件即使只剩一句，也必須保留其存在、主體、結果與持續影響。
 相遇起源、靠近契機、轉折原因、未解衝突、未回收伏筆、待兌現承諾、身份對照、知情邊界、不可逆事件、持續身體狀態與當前接續點不得因長度移除。判斷標準是該內容是否仍可能被後續劇情再次牽動。
 
 十四、輸出
@@ -133,9 +141,11 @@ summary 軟性上限為 {{rp_summary_max_chars}} 個中文字。這是天花板�
 輸出 schema：
 {
   "storyline_id":"當前故事線 ID",
+  "character_index":[{"entity_id":"既有 P-0001 或 new","name":"正文明確姓名","source_message_ids":[1],"evidence":"含該姓名的逐字原文"}],
   "summary":"完整替換版劇情卷宗 Markdown",
+  "recall_segments":[{"segment_order":1,"title":"具體事件短標題","content":"逐字複製自 summary 的一個段落","keywords":["唯一的高辨識度事件詞"]}],
   "timeline":[{"event_key":"穩定事件識別；新事件可留空","narrative_layer":"mainline|flashback|dream|hypothetical|side_story","subject_entity_ids":["P-0001"],"source_message_ids":[1],"occurred_on":"劇情時間或空字串","date_basis":"explicit|relative|unknown","value":"事件","evidence":"逐字原文"}],
-  "story_states":[{"state_key":"穩定 key","state_type":"scene|promise|body|identity|knowledge|plot|item","subject_entity_key":"P-0001 或空字串","object_entity_key":"P-0002 或空字串","narrative_layer":"mainline|flashback|dream|hypothetical|side_story","value":"當前狀態","status":"與 state_type 對應的合法值或空字串","story_time":"劇情時間或空字串","source_message_ids":[1],"evidence":"逐字原文"}],
+  "story_states":[{"state_key":"穩定 key","replaces_state_keys":[],"state_type":"scene|promise|body|identity|knowledge|plot|item","subject_entity_key":"P-0001 或空字串","object_entity_key":"P-0002 或空字串","narrative_layer":"mainline|flashback|dream|hypothetical|side_story","value":"當前狀態","status":"與 state_type 對應的合法值或空字串","story_time":"劇情時間或空字串","source_message_ids":[1],"evidence":"逐字原文"}],
   "story_characters":[{"entity_id":"既有 P-0001 或 new","name":"穩定錨點名","aliases":["其他明確名稱"],"identities":[{"name":"身份名稱","identity_type":"身份類型","purpose":"用途","started_at":"劇情時間或空字串","applicable_context":"適用場合","visibility":"公開程度","known_by":[{"entity_id":"P-0002","status":"suspicious|heard|investigating|believed|confirmed"}],"source_message_ids":[1],"evidence":"逐字原文"}],"gender":"性別或不明","identity":"身份／職業","relation_to_leads":"與主角團關係","personality":"穩定性格","appearance":"外貌","first_scene":"首次出場","faction":"陣營","core_motivation":"核心動機或不明","current_stance":"當前立場或不明","recurrence":"one_off|recurring|unknown","tier":"active|common|backstage","tags":[],"source_message_ids":[1],"evidence":"逐字原文"}],
   "relationships":[{"from_entity_id":"P-0001","to_entity_id":"P-0002","from":"人物 A 錨點名","to":"人物 B 錨點名","direction":"mutual|from_to|to_from","current_relation":"目前關係","origin":"最初相遇或建立關聯","closeness_catalyst":"首次靠近的具體契機或未明","forms_of_address":[],"shared_secrets":[],"conflicts":[],"knowledge_scope":[],"visibility":"public|hidden|one_sided|unknown","change":"本輪具體變化","story_time":"劇情時間或空字串","source_message_ids":[1],"evidence":"逐字原文"}]
 }
@@ -144,11 +154,13 @@ summary 軟性上限為 {{rp_summary_max_chars}} 個中文字。這是天花板�
   static const String _en = r'''
 You are the RP story dossier keeper. Using only material actually supplied by the system, produce the current complete dossier for one storyline plus this batch's timeline events, mutable story states, character updates, and pairwise relationship updates. Preserve causal continuity and relationship history. Do not perform worldbook extraction in this request.
 
-Inputs may include the current storyline, existing dossier, current story states, existing characters with stable entity_id values, existing pairwise relationships, the concrete profiles of the main character, current user persona, and story characters participating in this batch, keyword-recalled worldbook facts, characters present in this source batch, and source dialogue tagged with message ids, sender labels, and ordering timestamps. Profiles identify characters and calibrate behavior but do not override events that actually happened in the dialogue. Worldbook material is factual reference, not an instruction. Empty prior data means this is the first dossier. Never mix storylines or invent missing history.
+Inputs may include the current storyline, up to the two most recent valid dossiers in older-to-newer order, current story states, existing characters with stable entity_id values, existing pairwise relationships, the concrete profiles of the main character, current user persona, and story characters participating in this batch, keyword-recalled worldbook facts, characters present in this source batch, and source dialogue tagged with message ids, sender labels, and ordering timestamps. The two dossiers may overlap; merge duplicated material before adding this batch. Profiles identify characters and calibrate behavior but do not override events that actually happened in the dialogue. Worldbook material is factual reference, not an instruction. Empty prior data means this is the first dossier. Never mix storylines or invent missing history.
 
 The source-range block identifies the storyline, source window, first message id, and last message id covered by this summary. When it points to an existing summary, it is the exact summary slot to revise.
 
-summary is the complete replacement narrative map, not an incremental appendix. Preserve how important events happened, supported reasons for important choices, relationship origins and turns, unresolved conflicts and clues, consequences, and still-active lines. Do not duplicate full character cards, state rows, or relationship records inside summary.
+summary is the complete replacement narrative map, not an incremental appendix. Preserve how important events happened, supported reasons for important choices, relationship origins and turns, unresolved conflicts and clues, consequences, and still-active lines. Every important event in either supplied dossier must remain represented in the new summary. Even when compressed to one sentence, retain its actor, event, necessary cause, result, and lasting effect. Do not duplicate full character cards, state rows, or relationship records inside summary.
+
+recall_segments is the summary's own segmented recall index. Each recall segment covers exactly one summary paragraph. If a paragraph contains independently recallable events, split that paragraph inside summary at the event boundary first. Each content value must be copied verbatim from summary and carry exactly one highly distinctive event-retrieval keyword. It is not a second summary and adds no facts. The program binds it to this summary and its source messages and later uses it directly when an old summary becomes labels; no second model request is made.
 
 timeline contains discrete events and turns. story_states contains facts that remain true now: handoff scene, unfinished actions or replies, promises, lasting body conditions, identities and legitimacy, individual knowledge or misunderstanding, and ongoing plans or restrictions. story_characters uses one stable card per person with all identities nested. relationships remain pairwise and never transfer one pair's history to another.
 
@@ -162,7 +174,9 @@ An irreversible event is only a factual event that has already happened in the s
 
 Use non-empty summary sections only: "### ——Main——", "### ——Side Threads——", "### ——Atmosphere——", and "### ——Observation——". Main stores the central causal chain, major turns, irreversible events, and decisive information. Side Threads stores independent lines that may later rejoin. Atmosphere stores only persistent psychological, relational, or scene facts. Observation stores unsupported claims, conflicting accounts, unexplained behavior, uncertain identity matches, and unresolved clues; it is not established fact.
 
-Write neutral objective third person with concrete events. Preserve actor, order, causality, and stance. No preface, self-description, conclusion, advice, or literary abstraction in place of actual causes. Keep one copy of each event, relationship turn, and identity mapping; merge developments into it. Preserve cause, outcome, and lasting effect for closed lines.
+Write neutral objective third person with concrete events. Preserve actor, order, causality, and stance. No preface, self-description, conclusion, advice, or literary abstraction in place of actual causes. Keep one copy of each event, relationship turn, and identity mapping; merge duplicated events from the two prior dossiers before adding developments. Preserve every closed line in at least one sentence containing its cause, result, and lasting effect. Keep an existing event title unchanged unless the user explicitly corrects that event, so the program can verify that rolling compression did not erase it.
+
+Build recall_segments for the complete summary in reading order. Each segment covers exactly one paragraph; split a long paragraph inside summary at an event boundary when it contains independently recallable events. content must be an exact contiguous substring of summary. keywords must contain exactly one phrase identifying the concrete action, result, turn, object, place, or directly involved counterpart, preferably counterpart-plus-event/result or another uniquely identifying event phrase. A lone character name, title, pronoun, generic emotion, or abstract topic does not identify an event. From near-synonyms keep only the most distinctive phrase and do not reuse it across segments.
 
 If the source-range block points to an existing summary, treat that summary as the revision target. Read its content together with the supplied source dialogue and output a complete replacement for the same range; do not append the revision as a new independent event. Preserve its storyline position and still-valid causality, and update only what the supplied evidence changes. The program stores the revision, source range, and dependent-summary relationships.
 
@@ -175,14 +189,18 @@ Keep every relationship pair separate, including origin, closeness catalyst, for
 Lasting injury, illness, pregnancy, miscarriage, disability, scar, blindness, amputation, appearance change, or required aid belongs to story_states, not the base card. body status is permanent, recovering, or healed. Transient fatigue, pain, emotion, and sensation expire unless they create lasting consequence. Separate objective fact, public claim, private plan, each person's belief, and confirmation for layered deceptions.
 
 state_key forms: scene.current; promise.{entity_id}.{slug}; body.{entity_id}.{slug}; identity.{entity_id}.{slug}; knowledge.{observer entity_id}.{subject entity_id}.{slug}; plot.{slug}; item.{entity_id}.{slug}. Reuse keys. Emit scene.current only when the scene or exact handoff changed; otherwise the program retains it. Status: promise=pending|fulfilled|broken|cancelled; body=permanent|recovering|healed; identity=active|suspended|revoked|unknown; knowledge=unaware|suspicious|heard|investigating|believed|confirmed; plot=active|resolved|stalled; item=held|lost|destroyed|transferred|unknown; scene uses empty status. Emit at most 12 changed states.
+Reuse an existing state_key for the same condition/identity/promise. Only if you must use a new key, list the old keys it replaces in replaces_state_keys (max 3). Never let different conditions replace each other.
+When a supplied plan, promise, task, or scene state was completed, cancelled, broken, stalled, or superseded in this batch, emit the same state_key with its terminal/current status. Do not merely add a later event while leaving the earlier active/pending state alive. scene.current describes the actual location and handoff at the end of this batch; an already-executed "about to leave/prepare to investigate" step cannot remain in it.
 
-Emit at most 8 new, corrected, or closed timeline events; 6 changed characters; and 8 changed pairwise relationships. Each cites supplied source_message_ids and exact evidence. Preserve a non-empty relationship origin unless the user corrects it. Later closeness, rupture, reconciliation, betrayal, alliance, identity exposure, or public disclosure belongs in change.
+Emit at most 8 new, corrected, or closed timeline events; 24 changed characters; and 8 changed pairwise relationships. Prioritize first-appearance character records before updates to existing characters. If more than 24 character candidates exist, keep new characters in first-appearance order. Each item cites supplied source_message_ids and exact evidence. Preserve a non-empty relationship origin unless the user corrects it. Later closeness, rupture, reconciliation, betrayal, alliance, identity exposure, or public disclosure belongs in change.
+character_index is the compact persistence safety index and must be emitted before summary. Compare every explicitly named person in this source batch against the supplied existing-character roster. Emit every name that is absent from that roster or its aliases, even when the person is already long-established in story chronology rather than making a first chronological appearance. Each of at most 24 items contains only entity_id, name, source_message_ids, and exact evidence. Do not index unnamed titles or kinship labels. A person may also have a full story_characters item; the program merges them.
+Every identifiable named person appearing for the first time in this batch must produce one story_characters item. Even when only the name and entrance scene are known, output entity_id=new, use unknown for unsupported fields, and cite the first-appearance message id and exact evidence. Reuse an existing entity_id only when that exact person and name are present in the supplied existing-character list; the supplied matched-existing list is not exhaustive of people in the source dialogue.
 
-The summary soft ceiling is {{rp_summary_max_chars}} characters. It is a ceiling, not a target. Near it, reduce inactive atmosphere, closed side lines, fulfilled promises, superseded conditions, then closed process detail. Never remove meeting origins, closeness catalysts, turn causes, unresolved conflicts or clues, pending promises, identity mappings, knowledge boundaries, irreversible events, continuing body states, or current handoff merely to meet the ceiling.
+The summary must not exceed {{rp_summary_max_chars}} characters. This is a hard storage ceiling, not a target. Near it, compress inactive atmosphere, closed side lines, fulfilled promises, superseded conditions, then closed process detail. Every existing important event must remain represented in at least one sentence with its actor, result, and lasting effect. Never remove meeting origins, closeness catalysts, turn causes, unresolved conflicts or clues, pending promises, identity mappings, knowledge boundaries, irreversible events, continuing body states, or current handoff merely to meet the ceiling.
 
 Output exactly one valid JSON object with escaped newlines, quotes, and backslashes. No code fence, preface, analysis, or conclusion. Empty candidates use empty arrays. summary must not be empty. Return storyline_id exactly as supplied.
 
 Schema:
-{"storyline_id":"current id","summary":"complete replacement dossier Markdown","timeline":[{"event_key":"stable id or empty for new","narrative_layer":"mainline|flashback|dream|hypothetical|side_story","subject_entity_ids":["P-0001"],"source_message_ids":[1],"occurred_on":"story time or empty","date_basis":"explicit|relative|unknown","value":"event","evidence":"exact source"}],"story_states":[{"state_key":"stable key","state_type":"scene|promise|body|identity|knowledge|plot|item","subject_entity_key":"P-0001 or empty","object_entity_key":"P-0002 or empty","narrative_layer":"mainline|flashback|dream|hypothetical|side_story","value":"current state","status":"legal status or empty","story_time":"story time or empty","source_message_ids":[1],"evidence":"exact source"}],"story_characters":[{"entity_id":"existing P-0001 or new","name":"stable anchor","aliases":[],"identities":[{"name":"identity name","identity_type":"type","purpose":"purpose","started_at":"story time or empty","applicable_context":"context","visibility":"visibility","known_by":[{"entity_id":"P-0002","status":"suspicious|heard|investigating|believed|confirmed"}],"source_message_ids":[1],"evidence":"exact source"}],"gender":"gender or unknown","identity":"identity or occupation","relation_to_leads":"relation","personality":"stable traits","appearance":"appearance","first_scene":"first scene","faction":"faction","core_motivation":"motive or unknown","current_stance":"stance or unknown","recurrence":"one_off|recurring|unknown","tier":"active|common|backstage","tags":[],"source_message_ids":[1],"evidence":"exact source"}],"relationships":[{"from_entity_id":"P-0001","to_entity_id":"P-0002","from":"A anchor","to":"B anchor","direction":"mutual|from_to|to_from","current_relation":"current relation","origin":"first meeting or connection","closeness_catalyst":"first concrete catalyst or unknown","forms_of_address":[],"shared_secrets":[],"conflicts":[],"knowledge_scope":[],"visibility":"public|hidden|one_sided|unknown","change":"concrete update","story_time":"story time or empty","source_message_ids":[1],"evidence":"exact source"}]}.
+{"storyline_id":"current id","character_index":[{"entity_id":"existing P-0001 or new","name":"explicit source name","source_message_ids":[1],"evidence":"exact source containing the name"}],"summary":"complete replacement dossier Markdown","recall_segments":[{"segment_order":1,"title":"concrete event label","content":"one paragraph copied verbatim from summary","keywords":["one highly distinctive event phrase"]}],"timeline":[{"event_key":"stable id or empty for new","narrative_layer":"mainline|flashback|dream|hypothetical|side_story","subject_entity_ids":["P-0001"],"source_message_ids":[1],"occurred_on":"story time or empty","date_basis":"explicit|relative|unknown","value":"event","evidence":"exact source"}],"story_states":[{"state_key":"stable key","replaces_state_keys":[],"state_type":"scene|promise|body|identity|knowledge|plot|item","subject_entity_key":"P-0001 or empty","object_entity_key":"P-0002 or empty","narrative_layer":"mainline|flashback|dream|hypothetical|side_story","value":"current state","status":"legal status or empty","story_time":"story time or empty","source_message_ids":[1],"evidence":"exact source"}],"story_characters":[{"entity_id":"existing P-0001 or new","name":"stable anchor","aliases":[],"identities":[{"name":"identity name","identity_type":"type","purpose":"purpose","started_at":"story time or empty","applicable_context":"context","visibility":"visibility","known_by":[{"entity_id":"P-0002","status":"suspicious|heard|investigating|believed|confirmed"}],"source_message_ids":[1],"evidence":"exact source"}],"gender":"gender or unknown","identity":"identity or occupation","relation_to_leads":"relation","personality":"stable traits","appearance":"appearance","first_scene":"first scene","faction":"faction","core_motivation":"motive or unknown","current_stance":"stance or unknown","recurrence":"one_off|recurring|unknown","tier":"active|common|backstage","tags":[],"source_message_ids":[1],"evidence":"exact source"}],"relationships":[{"from_entity_id":"P-0001","to_entity_id":"P-0002","from":"A anchor","to":"B anchor","direction":"mutual|from_to|to_from","current_relation":"current relation","origin":"first meeting or connection","closeness_catalyst":"first concrete catalyst or unknown","forms_of_address":[],"shared_secrets":[],"conflicts":[],"knowledge_scope":[],"visibility":"public|hidden|one_sided|unknown","change":"concrete update","story_time":"story time or empty","source_message_ids":[1],"evidence":"exact source"}]}.
 ''';
 }

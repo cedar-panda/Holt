@@ -9,8 +9,7 @@ import 'package:uuid/uuid.dart';
 import '../theme/app_theme.dart';
 import '../services/locale_strings.dart';
 import '../widgets/gradient_background.dart';
-import '../widgets/starfield_painter.dart';
-import '../widgets/neural_field.dart';
+import '../widgets/ambient_particles.dart';
 import '../widgets/avatar_cropper.dart';
 import '../memory/database.dart';
 import '../services/settings_manager.dart';
@@ -21,6 +20,7 @@ import '../services/whisper_service.dart';
 import '../services/character_card_png_service.dart';
 import '../widgets/x_post_panel.dart';
 import '../widgets/character_signature_history_sheet.dart';
+import '../widgets/emotion_panel.dart';
 import '../utils/latest_request_gate.dart';
 
 /// 人設卡 — 創建/編輯（存 DB，無行數限制）
@@ -243,6 +243,7 @@ class _CharacterCardScreenState extends State<CharacterCardScreen> {
     }
 
     return Scaffold(
+      resizeToAvoidBottomInset: true,
       body: GestureDetector(
         onTap: () => FocusScope.of(context).unfocus(),
         child: GradientBackground(
@@ -250,9 +251,7 @@ class _CharacterCardScreenState extends State<CharacterCardScreen> {
             children: [
               Positioned.fill(
                 child: YanciTheme.starEnabled
-                    ? (YanciTheme.bgEffect == 'stars'
-                          ? const StarfieldWidget(starCount: 12)
-                          : const NeuralFieldWidget(nodeCount: 16))
+                    ? const AmbientParticleField(neuralCount: 16, starCount: 12)
                     : const SizedBox.shrink(),
               ),
               SafeArea(
@@ -274,13 +273,13 @@ class _CharacterCardScreenState extends State<CharacterCardScreen> {
                             onPressed: () => Navigator.pop(context),
                           ),
                           Expanded(
-                            child: Text(
-                              _isEditing
-                                  ? L.get('char_edit_title')
-                                  : L.get('char_new_title'),
-                              textAlign: TextAlign.center,
-                              style: YanciTheme.headingMedium,
-                            ),
+                            child: _isEditing
+                                ? const SizedBox.shrink()
+                                : Text(
+                                    L.get('char_new_title'),
+                                    textAlign: TextAlign.center,
+                                    style: YanciTheme.headingMedium,
+                                  ),
                           ),
                           // 已建立角色才有角色專屬的 X 綁定、分享與刪除操作。
                           if (widget.characterId != null) ...[
@@ -353,8 +352,14 @@ class _CharacterCardScreenState extends State<CharacterCardScreen> {
                     ),
                     Expanded(
                       child: SingleChildScrollView(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: YanciTheme.spacingMd,
+                        keyboardDismissBehavior:
+                            ScrollViewKeyboardDismissBehavior.onDrag,
+                        padding: EdgeInsets.fromLTRB(
+                          YanciTheme.spacingMd,
+                          0,
+                          YanciTheme.spacingMd,
+                          MediaQuery.viewInsetsOf(context).bottom +
+                              YanciTheme.spacingXl,
                         ),
                         child: Column(
                           children: [
@@ -662,6 +667,18 @@ class _CharacterCardScreenState extends State<CharacterCardScreen> {
                             // ═══ 相處細節：輸入框悄悄話 ═══
                             _buildWhisperSection(),
 
+                            if (widget.characterId != null &&
+                                EmotionPanel.kVisible) ...[
+                              const SizedBox(height: YanciTheme.spacingLg),
+                              EmotionPanel(
+                                key: ValueKey(
+                                  'emotion-inside-character-card-${widget.characterId}',
+                                ),
+                                characterId: widget.characterId!,
+                                initiallyCollapsed: true,
+                              ),
+                            ],
+
                             const SizedBox(height: YanciTheme.spacingXl),
                           ],
                         ),
@@ -768,75 +785,91 @@ class _CharacterCardScreenState extends State<CharacterCardScreen> {
       context: context,
       backgroundColor: Colors.transparent,
       isScrollControlled: true,
-      builder: (ctx) => DraggableScrollableSheet(
-        initialChildSize: 0.9,
-        maxChildSize: 0.95,
-        minChildSize: 0.5,
-        builder: (ctx, scrollCtrl) => Container(
-          decoration: BoxDecoration(
-            color: YanciTheme.isDark
-                ? const Color(0xF0252228)
-                : Colors.white.withValues(alpha: 0.97),
-            borderRadius: const BorderRadius.vertical(
-              top: Radius.circular(YanciTheme.radiusLg),
+      useSafeArea: true,
+      builder: (ctx) {
+        final bottomInset = MediaQuery.viewInsetsOf(ctx).bottom;
+        return AnimatedPadding(
+          duration: MediaQuery.disableAnimationsOf(ctx)
+              ? Duration.zero
+              : const Duration(milliseconds: 180),
+          curve: Curves.easeOutCubic,
+          padding: EdgeInsets.only(bottom: bottomInset),
+          child: DraggableScrollableSheet(
+            initialChildSize: 0.9,
+            maxChildSize: 0.95,
+            minChildSize: 0.5,
+            builder: (ctx, scrollCtrl) => Container(
+              decoration: BoxDecoration(
+                color: YanciTheme.isDark
+                    ? const Color(0xF0252228)
+                    : Colors.white.withValues(alpha: 0.97),
+                borderRadius: const BorderRadius.vertical(
+                  top: Radius.circular(YanciTheme.radiusLg),
+                ),
+              ),
+              child: Column(
+                children: [
+                  const SizedBox(height: YanciTheme.spacingMd),
+                  Container(
+                    width: 40,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: YanciTheme.textSecondary.withValues(alpha: 0.3),
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.all(YanciTheme.spacingMd),
+                    child: Row(
+                      children: [
+                        Text(
+                          L.get('char_settings'),
+                          style: YanciTheme.headingMedium,
+                        ),
+                        const Spacer(),
+                        GestureDetector(
+                          onTap: () => Navigator.pop(ctx),
+                          child: Icon(
+                            Icons.close_fullscreen_rounded,
+                            size: 20,
+                            color: YanciTheme.accent,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Expanded(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: YanciTheme.spacingMd,
+                      ),
+                      child: TextField(
+                        controller: _descController,
+                        maxLines: null,
+                        expands: true,
+                        scrollPadding: EdgeInsets.only(
+                          bottom: bottomInset + YanciTheme.spacingXl,
+                        ),
+                        textAlignVertical: TextAlignVertical.top,
+                        style: YanciTheme.bodyText.copyWith(fontSize: 14),
+                        decoration: InputDecoration(
+                          hintText: L.get('char_desc_hint_short'),
+                          hintStyle: YanciTheme.bodySmall.copyWith(
+                            color: YanciTheme.textSecondary.withValues(
+                              alpha: 0.4,
+                            ),
+                          ),
+                          border: InputBorder.none,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
-          child: Column(
-            children: [
-              const SizedBox(height: YanciTheme.spacingMd),
-              Container(
-                width: 40,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: YanciTheme.textSecondary.withValues(alpha: 0.3),
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-              Padding(
-                padding: const EdgeInsets.all(YanciTheme.spacingMd),
-                child: Row(
-                  children: [
-                    Text(
-                      L.get('char_settings'),
-                      style: YanciTheme.headingMedium,
-                    ),
-                    const Spacer(),
-                    GestureDetector(
-                      onTap: () => Navigator.pop(ctx),
-                      child: Icon(
-                        Icons.close_fullscreen_rounded,
-                        size: 20,
-                        color: YanciTheme.accent,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              Expanded(
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: YanciTheme.spacingMd,
-                  ),
-                  child: TextField(
-                    controller: _descController,
-                    maxLines: null,
-                    expands: true,
-                    textAlignVertical: TextAlignVertical.top,
-                    style: YanciTheme.bodyText.copyWith(fontSize: 14),
-                    decoration: InputDecoration(
-                      hintText: L.get('char_desc_hint_short'),
-                      hintStyle: YanciTheme.bodySmall.copyWith(
-                        color: YanciTheme.textSecondary.withValues(alpha: 0.4),
-                      ),
-                      border: InputBorder.none,
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
+        );
+      },
     );
   }
 

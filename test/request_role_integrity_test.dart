@@ -3,6 +3,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:project_yanci/services/api_adapter.dart';
 import 'package:project_yanci/services/aws_bedrock_service.dart';
+import 'package:project_yanci/services/cache/deepinfra_cache_policy.dart';
+import 'package:project_yanci/services/deepinfra_service.dart';
 import 'package:project_yanci/services/deepseek_service.dart';
 import 'package:project_yanci/services/gemini_service.dart';
 import 'package:project_yanci/services/locale_strings.dart';
@@ -55,8 +57,76 @@ void _expectNoRuntimeInUserMessages(List messages) {
 void main() {
   setUp(() async {
     SharedPreferences.setMockInitialValues(<String, Object>{});
+    DeepInfraCachePolicy.resetForTesting();
     await L.setLocale('en');
   });
+
+  test(
+    'DeepInfra DeepSeek cache has stable session key and real history',
+    () async {
+      SharedPreferences.setMockInitialValues({'enable_prompt_caching': true});
+      CacheSession.conversationId = 'deepseek-window';
+      final body = await DeepInfraService(apiKey: 'test')
+          .debugBuildBodyForTesting(
+            messages: _sourceMessages,
+            model: 'deepseek-ai/DeepSeek-V3.2',
+            structuredPrompt: _structuredPrompt,
+          );
+      expect(
+        body['prompt_cache_key'],
+        'holt:deepseek-window:deepseek-ai/deepseek-v3.2',
+      );
+      expect(body, isNot(contains('prompt_cache_options')));
+      final messages = (body['messages'] as List).cast<Map>();
+      expect(
+        messages.any((m) => _textContent(m['content']) == 'previous reply'),
+        isTrue,
+      );
+      expect(
+        _textContent(_latestUser(messages)['content']),
+        'actual human message',
+      );
+      _expectNoRuntimeInUserMessages(messages);
+    },
+  );
+
+  test(
+    'DeepInfra keeps live state after its explicit cache boundary',
+    () async {
+      SharedPreferences.setMockInitialValues(<String, Object>{
+        'enable_prompt_caching': true,
+      });
+      CacheSession.conversationId = 'deepinfra-story-a';
+      final body = await DeepInfraService(apiKey: 'test')
+          .debugBuildBodyForTesting(
+            messages: _sourceMessages,
+            model: 'moonshotai/Kimi-K2.7-Code',
+            structuredPrompt: _structuredPrompt,
+          );
+
+      expect(body['prompt_cache_key'], contains('deepinfra-story-a'));
+      expect(body['prompt_cache_options'], <String, String>{
+        'mode': 'explicit',
+        'ttl': '1h',
+      });
+      final messages = (body['messages'] as List).cast<Map>();
+      final boundaryIndex = messages.indexWhere((message) {
+        final content = message['content'];
+        if (content is! List || content.isEmpty) return false;
+        final last = content.last;
+        return last is Map && last.containsKey('prompt_cache_breakpoint');
+      });
+      final liveStateIndex = messages.indexWhere(
+        (message) => _textContent(
+          message['content'],
+        ).contains('MEMORY + CURRENT TIME=09:30'),
+      );
+
+      expect(boundaryIndex, greaterThanOrEqualTo(0));
+      expect(liveStateIndex, greaterThan(boundaryIndex));
+      _expectNoRuntimeInUserMessages(messages);
+    },
+  );
 
   test('Claude mid-conversation system support is model-gated', () {
     expect(
@@ -135,6 +205,44 @@ void main() {
       expect(_sourceMessages.last['content'], 'actual human message');
     }
   });
+
+  test(
+    'Claude-family alias activates the existing compatible cache path',
+    () async {
+      SharedPreferences.setMockInitialValues(<String, Object>{
+        'enable_prompt_caching': true,
+      });
+      final body =
+          await OpenAICompatibleService(
+            apiKey: 'test',
+            baseUrl: 'https://example.com/v1',
+          ).debugBuildBodyForTesting(
+            messages: _sourceMessages,
+            model: 'vendor/fable-4.6-thinking',
+            structuredPrompt: _structuredPrompt,
+          );
+      final messages = (body['messages'] as List).cast<Map>();
+
+      expect(
+        messages.any(
+          (message) =>
+              _textContent(message['content']).contains('STATIC EXACT'),
+        ),
+        isTrue,
+      );
+      expect(
+        messages.any(
+          (message) =>
+              message['role'] == 'assistant' &&
+              _textContent(
+                message['content'],
+              ).contains('MEMORY + CURRENT TIME=09:30'),
+        ),
+        isTrue,
+      );
+      _expectNoRuntimeInUserMessages(messages);
+    },
+  );
 
   test(
     'OpenRouter keeps image and caption as unmodified user content',

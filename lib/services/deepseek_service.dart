@@ -9,7 +9,7 @@ import 'system_context_debug.dart';
 
 /// DeepSeek API（OpenAI 兼容格式，自動 prompt caching）
 /// 不需要手動標記 cache_control，DeepSeek 自動緩存重複前綴
-/// 最小緩存長度 128 tokens，命中時費用降為 0.1 元/百萬 token
+/// 官方快取命中按 64-token 區塊計算，且沒有可由客戶端指定的固定 TTL。
 class DeepSeekService implements ApiAdapter {
   final String apiKey;
   final bool thinkingEnabled;
@@ -171,16 +171,26 @@ class DeepSeekService implements ApiAdapter {
 
       Map<String, int>? requestStats;
       var reasoningOpen = false;
+      var sawDone = false;
+      String? terminalFinishReason;
       final diagnostics = SseStreamDiagnostics();
       await for (final data in SseStream.data(
         response.stream,
         diagnostics: diagnostics,
       )) {
-        if (data == '[DONE]') break;
+        if (data == '[DONE]') {
+          sawDone = true;
+          break;
+        }
 
         try {
           final json = jsonDecode(data);
           if (json['usage'] != null) requestStats = _extractCacheStats(json);
+          final finishReason = json['choices']?[0]?['finish_reason']
+              ?.toString();
+          if (finishReason != null && finishReason.isNotEmpty) {
+            terminalFinishReason = finishReason;
+          }
           final deltaMap = json['choices']?[0]?['delta'];
           final reasoning = deltaMap is Map
               ? ProviderReasoning.fromMap(deltaMap)
@@ -217,6 +227,11 @@ class DeepSeekService implements ApiAdapter {
       } else {
         onUsage?.call(ApiUsage(diagnostics: streamDiagnostics));
       }
+      StreamTerminalGuard.requireOpenAiCompatible(
+        provider: 'DeepSeek',
+        sawDone: sawDone,
+        finishReason: terminalFinishReason,
+      );
     } finally {
       if (identical(_activeClient, client)) _activeClient = null;
       client.close();

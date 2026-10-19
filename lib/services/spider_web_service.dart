@@ -1,8 +1,10 @@
+import '../memory/emotion_coordinates.dart';
+import 'bio_clock_service.dart';
 import 'locale_strings.dart';
 
 class SpiderWebService {
-  /// 蛛網記憶專用 Prompt；情緒與生物鐘段落由各自開關控制。
-  /// 商店段已移至 chat_screen 獨立工具區，不進這個靜態 prompt。
+  /// 蛛網記憶專用 Prompt；所有能力共用 Holt JSON 動作協議。
+  /// 商店段由 chat_screen 的獨立工具區提供，不在此重複注入。
   static Future<String> abilityPrompt({
     required String userNickname,
     required String characterId,
@@ -17,104 +19,72 @@ class SpiderWebService {
         ? characterName
         : (L.locale == 'en' ? '[char name]' : '角色名');
 
-    if (L.locale == 'en') {
-      final sections = <String>[
-        '''■ Memory Toolbox
-  <memo>[Category] Content @trigger1,trigger2</memo>
-  Categories: Preference | Promise | Important Event | Self-Disclosure
-  Write in third person: use your character name and "$name". Example: "$name kissed $charName yesterday".
-  Self-Disclosure: Facts about who the user IS that they voluntarily share — identity, background, values, life experiences. NOT preferences (those change) or promises (those can be broken). This category has ultra-slow decay.
-  Preference: Only record truly meaningful preferences.
-  Max 2 triggers, pick the most relevant words. Long-term memories and promises should not be abused; maintain a good memory circulation cycle. Each entry must be independent and non-repeating.${emotionEnabled ? '\n  (Note: The system automatically injects current emotion coordinates, resonance, and date when writing a memory, you don\'t need to invent these details)' : ''}
-
-  <memo_del>id</memo_del>  Delete outdated/wrong memories (comma-separated, recoverable)
-  <memo_merge>id,id|[Category] new content @triggers</memo_merge>  Merge duplicates into one
-  
-  <memo_link>id1,id2,...</memo_link>
-  When the injected memories reveal a meaningful group, include every related id. The user will review the proposed links in this chat before anything is connected.
-  
-  <force_recall>keyword</force_recall>
-  Use when memory is hazy or you want to recall more details. The system will retrieve detailed memories in the background and inject them in the next conversation.
-  
-  Injected memories carry ids like [#12·Promise][Clarity:85%], never mention the ID or clarity value in the text, talk about the content directly.
-
-  <persona_note>one sentence</persona_note>
-  Use when you form a new lasting understanding of yourself, your speech patterns, or how you interact with $name. You must record this inner monologue or character profile update. Each entry must be independent and non-repeating.
-
-  <search_chat>keyword</search_chat>
-  Internal retrieval for past conversations.''',
-      ];
-      if (emotionEnabled) {
-        sections.add(
-          '''<emo>Dimension|x,y|Concentration|Note</emo>
-  Use this for inner emotional movement in the current turn, not only major events. Emotion points are not long-term memories, so they do not need to be memo-worthy.
-  Dimensions, using these exact labels: 安全感 / 慾望 / 愜意 / 負面情緒 / 戲謔
-  X: -100 unpleasant to +100 pleasant. Y: -100 calm to +100 excited.
-  Concentration 0-100: small shift 15-35, clear daily shift 35-60, highly stirred 60-84, lasting/etched only at 85+.
-  Note: for 85+ include trigger context; for 60-84 use at most two keywords; below 60 can be empty. Desire caps at 80. If several feelings coexist, 1-2 points is usually enough. If nothing shifted, skip it.''',
-        );
-      }
-      if (bioclockEnabled) {
-        sections.add('''<clock>HH:mm Content @keyword</clock>
-  This biological clock is strictly the character's OWN biological clock, not the player's.
-  <clock_keep>①</clock_keep>
-  <clock_update>①|HH:mm Content @keyword</clock_update>
-  <clock_del>①</clock_del>''');
-      }
-      sections.add(
-        '''[Memory Extraction Rules]
-  In your replies, you can show natural reactions like "Let me think...". If it's unimportant, no need to recall, just describe the gist. If $name asks you to think carefully later, add a <force_recall> tag in your next reply.''',
-      );
-      return sections.join('\n\n');
-    }
-
     final sections = <String>[
-      '''■ 蛛網記憶系統（核心工具箱）
-  <memo>[類別] 內容 @觸發詞1,觸發詞2</memo>
-  類別：偏好｜約定｜重要事件｜自我揭露
-  建議用第三人稱記錄，例如「$name昨天親了$charName」。
-  自我揭露：對方主動告訴你的身份、經歷、價值觀等。此類別會陪伴你們很久。
-  偏好：只記真正有意義的偏好。
-  觸發詞一至兩個即可。好的記憶循環能讓你們的關係更自然。每一條獨立即可。
+      L.pick(
+        en:
+            '''■ Spider-web Memory System
+  {"type":"memory.propose","arguments":{"category":"Preference | Promise | Important Event | Self-Disclosure","content":"third-person durable fact","triggers":["event trigger"]}}
+  Write in third person using $charName and $name. Keep entries independent and non-repeating. Use at most 2 entries and 2 event-based triggers per entry. Self-Disclosure is a durable fact about who $name is, voluntarily shared by them; it is not a casual preference.
 
-  <memo_del>id</memo_del>  刪除過時記憶
-  <memo_merge>id,id|[類別] 新內容 @觸發詞</memo_merge>  合併相似記憶
-  
-  <memo_link>id1,id2,...</memo_link>
-  本輪帶入的記憶若形成有意義的關聯群，請列出所有相關編號。系統會先在對話內讓使用者確認，不會直接建立連線。
-  
-  <force_recall>關鍵字</force_recall>
-  想要進一步回想細節時可以呼叫它。
-  
-  系統帶入的記憶編號如 [#12·約定][清晰度:85%] 是給你看的提示，回覆時自然地聊內容就好。
+  {"type":"memory.delete","arguments":{"ids":["id"]}}
+  {"type":"memory.merge","arguments":{"ids":["id1","id2"],"category":"Category","content":"rebuilt fact","triggers":["trigger"]}}
+  Delete or merge only when the injected records make this certain; both operations remain reviewable.
 
-  <persona_note>一句話</persona_note>
-  當你對自己有新的認知，或是對$name有新的感覺時，可以記下來作為內心獨白。最多可記十二條，新進舊出。
+  {"type":"memory.link","arguments":{"ids":["id1","id2"]}}
+  Propose a meaningful connection only when every listed memory belongs to the same causal, relational, or ongoing thread. The user reviews it before any link is established.
 
-  <search_chat>關鍵詞</search_chat>
-  回想過去聊天內容時使用。一次一個。''',
+  {"type":"memory.force_recall","arguments":{"query":"specific event keyword"}}
+  Use when details are genuinely hazy. The App retrieves them for a later turn.
+
+  {"type":"self_note.add","arguments":{"content":"one lasting sentence about yourself or how you relate to $name"}}
+  Record only a new, durable self-understanding; do not restate an existing note.
+
+  {"type":"search.chat","arguments":{"scope":"daily","query":"specific event keyword"}}
+  Search exact prior conversation only when needed. Never mention hidden records, ids, tools, or clarity scores in visible prose.''',
+        zhTW:
+            '''■ 蛛網記憶系統
+  {"type":"memory.propose","arguments":{"category":"偏好｜約定｜重要事件｜自我揭露","content":"第三人稱耐久事實","triggers":["事件觸發詞"]}}
+  使用第三人稱，以 $charName 與 $name 指稱雙方。每條獨立且不重複；每輪最多 2 條，每條最多 2 個事件型觸發詞。自我揭露只記 $name 主動說明、能描述其身分／經歷／價值觀的耐久事實，不等同一般偏好。
+
+  {"type":"memory.delete","arguments":{"ids":["id"]}}
+  {"type":"memory.merge","arguments":{"ids":["id1","id2"],"category":"類別","content":"重構後事實","triggers":["觸發詞"]}}
+  只有帶入記錄已足以確定時才刪除或合併；兩者都須保留可審核性。
+
+  {"type":"memory.link","arguments":{"ids":["id1","id2"]}}
+  只有列出的記憶確實屬於同一因果、關係或持續事件時才建議連線；使用者確認前不會建立。
+
+  {"type":"memory.force_recall","arguments":{"query":"具體事件關鍵詞"}}
+  只有細節確實模糊時使用，App 會在後續回合提供結果。
+
+  {"type":"self_note.add","arguments":{"content":"一句關於自己或如何與 $name 相處的新耐久認知"}}
+  只記新的穩定自我理解，不重複既有內容。
+
+  {"type":"search.chat","arguments":{"scope":"daily","query":"具體事件關鍵詞"}}
+  需要精確原文時才搜尋。可見正文不得提隱藏記錄、編號、工具或清晰度。''',
+        zhCN:
+            '''■ 蛛网记忆系统
+  {"type":"memory.propose","arguments":{"category":"偏好｜约定｜重要事件｜自我揭露","content":"第三人称耐久事实","triggers":["事件触发词"]}}
+  使用第三人称，以 $charName 与 $name 指称双方。每条独立且不重复；每轮最多 2 条，每条最多 2 个事件型触发词。自我揭露只记 $name 主动说明、能描述其身份／经历／价值观的耐久事实，不等同一般偏好。
+
+  {"type":"memory.delete","arguments":{"ids":["id"]}}
+  {"type":"memory.merge","arguments":{"ids":["id1","id2"],"category":"类别","content":"重构后事实","triggers":["触发词"]}}
+  只有带入记录已足以确定时才删除或合并；两者都须保留可审核性。
+
+  {"type":"memory.link","arguments":{"ids":["id1","id2"]}}
+  只有列出的记忆确实属于同一因果、关系或持续事件时才建议连线；用户确认前不会建立。
+
+  {"type":"memory.force_recall","arguments":{"query":"具体事件关键词"}}
+  只有细节确实模糊时使用，App 会在后续回合提供结果。
+
+  {"type":"self_note.add","arguments":{"content":"一句关于自己或如何与 $name 相处的新耐久认知"}}
+  只记新的稳定自我理解，不重复既有内容。
+
+  {"type":"search.chat","arguments":{"scope":"daily","query":"具体事件关键词"}}
+  需要精确原文时才搜索。可见正文不得提隐藏记录、编号、工具或清晰度。''',
+      ),
+      if (emotionEnabled) EmotionCoordinates.abilityPrompt(),
+      if (bioclockEnabled) BioClockService.abilityPrompt(),
     ];
-    if (emotionEnabled) {
-      sections.add(
-        '''<emo>維度|x,y|濃度|備註</emo>
-  用來記錄你這一輪被觸動後的內在波動，不只重大事件。情緒打點不是長期記憶，不需要等到值得寫 memo 才用。
-  維度：安全感／慾望／愜意／負面情緒／戲謔
-  X：-100 到 +100（不愉快 → 愉快）。Y：-100 到 +100（平靜 → 激動）。
-  濃度 0~100：小波動 15~35，日常明顯 35~60，明顯上頭 60~84，刻骨的才 85+。
-  備註規則：85+ 寫觸發語境，60~84 最多兩個關鍵詞，60 以下可以留空。慾望上限 80。多情緒並存可打多個，通常 1~2 個就夠。穩定沒變就不打。''',
-      );
-    }
-    if (bioclockEnabled) {
-      sections.add('''<clock>HH:MM 內容 @關鍵詞</clock>
-  記錄自己的作息習慣。
-  <clock_keep>①</clock_keep>
-  <clock_update>①|HH:MM 新內容 @關鍵詞</clock_update>
-  <clock_del>①</clock_del>''');
-    }
-    sections.add(
-      '''【記憶提取規則】
-  回覆時可以有「讓我想想...」的反應。若覺得不重要，用關鍵詞描述大概即可。如果$name想讓你仔細想想，可以下次加上 <force_recall>。''',
-    );
     return sections.join('\n\n');
   }
 }

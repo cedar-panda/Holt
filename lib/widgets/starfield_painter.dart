@@ -1,4 +1,5 @@
 import 'dart:math';
+import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
 
@@ -23,43 +24,23 @@ class _Star {
 
 /// 星光粒子動畫 Widget
 class StarfieldWidget extends StatefulWidget {
+  final ValueListenable<double> clock;
   final int starCount;
 
-  const StarfieldWidget({super.key, this.starCount = 25});
+  const StarfieldWidget({super.key, required this.clock, this.starCount = 25});
 
   @override
   State<StarfieldWidget> createState() => _StarfieldWidgetState();
 }
 
-class _StarfieldWidgetState extends State<StarfieldWidget>
-    with SingleTickerProviderStateMixin {
-  late AnimationController _controller;
+class _StarfieldWidgetState extends State<StarfieldWidget> {
   late List<_Star> _stars;
   final Random _random = Random();
-  bool _reduceMotion = false;
 
   @override
   void initState() {
     super.initState();
     _stars = _generateStars();
-    _controller = AnimationController(
-      vsync: this,
-      duration: const Duration(seconds: 10),
-    );
-  }
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    final reduceMotion = MediaQuery.disableAnimationsOf(context);
-    if (_reduceMotion == reduceMotion && _controller.isAnimating) return;
-    _reduceMotion = reduceMotion;
-    if (reduceMotion) {
-      _controller.stop();
-      _controller.value = 0;
-    } else if (!_controller.isAnimating) {
-      _controller.repeat();
-    }
   }
 
   List<_Star> _generateStars() {
@@ -79,16 +60,10 @@ class _StarfieldWidgetState extends State<StarfieldWidget>
   }
 
   @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
   Widget build(BuildContext context) {
     return RepaintBoundary(
       child: CustomPaint(
-        painter: _StarfieldPainter(stars: _stars, progress: _controller),
+        painter: _StarfieldPainter(stars: _stars, clock: widget.clock),
         size: Size.infinite,
       ),
     );
@@ -97,27 +72,36 @@ class _StarfieldWidgetState extends State<StarfieldWidget>
 
 class _StarfieldPainter extends CustomPainter {
   final List<_Star> stars;
-  final Animation<double> progress;
+  final ValueListenable<double> clock;
 
-  _StarfieldPainter({required this.stars, required this.progress})
-    : super(repaint: progress);
+  _StarfieldPainter({required this.stars, required this.clock})
+    : super(repaint: clock);
 
   @override
   void paint(Canvas canvas, Size size) {
-    final animationValue = progress.value;
+    final animationValue = (clock.value / 10.0) % 1.0;
     for (final star in stars) {
       // 呼吸閃爍效果
       final breathe = sin(animationValue * 2 * pi * star.speed + star.phase);
       final currentOpacity = (star.opacity + breathe * 0.3).clamp(0.05, 0.9);
 
-      final paint = Paint()
-        ..color = YanciTheme.starColor.withValues(alpha: currentOpacity)
-        ..maskFilter = MaskFilter.blur(BlurStyle.normal, star.size * 0.8);
-
       final offset = Offset(star.x * size.width, star.y * size.height);
 
-      // 星光本體
-      canvas.drawCircle(offset, star.size, paint);
+      // 兩層半透明光圈替代逐星高斯模糊，保留柔光感但避免每幀
+      // 為每顆星執行昂貴的 blur convolution。
+      canvas.drawCircle(
+        offset,
+        star.size * 2.1,
+        Paint()
+          ..color = YanciTheme.starColor.withValues(
+            alpha: currentOpacity * 0.12,
+          ),
+      );
+      canvas.drawCircle(
+        offset,
+        star.size,
+        Paint()..color = YanciTheme.starColor.withValues(alpha: currentOpacity),
+      );
 
       // 十字光芒（較大的星星才畫）
       if (star.size > 1.5) {

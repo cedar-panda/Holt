@@ -44,7 +44,7 @@ void main() {
     'vector recall adds semantic matches without crossing story lines',
     () async {
       await DatabaseHelper.insertMemories(<Memory>[
-        _memory(1, 'route-red', '晏辭替昭昭包紮手臂的傷口'),
+        _memory(1, 'route-red', '顧遠替小禾包紮手臂的傷口'),
         _memory(2, 'route-red', '他們在渡口買了桂花糕'),
         _memory(3, 'route-blue', '藍線也曾有人替主角包紮'),
       ]);
@@ -71,8 +71,8 @@ void main() {
 
   test('manual vector curation never pairs different story lines', () async {
     final memories = <Memory>[
-      _memory(1, 'route-red', '晏辭替昭昭包紮手臂的傷口'),
-      _memory(2, 'route-red', '昭昭受傷後由晏辭照顧'),
+      _memory(1, 'route-red', '顧遠替小禾包紮手臂的傷口'),
+      _memory(2, 'route-red', '小禾受傷後由顧遠照顧'),
       _memory(3, 'route-blue', '藍線也曾有人替主角包紮'),
     ];
     await DatabaseHelper.insertMemories(memories);

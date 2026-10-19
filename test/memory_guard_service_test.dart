@@ -46,6 +46,14 @@ void main() {
       expect(await _memoryStatus(db, memoryId), 'active');
       expect(await db.query('archive'), isEmpty);
 
+      await db.insert('messages', {
+        'id': 42,
+        'conversation_id': 'conv-a',
+        'character_id': 'char-a',
+        'text': 'reply requesting deletion',
+        'is_user': 0,
+        'created_at': DateTime.now().toIso8601String(),
+      });
       await MemoryGuardService.bindToMessage(
         proposalIds: [proposalId!],
         conversationId: 'conv-a',
@@ -97,7 +105,7 @@ void main() {
           characterId: 'char-a',
           mode: 'romance',
           category: '偏好',
-          content: '昭昭喜歡在下雨天留在家裡看電影',
+          content: '小禾喜歡在下雨天留在家裡看電影',
           confidence: 'high',
           triggers: '下雨天,電影',
         ),
@@ -118,7 +126,7 @@ void main() {
           characterId: 'char-a',
           mode: 'romance',
           category: '偏好',
-          content: '昭昭喜歡下雨天留在家裡看電影',
+          content: '小禾喜歡下雨天留在家裡看電影',
           confidence: 'high',
           triggers: '下雨天,電影',
         ),
@@ -143,7 +151,7 @@ void main() {
           characterId: 'char-a',
           mode: 'romance',
           category: '自我揭露',
-          content: '[9/25] 昭昭四歲時爸爸離開，現在聯繫但不親近，爸爸抱他時會想推開',
+          content: '[9/25] 小禾四歲時爸爸離開，現在聯繫但不親近，爸爸抱他時會想推開',
           confidence: 'high',
           triggers: '爸爸,推開,四歲',
         ),
@@ -157,7 +165,7 @@ void main() {
           characterId: 'char-a',
           mode: 'romance',
           category: '自我揭露',
-          content: '[9/25] 昭昭的爸在他四歲時離開，現在仍有聯繫但不親；他爸抱他時，他很不習慣並會想推開',
+          content: '[9/25] 小禾的爸在他四歲時離開，現在仍有聯繫但不親；他爸抱他時，他很不習慣並會想推開',
           confidence: 'high',
           triggers: '爸,四歲,推開',
         ),
@@ -181,9 +189,9 @@ void main() {
           characterId: 'char-a',
           mode: 'romance',
           category: '自我揭露',
-          content: '晏辭的爸爸很早離開，媽媽獨自養大她，不擁抱也不問感受',
+          content: '顧遠的爸爸很早離開，媽媽獨自養大她，不擁抱也不問感受',
           confidence: 'high',
-          triggers: '晏辭媽媽,原生家庭',
+          triggers: '顧遠媽媽,原生家庭',
         ),
         source: 'model',
         sourceConversationId: 'conv-a',
@@ -195,7 +203,7 @@ void main() {
           characterId: 'char-a',
           mode: 'romance',
           category: '自我揭露',
-          content: '晏辭的爸走得早（離開，不是去世），媽媽一個人帶大她，從不擁抱，也不詢問她是否開心',
+          content: '顧遠的爸走得早（離開，不是去世），媽媽一個人帶大她，從不擁抱，也不詢問她是否開心',
           confidence: 'high',
           triggers: '媽,安靜,家',
         ),
@@ -216,7 +224,7 @@ void main() {
         characterId: 'char-a',
         mode: 'romance',
         category: '偏好',
-        content: '晏辭不喜歡榴槤味的甜點',
+        content: '顧遠不喜歡榴槤味的甜點',
         confidence: 'high',
         triggers: '榴槤,甜點',
       ),
@@ -230,7 +238,7 @@ void main() {
         characterId: 'char-a',
         mode: 'romance',
         category: '偏好',
-        content: '晏辭現在喜歡榴槤味的甜點',
+        content: '顧遠現在喜歡榴槤味的甜點',
         confidence: 'high',
         triggers: '榴槤,甜點',
       ),
@@ -248,7 +256,7 @@ void main() {
         characterId: 'char-a',
         mode: 'romance',
         category: '重要事件',
-        content: '中秋節昭昭帶月餅和花來，兩人談起各自的原生家庭',
+        content: '中秋節小禾帶月餅和花來，兩人談起各自的原生家庭',
         confidence: 'high',
         triggers: '中秋,月餅,原生家庭',
       ),
@@ -260,7 +268,7 @@ void main() {
         characterId: 'char-a',
         mode: 'romance',
         category: '重要事件',
-        content: '中秋那天，昭昭帶著冰皮月餅與花來找晏辭，之後兩人聊了雙方的原生家庭',
+        content: '中秋那天，小禾帶著冰皮月餅與花來找顧遠，之後兩人聊了雙方的原生家庭',
         confidence: 'high',
         triggers: '中秋,月餅,原生家庭',
       ),
@@ -284,7 +292,7 @@ void main() {
           characterId: 'char-a',
           mode: 'romance',
           category: '偏好',
-          content: '[9/20] 昭昭喜歡下雨天留在家裡看電影',
+          content: '[9/20] 小禾喜歡下雨天留在家裡看電影',
           confidence: 'high',
           triggers: '下雨天,電影',
         ),
@@ -310,7 +318,7 @@ void main() {
           'candidate': <String, Object?>{
             'mode': 'romance',
             'category': '重要事件',
-            'content': '[9/21] 昭昭喜歡下雨天留在家裡看電影',
+            'content': '[9/21] 小禾喜歡下雨天留在家裡看電影',
             'triggers': '下雨天,電影',
             'permanent': false,
           },
@@ -342,9 +350,9 @@ void main() {
         characterId: 'char-a',
         mode: 'romance',
         category: '自我揭露',
-        content: '[9/25] 昭昭的媽媽今天中秋節塞了他九顆大生蠔，媽媽不知道他來找晏辭',
+        content: '[9/25] 小禾的媽媽今天中秋節塞了他九顆大生蠔，媽媽不知道他來找顧遠',
         confidence: 'high',
-        triggers: '生蠔,昭昭媽媽',
+        triggers: '生蠔,小禾媽媽',
       ),
       source: 'model',
       sourceConversationId: 'conv-a',
@@ -356,7 +364,7 @@ void main() {
         characterId: 'char-a',
         mode: 'romance',
         category: '偏好',
-        content: '[9/25] 昭昭今天來找晏辭之前被他媽塞了九顆大生蠔，晏辭拿來調侃並計算工作量',
+        content: '[9/25] 小禾今天來找顧遠之前被他媽塞了九顆大生蠔，顧遠拿來調侃並計算工作量',
         confidence: 'high',
         triggers: '生蠔,媽',
       ),
@@ -371,8 +379,8 @@ void main() {
   });
 
   test('merge preview strips duplicate-processing narration', () async {
-    final firstId = await _insertMemory(db, 'char-a', '昭昭答應下次再來');
-    final secondId = await _insertMemory(db, 'char-a', '昭昭說下次還會再來');
+    final firstId = await _insertMemory(db, 'char-a', '小禾答應下次再來');
+    final secondId = await _insertMemory(db, 'char-a', '小禾說下次還會再來');
     final rows = await db.query(
       'memories',
       where: 'id IN (?, ?)',
@@ -388,21 +396,21 @@ void main() {
       reasons: const ['same promise'],
       mergeResult: const <String, Object?>{
         'category': '約定',
-        'content': '昭昭答應下次還會再來（重複記憶已合併）',
+        'content': '小禾答應下次還會再來（重複記憶已合併）',
         'triggers': '下次',
       },
     );
 
     final proposal = (await MemoryGuardService.listForReview('char-a')).single;
-    expect(proposal.mergePreview['content'], '昭昭答應下次還會再來');
+    expect(proposal.mergePreview['content'], '小禾答應下次還會再來');
   });
 
   test(
     'clear-all rejects only one character review items and suggested links',
     () async {
-      final firstId = await _insertMemory(db, 'char-a', '昭昭喜歡雨天');
-      final secondId = await _insertMemory(db, 'char-a', '昭昭喜歡下雨天');
-      final thirdId = await _insertMemory(db, 'char-a', '昭昭會帶傘');
+      final firstId = await _insertMemory(db, 'char-a', '小禾喜歡雨天');
+      final secondId = await _insertMemory(db, 'char-a', '小禾喜歡下雨天');
+      final thirdId = await _insertMemory(db, 'char-a', '小禾會帶傘');
       final otherId = await _insertMemory(db, 'char-b', '另一個角色的記憶');
       final rows = await db.query(
         'memories',
@@ -773,12 +781,12 @@ void main() {
       final firstId = await _insertMemory(
         db,
         'char-a',
-        '[7/24] 昭昭說「是你的我都想要」，兩人決定留下這個孩子。',
+        '[7/24] 小禾說「是你的我都想要」，兩人決定留下這個孩子。',
       );
       final secondId = await _insertMemory(
         db,
         'char-a',
-        '[7/24] 虛擬驗孕呈陽性，昭昭接受了這個孩子。',
+        '[7/24] 虛擬驗孕呈陽性，小禾接受了這個孩子。',
       );
       final rows = await db.query(
         'memories',
@@ -795,7 +803,7 @@ void main() {
         reasons: const ['model_relation:97'],
         mergeResult: const <String, Object?>{
           'category': '重要事件',
-          'content': '[7/24] 昭昭接受了虛擬驗孕結果；[7/24] 兩人決定留下這個孩子。',
+          'content': '[7/24] 小禾接受了虛擬驗孕結果；[7/24] 兩人決定留下這個孩子。',
           'triggers': '孩子,驗孕',
         },
       );
@@ -818,7 +826,7 @@ void main() {
       );
       payload['result'] = <String, Object?>{
         ...Map<String, dynamic>.from(payload['result'] as Map),
-        'content': '[7/24] 昭昭接受了虛擬驗孕結果；[7/24] 兩人決定留下這個孩子。',
+        'content': '[7/24] 小禾接受了虛擬驗孕結果；[7/24] 兩人決定留下這個孩子。',
       };
       await db.update(
         'pending_memory_actions',
@@ -884,7 +892,7 @@ void main() {
       characterId: 'char-a',
       mode: 'romance',
       category: '偏好',
-      content: '[8/6] 昭昭喜歡熱牛奶。',
+      content: '[8/6] 小禾喜歡熱牛奶。',
       confidence: 'high',
       triggers: '熱牛奶',
     );
@@ -923,12 +931,12 @@ void main() {
   test(
     'possible duplicate waits in inbox and rejection is respected',
     () async {
-      final oldId = await _insertMemory(db, 'char-a', '昭昭喜歡下雨天窩在家裡慢慢看電影');
+      final oldId = await _insertMemory(db, 'char-a', '小禾喜歡下雨天窩在家裡慢慢看電影');
       final candidate = Memory(
         characterId: 'char-a',
         mode: 'romance',
         category: '重要事件',
-        content: '昭昭喜歡下雨天在家裡看電影',
+        content: '小禾喜歡下雨天在家裡看電影',
         confidence: 'high',
         triggers: '下雨天',
       );
@@ -965,15 +973,15 @@ void main() {
   test(
     'use-new decision archives old memory and preserves its web edge',
     () async {
-      final oldId = await _insertMemory(db, 'char-a', '昭昭每天要吃2顆藥');
-      final neighbor = await _insertMemory(db, 'char-a', '提醒昭昭照顧身體');
+      final oldId = await _insertMemory(db, 'char-a', '小禾每天要吃2顆藥');
+      final neighbor = await _insertMemory(db, 'char-a', '提醒小禾照顧身體');
       await DatabaseHelper.insertSpiderWebLink('char-a', oldId, neighbor);
       final guarded = await MemoryGuardService.guardNewMemory(
         candidate: Memory(
           characterId: 'char-a',
           mode: 'romance',
           category: '重要事件',
-          content: '昭昭每天要吃3顆藥',
+          content: '小禾每天要吃3顆藥',
           confidence: 'high',
           triggers: '吃藥',
         ),
@@ -996,7 +1004,7 @@ void main() {
       final replacement = (await db.query(
         'memories',
         where: 'content = ? AND status = ?',
-        whereArgs: ['昭昭每天要吃3顆藥', 'active'],
+        whereArgs: ['小禾每天要吃3顆藥', 'active'],
       )).single;
       final replacementId = replacement['id'] as int;
       expect(
@@ -1015,13 +1023,13 @@ void main() {
   );
 
   test('merge decision uses reviewed content in one transaction', () async {
-    final oldId = await _insertMemory(db, 'char-a', '昭昭答應8月10日一起看電影');
+    final oldId = await _insertMemory(db, 'char-a', '小禾答應8月10日一起看電影');
     final guarded = await MemoryGuardService.guardNewMemory(
       candidate: Memory(
         characterId: 'char-a',
         mode: 'romance',
         category: '約定',
-        content: '昭昭改成8月11日一起看電影',
+        content: '小禾改成8月11日一起看電影',
         confidence: 'high',
         triggers: '看電影',
       ),
@@ -1037,7 +1045,7 @@ void main() {
         createDecision: MemoryGuardService.createDecisionMerge,
         createResultOverride: const <String, Object?>{
           'category': '約定',
-          'content': '昭昭把看電影的約定改到8月11日',
+          'content': '小禾把看電影的約定改到8月11日',
           'triggers': '看電影,8月11日',
         },
       ),
@@ -1047,7 +1055,7 @@ void main() {
     final merged = await db.query(
       'memories',
       where: 'content = ? AND status = ?',
-      whereArgs: ['昭昭把看電影的約定改到8月11日', 'active'],
+      whereArgs: ['小禾把看電影的約定改到8月11日', 'active'],
     );
     expect(merged, hasLength(1));
     expect(merged.single['triggers'], '看電影,8月11日');
@@ -1060,7 +1068,7 @@ void main() {
         characterId: 'char-a',
         mode: 'romance',
         category: '偏好',
-        content: '昭昭喜歡喝熱牛奶',
+        content: '小禾喜歡喝熱牛奶',
         confidence: 'high',
         triggers: '熱牛奶',
       ),

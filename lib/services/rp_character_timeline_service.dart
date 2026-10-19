@@ -71,9 +71,9 @@ abstract final class RpCharacterTimelineService {
           columns: const <String>['id'],
           where: eventKey.isNotEmpty
               ? 'character_id = ? AND continuity_id = ? AND type = ? '
-                    'AND event_key = ?'
+                    'AND event_key = ? AND confirmed = 1'
               : 'character_id = ? AND continuity_id = ? AND type = ? '
-                    'AND value = ? AND story_time_text = ?',
+                    'AND value = ? AND story_time_text = ? AND confirmed = 1',
           whereArgs: eventKey.isNotEmpty
               ? <Object?>[characterId, continuityId, 'event', eventKey]
               : <Object?>[
@@ -157,6 +157,60 @@ abstract final class RpCharacterTimelineService {
         0;
   }
 
+  /// Updates one existing chronology event only when the main model points to
+  /// its stable key and quotes the latest user correction verbatim. The event
+  /// keeps its original order/id, so correcting it cannot move history or
+  /// create a competing duplicate.
+  static Future<bool> applyModelCorrection({
+    required String characterId,
+    required String continuityId,
+    required String sourceConversationId,
+    required int sourceMessageId,
+    required String eventKey,
+    required String value,
+    required String storyTime,
+    required String evidence,
+  }) async {
+    final normalizedKey = eventKey.trim();
+    final normalizedValue = value.trim();
+    final normalizedEvidence = evidence.trim();
+    if (normalizedKey.isEmpty ||
+        normalizedValue.isEmpty ||
+        normalizedEvidence.isEmpty) {
+      return false;
+    }
+    final db = await DatabaseHelper.database;
+    return db.transaction<bool>((txn) async {
+      final rows = await txn.query(
+        'rp_character_timeline',
+        where:
+            'character_id = ? AND continuity_id = ? AND type = ? '
+            'AND event_key = ? AND confirmed = 1',
+        whereArgs: <Object?>[characterId, continuityId, 'event', normalizedKey],
+        limit: 1,
+      );
+      if (rows.isEmpty) return false;
+      final previous = rows.first;
+      final correctedTime = storyTime.trim();
+      return await txn.update(
+            'rp_character_timeline',
+            <String, Object?>{
+              'value': normalizedValue,
+              if (correctedTime.isNotEmpty) 'story_time_text': correctedTime,
+              'scene': 'model_user_correction',
+              'source_conversation_id': sourceConversationId,
+              'source_message_id': sourceMessageId,
+              'source_message_ids': jsonEncode(<int>[sourceMessageId]),
+              'source_evidence': normalizedEvidence,
+              'updated_at': DateTime.now().toIso8601String(),
+            },
+            where: 'id = ? AND confirmed = 1',
+            whereArgs: <Object?>[previous['id']],
+          ) ==
+          1;
+    });
+  }
+
   static Future<String> recallPrompt(
     String characterId,
     String userMessage, {
@@ -189,22 +243,22 @@ abstract final class RpCharacterTimelineService {
         }
       }
       final sequence = (row['sequence_order'] as int?) ?? 0;
-      score += sequence / 1000000;
+      // Tiny deterministic tie-breaker only; it must never turn an unrelated
+      // event into a recall match.
+      score += sequence / 1000000000000;
       return (row: row, score: score);
     }).toList();
     scoredEvents.sort((left, right) => right.score.compareTo(left.score));
 
-    final selected = <Map<String, dynamic>>[];
-    for (final candidate in scoredEvents.take(6)) {
-      selected.add(candidate.row);
-    }
-    if (selected.length < 6) {
-      final already = selected.map((row) => row['id']).toSet();
-      for (final row in events.reversed) {
-        if (selected.length >= 6) break;
-        if (already.add(row['id'])) selected.add(row);
-      }
-    }
+    // Completed chronology is recall-only. Never fill the block with six
+    // unrelated recent events merely because fewer keywords matched; that is
+    // what made settled plans repeatedly reappear as current objectives.
+    final selected = scoredEvents
+        .where((candidate) => candidate.score >= 1)
+        .take(6)
+        .map((candidate) => candidate.row)
+        .toList(growable: false);
+    if (selected.isEmpty) return '';
     selected.sort(_chronological);
 
     final lines = <String>[];
@@ -218,9 +272,15 @@ abstract final class RpCharacterTimelineService {
           : '';
       final prefix = time.isEmpty ? '' : '[$time] ';
       final labels = <String>[
+        L.pick(en: 'completed', zhTW: '已完成', zhCN: '已完成'),
+        if (row['scene'] == 'model_user_correction')
+          L.pick(en: 'corrected', zhTW: '已修正', zhCN: '已修正'),
         if (layerLabel.isNotEmpty) layerLabel,
       ].map((value) => '[$value]').join();
-      final line = '- $prefix$labels${labels.isEmpty ? '' : ' '}$value';
+      final eventKey = row['event_key']?.toString().trim() ?? '';
+      final keyLabel = eventKey.isEmpty ? '' : '[event_key=$eventKey] ';
+      final line =
+          '- $keyLabel$prefix$labels${labels.isEmpty ? '' : ' '}$value';
       final cost = TokenEstimator.estimate(line);
       if (usedTokens + cost > 500 && lines.isNotEmpty) break;
       lines.add(line);

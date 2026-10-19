@@ -4,6 +4,8 @@ import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:http/http.dart' as http;
 import 'api_adapter.dart';
+import 'cache/claude_cache_policy.dart';
+import 'cache/gemini_cache_policy.dart';
 import 'cache_debug_log.dart';
 import 'grok_context_ledger.dart';
 import 'locale_strings.dart';
@@ -13,6 +15,7 @@ import 'settings_manager.dart';
 import 'sse_stream.dart';
 import 'stream_transport.dart';
 import 'token_estimator.dart';
+import 'provider_content_parser.dart';
 
 /// OpenRouter API 實現（含 Anthropic prompt caching）
 class OpenRouterService implements ApiAdapter {
@@ -153,16 +156,8 @@ class OpenRouterService implements ApiAdapter {
   }
 
   /// 判斷是否 Anthropic 模型（支持 prompt caching）
-  static bool _isAnthropicModel(String model) {
-    final m = model.toLowerCase();
-    return m.contains('anthropic') ||
-        m.contains('claude') ||
-        m.contains('opus') ||
-        m.contains('sonnet') ||
-        m.contains('haiku') ||
-        m.contains('fable') ||
-        m.contains('mythos');
-  }
+  static bool _isAnthropicModel(String model) =>
+      ClaudeCachePolicy.isFamilyModel(model);
 
   static bool _isXaiModel(String model) {
     final normalized = model.trim().toLowerCase();
@@ -223,6 +218,7 @@ class OpenRouterService implements ApiAdapter {
     resetCacheStats();
     final requestDiagnostics = <String, Object?>{};
     final client = http.Client();
+    final isGeminiImplicitCache = GeminiCachePolicy.usesImplicitCaching(model);
     _activeClient?.close();
     _activeClient = client;
     try {
@@ -242,7 +238,11 @@ class OpenRouterService implements ApiAdapter {
             headers: _headers(),
             body: jsonEncode(body),
           )
-          .timeout(const Duration(seconds: 180));
+          .timeout(
+            isGeminiImplicitCache
+                ? const Duration(minutes: 20)
+                : const Duration(seconds: 180),
+          );
 
       if (response.statusCode != 200) {
         throw Exception('API 錯誤 ${response.statusCode}: ${response.body}');
@@ -268,7 +268,7 @@ class OpenRouterService implements ApiAdapter {
         );
       }
       if (message is! Map) return '';
-      final content = '${message['content'] ?? ''}';
+      final content = ProviderContentParser.visibleText(message['content']);
       final hiddenReasoning =
           message['reasoning'] ??
           message['reasoning_content'] ??
@@ -296,6 +296,7 @@ class OpenRouterService implements ApiAdapter {
     resetCacheStats();
     final requestDiagnostics = <String, Object?>{};
     final client = http.Client();
+    final isGeminiImplicitCache = GeminiCachePolicy.usesImplicitCaching(model);
     _activeClient?.close();
     _activeClient = client;
     try {
@@ -317,11 +318,16 @@ class OpenRouterService implements ApiAdapter {
       final response = await StreamTransport.waitForResponseStart(
         client.send(request),
         provider: 'OpenRouter',
+        timeout: isGeminiImplicitCache
+            ? const Duration(minutes: 20)
+            : StreamTransport.responseStartTimeout,
       );
 
       if (response.statusCode != 200) {
         final errorBody = await response.stream.bytesToString().timeout(
-          SseStream.defaultIdleTimeout,
+          isGeminiImplicitCache
+              ? const Duration(minutes: 20)
+              : SseStream.defaultIdleTimeout,
         );
         throw Exception('API 錯誤 ${response.statusCode}: $errorBody');
       }
@@ -330,12 +336,20 @@ class OpenRouterService implements ApiAdapter {
       final reasoningDetails = <dynamic>[];
       final reasoning = StringBuffer();
       var reasoningTagOpen = false;
+      var sawDone = false;
+      String? terminalFinishReason;
       final streamDiagnostics = SseStreamDiagnostics();
       await for (final data in SseStream.data(
         response.stream,
+        idleTimeout: isGeminiImplicitCache
+            ? const Duration(minutes: 20)
+            : SseStream.defaultIdleTimeout,
         diagnostics: streamDiagnostics,
       )) {
-        if (data == '[DONE]') break;
+        if (data == '[DONE]') {
+          sawDone = true;
+          break;
+        }
 
         try {
           final json = jsonDecode(data);
@@ -344,6 +358,11 @@ class OpenRouterService implements ApiAdapter {
           // echo / router metadata 都收齊後再寫診斷，避免上游 TTL 缺席。
           if (json['usage'] != null) {
             finalUsageData = json;
+          }
+          final finishReason = json['choices']?[0]?['finish_reason']
+              ?.toString();
+          if (finishReason != null && finishReason.isNotEmpty) {
+            terminalFinishReason = finishReason;
           }
           final delta = json['choices']?[0]?['delta'];
           if (delta is Map) {
@@ -363,8 +382,8 @@ class OpenRouterService implements ApiAdapter {
                 yield hidden;
               }
             }
-            final content = delta['content'];
-            if (content is String && content.isNotEmpty) {
+            final content = ProviderContentParser.visibleText(delta['content']);
+            if (content.isNotEmpty) {
               if (reasoningTagOpen) {
                 reasoningTagOpen = false;
                 yield '</think>';
@@ -399,6 +418,11 @@ class OpenRouterService implements ApiAdapter {
       } else {
         onUsage?.call(ApiUsage(diagnostics: requestDiagnostics));
       }
+      StreamTerminalGuard.requireOpenAiCompatible(
+        provider: 'OpenRouter',
+        sawDone: sawDone,
+        finishReason: terminalFinishReason,
+      );
     } finally {
       if (identical(_activeClient, client)) _activeClient = null;
       client.close();
@@ -472,6 +496,7 @@ class OpenRouterService implements ApiAdapter {
     // ═══ 核心：system prompt 構建 ═══
     final useStructured = structuredPrompt != null && _isAnthropicModel(model);
     final isGrok = _isXaiModel(model);
+    final isGeminiImplicitCache = GeminiCachePolicy.usesImplicitCaching(model);
     final cacheControl = TokenEstimator.promptCacheControl(
       provider: 'openrouter',
       model: model,
@@ -487,7 +512,14 @@ class OpenRouterService implements ApiAdapter {
         isGrok &&
         structuredPrompt != null &&
         structuredPrompt.ephemeralEvidencePart.isEmpty;
-    final anyCacheEnabled = enableCache || enableGrokCache;
+    // OpenRouter routes Gemini 4 caching implicitly. A stable session_id keeps
+    // repeated turns on the same provider route without sending unsupported
+    // Anthropic cache_control fields. The complete selected history remains in
+    // the request so its stable prefix can qualify for a provider cache hit.
+    final enableGeminiImplicitCache =
+        isGeminiImplicitCache && structuredPrompt != null;
+    final anyCacheEnabled =
+        enableCache || enableGrokCache || enableGeminiImplicitCache;
     final focusLatestUser =
         structuredPrompt != null &&
         structuredPrompt.requestOnlyPart.isNotEmpty &&
@@ -705,10 +737,15 @@ class OpenRouterService implements ApiAdapter {
       'enable_cache': anyCacheEnabled,
       'cache_mode': enableGrokCache
           ? 'xai_implicit_prefix'
-          : (enableCache ? 'anthropic_explicit_breakpoint' : 'none'),
+          : (enableGeminiImplicitCache
+                ? 'openrouter_gemini_implicit_prefix'
+                : (enableCache ? 'anthropic_explicit_breakpoint' : 'none')),
       'session_id': enableGrokCache
           ? grokPrepared?.affinityId
-          : (enableCache ? providerSessionId : null),
+          : ((enableCache || enableGeminiImplicitCache)
+                ? providerSessionId
+                : null),
+      'cache_implicit': enableGeminiImplicitCache,
       'context_mode': structuredPrompt?.cacheContextMode ?? '',
       'cache_channel': cacheChannel,
       'channel_resume_indices': resumeSourceIndices,
@@ -776,14 +813,21 @@ class OpenRouterService implements ApiAdapter {
       'model': model,
       'messages': allMessages,
       'stream': stream,
-      'max_tokens': 4096,
+      'max_tokens': isGeminiImplicitCache ? 32768 : 4096,
       // Thinking is request policy, not prompt-cache content. Explicitly send
       // both states so models whose OpenRouter default enables reasoning do
       // not keep reasoning after the UI switch is turned off.
-      'reasoning': <String, dynamic>{
-        'enabled': thinkingEnabled,
-        if (!thinkingEnabled) 'exclude': true,
-      },
+      'reasoning': isGeminiImplicitCache
+          ? <String, dynamic>{
+              // Argon always reasons. "Off" lowers the effort and hides the
+              // reasoning text instead of pretending it can be disabled.
+              'effort': thinkingEnabled ? 'medium' : 'low',
+              'exclude': !thinkingEnabled,
+            }
+          : <String, dynamic>{
+              'enabled': thinkingEnabled,
+              if (!thinkingEnabled) 'exclude': true,
+            },
       // streaming 的 cache stats 需要 final usage chunk；沒有它會看起來
       // 像完全沒命中，實際只是客戶端沒有收到 usage。
       if (stream) 'stream_options': {'include_usage': true},
@@ -797,7 +841,8 @@ class OpenRouterService implements ApiAdapter {
       //    「Sticky routing is not used when you specify a manual provider order」，
       //    provider.order 會把 sticky routing 整個蓋掉，導致 cache 永遠命不中。
       if (enableGrokCache) 'session_id': grokPrepared!.affinityId,
-      if (!enableGrokCache && enableCache) 'session_id': providerSessionId,
+      if (!enableGrokCache && (enableCache || enableGeminiImplicitCache))
+        'session_id': providerSessionId,
       // 不送 top-level automatic cache_control。它會把自動斷點推到最後一個
       // cacheable block，越過上面刻意設在「最新 user 前」的 rolling
       // breakpoint；1h 寫入又是高倍率，會造成每輪大額重寫。
@@ -810,7 +855,9 @@ class OpenRouterService implements ApiAdapter {
         cacheChannel: cacheChannel,
         sessionId: enableGrokCache
             ? grokPrepared!.affinityId
-            : (enableCache ? providerSessionId : cacheSessionId),
+            : ((enableCache || enableGeminiImplicitCache)
+                  ? providerSessionId
+                  : cacheSessionId),
         transport: runtimeTransport,
         sourceMessages: messages,
         requestMessages: allMessages,

@@ -170,6 +170,111 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
+  void _showExpandedGuideEditor() {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) {
+        final bottomInset = MediaQuery.viewInsetsOf(sheetContext).bottom;
+        return AnimatedPadding(
+          duration: MediaQuery.disableAnimationsOf(sheetContext)
+              ? Duration.zero
+              : const Duration(milliseconds: 180),
+          curve: Curves.easeOutCubic,
+          padding: EdgeInsets.only(bottom: bottomInset),
+          child: DraggableScrollableSheet(
+            initialChildSize: 0.9,
+            minChildSize: 0.5,
+            maxChildSize: 0.95,
+            builder: (context, scrollController) => Container(
+              decoration: BoxDecoration(
+                color: YanciTheme.isDark
+                    ? const Color(0xF0252228)
+                    : Colors.white.withValues(alpha: 0.98),
+                borderRadius: const BorderRadius.vertical(
+                  top: Radius.circular(YanciTheme.radiusLg),
+                ),
+              ),
+              child: Column(
+                children: <Widget>[
+                  const SizedBox(height: YanciTheme.spacingMd),
+                  Container(
+                    width: 40,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: YanciTheme.textSecondary.withValues(alpha: 0.3),
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.all(YanciTheme.spacingMd),
+                    child: Row(
+                      children: <Widget>[
+                        Expanded(
+                          child: Text(
+                            L.pick(
+                              en: 'Communication guide',
+                              zhTW: '交流指南',
+                              zhCN: '交流指南',
+                            ),
+                            style: YanciTheme.headingMedium,
+                          ),
+                        ),
+                        IconButton(
+                          tooltip: L.pick(en: 'Close', zhTW: '關閉', zhCN: '关闭'),
+                          onPressed: () => Navigator.pop(sheetContext),
+                          icon: Icon(
+                            Icons.close_fullscreen_rounded,
+                            size: 20,
+                            color: YanciTheme.accent,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Expanded(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: YanciTheme.spacingMd,
+                      ),
+                      child: TextField(
+                        key: const Key('profile_system_prompt_expanded_field'),
+                        controller: _profileController,
+                        maxLines: null,
+                        expands: true,
+                        textAlignVertical: TextAlignVertical.top,
+                        scrollPadding: EdgeInsets.only(
+                          bottom: bottomInset + YanciTheme.spacingXl,
+                        ),
+                        style: YanciTheme.bodyText.copyWith(fontSize: 14),
+                        onChanged: (_) => _scheduleSave(),
+                        decoration: InputDecoration(
+                          hintText: L.pick(
+                            en: 'Write your communication guide…',
+                            zhTW: '填寫你的交流指南…',
+                            zhCN: '填写你的交流指南…',
+                          ),
+                          hintStyle: YanciTheme.bodySmall.copyWith(
+                            color: YanciTheme.textSecondary.withValues(
+                              alpha: 0.45,
+                            ),
+                          ),
+                          border: InputBorder.none,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return PopScope(
@@ -178,6 +283,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         if (!didPop) unawaited(_handleBack());
       },
       child: Scaffold(
+        resizeToAvoidBottomInset: true,
         body: GradientBackground(
           child: SafeArea(
             child: Column(
@@ -194,11 +300,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       children: [
                         Center(
                           child: Text(
-                            L.pick(
-                              en: 'Profile',
-                              zhTW: '相處方式',
-                              zhCN: '相处方式',
-                            ),
+                            L.pick(en: 'Profile', zhTW: '相處方式', zhCN: '相处方式'),
                             textAlign: TextAlign.center,
                             style: YanciTheme.headingMedium,
                           ),
@@ -222,7 +324,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   child: _isLoading
                       ? const Center(child: CircularProgressIndicator())
                       : SingleChildScrollView(
-                          padding: const EdgeInsets.all(YanciTheme.spacingMd),
+                          keyboardDismissBehavior:
+                              ScrollViewKeyboardDismissBehavior.onDrag,
+                          padding: EdgeInsets.fromLTRB(
+                            YanciTheme.spacingMd,
+                            YanciTheme.spacingMd,
+                            YanciTheme.spacingMd,
+                            MediaQuery.viewInsetsOf(context).bottom +
+                                YanciTheme.spacingXl,
+                          ),
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
@@ -266,32 +376,67 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                 ),
                               ),
                               const SizedBox(height: YanciTheme.spacingSm),
-                              _buildGlassCard(
-                                child: TextField(
-                                  key: const Key('profile_system_prompt_field'),
-                                  controller: _profileController,
-                                  minLines: 10,
-                                  maxLines: null,
-                                  style: YanciTheme.bodyText.copyWith(
-                                    fontSize: 14,
+                              Stack(
+                                children: <Widget>[
+                                  _buildGlassCard(
+                                    child: TextField(
+                                      key: const Key(
+                                        'profile_system_prompt_field',
+                                      ),
+                                      controller: _profileController,
+                                      minLines: 10,
+                                      maxLines: null,
+                                      style: YanciTheme.bodyText.copyWith(
+                                        fontSize: 14,
+                                      ),
+                                      onChanged: (_) => _scheduleSave(),
+                                      decoration: InputDecoration(
+                                        hintText: L.pick(
+                                          en: 'Write your communication guide…\n(New chats use the update; existing chats keep their birth version)',
+                                          zhTW:
+                                              '填寫你的交流指南…\n（新窗口使用更新；既有窗口保留建立時版本）',
+                                          zhCN:
+                                              '填写你的交流指南…\n（新窗口使用更新；既有窗口保留创建时版本）',
+                                        ),
+                                        hintStyle: YanciTheme.bodySmall
+                                            .copyWith(
+                                              color: YanciTheme.textSecondary
+                                                  .withValues(alpha: 0.45),
+                                            ),
+                                        border: InputBorder.none,
+                                        contentPadding:
+                                            const EdgeInsets.fromLTRB(
+                                              0,
+                                              YanciTheme.spacingSm,
+                                              30,
+                                              YanciTheme.spacingSm,
+                                            ),
+                                      ),
+                                    ),
                                   ),
-                                  onChanged: (_) => _scheduleSave(),
-                                  decoration: InputDecoration(
-                                    hintText: L.pick(
-                                      en: 'Write your communication guide…\n(New chats use the update; existing chats keep their birth version)',
-                                      zhTW: '填寫你的交流指南…\n（新窗口使用更新；既有窗口保留建立時版本）',
-                                      zhCN: '填写你的交流指南…\n（新窗口使用更新；既有窗口保留创建时版本）',
-                                    ),
-                                    hintStyle: YanciTheme.bodySmall.copyWith(
-                                      color: YanciTheme.textSecondary
-                                          .withValues(alpha: 0.45),
-                                    ),
-                                    border: InputBorder.none,
-                                    contentPadding: const EdgeInsets.symmetric(
-                                      vertical: YanciTheme.spacingSm,
+                                  Positioned(
+                                    top: 8,
+                                    right: 8,
+                                    child: IconButton(
+                                      key: const Key(
+                                        'profile-expand-guide-button',
+                                      ),
+                                      tooltip: L.pick(
+                                        en: 'Expand editor',
+                                        zhTW: '放大編輯',
+                                        zhCN: '放大编辑',
+                                      ),
+                                      onPressed: _showExpandedGuideEditor,
+                                      icon: Icon(
+                                        Icons.open_in_full_rounded,
+                                        size: 17,
+                                        color: YanciTheme.accent.withValues(
+                                          alpha: 0.58,
+                                        ),
+                                      ),
                                     ),
                                   ),
-                                ),
+                                ],
                               ),
                               const SizedBox(height: YanciTheme.spacingMd),
                               SizedBox(

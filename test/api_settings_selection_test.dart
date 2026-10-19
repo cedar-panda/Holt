@@ -4,6 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:project_yanci/services/settings/api_settings.dart';
 import 'package:project_yanci/services/settings/memory_settings.dart';
 import 'package:project_yanci/services/xai_service.dart';
+import 'package:project_yanci/services/deepinfra_service.dart';
 
 import 'helpers/secure_storage_test_mock.dart';
 
@@ -62,6 +63,7 @@ void main() {
     'bedrock',
     'gemini',
     'deepseek',
+    'deepinfra',
     'qwen',
     'thinking_machines',
     'openai_compatible',
@@ -89,6 +91,21 @@ void main() {
     expect(await ApiSettings.getXaiApiKey(), 'xai-test-key');
     expect(await ApiSettings.getModelForProvider('xai'), 'grok-4.5');
     expect(await ApiSettings.buildAdapter(), isA<XaiService>());
+  });
+
+  test('DeepInfra key and model build the direct adapter', () async {
+    await ApiSettings.saveDeepInfraApiKey('deepinfra-test-key');
+    await ApiSettings.saveProviderModelSelection(
+      'deepinfra',
+      'Qwen/Qwen3.8-Flash',
+    );
+
+    expect(await ApiSettings.getDeepInfraApiKey(), 'deepinfra-test-key');
+    expect(
+      await ApiSettings.getModelForProvider('deepinfra'),
+      'Qwen/Qwen3.8-Flash',
+    );
+    expect(await ApiSettings.buildAdapter(), isA<DeepInfraService>());
   });
 
   test('OpenAI-compatible source distinguishes a missing API key', () async {

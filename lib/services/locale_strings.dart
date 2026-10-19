@@ -1186,7 +1186,7 @@ class L {
     'sticker_char_fallback': {'zh_TW': '角色', 'zh_CN': '角色', 'en': 'Character'},
 
     // ── theme presets ──
-    'theme_preset_dawn': {'zh_TW': '晨光', 'zh_CN': '晨光', 'en': 'Dawn'},
+    'theme_preset_dawn': {'zh_TW': '曦光', 'zh_CN': '曦光', 'en': 'Dawn'},
     'theme_preset_midnight': {
       'zh_TW': '深夜書房',
       'zh_CN': '深夜书房',
@@ -1195,7 +1195,7 @@ class L {
     'theme_preset_bamboo': {'zh_TW': '墨竹', 'zh_CN': '墨竹', 'en': 'Bamboo'},
     'theme_preset_ivory': {'zh_TW': '象牙白', 'zh_CN': '象牙白', 'en': 'Ivory'},
     'theme_preset_amber': {'zh_TW': '琥珀', 'zh_CN': '琥珀', 'en': 'Amber'},
-    'theme_preset_mist': {'zh_TW': '霧紫', 'zh_CN': '雾紫', 'en': 'Mist'},
+    'theme_preset_mist': {'zh_TW': '迷霧', 'zh_CN': '迷雾', 'en': 'Mist'},
     'theme_preset_seafoam': {'zh_TW': '海鹽', 'zh_CN': '海盐', 'en': 'Seafoam'},
     'theme_preset_blush': {'zh_TW': '玫瑰露', 'zh_CN': '玫瑰露', 'en': 'Rose Dew'},
     'theme_preset_bloom': {'zh_TW': '花信', 'zh_CN': '花信', 'en': 'Bloom'},
@@ -1205,6 +1205,11 @@ class L {
       'zh_CN': '夜灯',
       'en': 'Night Lamp',
     },
+    'theme_preset_yanci': {
+      'zh_TW': '未洗硯',
+      'zh_CN': '未洗砚',
+      'en': 'Unwashed Inkstone',
+    },
     'theme_preset_tipsy': {'zh_TW': '微醺', 'zh_CN': '微醺', 'en': 'Tipsy'},
     'theme_preset_snow': {'zh_TW': '初雪', 'zh_CN': '初雪', 'en': 'First Snow'},
     'theme_preset_latte': {'zh_TW': '奶咖', 'zh_CN': '奶咖', 'en': 'Latte'},
@@ -1213,7 +1218,16 @@ class L {
       'zh_CN': '海盐苏打',
       'en': 'Sea Salt Soda',
     },
-    'theme_preset_neon': {'zh_TW': '霓虹雨', 'zh_CN': '霓虹雨', 'en': 'Neon Rain'},
+    'theme_preset_neon': {'zh_TW': '街角', 'zh_CN': '街角', 'en': 'Street Corner'},
+    'theme_preset_changan': {'zh_TW': '長安', 'zh_CN': '长安', 'en': "Chang'an"},
+    'theme_preset_taro': {'zh_TW': '奶芋', 'zh_CN': '奶芋', 'en': 'Taro Milk'},
+    'theme_preset_tidal': {'zh_TW': '潮汐', 'zh_CN': '潮汐', 'en': 'Tides'},
+    'theme_preset_blaze': {'zh_TW': '燎', 'zh_CN': '燎', 'en': 'Blaze'},
+    'theme_preset_neonpink': {
+      'zh_TW': '夜櫻',
+      'zh_CN': '夜樱',
+      'en': 'Night Sakura',
+    },
     'theme_preset_swallow': {
       'zh_TW': '春·燕',
       'zh_CN': '春·燕',
@@ -1259,6 +1273,11 @@ class L {
       'zh_CN': '小屋熄灯后剩的那一盏',
       'en': 'The one lamp left in the cottage',
     },
+    'theme_subtitle_yanci': {
+      'zh_TW': '寫完最後一筆沒有收',
+      'zh_CN': '写完最后一笔没有收',
+      'en': 'The final stroke, left unfinished',
+    },
     'theme_subtitle_tipsy': {
       'zh_TW': '一杯之後的體溫',
       'zh_CN': '一杯之后的体温',
@@ -1285,9 +1304,34 @@ class L {
       'en': 'Bubbles rushing upward',
     },
     'theme_subtitle_neon': {
-      'zh_TW': '雨夜霓虹落在傘面上',
-      'zh_CN': '雨夜霓虹落在伞面上',
-      'en': 'Neon rain on the umbrella',
+      'zh_TW': '柏油路上的積水剛好映出街口綠燈',
+      'zh_CN': '柏油路上的积水刚好映出街口绿灯',
+      'en': 'Puddles on the asphalt catching the green light',
+    },
+    'theme_subtitle_changan': {
+      'zh_TW': '十二樓前的朱牆',
+      'zh_CN': '十二楼前的朱墙',
+      'en': 'Vermilion walls before the twelve towers',
+    },
+    'theme_subtitle_taro': {
+      'zh_TW': '芋泥加了一點牛奶',
+      'zh_CN': '芋泥加了一点牛奶',
+      'en': 'Taro with a splash of milk',
+    },
+    'theme_subtitle_tidal': {
+      'zh_TW': '退潮後沙灘上的水痕',
+      'zh_CN': '退潮后沙滩上的水痕',
+      'en': 'Watermarks left after the tide',
+    },
+    'theme_subtitle_blaze': {
+      'zh_TW': '餘燼裡最後一點橙光',
+      'zh_CN': '余烬里最后一点橙光',
+      'en': 'The last orange glow in the embers',
+    },
+    'theme_subtitle_neonpink': {
+      'zh_TW': '長夜無聲，落櫻微光。',
+      'zh_CN': '长夜无声，落樱微光。',
+      'en': 'In the quiet of the night, cherry blossoms softly glow.',
     },
     'theme_subtitle_swallow': {
       'zh_TW': '燕子歸來的雨後',

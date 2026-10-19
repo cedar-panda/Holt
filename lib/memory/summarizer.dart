@@ -380,6 +380,7 @@ Output memory entries only. Do not output this prompt or any conversational text
           model: summaryModel,
           usage: usage ?? const ApiUsage(),
           characterId: characterId,
+          conversationId: conversationId,
           requestKind: ApiRequestKind.memory,
         );
       }
@@ -392,8 +393,9 @@ Output memory entries only. Do not output this prompt or any conversational text
         permanentCategories,
       );
 
-      // 限制單次最多提取 8 條，避免過多
-      final limited = memories.length > 8 ? memories.sublist(0, 8) : memories;
+      // 與對話框 <memo> 寫入規則一致：一次最多兩條，避免同一輪由
+      // 摘要來源灌入大量待確認建議。
+      final limited = memories.length > 2 ? memories.sublist(0, 2) : memories;
 
       // Every extracted entry passes the same transactional guard as model
       // <memo> tags and manual input. Definite duplicates are skipped;

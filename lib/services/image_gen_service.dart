@@ -19,14 +19,14 @@ class ImageGenService {
   static String abilityPrompt() {
     if (L.locale == 'en') {
       return '''■ Drawing
-  <draw>English image description: subject, style, lighting, composition</draw>
+  {"type":"image.draw","arguments":{"prompt":"English image description: subject, style, lighting, composition"}}
   Only when the user asks for it. If the user gives a full description, use their prompt as-is.
   At most one image per turn.''';
     }
     return L.pick(
       en: '',
       zhTW: '''■ 畫畫
-  <draw>英文圖像描述，寫清主體、風格、光線、構圖</draw>
+  {"type":"image.draw","arguments":{"prompt":"英文圖像描述，寫清主體、風格、光線、構圖"}}
   僅在對方要求時使用。對方給出完整描述時，完全使用對方的 prompt。
   一次至多一張。''',
     );
@@ -40,6 +40,7 @@ class ImageGenService {
     String charAnchor = '',
     String style = '',
     String characterId = 'default',
+    String conversationId = '',
   }) async {
     if (prompt.isEmpty) throw Exception('空白畫圖描述');
     final config = await loadConfig();
@@ -63,6 +64,7 @@ class ImageGenService {
       provider: config.provider.id,
       model: config.model,
       characterId: characterId,
+      conversationId: conversationId,
       promptTokens: TokenEstimator.estimate(composedPrompt),
       estimatedCost: ImageGenerationPricing.estimateUsd(config),
       requestKind: ApiRequestKind.image,

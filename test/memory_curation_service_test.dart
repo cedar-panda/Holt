@@ -57,7 +57,7 @@ void main() {
   "reason":"描述的是同一件事",
   "merge":{
     "category":"重要事件",
-    "content":"[7/24] 昭昭接受了這個孩子，兩人決定一起留下他。",
+    "content":"[7/24] 小禾接受了這個孩子，兩人決定一起留下他。",
     "triggers":["孩子","決定"]
   }
 }]}
@@ -73,7 +73,7 @@ void main() {
     expect(result.single.reason, '描述的是同一件事');
     expect(result.single.mergeResult, <String, Object?>{
       'category': '重要事件',
-      'content': '[7/24] 昭昭接受了這個孩子，兩人決定一起留下他。',
+      'content': '[7/24] 小禾接受了這個孩子，兩人決定一起留下他。',
       'triggers': '孩子,決定',
     });
   });

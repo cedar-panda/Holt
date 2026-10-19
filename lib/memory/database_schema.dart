@@ -54,6 +54,7 @@ class _DatabaseSchema {
         memory_log TEXT DEFAULT '',
         web_search_trace_json TEXT DEFAULT '',
         email_draft_json TEXT DEFAULT '',
+        persona_card_json TEXT DEFAULT '',
         cache_hit INTEGER DEFAULT 0,
         summary_recorded INTEGER NOT NULL DEFAULT 0,
         revision INTEGER NOT NULL DEFAULT 1,
@@ -88,6 +89,7 @@ class _DatabaseSchema {
     await _createRpStoryProjectionRevisionTable(db);
     await _createRpWorldbookTables(db);
     await _createCharacterDiaryTable(db);
+    await _createCharacterSelfNotesTable(db);
     await _createMemoryEmbeddingTable(db);
     await DatabaseHelper._createCharacterSignatureTable(db);
     await _createChatDiagnosticsTable(db);
@@ -102,6 +104,7 @@ class _DatabaseSchema {
   /// matches the app. This covers same-version additions and backups that
   /// intentionally omit derived FTS tables.
   static Future<void> _ensureRuntimeSchema(Database db) async {
+    await _createContextSummaryTables(db);
     await _createPendingMemoryActionsTable(db);
     await _createWebSearchUsageTable(db);
     await _createRpCharacterTimelineTable(db);
@@ -113,6 +116,8 @@ class _DatabaseSchema {
     await _createRpStoryProjectionRevisionTable(db);
     await _createRpWorldbookTables(db);
     await _createCharacterDiaryTable(db);
+    await _createCharacterSelfNotesTable(db);
+    await DatabaseHelper._backfillCharacterSelfNotes(db);
     await _createMemoryEmbeddingTable(db);
     await DatabaseHelper._createCharacterSignatureTable(db);
     await _createChatDiagnosticsTable(db);
@@ -133,6 +138,12 @@ class _DatabaseSchema {
       await _safeAddColumn(
         db,
         'messages',
+        'persona_card_json',
+        "TEXT DEFAULT ''",
+      );
+      await _safeAddColumn(
+        db,
+        'messages',
         'summary_recorded',
         'INTEGER NOT NULL DEFAULT 0',
       );
@@ -147,6 +158,14 @@ class _DatabaseSchema {
         'messages',
         'revision',
         'INTEGER NOT NULL DEFAULT 1',
+      );
+    }
+    if (await _tableExists(db, 'usage_logs')) {
+      await _safeAddColumn(
+        db,
+        'usage_logs',
+        'conversation_id',
+        "TEXT NOT NULL DEFAULT ''",
       );
     }
     if (await _tableExists(db, 'rp_story_characters')) {
@@ -604,6 +623,9 @@ class _DatabaseSchema {
   }
 
   static Future<void> _createRevisionIntegrityTables(Database db) async {
+    if (await _tableExists(db, 'messages')) {
+      await _safeAddColumn(db, 'messages', 'reply_to_message_id', 'INTEGER');
+    }
     await db.execute('''
       CREATE TABLE IF NOT EXISTS message_revisions (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -616,6 +638,16 @@ class _DatabaseSchema {
         UNIQUE(message_id, revision)
       )
     ''');
+    await _safeAddColumn(
+      db,
+      'message_revisions',
+      'reply_user_message_id',
+      'INTEGER',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_reply_revision_user '
+      'ON message_revisions(conversation_id, reply_user_message_id, id)',
+    );
     await db.execute(
       'CREATE INDEX IF NOT EXISTS idx_message_revisions_message '
       'ON message_revisions(message_id, revision DESC)',
@@ -728,6 +760,7 @@ class _DatabaseSchema {
         provider TEXT NOT NULL,
         model TEXT NOT NULL,
         character_id TEXT DEFAULT 'default',
+        conversation_id TEXT NOT NULL DEFAULT '',
         prompt_tokens INTEGER DEFAULT 0,
         completion_tokens INTEGER DEFAULT 0,
         cache_hit_tokens INTEGER DEFAULT 0,
@@ -1274,6 +1307,8 @@ class _DatabaseSchema {
           'ON usage_logs(character_id, timestamp DESC)',
       'CREATE INDEX IF NOT EXISTS idx_usage_kind_ts '
           'ON usage_logs(request_kind, timestamp DESC)',
+      'CREATE INDEX IF NOT EXISTS idx_usage_conversation_kind '
+          'ON usage_logs(conversation_id, request_kind, timestamp DESC)',
       'CREATE INDEX IF NOT EXISTS idx_voice_char_time '
           'ON saved_voices(character_id, created_at DESC)',
       'CREATE INDEX IF NOT EXISTS idx_voice_conversation '
@@ -2052,6 +2087,31 @@ class _DatabaseSchema {
     if (oldVersion < 77) {
       await _createCharacterDiaryTable(db);
     }
+    if (oldVersion < 78) {
+      if (await _tableExists(db, 'usage_logs')) {
+        await _safeAddColumn(
+          db,
+          'usage_logs',
+          'conversation_id',
+          "TEXT NOT NULL DEFAULT ''",
+        );
+      } else {
+        await _createUsageTable(db);
+      }
+    }
+    if (oldVersion < 79) {
+      await _createContextSummaryTables(db);
+    }
+    if (oldVersion < 80) {
+      await _createRevisionIntegrityTables(db);
+    }
+    if (oldVersion < 81) {
+      await _createCharacterSelfNotesTable(db);
+      await DatabaseHelper._backfillCharacterSelfNotes(db);
+    }
+    if (oldVersion < 82) {
+      await _migrateToV82SharedPersonaBindings(db);
+    }
     // Rebuild shared indexes only after every versioned column migration has
     // completed. _migrateToV36 used to call this helper early; once v38 added
     // an index over source_message_id, a real v35 database tried to create the
@@ -2062,6 +2122,77 @@ class _DatabaseSchema {
       await _createKnownIndexes(db);
       await _createContextModeIndexes(db);
     }
+  }
+
+  /// Persona files remain mode-specific, but the companion relationship is
+  /// one shared user-persona <-> character binding. Older builds stored a
+  /// separate row for every mode/continuity. Keep the legacy columns for
+  /// backup compatibility and collapse their values into one canonical row.
+  ///
+  /// When old scopes disagree, the most recently edited relationship wins.
+  /// The greedy pass also preserves the existing one-companion-per-persona UI
+  /// policy without inventing a binding the user never selected.
+  static Future<void> _migrateToV82SharedPersonaBindings(Database db) async {
+    if (!await _tableExists(db, 'character_persona_bindings')) return;
+    final rows = await db.query(
+      'character_persona_bindings',
+      orderBy: 'updated_at DESC, created_at DESC, rowid DESC',
+    );
+    if (rows.isEmpty) return;
+
+    final selected = <Map<String, Object?>>[];
+    final usedCharacters = <String>{};
+    final usedPersonas = <String>{};
+    for (final row in rows) {
+      final characterId = row['character_id']?.toString().trim() ?? '';
+      final personaId = row['user_persona_id']?.toString().trim() ?? '';
+      if (characterId.isEmpty ||
+          personaId.isEmpty ||
+          usedCharacters.contains(characterId) ||
+          usedPersonas.contains(personaId)) {
+        continue;
+      }
+      usedCharacters.add(characterId);
+      usedPersonas.add(personaId);
+      selected.add(<String, Object?>{
+        ...row,
+        // Compatibility placeholders only; lookup no longer scopes by them.
+        'context_mode': 'daily',
+        'continuity_id': 'main',
+      });
+    }
+
+    // onUpgrade already executes transactionally; do not open a nested
+    // transaction here.
+    await db.delete('character_persona_bindings');
+    for (final row in selected) {
+      await db.insert('character_persona_bindings', row);
+    }
+  }
+
+  static Future<void> _createCharacterSelfNotesTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS character_self_notes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        character_id TEXT NOT NULL,
+        content TEXT NOT NULL,
+        provider TEXT NOT NULL DEFAULT '',
+        model_id TEXT NOT NULL DEFAULT '',
+        model_version TEXT NOT NULL DEFAULT '',
+        source_conversation_id TEXT NOT NULL DEFAULT '',
+        source_message_ids_json TEXT NOT NULL DEFAULT '[]',
+        locked INTEGER NOT NULL DEFAULT 0 CHECK(locked IN (0, 1)),
+        long_term INTEGER NOT NULL DEFAULT 0 CHECK(long_term IN (0, 1)),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(character_id, content),
+        FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE CASCADE
+      )
+    ''');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_character_self_notes_scope '
+      'ON character_self_notes(character_id, created_at DESC, id DESC)',
+    );
   }
 
   static Future<void> _migrateToV69(Database db) async {

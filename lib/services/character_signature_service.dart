@@ -101,6 +101,7 @@ abstract final class CharacterSignatureService {
 
     final signature = await _generateSignature(
       characterId: characterId,
+      conversationId: conversationId,
       latestUserMessage: latestUserMessage,
       latestAssistantReply: latestAssistantReply,
       model: model,
@@ -296,6 +297,7 @@ abstract final class CharacterSignatureService {
 
   static Future<String?> _generateSignature({
     required String characterId,
+    String conversationId = '',
     required String latestUserMessage,
     required String latestAssistantReply,
     required String model,
@@ -341,6 +343,7 @@ abstract final class CharacterSignatureService {
       model: model,
       usage: usage ?? const ApiUsage(),
       characterId: characterId,
+      conversationId: conversationId,
       requestKind: ApiRequestKind.signature,
     );
 

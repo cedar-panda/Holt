@@ -9,6 +9,7 @@ import '../xai_service.dart';
 import '../aws_bedrock_service.dart';
 import '../gemini_service.dart';
 import '../deepseek_service.dart';
+import '../deepinfra_service.dart';
 import '../qwen_service.dart';
 import '../openai_compatible_service.dart';
 import '../thinking_machines_service.dart';
@@ -51,7 +52,7 @@ class StarredModelEntry {
   }
 }
 
-/// API 供應商配置（OpenRouter / xAI / Bedrock / Gemini / DeepSeek / Qwen / OpenAI Compatible / Local API）
+/// API 供應商配置（OpenRouter / xAI / Bedrock / Gemini / DeepSeek / DeepInfra / Qwen / OpenAI Compatible / Local API）
 class ApiSettings {
   // ═══ 通用 ═══
   static const String _keyLegacyApiKey = 'api_key';
@@ -178,6 +179,9 @@ class ApiSettings {
       case 'deepseek':
         await saveDeepseekApiKey(key);
         break;
+      case 'deepinfra':
+        await saveDeepInfraApiKey(key);
+        break;
       case 'qwen':
         await saveQwenApiKey(key);
         break;
@@ -203,6 +207,8 @@ class ApiSettings {
         return getGeminiApiKey();
       case 'deepseek':
         return getDeepseekApiKey();
+      case 'deepinfra':
+        return getDeepInfraApiKey();
       case 'qwen':
         return getQwenApiKey();
       case 'thinking_machines':
@@ -237,6 +243,7 @@ class ApiSettings {
       case 'xai':
       case 'gemini':
       case 'deepseek':
+      case 'deepinfra':
       case 'qwen':
       case 'thinking_machines':
         return (await getApiKeyForProvider(provider)).trim().isNotEmpty;
@@ -275,6 +282,9 @@ class ApiSettings {
     if (provider == 'deepseek') {
       return p.getString(_keyDeepseekModel) ?? 'deepseek-chat';
     }
+    if (provider == 'deepinfra') {
+      return p.getString(_keyDeepInfraModel) ?? DeepInfraService.defaultModel;
+    }
     if (provider == 'qwen') {
       return p.getString(_keyQwenModel) ?? 'qwen-plus';
     }
@@ -308,6 +318,9 @@ class ApiSettings {
         break;
       case 'deepseek':
         await saveDeepseekModel(value);
+        break;
+      case 'deepinfra':
+        await saveDeepInfraModel(value);
         break;
       case 'qwen':
         await saveQwenModel(value);
@@ -462,6 +475,31 @@ class ApiSettings {
   static Future<String> getDeepseekModel() async {
     final p = await SharedPreferences.getInstance();
     return p.getString(_keyDeepseekModel) ?? 'deepseek-chat';
+  }
+
+  // ═══ DeepInfra ═══
+  static const String _keyDeepInfraApiKey = 'deepinfra_api_key';
+  static const String _keyDeepInfraModel = 'deepinfra_model';
+
+  static Future<void> saveDeepInfraApiKey(String value) async {
+    await SecureStore.write(_keyDeepInfraApiKey, value);
+  }
+
+  static Future<String> getDeepInfraApiKey() async {
+    return SecureStore.read(_keyDeepInfraApiKey);
+  }
+
+  static Future<void> saveDeepInfraModel(String value) async {
+    final normalized = value.trim();
+    if (normalized.isEmpty) return;
+    final preferences = await SharedPreferences.getInstance();
+    await preferences.setString(_keyDeepInfraModel, normalized);
+  }
+
+  static Future<String> getDeepInfraModel() async {
+    final preferences = await SharedPreferences.getInstance();
+    return preferences.getString(_keyDeepInfraModel) ??
+        DeepInfraService.defaultModel;
   }
 
   // ═══ Qwen ═══
@@ -689,9 +727,13 @@ class ApiSettings {
   static Future<List<StarredModelEntry>> getRankedStarredModelEntries() async {
     final saved = await getStarredModelEntries();
     final starred = Platform.isIOS
-        ? saved.where((entry) =>
-            entry.provider != 'local' &&
-            !LocalModelService.isLocalModelId(entry.modelId)).toList()
+        ? saved
+              .where(
+                (entry) =>
+                    entry.provider != 'local' &&
+                    !LocalModelService.isLocalModelId(entry.modelId),
+              )
+              .toList()
         : saved;
     final preferences = await SharedPreferences.getInstance();
     if (preferences.getBool(_keyStarredModelManualOrder) == true) {
@@ -1024,11 +1066,13 @@ class ApiSettings {
     final modelId = overrideModel ?? await _modelForProvider(provider);
     if (LocalModelService.isLocalModelId(modelId)) {
       if (Platform.isIOS) {
-        throw ApiConfigException(L.pick(
-          en: 'On-device models are unavailable on iOS. Select an API model.',
-          zhTW: 'iOS 不提供本機模型，請選擇 API 模型。',
-          zhCN: 'iOS 不提供本地模型，请选择 API 模型。',
-        ));
+        throw ApiConfigException(
+          L.pick(
+            en: 'On-device models are unavailable on iOS. Select an API model.',
+            zhTW: 'iOS 不提供本機模型，請選擇 API 模型。',
+            zhCN: 'iOS 不提供本地模型，请选择 API 模型。',
+          ),
+        );
       }
       final key = LocalModelService.extractKey(modelId);
       final cached = _cachedLocalModelService;
@@ -1156,6 +1200,20 @@ class ApiSettings {
         );
       }
       return DeepSeekService(apiKey: key, thinkingEnabled: thinkingEnabled);
+    }
+
+    if (provider == 'deepinfra') {
+      final key = await getDeepInfraApiKey();
+      if (key.isEmpty) {
+        throw ApiConfigException(
+          L.pick(
+            en: 'DeepInfra API Key is not configured',
+            zhTW: 'DeepInfra API Key 未設定',
+            zhCN: 'DeepInfra API Key 未设置',
+          ),
+        );
+      }
+      return DeepInfraService(apiKey: key, thinkingEnabled: thinkingEnabled);
     }
 
     if (provider == 'qwen') {
@@ -1438,6 +1496,8 @@ class ApiSettings {
         return getGeminiModel();
       case 'deepseek':
         return getDeepseekModel();
+      case 'deepinfra':
+        return getDeepInfraModel();
       case 'qwen':
         return getQwenModel();
       case 'thinking_machines':

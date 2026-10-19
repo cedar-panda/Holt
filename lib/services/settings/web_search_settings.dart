@@ -1,16 +1,16 @@
-import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../secure_store.dart';
 
-/// Live web search is a developer preview. Debug builds can exercise it, while
-/// release builds fail closed unless the distributor opts in explicitly with
-/// `--dart-define=HOLT_ENABLE_LIVE_WEB_SEARCH=true` after reviewing the current
-/// provider terms, target audience and regions.
-const bool webSearchLiveDeveloperPreviewEnabled = bool.fromEnvironment(
+/// Native web search is available in normal builds. Distributors can still
+/// disable the complete live-search path explicitly at compile time.
+const bool webSearchLiveFeatureEnabled = bool.fromEnvironment(
   'HOLT_ENABLE_LIVE_WEB_SEARCH',
-  defaultValue: kDebugMode,
+  defaultValue: true,
 );
+
+/// Compatibility alias for the existing search pipeline.
+const bool webSearchLiveDeveloperPreviewEnabled = webSearchLiveFeatureEnabled;
 
 /// 原生網路搜尋的供應商策略。
 enum WebSearchMode {

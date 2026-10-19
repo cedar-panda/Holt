@@ -30,7 +30,7 @@ class ApiModelPicker extends StatelessWidget {
       YanciTheme.textSecondary,
       YanciTheme.accent,
       YanciTheme.isDark ? 0.38 : 0.28,
-    )!.withValues(alpha: 0.82);
+    )!.withValues(alpha: 0.41);
 
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: YanciTheme.spacingXs),
@@ -92,7 +92,10 @@ class ApiModelPicker extends StatelessWidget {
                   ),
                   focusedBorder: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(YanciTheme.radiusSm),
-                    borderSide: BorderSide(color: YanciTheme.accent, width: 1),
+                    borderSide: BorderSide(
+                      color: YanciTheme.accent.withValues(alpha: 0.5),
+                      width: 1,
+                    ),
                   ),
                 ),
                 onChanged: onFilter,
@@ -104,7 +107,7 @@ class ApiModelPicker extends StatelessWidget {
             ),
           ),
           const SizedBox(width: YanciTheme.spacingSm),
-          OutlinedButton.icon(
+          TextButton.icon(
             key: const Key('api_settings_model_refresh_button'),
             onPressed: isFetchingModels ? null : onLoadModels,
             icon: isFetchingModels
@@ -115,11 +118,10 @@ class ApiModelPicker extends StatelessWidget {
                   )
                 : const Icon(Icons.download_rounded, size: 18),
             label: Text(L.pick(en: 'Load', zhTW: '載入', zhCN: '载入')),
-            style: OutlinedButton.styleFrom(
+            style: TextButton.styleFrom(
               minimumSize: const Size(0, 46),
               padding: const EdgeInsets.symmetric(horizontal: 12),
               foregroundColor: YanciTheme.accent,
-              side: BorderSide(color: borderColor, width: 1),
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(YanciTheme.radiusSm),
               ),

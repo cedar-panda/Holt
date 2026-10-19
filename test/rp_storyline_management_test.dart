@@ -125,7 +125,7 @@ void main() {
           characterId: 'char-a',
           storylineId: storyline,
           userPersonaId: 'persona-a',
-          userPersonaSnapshot: '{"name":"昭昭"}',
+          userPersonaSnapshot: '{"name":"小禾"}',
         ),
         isTrue,
       );

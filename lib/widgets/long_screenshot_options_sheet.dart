@@ -40,15 +40,26 @@ Future<LongScreenshotOptions?> showLongScreenshotOptionsSheet({
   required List<LongScreenshotMessageOption> messages,
   int maxSelectionCount = 20,
 }) {
+  final sheetColor = Color.alphaBlend(
+    YanciTheme.surfacePanel,
+    YanciTheme.backgroundGradient.first,
+  ).withValues(alpha: 1);
   return showModalBottomSheet<LongScreenshotOptions>(
     context: context,
     isScrollControlled: true,
     useSafeArea: true,
-    backgroundColor: Colors.transparent,
+    backgroundColor: sheetColor,
     barrierColor: Colors.black.withValues(alpha: 0.32),
+    clipBehavior: Clip.antiAlias,
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(
+        top: Radius.circular(YanciTheme.radiusLg),
+      ),
+    ),
     builder: (_) => LongScreenshotOptionsSheet(
       messages: messages,
       maxSelectionCount: maxSelectionCount,
+      sheetColor: sheetColor,
     ),
   );
 }
@@ -56,11 +67,13 @@ Future<LongScreenshotOptions?> showLongScreenshotOptionsSheet({
 class LongScreenshotOptionsSheet extends StatefulWidget {
   final List<LongScreenshotMessageOption> messages;
   final int maxSelectionCount;
+  final Color? sheetColor;
 
   const LongScreenshotOptionsSheet({
     super.key,
     required this.messages,
     this.maxSelectionCount = 20,
+    this.sheetColor,
   }) : assert(maxSelectionCount > 0);
 
   @override
@@ -128,7 +141,13 @@ class _LongScreenshotOptionsSheetState
     return FractionallySizedBox(
       heightFactor: 0.88,
       child: Material(
-        color: YanciTheme.surfacePanel,
+        key: const ValueKey('longshot-sheet-surface'),
+        color:
+            widget.sheetColor ??
+            Color.alphaBlend(
+              YanciTheme.surfacePanel,
+              YanciTheme.backgroundGradient.first,
+            ).withValues(alpha: 1),
         borderRadius: const BorderRadius.vertical(
           top: Radius.circular(YanciTheme.radiusLg),
         ),

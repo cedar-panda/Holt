@@ -28,9 +28,9 @@ void main() {
   });
 
   test('manual model curation applies links and duplicate merges', () async {
-    final first = await _insert(db, '昭昭答應下雨天一起看電影');
-    final second = await _insert(db, '下雨天時昭昭答應一起看電影');
-    final third = await _insert(db, '昭昭準備了電影票');
+    final first = await _insert(db, '小禾答應下雨天一起看電影');
+    final second = await _insert(db, '下雨天時小禾答應一起看電影');
+    final third = await _insert(db, '小禾準備了電影票');
 
     final result = await MemoryCurationService.analyzeAndLink(
       characterId: 'char-a',
@@ -56,22 +56,48 @@ void main() {
     expect(links.single['status'], 'confirmed');
   });
 
+  test('manual model curation preview is fully read-only', () async {
+    final first = await _insert(db, '小禾答應下雨天一起看電影');
+    final second = await _insert(db, '下雨天時小禾答應一起看電影');
+    final third = await _insert(db, '小禾準備了電影票');
+
+    final result = await MemoryCurationService.analyzeAndLink(
+      characterId: 'char-a',
+      memories: [first, second, third],
+      adapterOverride: const _RelationAdapter(),
+      modelOverride: 'test-summary-model',
+      providerOverride: 'test',
+      applyImmediately: false,
+      persistSuggestions: false,
+    );
+
+    expect(result.relations, hasLength(2));
+    expect(await DatabaseHelper.getSpiderWebLinks('char-a'), isEmpty);
+    expect(await MemoryGuardService.listForReview('char-a'), isEmpty);
+    final active = await db.query(
+      'memories',
+      where: 'character_id = ? AND status = ?',
+      whereArgs: ['char-a', 'active'],
+    );
+    expect(active, hasLength(3));
+  });
+
   test('RP curation merges duplicates without creating graph links', () async {
     final first = await _insert(
       db,
-      '沈昭嶼在渡口接過白鶴印信',
+      '許清川在渡口接過青鸞印信',
       contextMode: ContextMode.rp,
       continuityId: 'route-a',
     );
     final second = await _insert(
       db,
-      '渡口相遇時，沈昭嶼收下白鶴印信',
+      '渡口相遇時，許清川收下青鸞印信',
       contextMode: ContextMode.rp,
       continuityId: 'route-a',
     );
     final third = await _insert(
       db,
-      '晏辭在藥鋪等待回覆',
+      '顧遠在藥鋪等待回覆',
       contextMode: ContextMode.rp,
       continuityId: 'route-a',
     );
@@ -93,9 +119,9 @@ void main() {
   test(
     'model review receives existing linked content and rejected pairs',
     () async {
-      final first = await _insert(db, '昭昭準備搬家');
-      final second = await _insert(db, '昭昭整理了紙箱');
-      final linked = await _insert(db, '昭昭隔天正式搬進來');
+      final first = await _insert(db, '小禾準備搬家');
+      final second = await _insert(db, '小禾整理了紙箱');
+      final linked = await _insert(db, '小禾隔天正式搬進來');
       await DatabaseHelper.upsertSpiderWebRelation(
         'char-a',
         first.id!,
@@ -142,7 +168,7 @@ void main() {
       expect(existing, hasLength(1));
       expect((existing.single as Map)['relation_type'], 'temporal');
       expect(
-        linkedMemories.where((item) => (item as Map)['content'] == '昭昭隔天正式搬進來'),
+        linkedMemories.where((item) => (item as Map)['content'] == '小禾隔天正式搬進來'),
         hasLength(1),
       );
       expect(rejected, hasLength(1));
@@ -200,7 +226,7 @@ class _RelationAdapter implements ApiAdapter {
           'reason': '同一項約定',
           'merge': <String, Object?>{
             'category': '約定',
-            'content': '昭昭答應下雨天一起看電影',
+            'content': '小禾答應下雨天一起看電影',
             'triggers': <String>['下雨天', '電影'],
           },
         },

@@ -74,3 +74,9 @@ prompt-caching-guide.md
 prompt-caching-guide.pdf
 lib_major_categories_guide.md
 fix_db.dart
+
+# 本機備份與 AI 輸出（不上傳）
+backups/
+Claude outputs/
+*.bak
+recovery/

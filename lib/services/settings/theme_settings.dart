@@ -17,6 +17,7 @@ class ThemeSettings {
   static const String _keyBubbleRadius = 'bubble_radius';
   static const String _keyStarEnabled = 'star_enabled';
   static const String _keyStarDensity = 'star_density';
+  static const String _keyParticleEffect = 'particle_effect';
   static const String _keyAiBubbleFlat = 'ai_bubble_flat';
 
   static Future<void> saveDarkMode(bool v) async {
@@ -158,6 +159,18 @@ class ThemeSettings {
   static Future<int> getStarDensity() async {
     final p = await SharedPreferences.getInstance();
     return p.getInt(_keyStarDensity) ?? 12;
+  }
+
+  static Future<void> saveParticleEffect(String effect) async {
+    if (!YanciTheme.particleEffectIds.contains(effect)) return;
+    final p = await SharedPreferences.getInstance();
+    await p.setString(_keyParticleEffect, effect);
+  }
+
+  static Future<String?> getParticleEffect() async {
+    final p = await SharedPreferences.getInstance();
+    final effect = p.getString(_keyParticleEffect);
+    return YanciTheme.particleEffectIds.contains(effect) ? effect : null;
   }
 
   /// AI 氣泡平鋪模式（true = 無氣泡，false = 正常氣泡）

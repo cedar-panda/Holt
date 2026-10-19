@@ -21,18 +21,24 @@ void main() {
       expect(defaults.coinSnapshotEnabled, isTrue);
       expect(defaults.diaryEnabled, isTrue);
       expect(defaults.toolPromptsEnabled, isTrue);
+      expect(defaults.modelGreetingEnabled, isTrue);
+      expect(defaults.emailDraftEnabled, isTrue);
 
       await ToolFeatureSettings.setShellEconomyEnabled(false);
       await ToolFeatureSettings.setDiaryEnabled(false);
       await ToolFeatureSettings.setToolPromptsEnabled(false);
+      await ToolFeatureSettings.setModelGreetingEnabled(false);
+      await ToolFeatureSettings.setEmailDraftEnabled(false);
 
       final reloaded = await ToolFeatureSettings.load();
       expect(reloaded.scratchEnabled, isFalse);
       expect(reloaded.toolPromptsEnabled, isFalse);
+      expect(reloaded.modelGreetingEnabled, isFalse);
       expect(reloaded.shopEnabled, isFalse);
       expect(reloaded.transferEnabled, isFalse);
       expect(reloaded.coinSnapshotEnabled, isFalse);
       expect(reloaded.diaryEnabled, isFalse);
+      expect(reloaded.emailDraftEnabled, isFalse);
     },
   );
 
@@ -42,6 +48,19 @@ void main() {
       const ToolFeatureState(shellEconomyEnabled: false).shellEconomyEnabled,
       isFalse,
     );
+  });
+
+  test('model home greeting is independent from tool prompts', () async {
+    await ToolFeatureSettings.setToolPromptsEnabled(false);
+
+    var reloaded = await ToolFeatureSettings.load();
+    expect(reloaded.toolPromptsEnabled, isFalse);
+    expect(reloaded.modelGreetingEnabled, isTrue);
+
+    await ToolFeatureSettings.setModelGreetingEnabled(false);
+    reloaded = await ToolFeatureSettings.load();
+    expect(reloaded.toolPromptsEnabled, isFalse);
+    expect(reloaded.modelGreetingEnabled, isFalse);
   });
 
   test(

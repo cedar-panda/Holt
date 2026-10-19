@@ -21,13 +21,25 @@ class ExtractedPortableBackup {
   }
 }
 
+class _StagedPortableMedia {
+  const _StagedPortableMedia({
+    required this.files,
+    required this.referenceCounts,
+    required this.totalBytes,
+  });
+
+  final List<Map<String, Object?>> files;
+  final Map<String, int> referenceCounts;
+  final int totalBytes;
+}
+
 /// Creates and validates the portable `.holt.zip` backup container.
 ///
 /// Database JSON never carries an absolute device path inside the archive.
 /// Every referenced media file is rewritten to `media/<sha256>.<ext>` and is
 /// verified again before an import path is restored under app documents.
 class PortableBackupBundle {
-  static const int formatVersion = 1;
+  static const int formatVersion = 2;
   static const String manifestEntry = 'manifest.json';
   static const String dataEntry = 'backup.json';
   static const int _maxMetadataBytes = 64 * 1024 * 1024;
@@ -63,7 +75,7 @@ class PortableBackupBundle {
 
     try {
       final portableData = _deepCopy(backupData);
-      final manifestFiles = await _stageReferencedMedia(
+      final stagedMedia = await _stageReferencedMedia(
         portableData,
         ownedRoot: ownedRoot,
         stage: stage,
@@ -95,7 +107,12 @@ class PortableBackupBundle {
             'sha256': databaseHash,
             'size': databaseSize,
           },
-          'files': manifestFiles,
+          'files': stagedMedia.files,
+          'media_inventory': <String, Object?>{
+            'references': stagedMedia.referenceCounts,
+            'unique_files': stagedMedia.files.length,
+            'total_bytes': stagedMedia.totalBytes,
+          },
         }),
         flush: true,
       );
@@ -162,8 +179,9 @@ class PortableBackupBundle {
       }
       final manifest = _decodeJsonEntry(manifestFile, field: manifestEntry);
       final data = _decodeJsonEntry(backupFile, field: dataEntry);
+      final bundleVersion = manifest['version'];
       if (manifest['type'] != 'holt_portable_backup' ||
-          manifest['version'] != formatVersion ||
+          (bundleVersion != 1 && bundleVersion != formatVersion) ||
           manifest['data'] != dataEntry) {
         throw const FormatException('不支援的 Holt 媒體備份格式');
       }
@@ -213,6 +231,31 @@ class PortableBackupBundle {
           throw FormatException('備份媒體雜湊不符：$path');
         }
         resolvedPaths[path] = target.path;
+      }
+
+      if (bundleVersion == formatVersion) {
+        final rawInventory = manifest['media_inventory'];
+        if (rawInventory is! Map) {
+          throw const FormatException('manifest.media_inventory 格式無效');
+        }
+        final expectedReferences = rawInventory['references'];
+        final expectedUniqueFiles = rawInventory['unique_files'];
+        final expectedTotalBytes = rawInventory['total_bytes'];
+        final normalizedExpectedReferences = expectedReferences is Map
+            ? <String, int>{
+                for (final entry in expectedReferences.entries)
+                  if (entry.value is num)
+                    entry.key.toString(): (entry.value as num).toInt(),
+              }
+            : const <String, int>{};
+        if (expectedUniqueFiles != rawFiles.length ||
+            expectedTotalBytes != totalBytes ||
+            !_sameCounts(
+              normalizedExpectedReferences,
+              _countPortableReferences(data),
+            )) {
+          throw const FormatException('備份媒體清單與資料引用不一致');
+        }
       }
 
       final databaseManifest = manifest['database'];
@@ -280,7 +323,7 @@ class PortableBackupBundle {
     }
   }
 
-  static Future<List<Map<String, Object?>>> _stageReferencedMedia(
+  static Future<_StagedPortableMedia> _stageReferencedMedia(
     Map<String, dynamic> data, {
     required Directory ownedRoot,
     required Directory stage,
@@ -292,20 +335,33 @@ class PortableBackupBundle {
     var sequence = 0;
     var totalSize = 0;
 
-    Future<String?> stagePath(Object? rawPath) async {
+    Future<String?> stagePath(
+      Object? rawPath, {
+      required String owner,
+      required bool requiredForBackup,
+    }) async {
       if (rawPath is! String || rawPath.trim().isEmpty) return null;
       final normalized = p.normalize(rawPath);
       final safeRoot = p.normalize(ownedRoot.path);
       if (!p.isAbsolute(normalized) ||
           (!p.equals(normalized, safeRoot) &&
               !p.isWithin(safeRoot, normalized))) {
+        if (requiredForBackup) {
+          throw StateError('備份媒體不在 App 儲存範圍：$owner');
+        }
         return null;
       }
       final source = File(normalized);
-      if (!await source.exists()) return null;
+      if (!await source.exists()) {
+        if (requiredForBackup) throw StateError('備份媒體遺失：$owner');
+        return null;
+      }
       final resolvedSource = await source.resolveSymbolicLinks();
       if (!p.equals(resolvedSource, resolvedOwnedRoot) &&
           !p.isWithin(resolvedOwnedRoot, resolvedSource)) {
+        if (requiredForBackup) {
+          throw StateError('備份媒體指向 App 儲存範圍外：$owner');
+        }
         return null;
       }
       final existing = sourceToPortable[resolvedSource];
@@ -347,6 +403,47 @@ class PortableBackupBundle {
       return portablePath;
     }
 
+    Future<void> stageMessageImages(Map rawRow, {required String owner}) async {
+      final sourcePaths = _decodeImagePaths(rawRow['image_paths_json']);
+      final portablePaths = <String>[];
+      for (final sourcePath in sourcePaths) {
+        final portable = await stagePath(
+          sourcePath,
+          owner: '$owner.image_paths_json',
+          requiredForBackup: true,
+        );
+        if (portable != null && !portablePaths.contains(portable)) {
+          portablePaths.add(portable);
+        }
+      }
+      if (portablePaths.isEmpty) {
+        final legacyPortable = await stagePath(
+          rawRow['image_path'],
+          owner: '$owner.image_path',
+          requiredForBackup: true,
+        );
+        if (legacyPortable != null) portablePaths.add(legacyPortable);
+      }
+      rawRow['image_paths_json'] = jsonEncode(portablePaths);
+      rawRow['image_path'] = portablePaths.isEmpty ? null : portablePaths.first;
+    }
+
+    final revisions = data['message_revisions'];
+    if (revisions is List) {
+      for (final revision in revisions.whereType<Map>()) {
+        final snapshot = jsonDecode(revision['snapshot_json'] as String);
+        if (snapshot is! Map) throw const FormatException('訊息版本格式無效');
+        await stageMessageImages(snapshot, owner: 'message_revisions.snapshot');
+        final prompt = snapshot['reply_user_snapshot'];
+        if (prompt is Map) {
+          await stageMessageImages(
+            prompt,
+            owner: 'message_revisions.reply_user_snapshot',
+          );
+        }
+        revision['snapshot_json'] = jsonEncode(snapshot);
+      }
+    }
     for (final entry in _tablePathColumns.entries) {
       final rows = data[entry.key];
       if (rows is! List) continue;
@@ -357,30 +454,15 @@ class PortableBackupBundle {
           continue;
         }
         if (entry.key == 'messages') {
-          final sourcePaths = _decodeImagePaths(rawRow['image_paths_json']);
-          final portablePaths = <String>[];
-          for (final sourcePath in sourcePaths) {
-            final portable = await stagePath(sourcePath);
-            if (portable != null && !portablePaths.contains(portable)) {
-              portablePaths.add(portable);
-            }
-          }
-          if (portablePaths.isEmpty) {
-            final legacyPortable = await stagePath(rawRow[entry.value]);
-            if (legacyPortable != null) portablePaths.add(legacyPortable);
-          }
-          rawRow['image_paths_json'] = jsonEncode(portablePaths);
-          rawRow[entry.value] = portablePaths.isEmpty
-              ? null
-              : portablePaths.first;
+          await stageMessageImages(rawRow, owner: 'messages');
           validRows.add(rawRow);
           continue;
         }
-        final portable = await stagePath(rawRow[entry.value]);
-        if (portable == null &&
-            (entry.key == 'stickers' || entry.key == 'saved_voices')) {
-          continue;
-        }
+        final portable = await stagePath(
+          rawRow[entry.value],
+          owner: '${entry.key}.${entry.value}',
+          requiredForBackup: entry.key != 'shop_items',
+        );
         rawRow[entry.value] =
             portable ??
             (_emptyStringPathTables.contains(entry.key) ? '' : null);
@@ -392,19 +474,110 @@ class PortableBackupBundle {
     if (preferences is Map) {
       for (final key in preferences.keys.toList()) {
         if (!key.toString().toLowerCase().contains('path')) continue;
-        preferences[key] = await stagePath(preferences[key]) ?? '';
+        preferences[key] =
+            await stagePath(
+              preferences[key],
+              owner: 'preferences.$key',
+              requiredForBackup: true,
+            ) ??
+            '';
       }
     }
     manifest.sort(
       (a, b) => a['path'].toString().compareTo(b['path'].toString()),
     );
-    return manifest;
+    return _StagedPortableMedia(
+      files: manifest,
+      referenceCounts: _countPortableReferences(data),
+      totalBytes: totalSize,
+    );
+  }
+
+  static Map<String, int> _countPortableReferences(Map<String, dynamic> data) {
+    final counts = <String, int>{};
+
+    void count(String owner, Object? raw) {
+      if (raw is String && _isSafeMediaPath(raw)) {
+        counts[owner] = (counts[owner] ?? 0) + 1;
+      }
+    }
+
+    void countMessage(Map row, String owner) {
+      final paths = _decodeImagePaths(row['image_paths_json']);
+      if (paths.isNotEmpty) {
+        for (final path in paths) {
+          count('$owner.image_paths_json', path);
+        }
+      } else {
+        count('$owner.image_path', row['image_path']);
+      }
+    }
+
+    final revisions = data['message_revisions'];
+    if (revisions is List) {
+      for (final revision in revisions.whereType<Map>()) {
+        final raw = revision['snapshot_json'];
+        if (raw is! String) continue;
+        final snapshot = jsonDecode(raw);
+        if (snapshot is! Map) continue;
+        countMessage(snapshot, 'message_revisions.snapshot');
+        final prompt = snapshot['reply_user_snapshot'];
+        if (prompt is Map) {
+          countMessage(prompt, 'message_revisions.reply_user_snapshot');
+        }
+      }
+    }
+    for (final entry in _tablePathColumns.entries) {
+      final rows = data[entry.key];
+      if (rows is! List) continue;
+      for (final row in rows.whereType<Map>()) {
+        if (entry.key == 'messages') {
+          countMessage(row, 'messages');
+        } else {
+          count('${entry.key}.${entry.value}', row[entry.value]);
+        }
+      }
+    }
+    final preferences = data['preferences'];
+    if (preferences is Map) {
+      for (final entry in preferences.entries) {
+        if (entry.key.toString().toLowerCase().contains('path')) {
+          count('preferences.${entry.key}', entry.value);
+        }
+      }
+    }
+    return Map<String, int>.fromEntries(
+      counts.entries.toList()..sort((a, b) => a.key.compareTo(b.key)),
+    );
+  }
+
+  static bool _sameCounts(Map<String, int> first, Map<String, int> second) {
+    if (first.length != second.length) return false;
+    for (final entry in first.entries) {
+      if (second[entry.key] != entry.value) return false;
+    }
+    return true;
   }
 
   static void _rewritePathsForImport(
     Map<String, dynamic> data,
     Map<String, String> resolvedPaths,
   ) {
+    final revisions = data['message_revisions'];
+    if (revisions is List) {
+      for (final revision in revisions.whereType<Map>()) {
+        final snapshot = jsonDecode(revision['snapshot_json'] as String);
+        if (snapshot is! Map) throw const FormatException('訊息版本格式無效');
+        _rewritePathsForImport({
+          'messages': [
+            snapshot,
+            if (snapshot['reply_user_snapshot'] is Map)
+              snapshot['reply_user_snapshot'],
+          ],
+        }, resolvedPaths);
+        revision['snapshot_json'] = jsonEncode(snapshot);
+      }
+    }
     String? resolve(Object? raw, {required bool emptyString}) {
       if (raw == null || raw.toString().isEmpty) return emptyString ? '' : null;
       final portable = raw.toString();

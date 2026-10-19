@@ -35,6 +35,7 @@ class TokenTracker {
     required String model,
     required ApiUsage usage,
     String characterId = 'default',
+    String conversationId = '',
     String requestKind = ApiRequestKind.chat,
   }) async {
     final prompt = usage.promptTokens;
@@ -58,6 +59,7 @@ class TokenTracker {
       provider: provider,
       model: model,
       characterId: characterId,
+      conversationId: conversationId,
       promptTokens: prompt,
       completionTokens: completion,
       cacheHitTokens: cacheHit,
@@ -77,6 +79,7 @@ class TokenTracker {
     required String model,
     required double estimatedCost,
     String characterId = 'default',
+    String conversationId = '',
     int promptTokens = 0,
     int completionTokens = 0,
     int cacheHitTokens = 0,
@@ -92,6 +95,7 @@ class TokenTracker {
       provider: provider,
       model: model,
       characterId: characterId,
+      conversationId: conversationId,
       promptTokens: promptTokens,
       completionTokens: completionTokens,
       cacheHitTokens: cacheHitTokens,

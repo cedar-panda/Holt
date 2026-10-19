@@ -48,6 +48,7 @@ class BackupService {
   static const int _rpProjectionRevisionSchemaVersion = 73;
   static const int _summaryRepairSchemaVersion = 73;
   static const int _characterDiarySchemaVersion = 77;
+  static const int _characterSelfNotesSchemaVersion = 81;
   static const Set<String> _rpRevisionTables = <String>{
     'rp_storylines',
     'message_revisions',
@@ -67,6 +68,7 @@ class BackupService {
   /// v5 明確列出的 app-owned tables；不包含 sqlite_sequence 等 SQLite 內部表。
   static const List<String> appTables = [
     'characters',
+    'character_self_notes',
     'rp_storylines',
     'user_personas',
     'user_persona_mode_overrides',
@@ -88,6 +90,7 @@ class BackupService {
     'stickers',
     'saved_messages',
     'context_summaries',
+    'context_summary_segments',
     'context_summary_repairs',
     'context_keywords',
     'usage_logs',
@@ -113,6 +116,7 @@ class BackupService {
   static const List<String> _insertOrder = appTables;
 
   static const Set<String> _integerPrimaryKeyTables = {
+    'character_self_notes',
     'messages',
     'message_revisions',
     'chat_diagnostics',
@@ -125,6 +129,7 @@ class BackupService {
     'stickers',
     'saved_messages',
     'context_summaries',
+    'context_summary_segments',
     'context_summary_repairs',
     'context_keywords',
     'usage_logs',
@@ -607,6 +612,8 @@ class BackupService {
                 declaredDatabaseVersion >= _summaryRepairSchemaVersion) &&
             (table != 'character_diaries' ||
                 declaredDatabaseVersion >= _characterDiarySchemaVersion) &&
+            (table != 'character_self_notes' ||
+                declaredDatabaseVersion >= _characterSelfNotesSchemaVersion) &&
             !tables.contains(table),
       );
       if (missing.isNotEmpty) {
@@ -664,7 +671,9 @@ class BackupService {
               (table != 'context_summary_repairs' ||
                   declaredDatabaseVersion >= _summaryRepairSchemaVersion) &&
               (table != 'character_diaries' ||
-                  declaredDatabaseVersion >= _characterDiarySchemaVersion),
+                  declaredDatabaseVersion >= _characterDiarySchemaVersion) &&
+              (table != 'character_self_notes' ||
+                  declaredDatabaseVersion >= _characterSelfNotesSchemaVersion),
         );
       }
     }
@@ -691,6 +700,9 @@ class BackupService {
     }
     if (declaredDatabaseVersion < _characterDiarySchemaVersion) {
       result['character_diaries'] = <Map<String, Object?>>[];
+    }
+    if (declaredDatabaseVersion < _characterSelfNotesSchemaVersion) {
+      result['character_self_notes'] = <Map<String, Object?>>[];
     }
 
     if (declaredDatabaseVersion < _personaModeSchemaVersion) {
@@ -730,6 +742,7 @@ class BackupService {
       requiresContextMode: requiresContextMode,
       requiresPersonaSchema: requiresPersonaSchema,
     );
+    _normalizeSharedPersonaBindings(result);
     _validateContextScopeLinks(result);
     _normalizeMemoryEmbeddings(result, fallbackTime);
     _normalizeSpiderWebLinks(result);
@@ -746,6 +759,54 @@ class BackupService {
       isLegacy: isLegacy,
       droppedOrphanMessageCount: droppedOrphanMessageCount,
     );
+  }
+
+  /// v82 keeps Daily/RP persona file content separate but shares one companion
+  /// binding. Old exports may contain conflicting mode/continuity rows; retain
+  /// the newest one-to-one relationships and rewrite them to the compatibility
+  /// scope used by current storage.
+  static void _normalizeSharedPersonaBindings(
+    Map<String, List<Map<String, Object?>>> tables,
+  ) {
+    final rows = tables['character_persona_bindings'];
+    if (rows == null || rows.isEmpty) return;
+    final sourceOrder = <Map<String, Object?>, int>{};
+    for (var index = 0; index < rows.length; index++) {
+      sourceOrder[rows[index]] = index;
+    }
+    final ordered = List<Map<String, Object?>>.from(rows)
+      ..sort((left, right) {
+        final leftTime = DateTime.tryParse(
+          left['updated_at']?.toString() ?? '',
+        );
+        final rightTime = DateTime.tryParse(
+          right['updated_at']?.toString() ?? '',
+        );
+        final byTime = (rightTime ?? DateTime.fromMillisecondsSinceEpoch(0))
+            .compareTo(leftTime ?? DateTime.fromMillisecondsSinceEpoch(0));
+        if (byTime != 0) return byTime;
+        return (sourceOrder[right] ?? 0).compareTo(sourceOrder[left] ?? 0);
+      });
+
+    final normalized = <Map<String, Object?>>[];
+    final usedCharacters = <String>{};
+    final usedPersonas = <String>{};
+    for (final row in ordered) {
+      final characterId = row['character_id']?.toString() ?? '';
+      final personaId = row['user_persona_id']?.toString() ?? '';
+      if (characterId.isEmpty ||
+          personaId.isEmpty ||
+          !usedCharacters.add(characterId) ||
+          !usedPersonas.add(personaId)) {
+        continue;
+      }
+      normalized.add(<String, Object?>{
+        ...row,
+        'context_mode': 'daily',
+        'continuity_id': 'main',
+      });
+    }
+    tables['character_persona_bindings'] = normalized;
   }
 
   static void _normalizeLegacyCore(
@@ -1095,6 +1156,7 @@ class BackupService {
     for (final table in const <String>[
       'memories',
       'context_summaries',
+      'context_summary_segments',
       'context_keywords',
       'pending_memory_actions',
       'memory_rejection_tombstones',
@@ -1667,6 +1729,56 @@ class BackupService {
       row['updated_at'] =
           _validIsoString(row['updated_at']) ?? row['created_at'];
     }
+    for (final row in tables['character_self_notes']!) {
+      if (row['id'] is! int || (row['id'] as int) <= 0) {
+        throw const FormatException('character_self_notes.id 必須是正整數');
+      }
+      final characterId = _requiredId(
+        row['character_id'],
+        'character_self_notes.character_id',
+      );
+      row['character_id'] = characterId;
+      final content = row['content']?.toString().trim() ?? '';
+      if (content.isEmpty) {
+        throw const FormatException('character_self_notes.content 不可為空');
+      }
+      row['content'] = content;
+      for (final field in const <String>[
+        'provider',
+        'model_id',
+        'model_version',
+        'source_conversation_id',
+      ]) {
+        row[field] = row[field]?.toString() ?? '';
+      }
+      row['locked'] = _sqliteBool(row['locked']);
+      row['long_term'] = _sqliteBool(row['long_term']);
+      try {
+        final decoded = jsonDecode(
+          row['source_message_ids_json']?.toString() ?? '[]',
+        );
+        if (decoded is! List || decoded.any((item) => item is! int)) {
+          throw const FormatException(
+            'character_self_notes.source_message_ids_json 無效',
+          );
+        }
+        row['source_message_ids_json'] = jsonEncode(decoded);
+      } on FormatException {
+        rethrow;
+      } catch (_) {
+        throw const FormatException(
+          'character_self_notes.source_message_ids_json 無效',
+        );
+      }
+      row['created_at'] = _validIsoString(row['created_at']) ?? fallbackTime;
+      row['updated_at'] =
+          _validIsoString(row['updated_at']) ?? row['created_at'];
+      final sourceConversationId =
+          row['source_conversation_id']?.toString() ?? '';
+      if (sourceConversationId.isEmpty) {
+        row['source_conversation_id'] = '';
+      }
+    }
 
     for (final row in tables['character_signatures']!) {
       row['character_id'] = _requiredId(
@@ -2134,6 +2246,7 @@ class BackupService {
     for (final table in const <String>[
       'memories',
       'context_summaries',
+      'context_summary_segments',
       'context_summary_repairs',
       'context_keywords',
       'pending_memory_actions',
@@ -2195,6 +2308,18 @@ class BackupService {
           conversation['character_id']?.toString() != characterId ||
           conversation['context_mode']?.toString() != 'daily') {
         throw const FormatException('character_diaries 的來源窗口不是該角色的日常窗口');
+      }
+    }
+    for (final row in tables['character_self_notes']!) {
+      final characterId = row['character_id']?.toString() ?? '';
+      if (!characterIds.contains(characterId)) {
+        throw const FormatException('character_self_notes 引用了不存在的角色');
+      }
+      final sourceConversationId =
+          row['source_conversation_id']?.toString() ?? '';
+      if (sourceConversationId.isNotEmpty &&
+          !conversations.containsKey(sourceConversationId)) {
+        throw const FormatException('character_self_notes 引用了不存在的窗口');
       }
     }
   }

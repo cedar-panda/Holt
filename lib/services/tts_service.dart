@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 import 'package:audioplayers/audioplayers.dart';
 import '../memory/database.dart';
+import 'api_adapter.dart';
 import 'settings_manager.dart';
 import 'token_tracker.dart';
 
@@ -275,7 +276,7 @@ class TtsService {
   /// ElevenLabs v3 靠這些控制語氣，剝掉反而失去表現力。
   /// 顯示用文本永遠剝（chat_bubble 那邊處理）。
   static String extractSpeechContent(String raw, {bool keepAudioTags = false}) {
-    var text = raw;
+    var text = VisibleModelOutput.finalOnly(raw);
 
     // 1) 思考鏈
     text = text.replaceAll(RegExp(r'<think>.*?</think>', dotAll: true), '');
@@ -562,7 +563,8 @@ class TtsService {
   static const elevenlabsModels = {
     'eleven_flash_v2_5': 'Flash v2.5（低延遲）',
     'eleven_multilingual_v2': 'Multilingual v2（高品質）',
-    'eleven_v3': 'Eleven v3（最新）',
+    'eleven_v3': 'Eleven v3（表現力）',
+    'eleven_v4': 'Eleven v4（最高品質）',
   };
 
   /// OpenAI 可選聲音

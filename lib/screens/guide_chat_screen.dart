@@ -4,6 +4,7 @@ import 'dart:math';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
+import 'package:flutter/services.dart';
 import 'package:uuid/uuid.dart';
 
 import '../memory/database.dart';
@@ -11,6 +12,7 @@ import '../models/context_mode.dart';
 import '../models/message.dart';
 import '../services/guide_manual.dart';
 import '../services/guide_service.dart';
+import '../services/app_error_log_service.dart';
 import '../services/locale_strings.dart';
 import '../services/rp_worldbook_service.dart';
 import '../services/settings/guide_settings.dart';
@@ -46,6 +48,7 @@ class _GuideChatScreenState extends State<GuideChatScreen> {
   bool _sending = false;
   bool _personaWorkshopActive = false;
   _GuideReplyMode _replyMode = _GuideReplyMode.system;
+  bool _hasRecentError = false;
 
   @override
   void initState() {
@@ -65,6 +68,7 @@ class _GuideChatScreenState extends State<GuideChatScreen> {
     await GuideManual.ensureSnapshotPersisted();
     final name = await UserSettings.getUserName();
     final greeting = GuideService.localGreeting(userName: name);
+    final hasRecentError = await AppErrorLogService.hasEntries();
     final savedModels = await ApiSettings.getRankedStarredModelEntries();
     final usableModels = <StarredModelEntry>[];
     for (final entry in savedModels) {
@@ -95,6 +99,7 @@ class _GuideChatScreenState extends State<GuideChatScreen> {
       _starredModels = usableModels;
       _selectedModel = usableModels.isEmpty ? null : usableModels.first;
       _pendingDraft = draft;
+      _hasRecentError = hasRecentError;
       _loading = false;
     });
     _scrollToBottom();
@@ -154,7 +159,7 @@ class _GuideChatScreenState extends State<GuideChatScreen> {
 
     try {
       final answer = _replyMode == _GuideReplyMode.system
-          ? GuideService.systemAnswer(text)
+          ? await GuideService.systemAnswer(text)
           : await GuideService.answer(
               text,
               conversationId: conversationId,
@@ -193,6 +198,13 @@ class _GuideChatScreenState extends State<GuideChatScreen> {
         _streamingText = '';
       });
     } catch (error) {
+      await AppErrorLogService.record(
+        error: error,
+        trigger: 'guide_api_request',
+        source: 'guide',
+        provider: _selectedModel?.provider ?? '',
+        model: _selectedModel?.modelId ?? '',
+      );
       if (!mounted) return;
       setState(() => _streamingText = '');
       ScaffoldMessenger.of(context).showSnackBar(
@@ -263,6 +275,42 @@ class _GuideChatScreenState extends State<GuideChatScreen> {
         en: 'Please organize what we have discussed into a complete character card now. Show it here for me to review and edit before creating the character.',
         zhTW: '幫我寫好人設卡。請根據我們目前聊過的內容整理完整人設，在這裡給我預覽與編輯，確認後再建立角色。',
         zhCN: '帮我写好人设卡。请根据我们目前聊过的内容整理完整人设，在这里给我预览与编辑，确认后再建立角色。',
+      ),
+    );
+  }
+
+  Future<void> _showErrorEmailDraft() async {
+    final body = await AppErrorLogService.composeEmailBody();
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(
+          L.pick(
+            en: 'Draft an error report',
+            zhTW: '擬一封 Holt 錯誤回報郵件',
+            zhCN: '拟一封 Holt 错误回报邮件',
+          ),
+        ),
+        content: SizedBox(
+          width: 520,
+          child: SingleChildScrollView(
+            child: SelectableText(body, style: YanciTheme.bodySmall),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () async {
+              await Clipboard.setData(ClipboardData(text: body));
+              if (dialogContext.mounted) Navigator.of(dialogContext).pop();
+            },
+            child: Text(L.pick(en: 'Copy', zhTW: '複製', zhCN: '复制')),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: Text(L.get('close')),
+          ),
+        ],
       ),
     );
   }
@@ -714,6 +762,7 @@ class _GuideChatScreenState extends State<GuideChatScreen> {
     ),
     'thinking_machines' => 'Inkling',
     'gemini' => 'Gemini',
+    'deepinfra' => 'DeepInfra',
     'xai' => 'xAI',
     'bedrock' => 'AWS Bedrock',
     _ => provider,
@@ -925,8 +974,17 @@ class _GuideChatScreenState extends State<GuideChatScreen> {
                       : Colors.white,
                   onSelected: (value) {
                     if (value == 'hide') unawaited(_hideGuide());
+                    if (value == 'errors') {
+                      Navigator.of(context).pushNamed('/error_diagnostics');
+                    }
                   },
                   itemBuilder: (_) => <PopupMenuEntry<String>>[
+                    PopupMenuItem<String>(
+                      value: 'errors',
+                      child: Text(
+                        L.pick(en: 'Error records', zhTW: '報錯記錄', zhCN: '报错记录'),
+                      ),
+                    ),
                     PopupMenuItem<String>(
                       value: 'hide',
                       child: Text(
@@ -1224,6 +1282,28 @@ class _GuideChatScreenState extends State<GuideChatScreen> {
               ),
             ],
           ),
+          if (_hasRecentError) ...[
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                onPressed: _showErrorEmailDraft,
+                icon: const Icon(Icons.mail_outline_rounded, size: 16),
+                label: Text(
+                  L.pick(
+                    en: 'Draft a Holt error report',
+                    zhTW: '幫我擬回報 Holt 錯誤郵件',
+                    zhCN: '帮我拟回报 Holt 错误邮件',
+                  ),
+                ),
+                style: TextButton.styleFrom(
+                  foregroundColor: YanciTheme.accent,
+                  padding: const EdgeInsets.symmetric(horizontal: 6),
+                  minimumSize: const Size(0, 36),
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+              ),
+            ),
+          ],
           const SizedBox(height: 7),
           ClipRRect(
             borderRadius: BorderRadius.circular(999),

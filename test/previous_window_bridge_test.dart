@@ -98,7 +98,7 @@ void main() {
   );
 
   test(
-    'RP continuation candidates use last message time and carry four messages plus two summaries',
+    'RP continuation candidates carry one complete rolling summary',
     () async {
       for (final conversation in <Conversation>[
         Conversation(
@@ -189,16 +189,14 @@ void main() {
         'created-later',
       ]);
       expect(sources.first.messages.map((message) => message.text), <String>[
-        'scene-2',
-        'scene-3',
         'scene-4',
         'scene-5',
       ]);
-      expect(sources.first.summaries, <String>['summary-1', 'summary-2']);
+      expect(sources.first.summaries, <String>['summary-2']);
     },
   );
 
-  test('RP continuation preview keeps the latest two complete turns', () async {
+  test('RP continuation preview keeps the latest complete turn', () async {
     for (final conversation in <Conversation>[
       Conversation(
         id: 'source',
@@ -247,8 +245,6 @@ void main() {
     );
 
     expect(sources.single.messages.map((message) => message.text), <String>[
-      'user-2',
-      'char-2',
       'user-3',
       'char-3',
     ]);
@@ -259,16 +255,19 @@ void main() {
     () {
       final marker = Message.rpChapterContinuationSourceMarker('source/a');
       final anchor = Message.rpChapterContinuationAnchorMarker(42);
+      final mode = Message.continuationStartModeMarker('user');
       final message = Message(
         conversationId: 'current',
         characterId: 'char-a',
         text:
-            '${Message.rpChapterContinuationPrefix}\n$marker\n$anchor\nContinue the scene.',
+            '${Message.rpChapterContinuationPrefix}\n$marker\n$anchor\n$mode\nContinue the scene.',
         isUser: true,
       );
 
       expect(message.rpChapterContinuationSourceId, 'source/a');
       expect(message.rpChapterContinuationAnchorMessageId, 42);
+      expect(message.continuationStartMode, 'user');
+      expect(message.isUserFirstContinuation, isTrue);
       expect(
         message.toPromptHistoryEntry()['content'],
         '${Message.rpChapterContinuationPrefix}\nContinue the scene.',

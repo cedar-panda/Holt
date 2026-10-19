@@ -116,7 +116,7 @@ class _ContextDebugScreenState extends State<ContextDebugScreen> {
     final summaryTotal = _info!['summaryTokenTotal'] as int;
     final keywordTotal = _info!['keywordTokenTotal'] as int;
     final summaryCap = _info!['summaryCap'] as int;
-    final keywordCap = _info!['keywordCap'] as int;
+    final keywordCap = _info!['keywordCap'] as int?;
 
     return ListView(
       padding: const EdgeInsets.all(16),
@@ -135,7 +135,12 @@ class _ContextDebugScreenState extends State<ContextDebugScreen> {
               ),
               const SizedBox(height: 8),
               _row('Summary tokens', '$summaryTotal / $summaryCap'),
-              _row('Keyword tokens', '$keywordTotal / $keywordCap'),
+              _row(
+                'Keyword tokens',
+                keywordCap == null
+                    ? '$keywordTotal / unlimited'
+                    : '$keywordTotal / $keywordCap',
+              ),
               _row('Summary blocks', '${summaryBlocks.length}'),
               _row('Keyword blocks', '${keywordBlocks.length}'),
             ],

@@ -120,7 +120,7 @@ class _SplashScreenState extends State<SplashScreen>
         _StarParticle(
           angle: angle,
           distance: distance,
-          size: 1.5 + rng.nextDouble() * 2.5,
+          size: 2.2 + rng.nextDouble() * 3.0,
           delay: rng.nextDouble() * 0.4,
         ),
       );
@@ -235,12 +235,88 @@ class _SplashScreenState extends State<SplashScreen>
     super.dispose();
   }
 
+  Widget _buildStarBurst({required Color starColor, required Color glowColor}) {
+    return Positioned.fill(
+      child: ExcludeSemantics(
+        child: RepaintBoundary(
+          child: ShaderMask(
+            key: const ValueKey('splash-star-feather-mask'),
+            blendMode: BlendMode.dstIn,
+            shaderCallback: (bounds) => const RadialGradient(
+              // 中心保持透明，避免星光穿過線稿水獺的腹部；接近水獺
+              // 外輪廓時再以柔和羽化帶顯現，最外圈恢復完整亮度。
+              center: Alignment.center,
+              // RadialGradient 的 radius 以整個繪製範圍為基準；0.5
+              // 才約等於從中心到外緣。過大的半徑會讓星點尚未穿過
+              // 羽化帶就進入退場淡出，看起來像整段動畫消失。
+              radius: 0.5,
+              colors: <Color>[
+                Colors.transparent,
+                Colors.transparent,
+                Color(0x88FFFFFF),
+                Colors.white,
+              ],
+              stops: <double>[0, 0.28, 0.50, 0.65],
+            ).createShader(bounds),
+            child: Stack(
+              clipBehavior: Clip.none,
+              children: _particles.map((p) {
+                final progress = _starCtrl.value;
+                final delayed =
+                    (progress - p.delay).clamp(0.0, 1.0) / (1.0 - p.delay);
+                final ease = Curves.easeOut.transform(delayed.clamp(0.0, 1.0));
+                final x = cos(p.angle) * p.distance * ease;
+                final y = sin(p.angle) * p.distance * ease;
+                final opacity = delayed < 0.3
+                    ? delayed / 0.3
+                    : delayed > 0.7
+                    ? (1 - delayed) / 0.3
+                    : 1.0;
+                return Positioned(
+                  left: 130 + x - p.size / 2,
+                  top: 130 + y - p.size / 2,
+                  child: Opacity(
+                    opacity: opacity.clamp(0.0, 1.0),
+                    child: Container(
+                      width: p.size,
+                      height: p.size,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: starColor,
+                        boxShadow: [
+                          BoxShadow(
+                            color: glowColor,
+                            blurRadius: p.size * 5,
+                            spreadRadius: p.size * 0.35,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                );
+              }).toList(),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       body: AnimatedBuilder(
         animation: _animationListenable,
         builder: (context, _) {
+          // 開屏 Logo、Holt 字樣與散開星光共用同一 accent。
+          // 星點是極小面積元素，需要獨立的最低可見 alpha，不能沿用
+          // 主題背景粒子的低透明度，否則部分主題下會近乎消失。
+          final splashStarColor = YanciTheme.accentLight.withValues(
+            alpha: YanciTheme.isDark ? 0.96 : 0.90,
+          );
+          final splashStarGlow = YanciTheme.accentLight.withValues(
+            alpha: YanciTheme.isDark ? 0.52 : 0.40,
+          );
           return FadeTransition(
             opacity: _exitOpacity,
             child: SlideTransition(
@@ -266,44 +342,11 @@ class _SplashScreenState extends State<SplashScreen>
                         child: Stack(
                           alignment: Alignment.center,
                           children: [
-                            // 星光粒子
-                            ..._particles.map((p) {
-                              final progress = _starCtrl.value;
-                              final delayed =
-                                  (progress - p.delay).clamp(0.0, 1.0) /
-                                  (1.0 - p.delay);
-                              final ease = Curves.easeOut.transform(
-                                delayed.clamp(0.0, 1.0),
-                              );
-                              final x = cos(p.angle) * p.distance * ease;
-                              final y = sin(p.angle) * p.distance * ease;
-                              final opacity = delayed < 0.3
-                                  ? delayed / 0.3
-                                  : delayed > 0.7
-                                  ? (1 - delayed) / 0.3
-                                  : 1.0;
-                              return Positioned(
-                                left: 130 + x - p.size / 2,
-                                top: 130 + y - p.size / 2,
-                                child: Opacity(
-                                  opacity: opacity.clamp(0.0, 1.0),
-                                  child: Container(
-                                    width: p.size,
-                                    height: p.size,
-                                    decoration: BoxDecoration(
-                                      shape: BoxShape.circle,
-                                      color: YanciTheme.starColor,
-                                      boxShadow: [
-                                        BoxShadow(
-                                          color: YanciTheme.starGlow,
-                                          blurRadius: p.size * 3,
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ),
-                              );
-                            }),
+                            // 星光只在水獺外圍經羽化顯現，Logo 本身不受遮罩。
+                            _buildStarBurst(
+                              starColor: splashStarColor,
+                              glowColor: splashStarGlow,
+                            ),
                             // Logo 圖片
                             SlideTransition(
                               position: _logoSlide,
@@ -311,12 +354,22 @@ class _SplashScreenState extends State<SplashScreen>
                                 scale: _logoScale,
                                 child: FadeTransition(
                                   opacity: _logoOpacity,
-                                  child: Image.asset(
-                                    'assets/images/holt_logo.png',
-                                    semanticLabel: 'Holt',
-                                    width: 180,
-                                    height: 180,
-                                    fit: BoxFit.contain,
+                                  child: RepaintBoundary(
+                                    child: ColorFiltered(
+                                      // 用 PNG alpha 當蒙版填入與 Holt 文字相同的
+                                      // accent；透明背景與抗鋸齒邊緣保持原樣。
+                                      colorFilter: ColorFilter.mode(
+                                        YanciTheme.accent,
+                                        BlendMode.srcIn,
+                                      ),
+                                      child: Image.asset(
+                                        'assets/images/holt_logo.png',
+                                        semanticLabel: 'Holt',
+                                        width: 180,
+                                        height: 180,
+                                        fit: BoxFit.contain,
+                                      ),
+                                    ),
                                   ),
                                 ),
                               ),

@@ -18,7 +18,7 @@ import 'tts_service.dart';
 ///        → 按序排隊播放（播第 1 句時第 2 句在後台合成）
 ///
 ///  延遲從「全文 + 整段合成」降到「首句 + 首句合成」。
-///  v3 不支持 WebSocket 流式輸入，但一句一句發 HTTP 沒有限制。
+///  ElevenLabs 表現型模型以句子為單位發 HTTP TTS。
 /// ═══════════════════════════════════════════════════════════
 
 /// SoLoud 全局初始化（通話路徑專用，聊天內點播仍走 audioplayers）
@@ -161,7 +161,9 @@ class SentenceTtsPipeline {
   String _oaVoice = 'nova';
   String _oaKey = '';
 
-  bool get isV3 => _provider == 'elevenlabs' && _elModel == 'eleven_v3';
+  bool get keepsAudioTags =>
+      _provider == 'elevenlabs' &&
+      (_elModel == 'eleven_v3' || _elModel == 'eleven_v4');
 
   // 切句緩衝
   String _buf = '';
@@ -302,10 +304,10 @@ class SentenceTtsPipeline {
   }
 
   void _dispatch(String sentence) {
-    // 送 TTS 的文本：v3 保留 [tag]（模型靠它控制語氣），其他模型剝除
+    // 送 TTS 的文本：v3/v4 保留 [tag]，其他模型剝除。
     final speech = TtsService.extractSpeechContent(
       sentence,
-      keepAudioTags: isV3,
+      keepAudioTags: keepsAudioTags,
     );
     if (speech.trim().isEmpty) return;
     final idx = _sentenceIndex++;

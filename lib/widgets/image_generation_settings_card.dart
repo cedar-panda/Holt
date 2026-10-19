@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../services/image_gen_service.dart';
+import '../services/app_error_log_service.dart';
 import '../services/image_generation/image_generation_provider.dart';
 import '../services/locale_strings.dart';
 import '../services/model_info.dart';
@@ -85,6 +86,13 @@ class _ImageGenerationSettingsCardState
         }
       });
     } catch (error) {
+      await AppErrorLogService.record(
+        error: error,
+        trigger: 'functional_image_model_list',
+        source: 'functional_model_settings',
+        provider: _provider.id,
+        model: _modelController.text.trim(),
+      );
       if (!mounted) return;
       final text = error.toString().replaceFirst('Exception: ', '');
       setState(() {

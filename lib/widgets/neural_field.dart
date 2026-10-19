@@ -1,7 +1,6 @@
 import 'dart:math';
 import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/material.dart';
-import 'package:flutter/scheduler.dart' show Ticker;
 import '../theme/app_theme.dart';
 
 /// 神經網路碎片漂浮背景
@@ -10,6 +9,7 @@ import '../theme/app_theme.dart';
 /// 節點大小不一帶呼吸閃爍，像冰水裡的氣泡+突觸碎片。
 /// 自動根據主題明暗調整可見度。
 class NeuralFieldWidget extends StatefulWidget {
+  final ValueListenable<double> clock;
   final int nodeCount;
 
   // 全主題共用象牙白的低顯著性基準；只統一淡化程度，不統一色相。
@@ -19,22 +19,19 @@ class NeuralFieldWidget extends StatefulWidget {
   static const double connectionStrength = 0.32;
   static const double connectionMaxOpacity = 0.38;
 
-  const NeuralFieldWidget({super.key, this.nodeCount = 18});
+  const NeuralFieldWidget({
+    super.key,
+    required this.clock,
+    this.nodeCount = 18,
+  });
 
   @override
   State<NeuralFieldWidget> createState() => _NeuralFieldWidgetState();
 }
 
-class _NeuralFieldWidgetState extends State<NeuralFieldWidget>
-    with SingleTickerProviderStateMixin {
-  // 連續時鐘：Ticker 的 elapsed 只增不減，永不復位。
-  // 舊版用 20s 循環的 AnimationController.value 直接乘位移，
-  // repeat 從 1.0 跳回 0.0 時所有粒子瞬間彈回起點——就是那個「卡一下」。
-  late final Ticker _ticker;
-  final ValueNotifier<double> _t = ValueNotifier(0);
+class _NeuralFieldWidgetState extends State<NeuralFieldWidget> {
   late List<_Node> _nodes;
   final Random _rng = Random(7);
-  bool _reduceMotion = false;
 
   @override
   void initState() {
@@ -53,30 +50,6 @@ class _NeuralFieldWidgetState extends State<NeuralFieldWidget>
         breatheSpeed: _rng.nextDouble() * 0.7 + 0.25,
       ),
     );
-    _ticker = createTicker((elapsed) {
-      _t.value = elapsed.inMicroseconds / 1e6;
-    });
-  }
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    final reduceMotion = MediaQuery.disableAnimationsOf(context);
-    if (_reduceMotion == reduceMotion && _ticker.isActive) return;
-    _reduceMotion = reduceMotion;
-    if (reduceMotion) {
-      _ticker.stop();
-      _t.value = 0;
-    } else if (!_ticker.isActive) {
-      _ticker.start();
-    }
-  }
-
-  @override
-  void dispose() {
-    _ticker.dispose();
-    _t.dispose();
-    super.dispose();
   }
 
   @override
@@ -85,7 +58,7 @@ class _NeuralFieldWidgetState extends State<NeuralFieldWidget>
       child: CustomPaint(
         painter: _NeuralPainter(
           nodes: _nodes,
-          clock: _t,
+          clock: widget.clock,
           isDark: YanciTheme.isDark,
           color: YanciTheme.starColor,
           glowColor: YanciTheme.starGlow,
@@ -204,8 +177,13 @@ class _NeuralPainter extends CustomPainter {
         pos,
         n.r * 2.5,
         Paint()
-          ..color = haloColor.withValues(alpha: (op * 0.22).clamp(0.0, 0.32))
-          ..maskFilter = MaskFilter.blur(BlurStyle.normal, n.r * 2),
+          ..color = haloColor.withValues(alpha: (op * 0.08).clamp(0.0, 0.14)),
+      );
+      canvas.drawCircle(
+        pos,
+        n.r * 1.65,
+        Paint()
+          ..color = haloColor.withValues(alpha: (op * 0.13).clamp(0.0, 0.20)),
       );
 
       // 內核

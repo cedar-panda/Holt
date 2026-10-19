@@ -34,6 +34,7 @@ void main() {
       'gemini',
       'xai',
       'deepseek',
+      'deepinfra',
       'qwen',
       'thinking_machines',
       'bedrock',

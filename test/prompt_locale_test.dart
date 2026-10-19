@@ -25,7 +25,7 @@ void main() {
 
     await L.setLocale('zh_CN');
     expect(ToolPrompts.toolHeader(), contains('可用工具'));
-    expect(ToolPrompts.toolHeader(), contains('标签'));
+    expect(ToolPrompts.toolHeader(), contains('JSON'));
     expect(BioClockService.abilityPrompt(), contains('生物钟'));
     expect(KeepAliveService.heartbeatPrompt(), contains('隐藏保活消息'));
 
@@ -86,9 +86,9 @@ void main() {
     await L.setLocale('zh_TW');
     final memoryPrompt = MemoryActions.abilityPrompt();
     final spiderPrompt = await SpiderWebService.abilityPrompt(
-      userNickname: '昭昭',
+      userNickname: '小禾',
       characterId: 'char',
-      characterName: '晏辭',
+      characterName: '顧遠',
       emotionEnabled: true,
       bioclockEnabled: true,
     );
@@ -100,9 +100,9 @@ void main() {
     expect(spiderPrompt, contains('情緒打點不是長期記憶'));
 
     final quietSpiderPrompt = await SpiderWebService.abilityPrompt(
-      userNickname: '昭昭',
+      userNickname: '小禾',
       characterId: 'char',
-      characterName: '晏辭',
+      characterName: '顧遠',
       emotionEnabled: false,
       bioclockEnabled: false,
     );

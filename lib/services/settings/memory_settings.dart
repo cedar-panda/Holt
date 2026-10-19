@@ -15,6 +15,12 @@ class MemorySettings {
   static const String _keyRpSummaryMaxChars = 'rp_summary_max_chars_v1';
   static const String _keyRpSummaryAutoMaxChars =
       'rp_summary_auto_max_chars_v1';
+  static const String _keyRpDynamicSummarySegments =
+      'rp_dynamic_summary_segments_v1';
+  static const String _keyRpDynamicSummaryMaxChars =
+      'rp_dynamic_summary_max_chars_v1';
+  static const String _keyRpContinuationSummaryMaxChars =
+      'rp_continuation_summary_max_chars_v1';
   static const String _keyDailySummaryCustomRules =
       'daily_summary_custom_rules_v1';
   static const String _keyRpSummaryCustomRules = 'rp_summary_custom_rules_v1';
@@ -151,12 +157,12 @@ class MemorySettings {
 
   static Future<void> saveRpSummaryMaxChars(int value) async {
     final p = await SharedPreferences.getInstance();
-    await p.setInt(_keyRpSummaryMaxChars, value.clamp(800, 12000));
+    await p.setInt(_keyRpSummaryMaxChars, value.clamp(800, 4000));
   }
 
   static Future<int> getRpSummaryMaxChars() async {
     final p = await SharedPreferences.getInstance();
-    return (p.getInt(_keyRpSummaryMaxChars) ?? 3000).clamp(800, 12000);
+    return (p.getInt(_keyRpSummaryMaxChars) ?? 1600).clamp(800, 4000);
   }
 
   static Future<void> saveRpSummaryAutoMaxCharsEnabled(bool value) async {
@@ -167,6 +173,39 @@ class MemorySettings {
   static Future<bool> getRpSummaryAutoMaxCharsEnabled() async {
     final p = await SharedPreferences.getInstance();
     return p.getBool(_keyRpSummaryAutoMaxChars) ?? true;
+  }
+
+  static Future<void> saveRpDynamicSummarySegments(int value) async {
+    final p = await SharedPreferences.getInstance();
+    await p.setInt(_keyRpDynamicSummarySegments, value.clamp(1, 4));
+  }
+
+  static Future<int> getRpDynamicSummarySegments() async {
+    final p = await SharedPreferences.getInstance();
+    return (p.getInt(_keyRpDynamicSummarySegments) ?? 1).clamp(1, 4);
+  }
+
+  static Future<void> saveRpDynamicSummaryMaxChars(int value) async {
+    final p = await SharedPreferences.getInstance();
+    await p.setInt(_keyRpDynamicSummaryMaxChars, value.clamp(600, 4000));
+  }
+
+  static Future<int> getRpDynamicSummaryMaxChars() async {
+    final p = await SharedPreferences.getInstance();
+    return (p.getInt(_keyRpDynamicSummaryMaxChars) ?? 1400).clamp(600, 4000);
+  }
+
+  static Future<void> saveRpContinuationSummaryMaxChars(int value) async {
+    final p = await SharedPreferences.getInstance();
+    await p.setInt(_keyRpContinuationSummaryMaxChars, value.clamp(1000, 6000));
+  }
+
+  static Future<int> getRpContinuationSummaryMaxChars() async {
+    final p = await SharedPreferences.getInstance();
+    return (p.getInt(_keyRpContinuationSummaryMaxChars) ?? 2400).clamp(
+      1000,
+      6000,
+    );
   }
 
   static Future<void> saveSummaryCustomRules({
@@ -228,9 +267,20 @@ class MemorySettings {
     return p.getBool(_keyEnablePromptCaching) ?? false;
   }
 
-  // ═══ 上下文 Token 限制 ═══
+  // ═══ 上下文發送限制（現行 UI 以消息條數控制）═══
+  // 舊 Token 欄位保留供既有資料與相容路徑讀取；側邊欄只寫入條數欄位。
   static const String _keyContextTokenLimit = 'context_token_limit';
   static const String _keyContextLimitEnabled = 'context_limit_enabled';
+  static const String _keyContextMessageLimit = 'context_message_limit_v1';
+  static const String _keyContextSummaryTriggerMessages =
+      'context_summary_trigger_messages_v1';
+  static const String _keyCacheSummaryTriggerMessages =
+      'cache_summary_trigger_messages_v1';
+  static const int defaultContextMessageLimit = 20;
+  static const int defaultContextSummaryTriggerMessages = 18;
+  static const int defaultCacheSummaryTriggerMessages = 18;
+  static const int minContextMessageLimit = 4;
+  static const int maxContextMessageLimit = 200;
 
   static Future<void> saveContextTokenLimit(int v) async {
     final p = await SharedPreferences.getInstance();
@@ -241,6 +291,48 @@ class MemorySettings {
     final p = await SharedPreferences.getInstance();
     final v = p.getInt(_keyContextTokenLimit) ?? 5000;
     return v < 1000 ? 5000 : v;
+  }
+
+  static Future<void> saveContextMessageLimit(int value) async {
+    final p = await SharedPreferences.getInstance();
+    final normalized = value.clamp(
+      minContextMessageLimit,
+      maxContextMessageLimit,
+    );
+    await p.setInt(_keyContextMessageLimit, normalized);
+  }
+
+  static Future<int> getContextMessageLimit() async {
+    final p = await SharedPreferences.getInstance();
+    return (p.getInt(_keyContextMessageLimit) ?? defaultContextMessageLimit)
+        .clamp(minContextMessageLimit, maxContextMessageLimit);
+  }
+
+  static Future<void> saveContextSummaryTriggerMessages(int value) async {
+    final p = await SharedPreferences.getInstance();
+    await p.setInt(
+      _keyContextSummaryTriggerMessages,
+      value.clamp(2, maxContextMessageLimit),
+    );
+  }
+
+  static Future<int> getContextSummaryTriggerMessages() async {
+    final p = await SharedPreferences.getInstance();
+    return (p.getInt(_keyContextSummaryTriggerMessages) ??
+            defaultContextSummaryTriggerMessages)
+        .clamp(2, maxContextMessageLimit);
+  }
+
+  static Future<void> saveCacheSummaryTriggerMessages(int value) async {
+    final p = await SharedPreferences.getInstance();
+    await p.setInt(_keyCacheSummaryTriggerMessages, value.clamp(2, 200));
+  }
+
+  static Future<int> getCacheSummaryTriggerMessages() async {
+    final p = await SharedPreferences.getInstance();
+    return (p.getInt(_keyCacheSummaryTriggerMessages) ??
+            defaultCacheSummaryTriggerMessages)
+        .clamp(2, 200);
   }
 
   static Future<void> saveContextLimitEnabled(bool v) async {
@@ -358,6 +450,10 @@ class MemorySettings {
   static const String _keyMemoryWriteEnabled = 'memory_write_enabled';
   static const String _keyTimelineEnabled = 'timeline_enabled';
   static const String _keySelfNotesEnabled = 'self_notes_enabled';
+  static const String _keySelfNotesLongTermEnabled =
+      'self_notes_long_term_enabled_v1';
+  static const String _keySelfNotesInjectionLimit =
+      'self_notes_injection_limit_v1';
   static const String _keyTimelinePromptMode = 'timeline_prompt_mode';
 
   static Future<void> saveMemorySummarize(bool v) async {
@@ -469,6 +565,26 @@ class MemorySettings {
     // 原本保存的值，不需要搬動或清除任何 cache。
     final promptMode = p.getString(_keyTimelinePromptMode) ?? 'normal';
     return enabled && promptMode != 'plot';
+  }
+
+  static Future<void> saveSelfNotesLongTermEnabled(bool value) async {
+    final p = await SharedPreferences.getInstance();
+    await p.setBool(_keySelfNotesLongTermEnabled, value);
+  }
+
+  static Future<bool> getSelfNotesLongTermEnabled() async {
+    final p = await SharedPreferences.getInstance();
+    return p.getBool(_keySelfNotesLongTermEnabled) ?? false;
+  }
+
+  static Future<void> saveSelfNotesInjectionLimit(int value) async {
+    final p = await SharedPreferences.getInstance();
+    await p.setInt(_keySelfNotesInjectionLimit, value.clamp(1, 12));
+  }
+
+  static Future<int> getSelfNotesInjectionLimit() async {
+    final p = await SharedPreferences.getInstance();
+    return (p.getInt(_keySelfNotesInjectionLimit) ?? 12).clamp(1, 12);
   }
 
   static Future<void> saveTimelinePromptMode(String mode) async {

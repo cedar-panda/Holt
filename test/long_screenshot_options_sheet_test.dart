@@ -63,6 +63,10 @@ void main() {
 
     await tester.tap(find.text('open'));
     await tester.pumpAndSettle();
+    final sheetSurface = tester.widget<Material>(
+      find.byKey(const ValueKey('longshot-sheet-surface')),
+    );
+    expect(sheetSurface.color!.a, 1);
     expect(find.text('已選 3 條 · 最多 3 條'), findsOneWidget);
     expect(
       tester

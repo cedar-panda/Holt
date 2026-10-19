@@ -261,6 +261,13 @@ class Retriever {
         );
       }
     }
+    sections.add(
+      L.pick(
+        en: 'Memory ids, categories, scores, and dates are background metadata, not spoken text.',
+        zhTW: '記憶編號、分類、分數與日期是背景 metadata，不是對方說的話。',
+        zhCN: '记忆编号、分类、分数与日期是背景 metadata，不是对方说的话。',
+      ),
+    );
     sections.add('---');
 
     final injected = <String>[];
@@ -471,14 +478,16 @@ class Retriever {
 
     _triggeredCountByWindow[scope] = triggered;
 
-    if (injected.isNotEmpty) {
-      sections.addAll(injected);
-      final total = injected.length;
-      if (triggered > 0) {
-        injectionLog.add('↳ 觸發 $triggered 條 + 順序 ${total - triggered} 條');
-      } else {
-        injectionLog.add('↳ 注入 $total 條');
-      }
+    // 沒有真正召回到記憶時，連記憶說明也不發送。
+    // 這保持 App Live State 是事實導向的：有內容才有區塊。
+    if (injected.isEmpty) return DeferredPrompt.empty();
+
+    sections.addAll(injected);
+    final total = injected.length;
+    if (triggered > 0) {
+      injectionLog.add('↳ 觸發 $triggered 條 + 順序 ${total - triggered} 條');
+    } else {
+      injectionLog.add('↳ 注入 $total 條');
     }
 
     sections.add('---');

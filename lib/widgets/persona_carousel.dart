@@ -35,18 +35,24 @@ class PersonaCarousel extends StatefulWidget {
 class _PersonaCarouselState extends State<PersonaCarousel> {
   static const double _carouselWidth = 294;
   static const double _carouselHeight = 132;
-  static const double _pageViewportFraction = 0.18;
+  // A page must be at least as wide as the 72 px avatar. The previous 0.18
+  // made adjacent hit regions overlap, so middle identities were difficult to
+  // stop on while the two ends still felt selectable.
+  static const double _pageViewportFraction = 0.25;
 
   late PageController _carouselController;
   int _currentCarouselPage = 0;
   int? _programmaticTargetPage;
   Set<String> _starredPersonaIds = <String>{};
+  bool _starredPersonaIdsLoaded = false;
 
   int get _selectedIndex {
     final index = _orderedPersonas.indexWhere(
       (persona) => persona.id == widget.selectedId,
     );
-    return index < 0 ? 0 : index;
+    if (index >= 0) return index;
+    if (_orderedPersonas.isEmpty) return 0;
+    return _currentCarouselPage.clamp(0, _orderedPersonas.length - 1);
   }
 
   @override
@@ -63,9 +69,13 @@ class _PersonaCarouselState extends State<PersonaCarousel> {
   @override
   void didUpdateWidget(PersonaCarousel oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.personas != widget.personas ||
-        oldWidget.selectedId != widget.selectedId) {
-      _syncCarouselToSelection();
+    if (!_starredPersonaIdsLoaded) return;
+    // A parent reload often replaces the list instance without changing the
+    // selected identity. Treating that as a new selection caused a hard jump
+    // (usually through page zero) while the carousel was being dragged.
+    if (oldWidget.selectedId != widget.selectedId &&
+        _orderedPersonas.any((persona) => persona.id == widget.selectedId)) {
+      _syncCarouselToSelection(animate: false);
     }
   }
 
@@ -78,21 +88,58 @@ class _PersonaCarouselState extends State<PersonaCarousel> {
   Future<void> _loadStarredPersonaIds() async {
     final ids = await UserPersonaService.getStarredPersonaIds();
     if (!mounted) return;
-    setState(() => _starredPersonaIds = ids);
-    _syncCarouselToSelection();
+    _replaceOrderWithoutMotion(ids);
   }
 
-  List<UserPersona> get _orderedPersonas {
+  List<UserPersona> _orderedPersonasFor(Set<String> starredIds) {
     final starred = widget.personas
-        .where((persona) => _starredPersonaIds.contains(persona.id))
+        .where((persona) => starredIds.contains(persona.id))
         .toList(growable: false);
     final regular = widget.personas
-        .where((persona) => !_starredPersonaIds.contains(persona.id))
+        .where((persona) => !starredIds.contains(persona.id))
         .toList(growable: false);
     return <UserPersona>[...starred, ...regular];
   }
 
-  void _syncCarouselToSelection() {
+  List<UserPersona> get _orderedPersonas =>
+      _orderedPersonasFor(_starredPersonaIds);
+
+  void _replaceOrderWithoutMotion(Set<String> starredIds) {
+    final previousOrder = _orderedPersonas;
+    final visibleId =
+        _currentCarouselPage >= 0 && _currentCarouselPage < previousOrder.length
+        ? previousOrder[_currentCarouselPage].id
+        : widget.selectedId;
+    final ordered = _orderedPersonasFor(starredIds);
+    var nextPage = ordered.indexWhere((persona) => persona.id == visibleId);
+    if (nextPage < 0) {
+      nextPage = ordered.indexWhere(
+        (persona) => persona.id == widget.selectedId,
+      );
+    }
+    if (nextPage < 0) {
+      nextPage = ordered.isEmpty
+          ? 0
+          : _currentCarouselPage.clamp(0, ordered.length - 1);
+    }
+    final previousController = _carouselController;
+    final replacementController = PageController(
+      viewportFraction: _pageViewportFraction,
+      initialPage: nextPage,
+    );
+    setState(() {
+      _starredPersonaIds = starredIds;
+      _starredPersonaIdsLoaded = true;
+      _currentCarouselPage = nextPage;
+      _programmaticTargetPage = null;
+      _carouselController = replacementController;
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      previousController.dispose();
+    });
+  }
+
+  void _syncCarouselToSelection({required bool animate}) {
     if (!_carouselController.hasClients || _orderedPersonas.isEmpty) return;
     final index = _selectedIndex;
     final currentShowsSelection =
@@ -104,13 +151,13 @@ class _PersonaCarouselState extends State<PersonaCarousel> {
       return;
     }
     _currentCarouselPage = index;
-    _programmaticTargetPage = index;
-    if (MediaQuery.disableAnimationsOf(context)) {
+    _programmaticTargetPage = animate ? index : null;
+    if (!animate || MediaQuery.disableAnimationsOf(context)) {
       _carouselController.jumpToPage(index);
     } else {
       _carouselController.animateToPage(
         index,
-        duration: const Duration(milliseconds: 350),
+        duration: const Duration(milliseconds: 260),
         curve: Curves.easeOutCubic,
       );
     }
@@ -138,7 +185,7 @@ class _PersonaCarouselState extends State<PersonaCarousel> {
     } else {
       _carouselController.animateToPage(
         index,
-        duration: const Duration(milliseconds: 350),
+        duration: const Duration(milliseconds: 260),
         curve: Curves.easeOutCubic,
       );
     }
@@ -164,16 +211,13 @@ class _PersonaCarouselState extends State<PersonaCarousel> {
   Future<void> _setStarred(String personaId, bool starred) async {
     await UserPersonaService.setPersonaStarred(personaId, starred);
     if (!mounted) return;
-    setState(() {
-      if (starred) {
-        _starredPersonaIds.add(personaId);
-      } else {
-        _starredPersonaIds.remove(personaId);
-      }
-    });
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _syncCarouselToSelection();
-    });
+    final ids = Set<String>.of(_starredPersonaIds);
+    if (starred) {
+      ids.add(personaId);
+    } else {
+      ids.remove(personaId);
+    }
+    _replaceOrderWithoutMotion(ids);
   }
 
   Future<void> _showAllPersonas() async {
@@ -200,6 +244,36 @@ class _PersonaCarouselState extends State<PersonaCarousel> {
 
   @override
   Widget build(BuildContext context) {
+    if (widget.personas.isEmpty) {
+      return const SizedBox(width: _carouselWidth, height: _carouselHeight);
+    }
+    if (!_starredPersonaIdsLoaded) {
+      final selectedIndex = widget.personas.indexWhere(
+        (persona) => persona.id == widget.selectedId,
+      );
+      final selected = widget.personas[selectedIndex < 0 ? 0 : selectedIndex];
+      return Semantics(
+        container: true,
+        label: L.pick(en: 'Role carousel', zhTW: '角色輪播選擇器', zhCN: '角色轮播选择器'),
+        child: SizedBox(
+          width: _carouselWidth,
+          height: _carouselHeight,
+          child: Align(
+            alignment: Alignment.topCenter,
+            child: SizedBox(
+              height: 88,
+              child: Center(
+                child: _PersonaCarouselAvatar(
+                  persona: selected,
+                  size: 72,
+                  selected: true,
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
     return Semantics(
       container: true,
       label: L.pick(en: 'Role carousel', zhTW: '角色輪播選擇器', zhCN: '角色轮播选择器'),

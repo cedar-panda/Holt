@@ -13,6 +13,9 @@ analyzer:
   exclude:
     # 開發殘檔封存區（已 gitignore，不進倉庫，不參與分析）
     - _archive_dev/**
+    # 晏辭／Codex 的原檔備份與輸出區（不參與分析）
+    - backups/**
+    - "Claude outputs/**"
 
 linter:
   # The lint rules applied to this project can be customized in the

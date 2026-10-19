@@ -4,9 +4,12 @@ import 'package:project_yanci/services/user_persona_service.dart';
 import 'package:project_yanci/widgets/user_persona_avatar_pair.dart';
 import 'package:project_yanci/widgets/persona_carousel.dart';
 import 'package:project_yanci/widgets/user_persona_switcher.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
   final now = DateTime(2026, 9, 14);
+
+  setUp(() => SharedPreferences.setMockInitialValues(<String, Object>{}));
 
   List<UserPersona> roles(int count) => List<UserPersona>.generate(
     count,
@@ -44,6 +47,36 @@ void main() {
     expect(find.byKey(const ValueKey('persona-create-slot')), findsOneWidget);
     await tester.tap(find.byKey(const ValueKey('persona-create-slot')));
     expect(createCount, 1);
+  });
+
+  testWidgets('persona carousel chevron rotates upward when expanded', (
+    tester,
+  ) async {
+    final personas = roles(2);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: UserPersonaSwitcher(
+            personas: personas,
+            selectedId: personas.first.id,
+            onSelected: (_) {},
+            onOpenProfile: () {},
+          ),
+        ),
+      ),
+    );
+
+    final chevron = find.byKey(const ValueKey('persona-carousel-chevron'));
+    expect(tester.widget<AnimatedRotation>(chevron).turns, 0);
+
+    await tester.tap(find.byKey(const ValueKey('persona-carousel-toggle')));
+    await tester.pump();
+    expect(tester.widget<AnimatedRotation>(chevron).turns, 0.5);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('persona-carousel-toggle')));
+    await tester.pump();
+    expect(tester.widget<AnimatedRotation>(chevron).turns, 0);
   });
 
   testWidgets('two roles expose carousel and view-all drawer', (tester) async {
@@ -147,6 +180,39 @@ void main() {
     );
     final viewAll = tester.widget<Text>(find.text('View all'));
     expect(viewAll.style?.color?.a, closeTo(.50, .01));
+  });
+
+  testWidgets('starred ordering initializes without selecting or relocking', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues(<String, Object>{
+      'starred_user_persona_ids_v1': <String>['role-1'],
+    });
+    final personas = roles(4);
+    var selectionCount = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: PersonaCarousel(
+            personas: personas,
+            selectedId: 'role-2',
+            onSelected: (_) => selectionCount++,
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+
+    final carousel = find.byKey(const ValueKey('persona-carousel'));
+    final selected = find.byKey(const ValueKey('persona-carousel-slot-role-2'));
+    expect(carousel, findsOneWidget);
+    expect(selected, findsOneWidget);
+    expect(
+      tester.getCenter(selected).dx,
+      closeTo(tester.getCenter(carousel).dx, .5),
+    );
+    expect(selectionCount, 0);
   });
 
   testWidgets('avatar pair can hide the unbound companion target', (

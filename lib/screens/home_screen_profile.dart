@@ -197,47 +197,6 @@ extension _HomeProfileMethods on _HomeScreenState {
     );
   }
 
-  Widget _buildSplitGridTile({
-    required IconData leftIcon,
-    required VoidCallback leftOnTap,
-    required IconData rightIcon,
-    required VoidCallback rightOnTap,
-    double? height,
-    Color? imageSecondaryForeground,
-  }) {
-    final effectiveAccent =
-        imageSecondaryForeground ?? YanciTheme.accent.withValues(alpha: 0.45);
-
-    final iconSize = 32.0;
-
-    return SizedBox(
-      width: double.infinity,
-      height: height,
-      child: Row(
-        children: [
-          Expanded(
-            child: GestureDetector(
-              onTap: leftOnTap,
-              behavior: HitTestBehavior.opaque,
-              child: Center(
-                child: Icon(leftIcon, color: effectiveAccent, size: iconSize),
-              ),
-            ),
-          ),
-          Expanded(
-            child: GestureDetector(
-              onTap: rightOnTap,
-              behavior: HitTestBehavior.opaque,
-              child: Center(
-                child: Icon(rightIcon, color: effectiveAccent, size: iconSize),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
   Widget _buildSoftProfileDivider({
     bool dots = false,
     Color? imageSecondaryForeground,
@@ -472,11 +431,7 @@ extension _HomeProfileMethods on _HomeScreenState {
 
                 // Profile 佔用原「開關」主入口；圖示沿用主入口尺寸規格。
                 _buildGridTile(
-                  title: L.pick(
-                    en: 'Profile',
-                    zhTW: '相處方式',
-                    zhCN: '相处方式',
-                  ),
+                  title: L.pick(en: 'Profile', zhTW: '相處方式', zhCN: '相处方式'),
                   icon: Icons.person_outline_rounded,
                   height: 76,
                   imagePrimaryForeground: imagePrimaryForeground,
@@ -512,93 +467,27 @@ extension _HomeProfileMethods on _HomeScreenState {
                     await _refreshProfileTheme();
                   },
                 ),
-                const SizedBox(height: 26),
-
-                // 裝飾分割線 (三個小點)
-                _buildSoftProfileDivider(
-                  dots: true,
+                const SizedBox(height: 14),
+                _buildGridTile(
+                  title: L.pick(en: 'My Stickers', zhTW: '我的表情', zhCN: '我的表情'),
+                  icon: Icons.emoji_emotions_outlined,
+                  height: 76,
+                  imagePrimaryForeground: imagePrimaryForeground,
                   imageSecondaryForeground: imageSecondaryForeground,
-                ),
-                const SizedBox(height: 24),
-
-                Row(
-                  children: [
-                    Expanded(
-                      child: _buildGridTile(
-                        title: L.pick(en: 'Voice / Ringtone', zhTW: '語音/鈴聲'),
-                        icon: Icons.record_voice_over_rounded,
-                        height: 76,
-                        isSecondary: true,
-                        imagePrimaryForeground: imagePrimaryForeground,
-                        imageSecondaryForeground: imageSecondaryForeground,
-                        onTap: () =>
-                            Navigator.of(context).pushNamed('/voice_call'),
-                      ),
-                    ),
-                    const SizedBox(width: 14),
-                    Expanded(
-                      child: _buildGridTile(
-                        title: L.pick(
-                          en: 'Preferences',
-                          zhTW: '偏好設定',
-                          zhCN: '偏好设置',
+                  onTap: () {
+                    final personaId = _selectedUserPersona?.id;
+                    if (personaId == null || personaId.trim().isEmpty) return;
+                    Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) => StickerLibraryScreen(
+                          characterId: StickerService.userBucketForPersona(
+                            personaId,
+                          ),
                         ),
-                        icon: Icons.tune_rounded,
-                        height: 76,
-                        isSecondary: true,
-                        imagePrimaryForeground: imagePrimaryForeground,
-                        imageSecondaryForeground: imageSecondaryForeground,
-                        onTap: () =>
-                            Navigator.of(context).pushNamed('/cost_context'),
                       ),
-                    ),
-                  ],
+                    );
+                  },
                 ),
-                const SizedBox(height: 14),
-
-                // 附加應用 (Bottom Row)
-                Row(
-                  children: [
-                    Expanded(
-                      child: _buildGridTile(
-                        title: L.pick(en: 'Tool API', zhTW: '工具 API'),
-                        icon: Icons.build_circle_outlined,
-                        height: 76,
-                        isSecondary: true,
-                        imagePrimaryForeground: imagePrimaryForeground,
-                        imageSecondaryForeground: imageSecondaryForeground,
-                        onTap: () =>
-                            Navigator.of(context).pushNamed('/tool_model'),
-                      ),
-                    ),
-                    const SizedBox(width: 14),
-                    Expanded(
-                      child: _buildGridTile(
-                        title: L.pick(en: 'My Stickers', zhTW: '我的表情'),
-                        icon: Icons.emoji_emotions_outlined,
-                        height: 76,
-                        isSecondary: true,
-                        imagePrimaryForeground: imagePrimaryForeground,
-                        imageSecondaryForeground: imageSecondaryForeground,
-                        onTap: () => Navigator.of(
-                          context,
-                        ).pushNamed('/sticker', arguments: 'user'),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 14),
-
-                // 商店與背包
-                if (_shopEnabled)
-                  _buildSplitGridTile(
-                    leftIcon: Icons.storefront_outlined,
-                    leftOnTap: () => _showShopBottomSheet(context),
-                    rightIcon: Icons.backpack_outlined,
-                    rightOnTap: () => _showBackpackBottomSheet(context, 'user'),
-                    height: 76,
-                    imageSecondaryForeground: imageSecondaryForeground,
-                  ),
                 if (_showDeveloperDiagnostics) ...[
                   const SizedBox(height: 28),
                   GestureDetector(

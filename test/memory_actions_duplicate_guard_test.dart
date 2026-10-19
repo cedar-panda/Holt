@@ -30,7 +30,7 @@ void main() {
   test(
     'model memo waits for confirmation before entering the memory library',
     () async {
-      const reply = '<memo>[偏好] 昭昭喜歡喝熱牛奶 @熱牛奶</memo>知道了。';
+      const reply = '<memo>[偏好] 小禾喜歡喝熱牛奶 @熱牛奶</memo>知道了。';
       expect(
         await MemoryActions.processReply(
           reply,
@@ -86,13 +86,13 @@ void main() {
         characterId: 'char-a',
         mode: 'romance',
         category: '重要事件',
-        content: '昭昭喜歡下雨天窩在家裡慢慢看電影',
+        content: '小禾喜歡下雨天窩在家裡慢慢看電影',
         confidence: 'high',
       ).toMap(),
     );
 
     await MemoryActions.processReply(
-      '<memo>[重要事件] 昭昭喜歡下雨天在家裡看電影 @下雨天</memo>',
+      '<memo>[重要事件] 小禾喜歡下雨天在家裡看電影 @下雨天</memo>',
       characterId: 'char-a',
       mode: 'romance',
       windowId: 'conv-a',
@@ -105,9 +105,9 @@ void main() {
 
   test('one model reply can create at most two memory proposals', () async {
     const reply = '''
-<memo>[偏好] 昭昭喜歡雨聲 @雨聲</memo>
-<memo>[約定] 昭昭答應週末看電影 @週末</memo>
-<memo>[重要事件] 昭昭搬進新住處 @搬家</memo>
+<memo>[偏好] 小禾喜歡雨聲 @雨聲</memo>
+<memo>[約定] 小禾答應週末看電影 @週末</memo>
+<memo>[重要事件] 小禾搬進新住處 @搬家</memo>
 ''';
 
     final visible = await MemoryActions.processReply(

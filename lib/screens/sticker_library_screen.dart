@@ -6,6 +6,8 @@ import '../services/locale_strings.dart';
 import '../widgets/gradient_background.dart';
 import '../widgets/sticker_preview_quality.dart';
 import '../services/sticker_service.dart';
+import '../services/app_error_log_service.dart';
+import '../services/settings/user_settings.dart';
 import '../memory/database.dart';
 import '../utils/latest_request_gate.dart';
 
@@ -14,7 +16,7 @@ String stickerLibraryTitle({
   required String characterId,
   String? characterName,
 }) {
-  if (characterId == StickerService.userBucket) return L.get('me_sticker');
+  if (StickerService.isUserBucket(characterId)) return L.get('me_sticker');
   final ownerName = characterName?.trim().isNotEmpty == true
       ? characterName!.trim()
       : L.pick(en: 'Character', zhTW: '角色', zhCN: '角色');
@@ -51,10 +53,12 @@ class _StickerLibraryScreenState extends State<StickerLibraryScreen> {
   Future<void> _loadStickers() async {
     final generation = _loadGate.begin();
     final characterId = widget.characterId;
-    final isUserLibrary = characterId == StickerService.userBucket;
+    final isUserLibrary = StickerService.isUserBucket(characterId);
     final results = await Future.wait<Object?>([
       isUserLibrary
-          ? StickerService.getUserStickers()
+          ? characterId == StickerService.userBucket
+                ? StickerService.getUserStickers()
+                : StickerService.getStickers(characterId: characterId)
           : StickerService.getStickers(characterId: characterId),
       if (isUserLibrary)
         Future<Map<String, dynamic>?>.value(null)
@@ -452,6 +456,15 @@ class _StickerLibraryScreenState extends State<StickerLibraryScreen> {
                                   isVisionLoading = false;
                                 });
                               } catch (e) {
+                                await AppErrorLogService.record(
+                                  error: e,
+                                  trigger: 'functional_sticker_model_request',
+                                  source: 'functional_model',
+                                  provider:
+                                      await UserSettings.getStickerVisionProvider(),
+                                  model:
+                                      await UserSettings.getStickerVisionModel(),
+                                );
                                 setSheetState(() {
                                   visionError = e.toString();
                                   isVisionLoading = false;

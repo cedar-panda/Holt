@@ -12,6 +12,7 @@ import 'package:project_yanci/models/memory_action_proposal.dart';
 import 'package:project_yanci/theme/app_theme.dart';
 import 'package:project_yanci/theme/theme_presets.dart';
 import 'package:project_yanci/widgets/chat_bubble.dart';
+import 'package:project_yanci/widgets/chat_avatar.dart';
 import 'package:project_yanci/widgets/gradient_background.dart';
 import 'package:project_yanci/widgets/bubble_action_glyph.dart';
 import 'package:project_yanci/widgets/thinking_context_widgets.dart';
@@ -31,6 +32,95 @@ void main() {
       expect(L.get('chat_thinking_tree'), 'Thinking');
     },
   );
+
+  testWidgets('grouped bubbles keep one stable avatar and symmetric corners', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    final originalFlatMode = YanciTheme.aiBubbleFlat;
+    YanciTheme.aiBubbleFlat = false;
+    addTearDown(() => YanciTheme.aiBubbleFlat = originalFlatMode);
+
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: Column(
+            children: [
+              ChatBubble(
+                text: '第一段',
+                isUser: false,
+                showAvatar: true,
+                groupedWithNext: true,
+                captureMode: true,
+              ),
+              ChatBubble(
+                text: '第二段',
+                isUser: false,
+                showAvatar: true,
+                showAvatarImage: false,
+                groupedWithPrevious: true,
+                captureMode: true,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    expect(find.byType(ChatAvatar), findsOneWidget);
+    final surfaces = tester
+        .widgetList<Container>(
+          find.byKey(const ValueKey('chat-bubble-surface')),
+        )
+        .toList();
+    expect(surfaces, hasLength(2));
+    for (final surface in surfaces) {
+      final radius = (surface.decoration! as BoxDecoration).borderRadius!;
+      expect(radius, isA<BorderRadius>());
+      final corners = radius as BorderRadius;
+      expect(corners.topLeft, corners.topRight);
+      expect(corners.topLeft, corners.bottomLeft);
+      expect(corners.topLeft, corners.bottomRight);
+    }
+  });
+
+  testWidgets('context metadata floats independently beside the avatar', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    final originalFlatMode = YanciTheme.aiBubbleFlat;
+    YanciTheme.aiBubbleFlat = false;
+    addTearDown(() => YanciTheme.aiBubbleFlat = originalFlatMode);
+
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: ChatBubble(
+            text: '<think>整理中</think>正文',
+            isUser: false,
+            showAvatar: true,
+            captureMode: true,
+          ),
+        ),
+      ),
+    );
+
+    final contextTop = tester.getTopLeft(
+      find.byKey(const ValueKey('thinking-chain-container')),
+    );
+    final avatarTop = tester.getTopLeft(find.byType(ChatAvatar));
+    final avatarRect = tester.getRect(find.byType(ChatAvatar));
+    final anchorRect = tester.getRect(
+      find.byKey(const ValueKey('avatar-side-context-anchor')),
+    );
+    final bubbleTop = tester
+        .getTopLeft(find.byKey(const ValueKey('chat-bubble-surface')))
+        .dy;
+
+    expect(contextTop.dy, closeTo(avatarTop.dy, 1));
+    expect(anchorRect.left, greaterThan(avatarRect.right));
+    expect(bubbleTop, greaterThan(anchorRect.top));
+  });
 
   testWidgets('thinking opens a two-stage draggable sheet', (tester) async {
     SharedPreferences.setMockInitialValues(<String, Object>{});
@@ -72,6 +162,11 @@ void main() {
     expect(sheet.maxChildSize, 1.0);
     expect(sheet.snap, isTrue);
     expect(sheet.snapSizes, const [0.58, 1.0]);
+    final sheetSurface = tester.widget<Container>(
+      find.byKey(const ValueKey('thinking-sheet-surface')),
+    );
+    final sheetDecoration = sheetSurface.decoration! as BoxDecoration;
+    expect(sheetDecoration.border, isNull);
     expect(find.text('正常回覆'), findsOneWidget);
 
     await tester.drag(
@@ -370,10 +465,55 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets(
+    'long screenshot without image keeps selected theme bubble colors',
+    (tester) async {
+      SharedPreferences.setMockInitialValues(<String, Object>{});
+      final originalPath = YanciTheme.chatBackgroundImagePath;
+      final originalUserColor = YanciTheme.chatBackgroundUserBubbleOverride;
+      final tempDir = Directory.systemTemp.createTempSync(
+        'holt_longshot_theme_color_test_',
+      );
+      final background = File('${tempDir.path}/background.jpg')
+        ..writeAsBytesSync(const <int>[1, 2, 3]);
+      addTearDown(() {
+        YanciTheme.chatBackgroundImagePath = originalPath;
+        YanciTheme.chatBackgroundUserBubbleOverride = originalUserColor;
+        tempDir.deleteSync(recursive: true);
+      });
+
+      YanciTheme.chatBackgroundImagePath = background.path;
+      YanciTheme.chatBackgroundUserBubbleOverride = const Color(0xFF123456);
+      final expectedThemeColor = YanciTheme.userBubble;
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: Scaffold(
+            body: ChatBubble(
+              text: '長截圖內容',
+              isUser: true,
+              captureMode: true,
+              forceThemeBubbleColors: true,
+            ),
+          ),
+        ),
+      );
+
+      final surface = tester.widget<Container>(
+        find.byKey(const ValueKey('chat-bubble-surface')),
+      );
+      final color = (surface.decoration! as BoxDecoration).color;
+      expect(color, expectedThemeColor);
+      expect(color, isNot(const Color(0xFF123456)));
+    },
+  );
+
   testWidgets('bound character palette does not inherit active slot colors', (
     tester,
   ) async {
     SharedPreferences.setMockInitialValues(<String, Object>{});
+    final tempDir = Directory.systemTemp.createTempSync('holt-bubble-bg-');
+    final background = File('${tempDir.path}/bound.png')..writeAsBytesSync([0]);
+    addTearDown(() => tempDir.deleteSync(recursive: true));
     final originalAi = YanciTheme.chatBackgroundAiBubbleOverride;
     final originalUser = YanciTheme.chatBackgroundUserBubbleOverride;
     addTearDown(() {
@@ -394,12 +534,12 @@ void main() {
       inputBarText: Color(0xFF0D0E0F),
     );
     await tester.pumpWidget(
-      const MaterialApp(
+      MaterialApp(
         home: Scaffold(
           body: ChatBackgroundPresetScope(
-            preset: BackgroundPreset(slot: 2, chatPath: 'bound.png'),
+            preset: BackgroundPreset(slot: 2, chatPath: background.path),
             palette: palette,
-            child: Column(
+            child: const Column(
               children: [
                 ChatBubble(text: '角色訊息', isUser: false, captureMode: true),
                 ChatBubble(text: '用戶訊息', isUser: true, captureMode: true),
@@ -873,8 +1013,8 @@ void main() {
     final copyGlyph = glyphs.singleWhere(
       (glyph) => glyph.type == BubbleActionGlyphType.copy,
     );
-    expect(copyGlyph.size, 13.5);
-    expect(copyGlyph.size, lessThan(BubbleActionGlyph.defaultSize));
+    expect(copyGlyph.size, 15);
+    expect(copyGlyph.size, BubbleActionGlyph.defaultSize);
     expect(BubbleActionGlyph.strokeWidth, 1);
     expect(
       BubbleActionGlyph.strokeWidth,
@@ -899,6 +1039,34 @@ void main() {
       closeTo(tester.getCenter(ttsSlot).dy, 0.01),
     );
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('cache bolt explains itself without widening into a label', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    await L.setLocale('zh_TW');
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ChatBubble(
+            text: '回覆內容',
+            isUser: false,
+            cacheHit: true,
+            timestamp: DateTime(2026, 10, 15, 12),
+          ),
+        ),
+      ),
+    );
+
+    expect(find.byIcon(Icons.bolt_rounded), findsOneWidget);
+    expect(find.text('命中上下文緩存'), findsNothing);
+
+    await tester.tap(find.byIcon(Icons.bolt_rounded));
+    await tester.pump();
+
+    expect(find.text('⚡ 命中上下文緩存'), findsOneWidget);
+    await tester.pump(const Duration(milliseconds: 900));
   });
 
   testWidgets('pending memory badge opens review from the source reply', (
@@ -950,7 +1118,7 @@ void main() {
       payload: const <String, dynamic>{
         'candidate': <String, dynamic>{
           'category': '偏好',
-          'content': '昭昭喜歡喝熱牛奶',
+          'content': '小禾喜歡喝熱牛奶',
           'triggers': '熱牛奶',
         },
       },

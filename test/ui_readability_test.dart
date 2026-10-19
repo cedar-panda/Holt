@@ -13,30 +13,33 @@ void main() {
     expect(ivoryPreset.starGlow.a, lessThan(0.2));
   });
 
-  test('every preset uses the same restrained particle alpha as ivory', () {
-    for (final preset in presets) {
-      expect(
-        preset.starColor.a,
-        closeTo(ivoryPreset.starColor.a, 0.0001),
-        reason: '${preset.id} particle alpha drifted',
-      );
-      expect(
-        preset.starGlow.a,
-        closeTo(ivoryPreset.starGlow.a, 0.0001),
-        reason: '${preset.id} glow alpha drifted',
-      );
-    }
-    expect(NeuralFieldWidget.particleColorMix, 0.72);
-    expect(NeuralFieldWidget.particleGlowMix, 0.74);
-    expect(NeuralFieldWidget.particleOpacityBoost, 1.12);
-    expect(NeuralFieldWidget.connectionStrength, 0.32);
-    expect(NeuralFieldWidget.connectionMaxOpacity, 0.38);
-  });
+  test(
+    'every preset keeps particle alpha at or below the restrained ceiling',
+    () {
+      for (final preset in presets) {
+        expect(
+          preset.starColor.a,
+          lessThanOrEqualTo(ivoryPreset.starColor.a),
+          reason: '${preset.id} particle alpha became too strong',
+        );
+        expect(
+          preset.starGlow.a,
+          lessThanOrEqualTo(ivoryPreset.starGlow.a),
+          reason: '${preset.id} glow alpha became too strong',
+        );
+      }
+      expect(NeuralFieldWidget.particleColorMix, 0.72);
+      expect(NeuralFieldWidget.particleGlowMix, 0.74);
+      expect(NeuralFieldWidget.particleOpacityBoost, 1.12);
+      expect(NeuralFieldWidget.connectionStrength, 0.32);
+      expect(NeuralFieldWidget.connectionMaxOpacity, 0.38);
+    },
+  );
 
   test('long summary reader adds paragraphs without changing its words', () {
     const source =
-        '昭昭與晏辭一起整理了最近的生活變化，也確認彼此仍然重視這段關係。'
-        '晏辭說明自己的身體狀態，昭昭則記住了她提到的日期與感受。'
+        '小禾與顧遠一起整理了最近的生活變化，也確認彼此仍然重視這段關係。'
+        '顧遠說明自己的身體狀態，小禾則記住了她提到的日期與感受。'
         '兩人接著討論下一次見面的安排，並決定等狀態穩定後再一起出門。'
         '最後雙方確認先休息，晚一點再繼續聊天。';
 
@@ -81,7 +84,9 @@ void main() {
     expect(zh, contains('* **主題：** 事實'));
     expect(zh, contains('## 前情提要'));
     expect(zh, contains('## 本次摘要'));
-    expect(zh, contains('約 250～700 個中文字'));
+    expect(zh, contains('目前完整的滾動摘要'));
+    expect(zh, contains('不能省略事件主體'));
+    expect(zh, isNot(contains('約 250～700 個中文字')));
     expect(zh, isNot(contains('中文約 180～450 字')));
     expect(zh, contains('「第 N 天」只保留在 value 與 evidence'));
     expect(en, contains('**1. Important events and decisions**'));

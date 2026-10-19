@@ -165,7 +165,24 @@ class _MemorySummaryTabState extends State<MemorySummaryTab>
         ),
     ]);
     final summaries = summaryGroups.expand((group) => group).toList()
-      ..sort((a, b) => '${a['created_at']}'.compareTo('${b['created_at']}'));
+      ..sort((a, b) {
+        final bySourceTime = '${a['source_chronology_at'] ?? a['created_at']}'
+            .compareTo('${b['source_chronology_at'] ?? b['created_at']}');
+        if (bySourceTime != 0) return bySourceTime;
+        final aSource =
+            a['source_chronology_id'] as int? ??
+            a['source_message_end_id'] as int? ??
+            a['display_anchor_message_id'] as int? ??
+            a['id'] as int? ??
+            0;
+        final bSource =
+            b['source_chronology_id'] as int? ??
+            b['source_message_end_id'] as int? ??
+            b['display_anchor_message_id'] as int? ??
+            b['id'] as int? ??
+            0;
+        return aSource.compareTo(bSource);
+      });
     final keywords = keywordGroups.expand((group) => group).toList()
       ..sort((a, b) => '${a['created_at']}'.compareTo('${b['created_at']}'));
     if (!mounted) return;
@@ -910,7 +927,14 @@ class _MemorySummaryTabState extends State<MemorySummaryTab>
           .split(RegExp(r'[,，、]'))
           .map((s) => s.trim())
           .where((s) => s.isNotEmpty);
-      for (final kw in kws) {
+      // Older RP summaries stored several aliases for the same paragraph.
+      // Keep those aliases in storage for historical recall, but present the
+      // paragraph as one event label in the review UI.
+      final visibleKeywords =
+          ContextMode.fromStorage(block['context_mode']) == ContextMode.rp
+          ? kws.take(1)
+          : kws;
+      for (final kw in visibleKeywords) {
         chips.add(
           _KeywordChip(
             keyword: kw,

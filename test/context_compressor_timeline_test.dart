@@ -32,6 +32,30 @@ void main() {
     expect(selected.last.text.length, 700);
   });
 
+  test('message boundary selects the oldest complete pending bubbles', () {
+    final selected = ContextCompressor.selectWholeMessageBatch([
+      message(1, '一'),
+      message(2, '二'),
+      message(3, '三'),
+    ], 2);
+
+    expect(selected.map((item) => item.id), [1, 2]);
+  });
+
+  test(
+    'message-count summaries do not inherit the token compression floor',
+    () {
+      expect(
+        ContextCompressor.minimumSourceTokensForTrigger(triggerMessageLimit: 2),
+        1,
+      );
+      expect(
+        ContextCompressor.minimumSourceTokensForTrigger(),
+        ContextCompressor.minCompressTokens,
+      );
+    },
+  );
+
   test('valid JSON separates summary text from timeline candidates', () {
     final decoded = ContextCompressor.decodeCompressionResponseForTesting('''
 {"summary":"兩人回顧前一天的電影。","timeline":[{"type":"event","subject":"relationship","source_message_ids":[12,11,12],"occurred_on":"2026-07-17","date_basis":"relative","value":"兩人一起看電影","evidence":"昨天我們去看了電影"}]}
@@ -48,7 +72,7 @@ void main() {
 
   test('valid state JSON keeps subject and state key', () {
     final decoded = ContextCompressor.decodeCompressionResponseForTesting('''
-{"summary":"晏辭處於生理期。","timeline":[{"type":"state","subject":"character","source_message_ids":[21],"occurred_on":"2026-07-17","date_basis":"relative","key":"生理週期","value":"晏辭處於生理期第二天","evidence":"你昨天是生理期第二天"}]}
+{"summary":"顧遠處於生理期。","timeline":[{"type":"state","subject":"character","source_message_ids":[21],"occurred_on":"2026-07-17","date_basis":"relative","key":"生理週期","value":"顧遠處於生理期第二天","evidence":"你昨天是生理期第二天"}]}
 ''');
 
     final timeline = decoded['timeline']! as List<TimelineEventCandidate>;
@@ -61,11 +85,11 @@ void main() {
   test('wrapped JSON and numeric string ids keep timeline candidates', () {
     final decoded = ContextCompressor.decodeCompressionResponseForTesting('''
 以下是結果：
-{"summary":"晏辭的生理期已結束。","timeline":[{"type":"event","subject":"character","source_message_ids":["21"],"occurred_on":"2026-07-22","date_basis":"explicit","value":"生理期結束","evidence":"生理期已於2026-07-22結束"}]}
+{"summary":"顧遠的生理期已結束。","timeline":[{"type":"event","subject":"character","source_message_ids":["21"],"occurred_on":"2026-07-22","date_basis":"explicit","value":"生理期結束","evidence":"生理期已於2026-07-22結束"}]}
 以上。
 ''');
 
-    expect(decoded['summary'], '晏辭的生理期已結束。');
+    expect(decoded['summary'], '顧遠的生理期已結束。');
     final timeline = decoded['timeline']! as List<TimelineEventCandidate>;
     expect(timeline, hasLength(1));
     expect(timeline.single.sourceMessageIds, [21]);

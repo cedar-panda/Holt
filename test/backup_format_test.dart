@@ -196,7 +196,7 @@ void main() {
         'continuity_id': 'main',
         'mode': 'romance',
         'category': '偏好',
-        'content': '昭昭喜歡雨天',
+        'content': '小禾喜歡雨天',
         'created_at': '2026-01-01T00:00:00.000Z',
         'updated_at': '2026-01-01T00:00:00.000Z',
       },

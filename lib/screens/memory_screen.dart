@@ -810,7 +810,8 @@ class _MemoryScreenState extends State<MemoryScreen>
             _curationTotalBatches = total;
           });
         },
-        applyImmediately: true,
+        applyImmediately: false,
+        persistSuggestions: false,
       );
       final reports = <_MemoryConnectionReport>[
         for (final relation in result.relations)
@@ -828,28 +829,49 @@ class _MemoryScreenState extends State<MemoryScreen>
         _curationRunning = false;
         _curationCompletedBatches = 0;
         _curationTotalBatches = 0;
-        _selectionMode = false;
         _resumableCurationJob = false;
+      });
+      final accepted = await _showMemoryConnectionReport(
+        memories: selected,
+        relations: reports,
+        preview: true,
+        note: vectorError == null
+            ? L.pick(
+                en: 'Preview only. Nothing has been linked, merged, or deleted yet.',
+                zhTW: '目前只是預覽，尚未連線、合併或刪除任何記憶。',
+                zhCN: '目前只是预览，尚未连线、合并或删除任何记忆。',
+              )
+            : L.pick(
+                en: 'The vector pass failed; the summary model produced this read-only preview. Nothing has changed yet.',
+                zhTW: '向量階段失敗；這份唯讀預覽由摘要模型產生，目前尚未變更任何記憶。',
+                zhCN: '向量阶段失败；这份只读预览由摘要模型生成，目前尚未变更任何记忆。',
+              ),
+      );
+      if (!accepted || !mounted) return;
+      final applied = await MemoryCurationService.applyReviewedRelations(
+        characterId: _characterId,
+        memories: selected,
+        relations: result.relations,
+      );
+      if (!mounted) return;
+      setState(() {
+        _selectionMode = false;
         _selectedMemoryIds.clear();
       });
       await _loadMemories();
       if (!mounted) return;
-      await _showMemoryConnectionReport(
-        memories: selected,
-        relations: reports,
-        createdLinks: result.createdLinks,
-        updatedLinks: result.updatedLinks,
-        unchangedLinks: result.unchangedLinks,
-        protectedLinks: result.protectedLinks,
-        mergedGroups: result.mergedGroups,
-        protectedProposals: result.duplicateProposals,
-        note: vectorError == null
-            ? null
-            : L.pick(
-                en: 'The vector pass failed; the summary model completed the review.',
-                zhTW: '向量階段失敗，已由摘要模型完成整理。',
-                zhCN: '向量阶段失败，已由摘要模型完成整理。',
-              ),
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            L.pick(
+              en: 'Applied ${applied.createdLinks + applied.updatedLinks} connections and ${applied.mergedGroups} memory merges.',
+              zhTW:
+                  '已套用 ${applied.createdLinks + applied.updatedLinks} 組連線與 ${applied.mergedGroups} 組記憶合併。',
+              zhCN:
+                  '已应用 ${applied.createdLinks + applied.updatedLinks} 组连线与 ${applied.mergedGroups} 组记忆合并。',
+            ),
+          ),
+        ),
       );
     } catch (error) {
       await SpiderWebStateService.saveCurationJob(
@@ -899,18 +921,15 @@ class _MemoryScreenState extends State<MemoryScreen>
       final result = await ExistingMemoryScanner.scan(
         characterId: _characterId,
         memories: selected,
-        applyImmediately: true,
+        applyImmediately: false,
+        persistSuggestions: false,
       );
       if (!mounted) return;
       setState(() {
         _curationRunning = false;
-        _selectionMode = false;
         _reviewSourceMessageId = null;
-        _selectedMemoryIds.clear();
       });
-      await _loadMemories();
-      if (!mounted) return;
-      await _showMemoryConnectionReport(
+      final accepted = await _showMemoryConnectionReport(
         memories: selected,
         relations: <_MemoryConnectionReport>[
           for (final relation in result.relations)
@@ -922,13 +941,25 @@ class _MemoryScreenState extends State<MemoryScreen>
               reason: '',
             ),
         ],
-        createdLinks: result.suggestedRelations,
-        updatedLinks: result.updatedLinks,
-        unchangedLinks: result.unchangedLinks,
-        protectedLinks: result.protectedLinks,
-        mergedGroups: result.mergedGroups,
-        protectedProposals: result.duplicateProposals,
+        preview: true,
+        note: L.pick(
+          en: 'On-device preview only. Nothing has been linked, merged, or deleted yet.',
+          zhTW: '這只是本機預覽，尚未連線、合併或刪除任何記憶。',
+          zhCN: '这只是本机预览，尚未连线、合并或删除任何记忆。',
+        ),
       );
+      if (!accepted || !mounted) return;
+      await ExistingMemoryScanner.scan(
+        characterId: _characterId,
+        memories: selected,
+        applyImmediately: true,
+      );
+      if (!mounted) return;
+      setState(() {
+        _selectionMode = false;
+        _selectedMemoryIds.clear();
+      });
+      await _loadMemories();
     } catch (error) {
       if (!mounted) return;
       setState(() => _curationRunning = false);
@@ -946,7 +977,7 @@ class _MemoryScreenState extends State<MemoryScreen>
     }
   }
 
-  Future<void> _showMemoryConnectionReport({
+  Future<bool> _showMemoryConnectionReport({
     required List<Memory> memories,
     required List<_MemoryConnectionReport> relations,
     int createdLinks = 0,
@@ -956,8 +987,9 @@ class _MemoryScreenState extends State<MemoryScreen>
     int mergedGroups = 0,
     int protectedProposals = 0,
     String? note,
+    bool preview = false,
   }) async {
-    if (!mounted) return;
+    if (!mounted) return false;
     final byId = <int, Memory>{
       for (final memory in memories)
         if (memory.id != null) memory.id!: memory,
@@ -999,7 +1031,7 @@ class _MemoryScreenState extends State<MemoryScreen>
     );
     final rpOnly = hasRp && !hasDaily;
     final mixedModes = hasRp && hasDaily;
-    await showModalBottomSheet<void>(
+    final accepted = await showModalBottomSheet<bool>(
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
@@ -1052,7 +1084,7 @@ class _MemoryScreenState extends State<MemoryScreen>
                     ),
                     IconButton(
                       tooltip: L.pick(en: 'Close', zhTW: '關閉', zhCN: '关闭'),
-                      onPressed: () => Navigator.pop(sheetContext),
+                      onPressed: () => Navigator.pop(sheetContext, false),
                       icon: const Icon(Icons.close_rounded),
                     ),
                   ],
@@ -1198,11 +1230,50 @@ class _MemoryScreenState extends State<MemoryScreen>
                   ],
                 ),
               ),
+              if (preview)
+                SafeArea(
+                  top: false,
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(18, 10, 18, 14),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton(
+                            onPressed: () => Navigator.pop(sheetContext, false),
+                            child: Text(
+                              L.pick(
+                                en: 'Keep unchanged',
+                                zhTW: '保留原樣',
+                                zhCN: '保留原样',
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: FilledButton(
+                            onPressed: relations.isEmpty
+                                ? null
+                                : () => Navigator.pop(sheetContext, true),
+                            child: Text(
+                              L.pick(
+                                en: 'Apply reviewed changes',
+                                zhTW: '套用已審內容',
+                                zhCN: '应用已审内容',
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
             ],
           ),
         ),
       ),
     );
+    return accepted ?? false;
   }
 
   Widget _reportSectionTitle(String text) => Text(
@@ -1286,141 +1357,169 @@ class _MemoryScreenState extends State<MemoryScreen>
     var useSummary = summaryModel.isNotEmpty;
     final choice = await showModalBottomSheet<_MemoryCurationChoice>(
       context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
       backgroundColor: Colors.transparent,
       builder: (context) => StatefulBuilder(
-        builder: (context, setSheetState) => Container(
-          padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
-          decoration: BoxDecoration(
-            color: YanciTheme.surfacePanel,
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(22)),
-          ),
-          child: SafeArea(
-            top: false,
+        builder: (context, setSheetState) => FractionallySizedBox(
+          heightFactor: 0.78,
+          child: Container(
+            decoration: BoxDecoration(
+              color: YanciTheme.surfacePanel,
+              borderRadius: const BorderRadius.vertical(
+                top: Radius.circular(22),
+              ),
+            ),
             child: Column(
-              mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Text(
-                  L.pick(
-                    en: 'Process selected memories',
-                    zhTW: '處理已選記憶',
-                    zhCN: '处理已选记忆',
-                  ),
-                  style: YanciTheme.headingMedium,
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  L.pick(
-                    en: 'Clear relations are connected and duplicate memories are merged immediately. Permanent memories remain protected. Results open as one concise report.',
-                    zhTW: '明確關聯會直接連線，重複記憶會直接合併；永久記憶仍保留確認保護。完成後只顯示一份簡潔報告。',
-                    zhCN: '明确关联会直接连线，重复记忆会直接合并；永久记忆仍保留确认保护。完成后只显示一份简洁报告。',
-                  ),
-                  style: YanciTheme.bodySmall,
-                ),
-                const SizedBox(height: 12),
-                FilledButton.tonalIcon(
-                  onPressed: () => Navigator.pop(
-                    context,
-                    const _MemoryCurationChoice.local(),
-                  ),
-                  style: FilledButton.styleFrom(
-                    minimumSize: const Size.fromHeight(48),
-                    alignment: Alignment.centerLeft,
-                  ),
-                  icon: const Icon(Icons.shield_outlined, size: 19),
-                  label: Text(
-                    L.pick(
-                      en: 'On-device memory deduplication check',
-                      zhTW: '本機記憶去重檢查',
-                      zhCN: '本机记忆去重检查',
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                CheckboxListTile(
-                  contentPadding: EdgeInsets.zero,
-                  value: useVector,
-                  onChanged: embedding.model.isEmpty || summaryModel.isEmpty
-                      ? null
-                      : (value) => setSheetState(() {
-                          useVector = value ?? false;
-                          if (useVector) useSummary = true;
-                        }),
-                  title: Text(
-                    L.pick(
-                      en: 'Vector relation pass',
-                      zhTW: '向量關聯',
-                      zhCN: '向量关联',
-                    ),
-                    style: YanciTheme.bodyText,
-                  ),
-                  subtitle: Text(
-                    embedding.model.isEmpty
-                        ? L.pick(
-                            en: 'No embedding model selected',
-                            zhTW: '尚未選擇向量模型',
-                            zhCN: '尚未选择向量模型',
-                          )
-                        : summaryModel.isEmpty
-                        ? L.pick(
-                            en: 'Select a summary model to review vector candidates',
-                            zhTW: '請先選擇摘要模型審核向量候選',
-                            zhCN: '请先选择摘要模型审核向量候选',
-                          )
-                        : '${embedding.provider} / ${embedding.model}',
-                    style: YanciTheme.bodySmall,
-                  ),
-                ),
-                CheckboxListTile(
-                  contentPadding: EdgeInsets.zero,
-                  value: useSummary,
-                  onChanged: summaryModel.isEmpty || useVector
-                      ? null
-                      : (value) =>
-                            setSheetState(() => useSummary = value ?? false),
-                  title: Text(
-                    L.pick(
-                      en: 'Summary model review',
-                      zhTW: '摘要共用模型整理',
-                      zhCN: '摘要共用模型整理',
-                    ),
-                    style: YanciTheme.bodyText,
-                  ),
-                  subtitle: Text(
-                    summaryModel.isEmpty
-                        ? L.pick(
-                            en: 'No summary model selected',
-                            zhTW: '尚未選擇摘要共用模型',
-                            zhCN: '尚未选择摘要共用模型',
-                          )
-                        : '${summaryProvider.isEmpty ? L.pick(en: 'Current source', zhTW: '目前來源', zhCN: '当前来源') : summaryProvider} / $summaryModel',
-                    style: YanciTheme.bodySmall,
-                  ),
-                ),
-                if (useVector)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 10),
-                    child: Text(
-                      L.pick(
-                        en: 'Vectors only suggest candidates. The summary model decides whether a relation exists after checking summaries, selected memories, and their existing links.',
-                        zhTW: '向量只負責提出候選；摘要模型會結合摘要、已選記憶及其既有連線，判斷關係是否成立。',
-                        zhCN: '向量只负责提出候选；摘要模型会结合摘要、已选记忆及其已有连线，判断关系是否成立。',
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 18, 20, 10),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        L.pick(
+                          en: 'Review selected memories',
+                          zhTW: '審核已選記憶',
+                          zhCN: '审核已选记忆',
+                        ),
+                        style: YanciTheme.headingMedium,
                       ),
-                      style: YanciTheme.bodySmall,
-                    ),
+                      const SizedBox(height: 6),
+                      Text(
+                        L.pick(
+                          en: 'The first pass is read-only. You will review every proposed connection or merge before any stored memory changes.',
+                          zhTW: '第一階段只做唯讀分析；所有連線與合併都會先顯示預覽，確認後才變更已存記憶。',
+                          zhCN: '第一阶段只做只读分析；所有连线与合并都会先显示预览，确认后才更改已存记忆。',
+                        ),
+                        style: YanciTheme.bodySmall,
+                      ),
+                    ],
                   ),
-                FilledButton(
-                  onPressed: !useSummary
-                      ? null
-                      : () => Navigator.pop(
+                ),
+                Expanded(
+                  child: ListView(
+                    padding: const EdgeInsets.fromLTRB(20, 4, 20, 16),
+                    children: [
+                      FilledButton.tonalIcon(
+                        onPressed: () => Navigator.pop(
                           context,
-                          _MemoryCurationChoice.models(
-                            vector: useVector,
-                            summary: useSummary,
+                          const _MemoryCurationChoice.local(),
+                        ),
+                        style: FilledButton.styleFrom(
+                          minimumSize: const Size.fromHeight(48),
+                          alignment: Alignment.centerLeft,
+                        ),
+                        icon: const Icon(Icons.shield_outlined, size: 19),
+                        label: Text(
+                          L.pick(
+                            en: 'On-device memory deduplication check',
+                            zhTW: '本機記憶去重檢查',
+                            zhCN: '本机记忆去重检查',
                           ),
                         ),
-                  child: Text(
-                    L.pick(en: 'Start processing', zhTW: '開始處理', zhCN: '开始处理'),
+                      ),
+                      const SizedBox(height: 12),
+                      CheckboxListTile(
+                        contentPadding: EdgeInsets.zero,
+                        value: useVector,
+                        onChanged:
+                            embedding.model.isEmpty || summaryModel.isEmpty
+                            ? null
+                            : (value) => setSheetState(() {
+                                useVector = value ?? false;
+                                if (useVector) useSummary = true;
+                              }),
+                        title: Text(
+                          L.pick(
+                            en: 'Vector relation pass',
+                            zhTW: '向量關聯',
+                            zhCN: '向量关联',
+                          ),
+                          style: YanciTheme.bodyText,
+                        ),
+                        subtitle: Text(
+                          embedding.model.isEmpty
+                              ? L.pick(
+                                  en: 'No embedding model selected',
+                                  zhTW: '尚未選擇向量模型',
+                                  zhCN: '尚未选择向量模型',
+                                )
+                              : summaryModel.isEmpty
+                              ? L.pick(
+                                  en: 'Select a summary model to review vector candidates',
+                                  zhTW: '請先選擇摘要模型審核向量候選',
+                                  zhCN: '请先选择摘要模型审核向量候选',
+                                )
+                              : '${embedding.provider} / ${embedding.model}',
+                          style: YanciTheme.bodySmall,
+                        ),
+                      ),
+                      CheckboxListTile(
+                        contentPadding: EdgeInsets.zero,
+                        value: useSummary,
+                        onChanged: summaryModel.isEmpty || useVector
+                            ? null
+                            : (value) => setSheetState(
+                                () => useSummary = value ?? false,
+                              ),
+                        title: Text(
+                          L.pick(
+                            en: 'Summary model review',
+                            zhTW: '摘要共用模型整理',
+                            zhCN: '摘要共用模型整理',
+                          ),
+                          style: YanciTheme.bodyText,
+                        ),
+                        subtitle: Text(
+                          summaryModel.isEmpty
+                              ? L.pick(
+                                  en: 'No summary model selected',
+                                  zhTW: '尚未選擇摘要共用模型',
+                                  zhCN: '尚未选择摘要共用模型',
+                                )
+                              : '${summaryProvider.isEmpty ? L.pick(en: 'Current source', zhTW: '目前來源', zhCN: '当前来源') : summaryProvider} / $summaryModel',
+                          style: YanciTheme.bodySmall,
+                        ),
+                      ),
+                      if (useVector)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 10),
+                          child: Text(
+                            L.pick(
+                              en: 'Vectors only suggest candidates. The summary model independently checks summaries, memories and existing links.',
+                              zhTW: '向量只提出候選；摘要模型會再依摘要、已選記憶及既有連線獨立判斷。',
+                              zhCN: '向量只提出候选；摘要模型会再依摘要、已选记忆及已有连线独立判断。',
+                            ),
+                            style: YanciTheme.bodySmall,
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+                SafeArea(
+                  top: false,
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 10, 20, 16),
+                    child: FilledButton(
+                      onPressed: !useSummary
+                          ? null
+                          : () => Navigator.pop(
+                              context,
+                              _MemoryCurationChoice.models(
+                                vector: useVector,
+                                summary: useSummary,
+                              ),
+                            ),
+                      child: Text(
+                        L.pick(
+                          en: 'Analyze and preview',
+                          zhTW: '分析並預覽',
+                          zhCN: '分析并预览',
+                        ),
+                      ),
+                    ),
                   ),
                 ),
               ],

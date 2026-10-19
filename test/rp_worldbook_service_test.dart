@@ -51,6 +51,7 @@ void main() {
     'fourth RP summary triggers exactly one independent worldbook pass',
     () async {
       var calls = 0;
+      final revisionBefore = RpWorldbookService.revision.value;
       Future<String> modelCall({
         required String systemPrompt,
         required String userMessage,
@@ -103,6 +104,7 @@ void main() {
       expect(entries, hasLength(1));
       expect(entries.single['entry_key'], 'WB-0001');
       expect(entries.single['continuity_id'], 'story-a');
+      expect(RpWorldbookService.revision.value, greaterThan(revisionBefore));
     },
   );
 
@@ -197,6 +199,42 @@ void main() {
     );
     expect(related, contains('共同曆法'));
     expect(related, contains('北境禁令'));
+  });
+
+  test('lead name alone cannot recall unrelated scoped lore', () async {
+    const now = '2026-10-02T00:00:00.000Z';
+    await db.insert('rp_worldbook_entries', <String, Object?>{
+      'id': 'entry-name-only',
+      'entry_key': 'WB-0003',
+      'character_id': 'char-a',
+      'continuity_id': 'story-a',
+      'name': '北境軍籍制度',
+      'category': 'law',
+      'content': '江離曾在北境看過軍籍；制度本身按營分冊。',
+      'scope': '北境軍營',
+      'visibility': '軍中公開',
+      'status': 'active',
+      'ended_reason': '',
+      'triggers_json': '["軍籍","分營造冊"]',
+      'source_summary_ids': '[1]',
+      'user_edited': 0,
+      'created_at': now,
+      'updated_at': now,
+    });
+
+    final nameOnly = await RpWorldbookService.recallPrompt(
+      characterId: 'char-a',
+      continuityId: 'story-a',
+      query: '江離今天回到府中',
+    );
+    expect(nameOnly, isNot(contains('北境軍籍制度')));
+
+    final settingTerm = await RpWorldbookService.recallPrompt(
+      characterId: 'char-a',
+      continuityId: 'story-a',
+      query: '他查閱軍籍確認編制',
+    );
+    expect(settingTerm, contains('北境軍籍制度'));
   });
 
   test('storyline mismatch keeps the batch cursor for retry', () async {
@@ -323,6 +361,88 @@ void main() {
       expect(rows, hasLength(1));
       expect(rows.single['content'], '城門在戌時關閉。');
       expect(rows.single['user_edited'], 1);
+    },
+  );
+
+  test(
+    'pending review draft can be edited and merged into a saved entry',
+    () async {
+      final entryKey = await RpWorldbookService.createManualEntry(
+        characterId: 'char-a',
+        continuityId: 'story-a',
+        name: '渡陽律例',
+        content: '城門在戌時關閉。',
+        category: 'law',
+        scope: '渡陽城',
+        visibility: 'public',
+        triggers: const <String>['城門'],
+      );
+      const now = '2026-10-02T00:00:00.000Z';
+      await db.insert('rp_worldbook_review_items', <String, Object?>{
+        'id': 'review-a',
+        'character_id': 'char-a',
+        'continuity_id': 'story-a',
+        'kind': 'conflict',
+        'payload_json': jsonEncode(<String, Object?>{
+          'entry_key': entryKey,
+          'candidate_name': '渡陽宵禁',
+          'candidate_content': '城門改為亥時關閉。',
+          'source_summary_ids': <int>[7],
+        }),
+        'status': 'pending',
+        'created_at': now,
+        'updated_at': now,
+      });
+
+      await RpWorldbookService.updatePendingReviewDraft(
+        id: 'review-a',
+        characterId: 'char-a',
+        continuityId: 'story-a',
+        name: '渡陽城門令',
+        content: '城門自秋日起改為亥時關閉。',
+        category: 'law',
+        scope: '渡陽城',
+        visibility: 'public',
+        triggers: const <String>['城門令'],
+      );
+      final pending = await db.query(
+        'rp_worldbook_review_items',
+        where: 'id = ?',
+        whereArgs: const <Object?>['review-a'],
+      );
+      final draft =
+          jsonDecode(pending.single['payload_json']! as String)
+              as Map<String, dynamic>;
+      expect(draft['candidate_name'], '渡陽城門令');
+      expect(pending.single['status'], 'pending');
+
+      await RpWorldbookService.resolvePendingReview(
+        id: 'review-a',
+        characterId: 'char-a',
+        continuityId: 'story-a',
+        name: draft['candidate_name']! as String,
+        content: draft['candidate_content']! as String,
+        category: draft['category']! as String,
+        scope: draft['scope']! as String,
+        visibility: draft['visibility']! as String,
+        triggers: (draft['triggers']! as List<dynamic>).cast<String>(),
+        targetEntryKey: entryKey,
+      );
+
+      final entries = await db.query(
+        'rp_worldbook_entries',
+        where: 'entry_key = ?',
+        whereArgs: <Object?>[entryKey],
+      );
+      expect(entries.single['name'], '渡陽城門令');
+      expect(entries.single['content'], '城門自秋日起改為亥時關閉。');
+      expect(entries.single['user_edited'], 1);
+      final resolved = await db.query(
+        'rp_worldbook_review_items',
+        where: 'id = ?',
+        whereArgs: const <Object?>['review-a'],
+      );
+      expect(resolved.single['status'], 'resolved');
     },
   );
 }

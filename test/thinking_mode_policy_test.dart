@@ -72,6 +72,39 @@ void main() {
     );
   });
 
+  test('visible model output hides protocol blocks even with Thinking on', () {
+    const raw =
+        '<think>先想想 <memo>不應顯示</memo></think>正文'
+        '<persona_note>內部註記</persona_note>';
+    final visible = VisibleModelOutput.reply(raw, thinkingEnabled: true);
+    expect(visible, '<think>先想想 </think>正文');
+    expect(visible, isNot(contains('內部註記')));
+    expect(visible, isNot(contains('<memo>')));
+  });
+
+  test('stream output hides unfinished persona JSON and partial tags', () {
+    expect(
+      VisibleModelOutput.streaming(
+        '先說的正文<holt_persona_draft>{"name":"',
+        thinkingEnabled: false,
+      ),
+      '先說的正文',
+    );
+    expect(
+      VisibleModelOutput.streaming('先說的正文<mem', thinkingEnabled: false),
+      '先說的正文',
+    );
+  });
+
+  test('final-only output cannot leak thinking or XML into titles', () {
+    expect(
+      VisibleModelOutput.finalOnly(
+        '<think>English reasoning</think><memo>fact</memo>夜雨',
+      ),
+      '夜雨',
+    );
+  });
+
   test('OpenRouter sends Thinking as a top-level request policy', () async {
     final offBody =
         await OpenRouterService(

@@ -15,11 +15,13 @@ class ApiMemorySettingsCard extends StatefulWidget {
   final String embeddingModel;
   final List<StarredModelEntry> embeddingModelEntries;
   final List<StarredModelEntry> starredModelEntries;
+  final List<StarredModelEntry> availableModelEntries;
   final bool dreamCurationEnabled;
   final int dreamCurationThreshold;
   final bool showDreamCuration;
   final bool showSummarySelection;
   final bool showAdvancedMemoryOptions;
+  final bool showRpSummaryOptions;
   final Color borderColor;
   final SummarySelectionChanged onSummarySelectionChanged;
   final EmbeddingSelectionChanged onEmbeddingSelectionChanged;
@@ -34,11 +36,13 @@ class ApiMemorySettingsCard extends StatefulWidget {
     required this.embeddingModel,
     required this.embeddingModelEntries,
     required this.starredModelEntries,
+    this.availableModelEntries = const <StarredModelEntry>[],
     required this.dreamCurationEnabled,
     required this.dreamCurationThreshold,
     this.showDreamCuration = false,
     this.showSummarySelection = true,
     this.showAdvancedMemoryOptions = true,
+    this.showRpSummaryOptions = false,
     required this.borderColor,
     required this.onSummarySelectionChanged,
     required this.onEmbeddingSelectionChanged,
@@ -56,6 +60,7 @@ class _ApiMemorySettingsCardState extends State<ApiMemorySettingsCard> {
   late final TextEditingController _worldbookIntervalController;
   bool? _worldbookAutoWrite;
   bool? _rpSummaryAutoMaxChars;
+  int? _rpDynamicSummarySegments;
 
   @override
   void initState() {
@@ -87,10 +92,12 @@ class _ApiMemorySettingsCardState extends State<ApiMemorySettingsCard> {
     final enabled = await MemorySettings.getRpWorldbookAutoWriteEnabled();
     final interval = await MemorySettings.getRpWorldbookSummaryInterval();
     final autoMax = await MemorySettings.getRpSummaryAutoMaxCharsEnabled();
+    final dynamicSegments = await MemorySettings.getRpDynamicSummarySegments();
     if (!mounted) return;
     setState(() {
       _worldbookAutoWrite = enabled;
       _rpSummaryAutoMaxChars = autoMax;
+      _rpDynamicSummarySegments = dynamicSegments;
       _worldbookIntervalController.text = '$interval';
     });
   }
@@ -130,6 +137,9 @@ class _ApiMemorySettingsCardState extends State<ApiMemorySettingsCard> {
     for (final entry in starred) {
       add(entry.provider, entry.modelId);
     }
+    for (final entry in widget.availableModelEntries) {
+      add(entry.provider, entry.modelId);
+    }
     return options;
   }
 
@@ -159,7 +169,8 @@ class _ApiMemorySettingsCardState extends State<ApiMemorySettingsCard> {
                 : a.modelId.compareTo(b.modelId);
           });
     for (final entry in discovered) {
-      if (entry.modelId.toLowerCase().contains('embedding')) {
+      if (entry.provider == 'deepinfra' ||
+          entry.modelId.toLowerCase().contains('embedding')) {
         add(entry.provider, entry.modelId);
       }
     }
@@ -171,6 +182,7 @@ class _ApiMemorySettingsCardState extends State<ApiMemorySettingsCard> {
     'xai' => 'xAI (Grok)',
     'gemini' => 'Gemini',
     'deepseek' => 'DeepSeek',
+    'deepinfra' => 'DeepInfra',
     'qwen' => 'Qwen',
     'bedrock' => 'AWS Bedrock',
     'thinking_machines' => 'Inkling',
@@ -193,7 +205,6 @@ class _ApiMemorySettingsCardState extends State<ApiMemorySettingsCard> {
       decoration: BoxDecoration(
         color: Colors.transparent,
         borderRadius: BorderRadius.circular(YanciTheme.radiusMd),
-        border: Border.all(color: widget.borderColor, width: 1),
       ),
       child: child,
     );
@@ -202,7 +213,7 @@ class _ApiMemorySettingsCardState extends State<ApiMemorySettingsCard> {
   OutlineInputBorder _thinInputBorder({Color? color, double width = 1}) {
     return OutlineInputBorder(
       borderRadius: BorderRadius.circular(YanciTheme.radiusSm),
-      borderSide: BorderSide(color: color ?? widget.borderColor, width: width),
+      borderSide: BorderSide.none,
     );
   }
 
@@ -278,7 +289,8 @@ class _ApiMemorySettingsCardState extends State<ApiMemorySettingsCard> {
               ),
             ),
           ],
-          if (widget.showAdvancedMemoryOptions) ...[
+          if (widget.showAdvancedMemoryOptions ||
+              widget.showRpSummaryOptions) ...[
             if (widget.showSummarySelection) ...[
               const SizedBox(height: 10),
               Divider(
@@ -287,98 +299,104 @@ class _ApiMemorySettingsCardState extends State<ApiMemorySettingsCard> {
               ),
               const SizedBox(height: 8),
             ],
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    L.pick(
-                      en: 'Automatic worldbook',
-                      zhTW: '自動整理世界書',
-                      zhCN: '自动整理世界书',
-                    ),
-                    style: YanciTheme.bodySmall.copyWith(fontSize: 11),
-                  ),
-                ),
-                SizedBox(
-                  height: 24,
-                  child: Switch.adaptive(
-                    value: _worldbookAutoWrite ?? true,
-                    activeThumbColor: YanciTheme.accent,
-                    activeTrackColor: YanciTheme.accent.withValues(alpha: 0.3),
-                    onChanged: _worldbookAutoWrite == null
-                        ? null
-                        : (value) {
-                            setState(() => _worldbookAutoWrite = value);
-                            MemorySettings.saveRpWorldbookAutoWriteEnabled(
-                              value,
-                            );
-                          },
-                  ),
-                ),
-              ],
-            ),
-            if (_worldbookAutoWrite ?? true) ...[
-              const SizedBox(height: 6),
+            if (widget.showAdvancedMemoryOptions) ...[
               Row(
                 children: [
                   Expanded(
                     child: Text(
                       L.pick(
-                        en: 'Process after this many RP summaries',
-                        zhTW: '累積摘要後整理世界書',
-                        zhCN: '累积摘要后整理世界书',
+                        en: 'Automatic worldbook',
+                        zhTW: '自動整理世界書',
+                        zhCN: '自动整理世界书',
                       ),
                       style: YanciTheme.bodySmall.copyWith(fontSize: 11),
                     ),
                   ),
                   SizedBox(
-                    width: 72,
-                    child: TextField(
-                      controller: _worldbookIntervalController,
-                      keyboardType: TextInputType.number,
-                      textAlign: TextAlign.center,
-                      style: YanciTheme.bodyText.copyWith(
-                        fontSize: 12,
-                        color: YanciTheme.accent,
+                    height: 24,
+                    child: Switch.adaptive(
+                      value: _worldbookAutoWrite ?? true,
+                      activeThumbColor: YanciTheme.accent,
+                      activeTrackColor: YanciTheme.accent.withValues(
+                        alpha: 0.3,
                       ),
-                      decoration: InputDecoration(
-                        isDense: true,
-                        suffixText: L.pick(en: 'items', zhTW: '份', zhCN: '份'),
-                        contentPadding: const EdgeInsets.symmetric(
-                          vertical: 5,
-                          horizontal: 6,
-                        ),
-                        border: _thinInputBorder(),
-                        enabledBorder: _thinInputBorder(),
-                        focusedBorder: _thinInputBorder(
-                          color: YanciTheme.accent.withValues(alpha: 0.85),
-                          width: 1,
-                        ),
-                      ),
-                      onChanged: (text) {
-                        final value = int.tryParse(text);
-                        if (value != null && value >= 1 && value <= 20) {
-                          MemorySettings.saveRpWorldbookSummaryInterval(value);
-                        }
-                      },
+                      onChanged: _worldbookAutoWrite == null
+                          ? null
+                          : (value) {
+                              setState(() => _worldbookAutoWrite = value);
+                              MemorySettings.saveRpWorldbookAutoWriteEnabled(
+                                value,
+                              );
+                            },
                     ),
                   ),
                 ],
               ),
-              const SizedBox(height: 4),
-              Text(
-                L.pick(
-                  en: 'Default 4. Uses a separate model call and the selected summary model.',
-                  zhTW: '預設 4 份。世界書會獨立呼叫目前選中的摘要模型。',
-                  zhCN: '默认 4 份。世界书会独立调用当前选中的摘要模型。',
+              if (_worldbookAutoWrite ?? true) ...[
+                const SizedBox(height: 6),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        L.pick(
+                          en: 'Process after this many RP summaries',
+                          zhTW: '累積摘要後整理世界書',
+                          zhCN: '累积摘要后整理世界书',
+                        ),
+                        style: YanciTheme.bodySmall.copyWith(fontSize: 11),
+                      ),
+                    ),
+                    SizedBox(
+                      width: 72,
+                      child: TextField(
+                        controller: _worldbookIntervalController,
+                        keyboardType: TextInputType.number,
+                        textAlign: TextAlign.center,
+                        style: YanciTheme.bodyText.copyWith(
+                          fontSize: 12,
+                          color: YanciTheme.accent,
+                        ),
+                        decoration: InputDecoration(
+                          isDense: true,
+                          suffixText: L.pick(en: 'items', zhTW: '份', zhCN: '份'),
+                          contentPadding: const EdgeInsets.symmetric(
+                            vertical: 5,
+                            horizontal: 6,
+                          ),
+                          border: _thinInputBorder(),
+                          enabledBorder: _thinInputBorder(),
+                          focusedBorder: _thinInputBorder(
+                            color: YanciTheme.accent.withValues(alpha: 0.85),
+                            width: 1,
+                          ),
+                        ),
+                        onChanged: (text) {
+                          final value = int.tryParse(text);
+                          if (value != null && value >= 1 && value <= 20) {
+                            MemorySettings.saveRpWorldbookSummaryInterval(
+                              value,
+                            );
+                          }
+                        },
+                      ),
+                    ),
+                  ],
                 ),
-                style: YanciTheme.bodySmall.copyWith(
-                  fontSize: 10,
-                  color: YanciTheme.textSecondary.withValues(alpha: 0.65),
+                const SizedBox(height: 4),
+                Text(
+                  L.pick(
+                    en: 'Default 4. Uses a separate model call and the selected summary model.',
+                    zhTW: '預設 4 份。世界書會獨立呼叫目前選中的摘要模型。',
+                    zhCN: '默认 4 份。世界书会独立调用当前选中的摘要模型。',
+                  ),
+                  style: YanciTheme.bodySmall.copyWith(
+                    fontSize: 10,
+                    color: YanciTheme.textSecondary.withValues(alpha: 0.65),
+                  ),
                 ),
-              ),
+              ],
+              const SizedBox(height: 10),
             ],
-            const SizedBox(height: 10),
             Row(
               children: [
                 Expanded(
@@ -412,106 +430,243 @@ class _ApiMemorySettingsCardState extends State<ApiMemorySettingsCard> {
             const SizedBox(height: 4),
             Text(
               L.pick(
-                en: 'Uses the current storyline source volume to choose a 3000-10000 character ceiling.',
-                zhTW: '依目前故事線原文總量，在 3000～10000 字間選擇軟上限。',
-                zhCN: '按当前故事线原文总量，在 3000～10000 字间选择软上限。',
+                en: 'May choose a shorter target from storyline size, but never exceeds the hard limit below.',
+                zhTW: '可依故事線原文總量自動縮短，但永遠不超過下方硬上限。',
+                zhCN: '可按故事线原文总量自动缩短，但永远不超过下方硬上限。',
               ),
               style: YanciTheme.bodySmall.copyWith(
                 fontSize: 10,
                 color: YanciTheme.textSecondary.withValues(alpha: 0.65),
               ),
             ),
-            if (!(_rpSummaryAutoMaxChars ?? true)) ...[
-              const SizedBox(height: 8),
-              FutureBuilder<int>(
-                future: MemorySettings.getRpSummaryMaxChars(),
-                builder: (context, snapshot) {
-                  final value = snapshot.data ?? 3000;
-                  return Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          L.pick(
-                            en: 'RP dossier soft ceiling',
-                            zhTW: 'RP 摘要軟上限',
-                            zhCN: 'RP 摘要软上限',
-                          ),
-                          style: YanciTheme.bodySmall.copyWith(fontSize: 11),
+            const SizedBox(height: 8),
+            FutureBuilder<int>(
+              future: MemorySettings.getRpSummaryMaxChars(),
+              builder: (context, snapshot) {
+                final value = snapshot.data ?? 1600;
+                return Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        L.pick(
+                          en: 'RP dossier hard limit',
+                          zhTW: 'RP 摘要硬上限',
+                          zhCN: 'RP 摘要硬上限',
                         ),
+                        style: YanciTheme.bodySmall.copyWith(fontSize: 11),
                       ),
-                      SizedBox(
-                        width: 92,
-                        child: TextFormField(
-                          key: ValueKey<int>(value),
-                          initialValue: '$value',
-                          keyboardType: TextInputType.number,
-                          textAlign: TextAlign.center,
-                          style: YanciTheme.bodyText.copyWith(
-                            fontSize: 12,
-                            color: YanciTheme.accent,
-                          ),
-                          decoration: InputDecoration(
-                            isDense: true,
-                            suffixText: L.pick(
-                              en: 'chars',
-                              zhTW: '字',
-                              zhCN: '字',
-                            ),
-                            contentPadding: const EdgeInsets.symmetric(
-                              vertical: 5,
-                              horizontal: 6,
-                            ),
-                            border: _thinInputBorder(),
-                            enabledBorder: _thinInputBorder(),
-                            focusedBorder: _thinInputBorder(
-                              color: YanciTheme.accent.withValues(alpha: 0.85),
-                              width: 1,
-                            ),
-                          ),
-                          onChanged: (text) {
-                            final parsed = int.tryParse(text);
-                            if (parsed != null &&
-                                parsed >= 800 &&
-                                parsed <= 12000) {
-                              MemorySettings.saveRpSummaryMaxChars(parsed);
-                            }
-                          },
+                    ),
+                    SizedBox(
+                      width: 92,
+                      child: TextFormField(
+                        key: ValueKey<int>(value),
+                        initialValue: '$value',
+                        keyboardType: TextInputType.number,
+                        textAlign: TextAlign.center,
+                        style: YanciTheme.bodyText.copyWith(
+                          fontSize: 12,
+                          color: YanciTheme.accent,
                         ),
+                        decoration: InputDecoration(
+                          isDense: true,
+                          suffixText: L.pick(en: 'chars', zhTW: '字', zhCN: '字'),
+                          contentPadding: const EdgeInsets.symmetric(
+                            vertical: 5,
+                            horizontal: 6,
+                          ),
+                          border: _thinInputBorder(),
+                          enabledBorder: _thinInputBorder(),
+                          focusedBorder: _thinInputBorder(
+                            color: YanciTheme.accent.withValues(alpha: 0.85),
+                            width: 1,
+                          ),
+                        ),
+                        onChanged: (text) {
+                          final parsed = int.tryParse(text);
+                          if (parsed != null &&
+                              parsed >= 800 &&
+                              parsed <= 4000) {
+                            MemorySettings.saveRpSummaryMaxChars(parsed);
+                          }
+                        },
                       ),
-                    ],
-                  );
-                },
+                    ),
+                  ],
+                );
+              },
+            ),
+            const SizedBox(height: 4),
+            Text(
+              L.pick(
+                en: 'Default 1600. This is a ceiling, not a target; supported range 800-4000.',
+                zhTW: '預設 1600。這是天花板，不是要求寫滿；可設定 800～4000 字。',
+                zhCN: '默认 1600。这是上限，不是要求写满；可设置 800～4000 字。',
               ),
-              const SizedBox(height: 4),
-              Text(
-                L.pick(
-                  en: 'Default 3000. This is a ceiling, not a target; supported range 800-12000.',
-                  zhTW: '預設 3000。這是天花板，不是要求寫滿；可設定 800～12000 字。',
-                  zhCN: '默认 3000。这是上限，不是要求写满；可设置 800～12000 字。',
-                ),
-                style: YanciTheme.bodySmall.copyWith(
-                  fontSize: 10,
-                  color: YanciTheme.textSecondary.withValues(alpha: 0.65),
-                ),
+              style: YanciTheme.bodySmall.copyWith(
+                fontSize: 10,
+                color: YanciTheme.textSecondary.withValues(alpha: 0.65),
               ),
-            ],
+            ),
             const SizedBox(height: 10),
-            Divider(
-              height: 1,
-              color: YanciTheme.textSecondary.withValues(alpha: 0.12),
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    L.pick(
+                      en: 'RP live summary recall',
+                      zhTW: 'RP 動態摘要注入段數',
+                      zhCN: 'RP 动态摘要注入段数',
+                    ),
+                    style: YanciTheme.bodySmall.copyWith(fontSize: 11),
+                  ),
+                ),
+                DropdownButton<int>(
+                  value: _rpDynamicSummarySegments,
+                  underline: const SizedBox(),
+                  dropdownColor: YanciTheme.isDark
+                      ? const Color(0xF0302830)
+                      : Colors.white,
+                  style: YanciTheme.bodyText.copyWith(
+                    fontSize: 12,
+                    color: YanciTheme.accent,
+                  ),
+                  items: List<DropdownMenuItem<int>>.generate(
+                    4,
+                    (index) => DropdownMenuItem<int>(
+                      value: index + 1,
+                      child: Text('${index + 1}'),
+                    ),
+                  ),
+                  onChanged: _rpDynamicSummarySegments == null
+                      ? null
+                      : (value) {
+                          if (value == null) return;
+                          setState(() => _rpDynamicSummarySegments = value);
+                          MemorySettings.saveRpDynamicSummarySegments(value);
+                        },
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(
+              L.pick(
+                en: 'Default 1. Only event-matched summary segments are injected; chapter continuation is unaffected.',
+                zhTW: '預設 1 段。只注入命中事件的摘要段落，不影響續寫篇章的完整摘要銜接。',
+                zhCN: '默认 1 段。只注入命中事件的摘要段落，不影响续写篇章的完整摘要衔接。',
+              ),
+              style: YanciTheme.bodySmall.copyWith(
+                fontSize: 10,
+                color: YanciTheme.textSecondary.withValues(alpha: 0.65),
+              ),
+            ),
+            const SizedBox(height: 10),
+            _buildCharacterBudgetField(
+              label: L.pick(
+                en: 'Live RP summary budget',
+                zhTW: 'RP 動態摘要總注入上限',
+                zhCN: 'RP 动态摘要总注入上限',
+              ),
+              future: MemorySettings.getRpDynamicSummaryMaxChars(),
+              defaultValue: 1400,
+              min: 600,
+              max: 4000,
+              onChanged: MemorySettings.saveRpDynamicSummaryMaxChars,
             ),
             const SizedBox(height: 8),
-            Text(
-              L.pick(en: 'Vector recall model', zhTW: '向量召回模型', zhCN: '向量召回模型'),
-              style: YanciTheme.bodySmall.copyWith(
-                fontSize: 11,
-                color: YanciTheme.textSecondary,
+            _buildCharacterBudgetField(
+              label: L.pick(
+                en: 'Chapter handoff summary budget',
+                zhTW: '續接篇章摘要總注入上限',
+                zhCN: '续接篇章摘要总注入上限',
               ),
+              future: MemorySettings.getRpContinuationSummaryMaxChars(),
+              defaultValue: 2400,
+              min: 1000,
+              max: 6000,
+              onChanged: MemorySettings.saveRpContinuationSummaryMaxChars,
             ),
-            _buildEmbeddingModelPicker(),
+            const SizedBox(height: 10),
+            if (widget.showAdvancedMemoryOptions) ...[
+              Divider(
+                height: 1,
+                color: YanciTheme.textSecondary.withValues(alpha: 0.12),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                L.pick(
+                  en: 'Vector recall model',
+                  zhTW: '向量召回模型',
+                  zhCN: '向量召回模型',
+                ),
+                style: YanciTheme.bodySmall.copyWith(
+                  fontSize: 11,
+                  color: YanciTheme.textSecondary,
+                ),
+              ),
+              _buildEmbeddingModelPicker(),
+            ],
           ],
         ],
       ),
+    );
+  }
+
+  Widget _buildCharacterBudgetField({
+    required String label,
+    required Future<int> future,
+    required int defaultValue,
+    required int min,
+    required int max,
+    required ValueChanged<int> onChanged,
+  }) {
+    return FutureBuilder<int>(
+      future: future,
+      builder: (context, snapshot) {
+        final value = snapshot.data ?? defaultValue;
+        return Row(
+          children: [
+            Expanded(
+              child: Text(
+                label,
+                style: YanciTheme.bodySmall.copyWith(fontSize: 11),
+              ),
+            ),
+            SizedBox(
+              width: 92,
+              child: TextFormField(
+                key: ValueKey<String>('summary-budget-$label-$value'),
+                initialValue: '$value',
+                keyboardType: TextInputType.number,
+                textAlign: TextAlign.center,
+                style: YanciTheme.bodyText.copyWith(
+                  fontSize: 12,
+                  color: YanciTheme.accent,
+                ),
+                decoration: InputDecoration(
+                  isDense: true,
+                  suffixText: L.pick(en: 'chars', zhTW: '字', zhCN: '字'),
+                  contentPadding: const EdgeInsets.symmetric(
+                    vertical: 5,
+                    horizontal: 6,
+                  ),
+                  border: _thinInputBorder(),
+                  enabledBorder: _thinInputBorder(),
+                  focusedBorder: _thinInputBorder(
+                    color: YanciTheme.accent.withValues(alpha: 0.85),
+                    width: 1,
+                  ),
+                ),
+                onChanged: (text) {
+                  final parsed = int.tryParse(text);
+                  if (parsed != null && parsed >= min && parsed <= max) {
+                    onChanged(parsed);
+                  }
+                },
+              ),
+            ),
+          ],
+        );
+      },
     );
   }
 

@@ -405,6 +405,7 @@ class ApiErrorLocalizer {
       'thinking machines': 'Thinking Machines',
       'openrouter': 'OpenRouter',
       'deepseek': 'DeepSeek',
+      'deepinfra': 'DeepInfra',
       'gemini': 'Gemini',
       'anthropic': 'Anthropic',
       'claude': 'Claude',

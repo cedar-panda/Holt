@@ -1,3 +1,5 @@
+import 'dart:collection';
+
 import 'package:flutter/foundation.dart' show immutable;
 
 @immutable
@@ -11,6 +13,10 @@ class RecallKeywordMatch {
 /// Provider-independent text matching used by both long-term memories and
 /// compressed-summary keyword recall.
 class RecallTextMatcher {
+  static const int _keywordCacheLimit = 12000;
+  static final LinkedHashMap<String, List<String>> _keywordCache =
+      LinkedHashMap<String, List<String>>();
+
   /// Bounded terms for relevance ranking. CJK does not have whitespace word
   /// boundaries, so include short 2-4 character windows; longer windows score
   /// higher at the caller and reduce dependence on model-authored triggers.
@@ -55,8 +61,42 @@ class RecallTextMatcher {
     final compactQuery = _compact(normalizedQuery);
     if (compactQuery.isEmpty) return null;
 
+    return _bestKeywordMatchNormalized(
+      normalizedQuery: normalizedQuery,
+      compactQuery: compactQuery,
+      keywords: splitKeywords(keywordText),
+    );
+  }
+
+  /// Matches several keyword rows while normalizing the query only once.
+  /// The returned list keeps the same order and length as [keywordTexts].
+  static List<RecallKeywordMatch?> bestKeywordMatches(
+    String query,
+    Iterable<String> keywordTexts,
+  ) {
+    final texts = keywordTexts.toList(growable: false);
+    final normalizedQuery = _normalize(query);
+    final compactQuery = _compact(normalizedQuery);
+    if (compactQuery.isEmpty) {
+      return List<RecallKeywordMatch?>.filled(texts.length, null);
+    }
+    return <RecallKeywordMatch?>[
+      for (final text in texts)
+        _bestKeywordMatchNormalized(
+          normalizedQuery: normalizedQuery,
+          compactQuery: compactQuery,
+          keywords: splitKeywords(text),
+        ),
+    ];
+  }
+
+  static RecallKeywordMatch? _bestKeywordMatchNormalized({
+    required String normalizedQuery,
+    required String compactQuery,
+    required Iterable<String> keywords,
+  }) {
     RecallKeywordMatch? best;
-    for (final keyword in splitKeywords(keywordText)) {
+    for (final keyword in keywords) {
       final score = _score(
         normalizedQuery: normalizedQuery,
         compactQuery: compactQuery,
@@ -72,6 +112,11 @@ class RecallTextMatcher {
       bestKeywordMatch(text, phrase) != null;
 
   static List<String> splitKeywords(String raw) {
+    final cached = _keywordCache.remove(raw);
+    if (cached != null) {
+      _keywordCache[raw] = cached;
+      return cached;
+    }
     final seen = <String>{};
     final result = <String>[];
     for (final group in raw.split(RegExp(r'[,，、;；\n|｜]+'))) {
@@ -93,7 +138,12 @@ class RecallTextMatcher {
         }
       }
     }
-    return result;
+    final stored = List<String>.unmodifiable(result);
+    _keywordCache[raw] = stored;
+    if (_keywordCache.length > _keywordCacheLimit) {
+      _keywordCache.remove(_keywordCache.keys.first);
+    }
+    return stored;
   }
 
   static int _score({

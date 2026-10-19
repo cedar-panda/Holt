@@ -17,7 +17,12 @@ class EmotionPanel extends StatefulWidget {
   static const bool kVisible = true;
 
   final String characterId;
-  const EmotionPanel({super.key, required this.characterId});
+  final bool initiallyCollapsed;
+  const EmotionPanel({
+    super.key,
+    required this.characterId,
+    this.initiallyCollapsed = true,
+  });
 
   @override
   State<EmotionPanel> createState() => _EmotionPanelState();
@@ -29,6 +34,7 @@ class _EmotionPanelState extends State<EmotionPanel> {
   double _chaos = 0;
   int _windowCount = 0;
   bool _loading = true;
+  late bool _expanded;
   final LatestRequestGate _loadGate = LatestRequestGate();
 
   static const double kResonanceBelow = 0.35;
@@ -45,7 +51,22 @@ class _EmotionPanelState extends State<EmotionPanel> {
   @override
   void initState() {
     super.initState();
+    _expanded = !widget.initiallyCollapsed;
+    if (_expanded) _load();
+  }
+
+  void _expand() {
+    if (_expanded) return;
+    setState(() {
+      _expanded = true;
+      _loading = true;
+    });
     _load();
+  }
+
+  void _collapse() {
+    if (!_expanded) return;
+    setState(() => _expanded = false);
   }
 
   Future<void> _load() async {
@@ -75,8 +96,15 @@ class _EmotionPanelState extends State<EmotionPanel> {
   void didUpdateWidget(covariant EmotionPanel oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.characterId != widget.characterId) {
-      setState(() => _loading = true);
-      _load();
+      _loadGate.invalidate();
+      _points = [];
+      _bars = {};
+      _chaos = 0;
+      _windowCount = 0;
+      if (_expanded) {
+        setState(() => _loading = true);
+        _load();
+      }
     }
   }
 
@@ -88,365 +116,423 @@ class _EmotionPanelState extends State<EmotionPanel> {
 
   @override
   Widget build(BuildContext context) {
-    final dimensionLabelWidth = L.locale == 'en' ? 96.0 : 52.0;
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.06),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: Colors.white.withValues(alpha: 0.1),
-          width: 0.5,
-        ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // ═══ 標題行 ═══
-          Row(
-            children: [
-              Expanded(
-                child: Wrap(
-                  spacing: 8,
-                  runSpacing: 5,
-                  crossAxisAlignment: WrapCrossAlignment.center,
-                  children: [
-                    Text(
-                      L.pick(en: 'Mood Map', zhTW: '心境圖譜', zhCN: '心境图谱'),
+    final panelLabel = L.pick(en: 'Mood Map', zhTW: '心境圖譜', zhCN: '心境图谱');
+    if (!_expanded) {
+      return Semantics(
+        button: true,
+        expanded: false,
+        label: panelLabel,
+        child: InkWell(
+          key: const ValueKey('emotion-panel-collapsed'),
+          borderRadius: BorderRadius.circular(12),
+          onTap: _expand,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minHeight: 44),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      panelLabel,
                       style: YanciTheme.bodySmall.copyWith(
-                        fontWeight: FontWeight.w500,
-                        color: YanciTheme.textSecondary,
+                        color: YanciTheme.textSecondary.withValues(alpha: 0.58),
                       ),
                     ),
-                    Builder(
-                      builder: (_) {
-                        final resonating =
-                            _windowCount >= 2 && _chaos < kResonanceBelow;
-                        final label = resonating
-                            ? '${L.pick(en: 'resonance', zhTW: '共鳴', zhCN: '共鸣')} ${(1 - _chaos).toStringAsFixed(2)}'
-                            : '${L.pick(en: 'chaos', zhTW: '混亂', zhCN: '混乱')} ${_chaos.toStringAsFixed(2)}';
-                        return Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 8,
-                            vertical: 2,
-                          ),
-                          decoration: BoxDecoration(
-                            color: YanciTheme.accent.withValues(
-                              alpha: 0.08 + _chaos * 0.25,
+                  ),
+                  Icon(
+                    Icons.expand_more_rounded,
+                    size: 18,
+                    color: YanciTheme.textSecondary.withValues(alpha: 0.34),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    final dimensionLabelWidth = L.locale == 'en' ? 96.0 : 52.0;
+    return Semantics(
+      expanded: true,
+      label: panelLabel,
+      child: Container(
+        key: const ValueKey('emotion-panel-expanded'),
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: Colors.white.withValues(alpha: 0.06),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: Colors.white.withValues(alpha: 0.1),
+            width: 0.5,
+          ),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // ═══ 標題行 ═══
+            Row(
+              children: [
+                Expanded(
+                  child: Wrap(
+                    spacing: 8,
+                    runSpacing: 5,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    children: [
+                      Text(
+                        panelLabel,
+                        style: YanciTheme.bodySmall.copyWith(
+                          fontWeight: FontWeight.w500,
+                          color: YanciTheme.textSecondary,
+                        ),
+                      ),
+                      Builder(
+                        builder: (_) {
+                          final resonating =
+                              _windowCount >= 2 && _chaos < kResonanceBelow;
+                          final label = resonating
+                              ? '${L.pick(en: 'resonance', zhTW: '共鳴', zhCN: '共鸣')} ${(1 - _chaos).toStringAsFixed(2)}'
+                              : '${L.pick(en: 'chaos', zhTW: '混亂', zhCN: '混乱')} ${_chaos.toStringAsFixed(2)}';
+                          return Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 2,
                             ),
-                            borderRadius: BorderRadius.circular(10),
+                            decoration: BoxDecoration(
+                              color: YanciTheme.accent.withValues(
+                                alpha: 0.08 + _chaos * 0.25,
+                              ),
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: Text(
+                              label,
+                              style: TextStyle(
+                                fontSize: 10,
+                                color: YanciTheme.accent,
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Semantics(
+                  button: true,
+                  label: L.pick(
+                    en: 'Reset Mood Map',
+                    zhTW: '重置心境圖譜',
+                    zhCN: '重置心境图谱',
+                  ),
+                  child: GestureDetector(
+                    onTap: () async {
+                      final confirm = await showDialog<bool>(
+                        context: context,
+                        builder: (ctx) => AlertDialog(
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
                           ),
-                          child: Text(
-                            label,
+                          title: Text(
+                            L.pick(
+                              en: 'Reset Mood Map?',
+                              zhTW: '重置心境圖譜？',
+                              zhCN: '重置心境图谱？',
+                            ),
+                            style: TextStyle(
+                              fontSize: 14,
+                              color: YanciTheme.textPrimary,
+                            ),
+                          ),
+                          content: Text(
+                            L.pick(
+                              en: 'All active emotion points will be cleared.',
+                              zhTW: '所有活躍情緒點都會被清除。',
+                              zhCN: '所有活跃情绪点都会被清除。',
+                            ),
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: YanciTheme.textSecondary,
+                            ),
+                          ),
+                          actions: [
+                            TextButton(
+                              onPressed: () => Navigator.pop(ctx, false),
+                              child: Text(
+                                L.pick(en: 'Cancel', zhTW: '取消', zhCN: '取消'),
+                                style: TextStyle(
+                                  color: YanciTheme.textSecondary,
+                                ),
+                              ),
+                            ),
+                            TextButton(
+                              onPressed: () => Navigator.pop(ctx, true),
+                              child: Text(
+                                L.pick(en: 'Reset', zhTW: '重置', zhCN: '重置'),
+                                style: TextStyle(
+                                  color: Colors.red.withValues(alpha: 0.7),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                      if (confirm == true) {
+                        if (!context.mounted) return;
+                        final n = await EmotionCoordinates.resetAll(
+                          widget.characterId,
+                        );
+                        if (!context.mounted) return;
+                        showThemedPillNotice(
+                          context,
+                          L.pick(
+                            en: 'Reset $n emotion points',
+                            zhTW: '已重置 $n 個情緒點',
+                            zhCN: '已重置 $n 个情绪点',
+                          ),
+                          duration: const Duration(milliseconds: 1200),
+                        );
+                        setState(() => _loading = true);
+                        _load();
+                      }
+                    },
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 6,
+                        vertical: 3,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.red.withValues(alpha: 0.08),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.restart_alt_rounded,
+                            size: 14,
+                            color: Colors.red.withValues(alpha: 0.5),
+                          ),
+                          const SizedBox(width: 2),
+                          Text(
+                            L.pick(en: 'Reset', zhTW: '重置', zhCN: '重置'),
                             style: TextStyle(
                               fontSize: 10,
-                              color: YanciTheme.accent,
-                            ),
-                          ),
-                        );
-                      },
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 8),
-              Semantics(
-                button: true,
-                label: L.pick(
-                  en: 'Reset Mood Map',
-                  zhTW: '重置心境圖譜',
-                  zhCN: '重置心境图谱',
-                ),
-                child: GestureDetector(
-                  onTap: () async {
-                    final confirm = await showDialog<bool>(
-                      context: context,
-                      builder: (ctx) => AlertDialog(
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        title: Text(
-                          L.pick(
-                            en: 'Reset Mood Map?',
-                            zhTW: '重置心境圖譜？',
-                            zhCN: '重置心境图谱？',
-                          ),
-                          style: TextStyle(
-                            fontSize: 14,
-                            color: YanciTheme.textPrimary,
-                          ),
-                        ),
-                        content: Text(
-                          L.pick(
-                            en: 'All active emotion points will be cleared.',
-                            zhTW: '所有活躍情緒點都會被清除。',
-                            zhCN: '所有活跃情绪点都会被清除。',
-                          ),
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: YanciTheme.textSecondary,
-                          ),
-                        ),
-                        actions: [
-                          TextButton(
-                            onPressed: () => Navigator.pop(ctx, false),
-                            child: Text(
-                              L.pick(en: 'Cancel', zhTW: '取消', zhCN: '取消'),
-                              style: TextStyle(color: YanciTheme.textSecondary),
-                            ),
-                          ),
-                          TextButton(
-                            onPressed: () => Navigator.pop(ctx, true),
-                            child: Text(
-                              L.pick(en: 'Reset', zhTW: '重置', zhCN: '重置'),
-                              style: TextStyle(
-                                color: Colors.red.withValues(alpha: 0.7),
-                              ),
+                              color: Colors.red.withValues(alpha: 0.5),
                             ),
                           ),
                         ],
                       ),
-                    );
-                    if (confirm == true) {
-                      if (!context.mounted) return;
-                      final n = await EmotionCoordinates.resetAll(
-                        widget.characterId,
-                      );
-                      if (!context.mounted) return;
-                      showThemedPillNotice(
-                        context,
-                        L.pick(
-                          en: 'Reset $n emotion points',
-                          zhTW: '已重置 $n 個情緒點',
-                          zhCN: '已重置 $n 个情绪点',
-                        ),
-                        duration: const Duration(milliseconds: 1200),
-                      );
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Semantics(
+                  button: true,
+                  label: L.pick(
+                    en: 'Refresh Mood Map',
+                    zhTW: '重新整理心境圖譜',
+                    zhCN: '刷新心境图谱',
+                  ),
+                  child: GestureDetector(
+                    onTap: () {
                       setState(() => _loading = true);
                       _load();
-                    }
-                  },
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 6,
-                      vertical: 3,
-                    ),
-                    decoration: BoxDecoration(
-                      color: Colors.red.withValues(alpha: 0.08),
-                      borderRadius: BorderRadius.circular(6),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          Icons.restart_alt_rounded,
-                          size: 14,
-                          color: Colors.red.withValues(alpha: 0.5),
-                        ),
-                        const SizedBox(width: 2),
-                        Text(
-                          L.pick(en: 'Reset', zhTW: '重置', zhCN: '重置'),
-                          style: TextStyle(
-                            fontSize: 10,
-                            color: Colors.red.withValues(alpha: 0.5),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 6),
-              Semantics(
-                button: true,
-                label: L.pick(
-                  en: 'Refresh Mood Map',
-                  zhTW: '重新整理心境圖譜',
-                  zhCN: '刷新心境图谱',
-                ),
-                child: GestureDetector(
-                  onTap: () {
-                    setState(() => _loading = true);
-                    _load();
-                  },
-                  child: Container(
-                    padding: const EdgeInsets.all(4),
-                    decoration: BoxDecoration(
-                      color: YanciTheme.accent.withValues(alpha: 0.08),
-                      borderRadius: BorderRadius.circular(6),
-                    ),
-                    child: Icon(
-                      Icons.refresh_rounded,
-                      size: 18,
-                      color: YanciTheme.accent.withValues(alpha: 0.6),
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 10),
-
-          // ═══ 座標平面 ═══
-          AspectRatio(
-            aspectRatio: 1.6,
-            child: _loading
-                ? const Center(
-                    child: SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    ),
-                  )
-                : CustomPaint(
-                    painter: _PlanePainter(
-                      points: _points,
-                      axisColor: YanciTheme.textSecondary.withValues(
-                        alpha: 0.25,
+                    },
+                    child: Container(
+                      padding: const EdgeInsets.all(4),
+                      decoration: BoxDecoration(
+                        color: YanciTheme.accent.withValues(alpha: 0.08),
+                        borderRadius: BorderRadius.circular(6),
                       ),
-                      lineColor: YanciTheme.accent.withValues(alpha: 0.35),
-                    ),
-                    child: const SizedBox.expand(),
-                  ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            L.pick(
-              en: 'x: valence −/＋ · y: arousal −/＋ · line = chaos shape (24h)',
-              zhTW: 'x 效價 負/正 · y 喚醒 負/正 · 連線 = 混亂的形狀（24h 內）',
-              zhCN: 'x 效价 负/正 · y 唤醒 负/正 · 连线 = 混乱的形状（24h 内）',
-            ),
-            style: TextStyle(
-              fontSize: 9,
-              color: YanciTheme.textSecondary.withValues(alpha: 0.4),
-            ),
-          ),
-          const SizedBox(height: 10),
-
-          // ═══ 圖例 ═══
-          if (_points.isNotEmpty)
-            Wrap(
-              spacing: 8,
-              runSpacing: 4,
-              children: _points
-                  .map((p) => p.type)
-                  .toSet()
-                  .map(
-                    (t) => Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Container(
-                          width: 7,
-                          height: 7,
-                          decoration: BoxDecoration(
-                            color: dimColors[t] ?? Colors.grey,
-                            shape: BoxShape.circle,
-                          ),
-                        ),
-                        const SizedBox(width: 3),
-                        Text(
-                          EmotionCoordinates.displayDimension(t),
-                          style: TextStyle(
-                            fontSize: 10,
-                            color: YanciTheme.textSecondary,
-                          ),
-                        ),
-                      ],
-                    ),
-                  )
-                  .toList(),
-            ),
-          const SizedBox(height: 10),
-
-          // ═══ 五維進度條 ═══
-          ...kV2Dimensions.map((d) {
-            final v = _bars[d] ?? 0;
-            final color = dimColors[d] ?? Colors.grey;
-            final isLongTerm = kLongTermDimensions.contains(d);
-            return Padding(
-              padding: const EdgeInsets.only(bottom: 5),
-              child: Row(
-                children: [
-                  SizedBox(
-                    width: dimensionLabelWidth,
-                    child: Text(
-                      EmotionCoordinates.displayDimension(d),
-                      maxLines: 2,
-                      style: TextStyle(
-                        fontSize: 10,
-                        color: YanciTheme.textSecondary,
+                      child: Icon(
+                        Icons.refresh_rounded,
+                        size: 18,
+                        color: YanciTheme.accent.withValues(alpha: 0.6),
                       ),
                     ),
                   ),
-                  Expanded(
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(3),
-                      child: Container(
-                        height: 5,
-                        color: Colors.white.withValues(alpha: 0.08),
-                        child: Stack(
-                          children: [
-                            // 條填充（從左往右，不需中軸——V2 無效價方向分離）
-                            FractionallySizedBox(
-                              alignment: Alignment.centerLeft,
-                              widthFactor: (v / 100).clamp(0.0, 1.0),
-                              child: Container(
-                                color: color.withValues(alpha: 0.85),
-                              ),
+                ),
+                const SizedBox(width: 2),
+                IconButton(
+                  key: const ValueKey('emotion-panel-collapse'),
+                  onPressed: _collapse,
+                  tooltip: L.pick(en: 'Collapse', zhTW: '收起', zhCN: '收起'),
+                  visualDensity: VisualDensity.compact,
+                  icon: Icon(
+                    Icons.expand_less_rounded,
+                    size: 18,
+                    color: YanciTheme.textSecondary.withValues(alpha: 0.42),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+
+            // ═══ 座標平面 ═══
+            AspectRatio(
+              aspectRatio: 1.6,
+              child: _loading
+                  ? const Center(
+                      child: SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                    )
+                  : CustomPaint(
+                      painter: _PlanePainter(
+                        points: _points,
+                        axisColor: YanciTheme.textSecondary.withValues(
+                          alpha: 0.25,
+                        ),
+                        lineColor: YanciTheme.accent.withValues(alpha: 0.35),
+                      ),
+                      child: const SizedBox.expand(),
+                    ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              L.pick(
+                en: 'x: valence −/＋ · y: arousal −/＋ · line = chaos shape (24h)',
+                zhTW: 'x 效價 負/正 · y 喚醒 負/正 · 連線 = 混亂的形狀（24h 內）',
+                zhCN: 'x 效价 负/正 · y 唤醒 负/正 · 连线 = 混乱的形状（24h 内）',
+              ),
+              style: TextStyle(
+                fontSize: 9,
+                color: YanciTheme.textSecondary.withValues(alpha: 0.4),
+              ),
+            ),
+            const SizedBox(height: 10),
+
+            // ═══ 圖例 ═══
+            if (_points.isNotEmpty)
+              Wrap(
+                spacing: 8,
+                runSpacing: 4,
+                children: _points
+                    .map((p) => p.type)
+                    .toSet()
+                    .map(
+                      (t) => Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Container(
+                            width: 7,
+                            height: 7,
+                            decoration: BoxDecoration(
+                              color: dimColors[t] ?? Colors.grey,
+                              shape: BoxShape.circle,
                             ),
-                            // 長期維度標記：85 持久線
-                            if (isLongTerm)
-                              Positioned(
-                                left: null,
-                                right: null,
-                                child: FractionallySizedBox(
-                                  widthFactor: 0.85,
-                                  alignment: Alignment.centerLeft,
-                                  child: Align(
-                                    alignment: Alignment.centerRight,
-                                    child: Container(
-                                      width: 1,
-                                      color: Colors.white.withValues(
-                                        alpha: 0.2,
+                          ),
+                          const SizedBox(width: 3),
+                          Text(
+                            EmotionCoordinates.displayDimension(t),
+                            style: TextStyle(
+                              fontSize: 10,
+                              color: YanciTheme.textSecondary,
+                            ),
+                          ),
+                        ],
+                      ),
+                    )
+                    .toList(),
+              ),
+            const SizedBox(height: 10),
+
+            // ═══ 五維進度條 ═══
+            ...kV2Dimensions.map((d) {
+              final v = _bars[d] ?? 0;
+              final color = dimColors[d] ?? Colors.grey;
+              final isLongTerm = kLongTermDimensions.contains(d);
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 5),
+                child: Row(
+                  children: [
+                    SizedBox(
+                      width: dimensionLabelWidth,
+                      child: Text(
+                        EmotionCoordinates.displayDimension(d),
+                        maxLines: 2,
+                        style: TextStyle(
+                          fontSize: 10,
+                          color: YanciTheme.textSecondary,
+                        ),
+                      ),
+                    ),
+                    Expanded(
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(3),
+                        child: Container(
+                          height: 5,
+                          color: Colors.white.withValues(alpha: 0.08),
+                          child: Stack(
+                            children: [
+                              // 條填充（從左往右，不需中軸——V2 無效價方向分離）
+                              FractionallySizedBox(
+                                alignment: Alignment.centerLeft,
+                                widthFactor: (v / 100).clamp(0.0, 1.0),
+                                child: Container(
+                                  color: color.withValues(alpha: 0.85),
+                                ),
+                              ),
+                              // 長期維度標記：85 持久線
+                              if (isLongTerm)
+                                Positioned(
+                                  left: null,
+                                  right: null,
+                                  child: FractionallySizedBox(
+                                    widthFactor: 0.85,
+                                    alignment: Alignment.centerLeft,
+                                    child: Align(
+                                      alignment: Alignment.centerRight,
+                                      child: Container(
+                                        width: 1,
+                                        color: Colors.white.withValues(
+                                          alpha: 0.2,
+                                        ),
                                       ),
                                     ),
                                   ),
                                 ),
-                              ),
-                          ],
+                            ],
+                          ),
                         ),
                       ),
                     ),
-                  ),
-                  SizedBox(
-                    width: 30,
-                    child: Text(
-                      v > 0 ? v.round().toString() : '—',
-                      textAlign: TextAlign.right,
-                      style: TextStyle(
-                        fontSize: 9,
-                        color: YanciTheme.textSecondary.withValues(
-                          alpha: v > 0 ? 0.8 : 0.3,
+                    SizedBox(
+                      width: 30,
+                      child: Text(
+                        v > 0 ? v.round().toString() : '—',
+                        textAlign: TextAlign.right,
+                        style: TextStyle(
+                          fontSize: 9,
+                          color: YanciTheme.textSecondary.withValues(
+                            alpha: v > 0 ? 0.8 : 0.3,
+                          ),
                         ),
                       ),
                     ),
-                  ),
-                  // 長期維度標註 avg
-                  if (isLongTerm)
-                    Text(
-                      L.pick(en: ' avg', zhTW: ' 均值', zhCN: ' 均值'),
-                      style: TextStyle(
-                        fontSize: 7,
-                        color: YanciTheme.textSecondary.withValues(alpha: 0.3),
-                      ),
-                    )
-                  else
-                    const SizedBox(width: 18),
-                ],
-              ),
-            );
-          }),
-        ],
+                    // 長期維度標註 avg
+                    if (isLongTerm)
+                      Text(
+                        L.pick(en: ' avg', zhTW: ' 均值', zhCN: ' 均值'),
+                        style: TextStyle(
+                          fontSize: 7,
+                          color: YanciTheme.textSecondary.withValues(
+                            alpha: 0.3,
+                          ),
+                        ),
+                      )
+                    else
+                      const SizedBox(width: 18),
+                  ],
+                ),
+              );
+            }),
+          ],
+        ),
       ),
     );
   }

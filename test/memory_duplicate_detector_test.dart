@@ -5,8 +5,8 @@ import 'package:project_yanci/services/memory_duplicate_detector.dart';
 void main() {
   test('exact content ignores app date prefix, punctuation and full width', () {
     final assessment = MemoryDuplicateDetector.assess(
-      memory(null, content: '[8/6] 昭昭喜歡喝熱牛奶。', triggers: '熱牛奶'),
-      [memory(1, content: '[8/1] 昭昭喜歡喝熱牛奶！', triggers: '熱牛奶')],
+      memory(null, content: '[8/6] 小禾喜歡喝熱牛奶。', triggers: '熱牛奶'),
+      [memory(1, content: '[8/1] 小禾喜歡喝熱牛奶！', triggers: '熱牛奶')],
     );
 
     expect(assessment.disposition, MemoryDuplicateDisposition.clearDuplicate);
@@ -15,8 +15,8 @@ void main() {
 
   test('similar wording becomes a review candidate instead of auto skip', () {
     final assessment = MemoryDuplicateDetector.assess(
-      memory(null, content: '昭昭喜歡下雨天在家裡看電影', triggers: '下雨天'),
-      [memory(1, content: '昭昭很喜歡下雨天窩在家裡慢慢看電影', triggers: '下雨天,電影')],
+      memory(null, content: '小禾喜歡下雨天在家裡看電影', triggers: '下雨天'),
+      [memory(1, content: '小禾很喜歡下雨天窩在家裡慢慢看電影', triggers: '下雨天,電影')],
     );
 
     expect(
@@ -28,12 +28,12 @@ void main() {
 
   test('negation and number changes can never be clear duplicates', () {
     final negation = MemoryDuplicateDetector.assess(
-      memory(null, content: '昭昭不喜歡睡前喝熱牛奶'),
-      [memory(1, content: '昭昭喜歡睡前喝熱牛奶')],
+      memory(null, content: '小禾不喜歡睡前喝熱牛奶'),
+      [memory(1, content: '小禾喜歡睡前喝熱牛奶')],
     );
     final number = MemoryDuplicateDetector.assess(
-      memory(null, content: '昭昭每天吃3顆藥'),
-      [memory(2, content: '昭昭每天吃2顆藥')],
+      memory(null, content: '小禾每天吃3顆藥'),
+      [memory(2, content: '小禾每天吃2顆藥')],
     );
 
     expect(negation.disposition, MemoryDuplicateDisposition.possibleDuplicate);
@@ -44,8 +44,8 @@ void main() {
 
   test('unrelated content is a new memory', () {
     final assessment = MemoryDuplicateDetector.assess(
-      memory(null, content: '昭昭今天收養了一隻橘貓', triggers: '橘貓'),
-      [memory(1, content: '昭昭喜歡喝熱牛奶', triggers: '熱牛奶')],
+      memory(null, content: '小禾今天收養了一隻橘貓', triggers: '橘貓'),
+      [memory(1, content: '小禾喜歡喝熱牛奶', triggers: '熱牛奶')],
     );
 
     expect(assessment.disposition, MemoryDuplicateDisposition.newMemory);
@@ -54,8 +54,8 @@ void main() {
 
   test('permanent mismatch requires review even when content is exact', () {
     final assessment = MemoryDuplicateDetector.assess(
-      memory(null, content: '昭昭答應週末一起看電影', permanent: true),
-      [memory(1, content: '昭昭答應週末一起看電影')],
+      memory(null, content: '小禾答應週末一起看電影', permanent: true),
+      [memory(1, content: '小禾答應週末一起看電影')],
     );
 
     expect(

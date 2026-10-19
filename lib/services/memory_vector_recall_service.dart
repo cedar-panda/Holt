@@ -12,6 +12,7 @@ import '../memory/database.dart';
 import '../models/context_mode.dart';
 import '../models/memory.dart';
 import 'api_adapter.dart';
+import 'app_error_log_service.dart';
 import 'openai_compatible_service.dart';
 import 'settings/api_settings.dart';
 import 'settings/memory_settings.dart';
@@ -154,6 +155,13 @@ abstract final class MemoryVectorRecallService {
         stackTrace: stackTrace,
         name: 'MemoryVectorRecall',
       );
+      await AppErrorLogService.record(
+        error: error,
+        trigger: 'functional_vector_model_recall',
+        source: 'functional_model',
+        provider: selection.provider,
+        model: selection.model,
+      );
       MemoryDebugLog.record(
         stage: 'hybrid_recall_fallback',
         contextMode: contextMode.storageValue,
@@ -209,6 +217,13 @@ abstract final class MemoryVectorRecallService {
         );
       } catch (error) {
         final scope = group.first;
+        await AppErrorLogService.record(
+          error: error,
+          trigger: 'functional_vector_model_request',
+          source: 'functional_model',
+          provider: selection.provider,
+          model: selection.model,
+        );
         MemoryDebugLog.record(
           stage: 'vector_curation_error',
           contextMode: scope.contextMode.storageValue,
@@ -535,11 +550,15 @@ abstract final class MemoryVectorRecallService {
             )
             .timeout(const Duration(seconds: 30));
       } else {
-        final uri = provider == 'openrouter'
-            ? Uri.parse('https://openrouter.ai/api/v1/embeddings')
-            : OpenAICompatibleService.embeddingsUriForBase(
-                await ApiSettings.getOaiCompatBaseUrl(),
-              );
+        final uri = switch (provider) {
+          'openrouter' => Uri.parse('https://openrouter.ai/api/v1/embeddings'),
+          'deepinfra' => Uri.parse(
+            'https://api.deepinfra.com/v1/openai/embeddings',
+          ),
+          _ => OpenAICompatibleService.embeddingsUriForBase(
+            await ApiSettings.getOaiCompatBaseUrl(),
+          ),
+        };
         response = await client
             .post(
               uri,

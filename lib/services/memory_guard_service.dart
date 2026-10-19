@@ -1186,12 +1186,32 @@ class MemoryGuardService {
     if (ids.isEmpty) return;
     final db = await DatabaseHelper.database;
     final placeholders = List.filled(ids.length, '?').join(',');
-    await db.rawUpdate(
-      'UPDATE pending_memory_actions SET source_message_id = ? '
-      'WHERE id IN ($placeholders) AND source_conversation_id = ? '
-      'AND source_message_id IS NULL',
-      [messageId, ...ids, conversationId],
-    );
+    await db.transaction<void>((txn) async {
+      final message = await txn.query(
+        'messages',
+        columns: ['id'],
+        where: 'id = ? AND conversation_id = ?',
+        whereArgs: [messageId, conversationId],
+        limit: 1,
+      );
+      if (message.isEmpty) {
+        // Reroll/delete may win the race before proposal binding completes.
+        await txn.delete(
+          'pending_memory_actions',
+          where:
+              'id IN ($placeholders) AND source_conversation_id = ? '
+              "AND source_message_id IS NULL AND status IN ('pending','snoozed','failed','stale')",
+          whereArgs: [...ids, conversationId],
+        );
+        return;
+      }
+      await txn.rawUpdate(
+        'UPDATE pending_memory_actions SET source_message_id = ? '
+        'WHERE id IN ($placeholders) AND source_conversation_id = ? '
+        'AND source_message_id IS NULL',
+        [messageId, ...ids, conversationId],
+      );
+    });
   }
 
   static Future<List<MemoryActionProposal>> listForReview(

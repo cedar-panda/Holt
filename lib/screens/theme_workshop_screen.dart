@@ -30,6 +30,7 @@ class _ThemeWorkshopScreenState extends State<ThemeWorkshopScreen> {
   late double _bubbleRadius;
   late bool _starEnabled;
   late int _starDensity;
+  late String _particleEffect;
   late bool _aiBubbleFlat;
   String _homeBgPath = '';
   double _homeBgScale = 1.0;
@@ -63,6 +64,7 @@ class _ThemeWorkshopScreenState extends State<ThemeWorkshopScreen> {
     _bubbleRadius = YanciTheme.bubbleRadius;
     _starEnabled = YanciTheme.starEnabled;
     _starDensity = YanciTheme.starDensity;
+    _particleEffect = YanciTheme.particleEffect;
     _aiBubbleFlat = YanciTheme.aiBubbleFlat;
     _homeBgPath = YanciTheme.homeBackgroundImagePath;
     _homeBgScale = YanciTheme.homeBackgroundImageScale;
@@ -216,7 +218,12 @@ class _ThemeWorkshopScreenState extends State<ThemeWorkshopScreen> {
   void _applyPreset(String id) {
     YanciTheme.setPreset(id);
     ThemeSettings.saveThemePreset(id);
-    setState(() => _selectedId = id);
+    setState(() {
+      _selectedId = id;
+      if (YanciTheme.particleEffectOverride == null) {
+        _particleEffect = YanciTheme.particleEffect;
+      }
+    });
     _notifyThemeChanged();
     ThemeSettings.restoreThemeBubbleColors(id).then((_) {
       if (!mounted || _selectedId != id) return;
@@ -1530,12 +1537,7 @@ class _ThemeWorkshopScreenState extends State<ThemeWorkshopScreen> {
           ? null
           : BoxDecoration(
               color: color,
-              borderRadius: BorderRadius.only(
-                topLeft: Radius.circular(r),
-                topRight: Radius.circular(r),
-                bottomLeft: Radius.circular(isUser ? r : 2),
-                bottomRight: Radius.circular(isUser ? 2 : r),
-              ),
+              borderRadius: BorderRadius.circular(r),
               border: Border.all(
                 color: borderColor.withValues(alpha: 0.5),
                 width: 0.4,
@@ -1673,12 +1675,7 @@ class _ThemeWorkshopScreenState extends State<ThemeWorkshopScreen> {
           ? null
           : BoxDecoration(
               color: color,
-              borderRadius: BorderRadius.only(
-                topLeft: Radius.circular(radius),
-                topRight: Radius.circular(radius),
-                bottomLeft: Radius.circular(isUser ? radius : 4),
-                bottomRight: Radius.circular(isUser ? 4 : radius),
-              ),
+              borderRadius: BorderRadius.circular(radius),
               border: Border.all(
                 color: borderColor.withValues(alpha: 0.5),
                 width: 0.5,
@@ -1759,12 +1756,7 @@ class _ThemeWorkshopScreenState extends State<ThemeWorkshopScreen> {
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
         decoration: BoxDecoration(
           color: color,
-          borderRadius: BorderRadius.only(
-            topLeft: Radius.circular(r),
-            topRight: Radius.circular(r),
-            bottomLeft: Radius.circular(isUser ? r : 3),
-            bottomRight: Radius.circular(isUser ? 3 : r),
-          ),
+          borderRadius: BorderRadius.circular(r),
           border: Border.all(
             color:
                 (isUser
@@ -2196,53 +2188,37 @@ class _ThemeWorkshopScreenState extends State<ThemeWorkshopScreen> {
   }
 
   Widget _buildBackgroundMenuButton() {
-    final label = L.pick(en: 'Background', zhTW: '背景', zhCN: '背景');
-    return Semantics(
-      button: true,
-      label: label,
-      child: Tooltip(
-        message: label,
-        child: Material(
-          color: Colors.transparent,
-          child: InkWell(
-            key: const ValueKey('theme-image-background-entry'),
-            onTap: _openBackgroundPage,
-            customBorder: const CircleBorder(),
-            child: Container(
-              width: 84,
-              height: 84,
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
-              decoration: BoxDecoration(
-                color: Colors.transparent,
-                shape: BoxShape.circle,
-                border: Border.all(
-                  color: YanciTheme.accent.withValues(alpha: 0.52),
-                  width: 1.2,
-                ),
-              ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(
-                    Icons.image_outlined,
-                    size: 24,
-                    color: YanciTheme.accent,
-                  ),
-                  const SizedBox(height: 5),
-                  Text(
+    final label = L.pick(en: 'Custom Background', zhTW: '自訂背景', zhCN: '自定义背景');
+    return Transform.translate(
+      offset: const Offset(0, 8),
+      child: Semantics(
+        button: true,
+        label: label,
+        child: Tooltip(
+          message: label,
+          child: Material(
+            color: Colors.transparent,
+            child: InkWell(
+              key: const ValueKey('theme-image-background-entry'),
+              onTap: _openBackgroundPage,
+              borderRadius: BorderRadius.circular(999),
+              child: SizedBox(
+                width: 156,
+                height: 44,
+                child: Center(
+                  child: Text(
                     label,
-                    maxLines: 2,
-                    overflow: TextOverflow.fade,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                     textAlign: TextAlign.center,
                     style: TextStyle(
-                      fontSize: L.locale == 'en' ? 10 : 12,
-                      height: 1.05,
-                      fontWeight: FontWeight.w500,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                      letterSpacing: 0.8,
                       color: YanciTheme.accent,
                     ),
                   ),
-                ],
+                ),
               ),
             ),
           ),
@@ -2856,9 +2832,10 @@ class _ThemeWorkshopScreenState extends State<ThemeWorkshopScreen> {
                   ),
                 ),
                 const Spacer(),
-                SizedBox(
-                  height: 24,
-                  child: Switch(
+                Transform.scale(
+                  scale: 0.78,
+                  alignment: Alignment.centerRight,
+                  child: Switch.adaptive(
                     value: _starEnabled,
                     activeThumbColor: preset.accent,
                     onChanged: (v) {
@@ -2872,61 +2849,67 @@ class _ThemeWorkshopScreenState extends State<ThemeWorkshopScreen> {
               ],
             ),
           ),
-          // 密度 slider (只在啟用時顯示)
+          // 樣式 tabs 與密度 slider（只在啟用時顯示）
           AnimatedCrossFade(
             firstChild: const SizedBox.shrink(),
             secondChild: Padding(
-              padding: const EdgeInsets.only(left: 8, right: 4),
-              child: Row(
+              padding: const EdgeInsets.only(left: 8, right: 4, top: 2),
+              child: Column(
                 children: [
-                  SizedBox(
-                    width: 56,
-                    child: Text(
-                      L.pick(en: 'Density', zhTW: '密度'),
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: preset.textSecondary.withValues(alpha: 0.7),
-                      ),
-                    ),
-                  ),
-                  Expanded(
-                    child: SliderTheme(
-                      data: SliderThemeData(
-                        trackHeight: 3,
-                        thumbShape: const RoundSliderThumbShape(
-                          enabledThumbRadius: 6,
+                  _buildParticleEffectTabs(preset),
+                  const SizedBox(height: 6),
+                  Row(
+                    children: [
+                      SizedBox(
+                        width: 56,
+                        child: Text(
+                          L.pick(en: 'Density', zhTW: '密度'),
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: preset.textSecondary.withValues(alpha: 0.7),
+                          ),
                         ),
-                        activeTrackColor: preset.accent,
-                        inactiveTrackColor: preset.textSecondary.withValues(
-                          alpha: 0.15,
+                      ),
+                      Expanded(
+                        child: SliderTheme(
+                          data: SliderThemeData(
+                            trackHeight: 3,
+                            thumbShape: const RoundSliderThumbShape(
+                              enabledThumbRadius: 6,
+                            ),
+                            activeTrackColor: preset.accent,
+                            inactiveTrackColor: preset.textSecondary.withValues(
+                              alpha: 0.15,
+                            ),
+                            thumbColor: preset.accent,
+                            overlayColor: preset.accent.withValues(alpha: 0.12),
+                          ),
+                          child: Slider(
+                            value: _starDensity.toDouble(),
+                            min: 1,
+                            max: 50,
+                            divisions: 49,
+                            onChanged: (v) {
+                              setState(() => _starDensity = v.round());
+                              YanciTheme.setStarDensity(v.round());
+                              ThemeSettings.saveStarDensity(v.round());
+                              _notifyThemeChanged();
+                            },
+                          ),
                         ),
-                        thumbColor: preset.accent,
-                        overlayColor: preset.accent.withValues(alpha: 0.12),
                       ),
-                      child: Slider(
-                        value: _starDensity.toDouble(),
-                        min: 1,
-                        max: 50,
-                        divisions: 49,
-                        onChanged: (v) {
-                          setState(() => _starDensity = v.round());
-                          YanciTheme.starDensity = v.round();
-                          ThemeSettings.saveStarDensity(v.round());
-                          _notifyThemeChanged();
-                        },
+                      SizedBox(
+                        width: 32,
+                        child: Text(
+                          '$_starDensity',
+                          textAlign: TextAlign.right,
+                          style: TextStyle(
+                            fontSize: 10,
+                            color: preset.textSecondary.withValues(alpha: 0.5),
+                          ),
+                        ),
                       ),
-                    ),
-                  ),
-                  SizedBox(
-                    width: 32,
-                    child: Text(
-                      '$_starDensity',
-                      textAlign: TextAlign.right,
-                      style: TextStyle(
-                        fontSize: 10,
-                        color: preset.textSecondary.withValues(alpha: 0.5),
-                      ),
-                    ),
+                    ],
                   ),
                 ],
               ),
@@ -2936,6 +2919,101 @@ class _ThemeWorkshopScreenState extends State<ThemeWorkshopScreen> {
                 : CrossFadeState.showFirst,
             duration: const Duration(milliseconds: 200),
           ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildParticleEffectTabs(ThemePreset preset) {
+    final reduceMotion = MediaQuery.disableAnimationsOf(context);
+    const effects = <_ParticleEffectOption>[
+      _ParticleEffectOption('neural', 'Neural', '神經網路', '神经网络'),
+      _ParticleEffectOption('stars', 'Stars', '星光', '星光'),
+      _ParticleEffectOption('rain', 'Rain', '雨絲', '雨丝'),
+      _ParticleEffectOption('ripple', 'Ripples', '偶發漣漪', '偶发涟漪'),
+      _ParticleEffectOption('ember', 'Embers', '逆流餘燼', '逆流余烬'),
+      _ParticleEffectOption('dandelion', 'Dandelion', '蒲公英絨', '蒲公英绒'),
+    ];
+
+    Widget buildTab(_ParticleEffectOption option) {
+      final selected = option.id == _particleEffect;
+      final label = L.pick(en: option.en, zhTW: option.zhTW, zhCN: option.zhCN);
+      return Semantics(
+        button: true,
+        selected: selected,
+        label: label,
+        child: InkWell(
+          key: ValueKey('particle-effect-${option.id}'),
+          borderRadius: BorderRadius.circular(14),
+          onTap: () {
+            if (selected) return;
+            setState(() => _particleEffect = option.id);
+            YanciTheme.setParticleEffect(option.id);
+            ThemeSettings.saveParticleEffect(option.id);
+            _notifyThemeChanged();
+          },
+          child: AnimatedContainer(
+            duration: reduceMotion
+                ? Duration.zero
+                : const Duration(milliseconds: 180),
+            curve: Curves.easeOutCubic,
+            height: 44,
+            alignment: Alignment.center,
+            padding: const EdgeInsets.symmetric(horizontal: 6),
+            decoration: BoxDecoration(
+              color: selected
+                  ? preset.accent.withValues(alpha: 0.10)
+                  : Colors.transparent,
+              borderRadius: BorderRadius.circular(14),
+              border: Border(
+                bottom: BorderSide(
+                  color: selected ? preset.accent : Colors.transparent,
+                  width: 1.5,
+                ),
+              ),
+            ),
+            child: Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 10.5,
+                fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+                color: selected
+                    ? preset.accent
+                    : preset.textSecondary.withValues(alpha: 0.78),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    Widget buildRow(Iterable<_ParticleEffectOption> rowEffects) {
+      return Row(
+        children: rowEffects
+            .map(
+              (option) => Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 3),
+                  child: buildTab(option),
+                ),
+              ),
+            )
+            .toList(growable: false),
+      );
+    }
+
+    return Semantics(
+      container: true,
+      label: L.pick(en: 'Particle style', zhTW: '粒子特效樣式', zhCN: '粒子特效样式'),
+      child: Column(
+        key: const ValueKey('particle-effect-tabs'),
+        children: [
+          buildRow(effects.take(3)),
+          const SizedBox(height: 4),
+          buildRow(effects.skip(3)),
         ],
       ),
     );
@@ -3023,12 +3101,7 @@ class _ThemeWorkshopScreenState extends State<ThemeWorkshopScreen> {
                   ? null
                   : BoxDecoration(
                       color: YanciTheme.aiBubble,
-                      borderRadius: BorderRadius.only(
-                        topLeft: Radius.circular(r * 0.5),
-                        topRight: Radius.circular(r * 0.5),
-                        bottomLeft: const Radius.circular(4),
-                        bottomRight: Radius.circular(r * 0.5),
-                      ),
+                      borderRadius: BorderRadius.circular(r * 0.5),
                       border: Border.all(
                         color: preset.aiBubbleBorder.withValues(alpha: 0.5),
                         width: 0.5,
@@ -3062,12 +3135,7 @@ class _ThemeWorkshopScreenState extends State<ThemeWorkshopScreen> {
               constraints: const BoxConstraints(minWidth: 64),
               decoration: BoxDecoration(
                 color: YanciTheme.userBubble,
-                borderRadius: BorderRadius.only(
-                  topLeft: Radius.circular(r * 0.5),
-                  topRight: Radius.circular(r * 0.5),
-                  bottomLeft: Radius.circular(r * 0.5),
-                  bottomRight: const Radius.circular(4),
-                ),
+                borderRadius: BorderRadius.circular(r * 0.5),
                 border: Border.all(
                   color: preset.userBubbleBorder.withValues(alpha: 0.5),
                   width: 0.5,
@@ -3231,6 +3299,9 @@ class _ThemeWorkshopScreenState extends State<ThemeWorkshopScreen> {
       context: context,
       backgroundColor: Colors.transparent,
       isScrollControlled: true,
+      isDismissible: true,
+      enableDrag: true,
+      barrierColor: Colors.black.withValues(alpha: 0.26),
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setSheetState) => DraggableScrollableSheet(
           initialChildSize: 0.85,
@@ -3238,9 +3309,7 @@ class _ThemeWorkshopScreenState extends State<ThemeWorkshopScreen> {
           minChildSize: 0.5,
           builder: (ctx, scrollCtrl) => Container(
             decoration: BoxDecoration(
-              color: YanciTheme.isDark
-                  ? const Color(0xF0252228)
-                  : Colors.white.withValues(alpha: 0.97),
+              color: YanciTheme.surfacePanel,
               borderRadius: const BorderRadius.vertical(
                 top: Radius.circular(YanciTheme.radiusLg),
               ),
@@ -3813,7 +3882,7 @@ class _ThemeWorkshopScreenState extends State<ThemeWorkshopScreen> {
     }
     YanciTheme.bubbleOpacity = _bubbleOpacity;
     YanciTheme.bubbleRadius = _bubbleRadius;
-    YanciTheme.starDensity = _starDensity;
+    YanciTheme.setStarDensity(_starDensity);
     ThemeSettings.saveBubbleOpacity(_bubbleOpacity);
     ThemeSettings.saveBubbleRadius(_bubbleRadius);
     ThemeSettings.saveStarDensity(_starDensity);
@@ -3840,6 +3909,15 @@ class _ThemeWorkshopScreenState extends State<ThemeWorkshopScreen> {
     }
     return null;
   }
+}
+
+class _ParticleEffectOption {
+  final String id;
+  final String en;
+  final String zhTW;
+  final String zhCN;
+
+  const _ParticleEffectOption(this.id, this.en, this.zhTW, this.zhCN);
 }
 
 enum _ChatBackgroundColorRole { aiBubble, userBubble, bubbleText, thinkingText }

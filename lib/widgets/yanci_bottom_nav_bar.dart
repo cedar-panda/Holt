@@ -29,18 +29,14 @@ class YanciBottomNavBar extends StatelessWidget {
   final BackgroundForegroundPalette? backgroundPalette;
 
   static const _icons = [
-    Icons.key_rounded,
-    Icons.bar_chart_rounded,
-    Icons.auto_awesome,
     Icons.people_outline_rounded,
+    Icons.auto_awesome,
     Icons.account_circle_outlined,
   ];
 
   List<String> get _labels => [
-    L.get('nav_api'),
-    L.get('nav_usage'),
-    L.get('nav_chat'),
     L.get('nav_character'),
+    L.get('nav_chat'),
     L.get('nav_me'),
   ];
 

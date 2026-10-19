@@ -30,8 +30,8 @@ void main() {
     'existing duplicates become suggestions and never auto-archive',
     () async {
       final memories = <Memory>[
-        await _insert(db, '昭昭喜歡在雨天窩在家裡看電影', triggers: '雨天,電影'),
-        await _insert(db, '昭昭喜歡雨天在家裡看電影', triggers: '雨天,電影'),
+        await _insert(db, '小禾喜歡在雨天窩在家裡看電影', triggers: '雨天,電影'),
+        await _insert(db, '小禾喜歡雨天在家裡看電影', triggers: '雨天,電影'),
       ];
       final result = await ExistingMemoryScanner.scan(
         characterId: 'char-a',
@@ -60,8 +60,8 @@ void main() {
 
   test('state reversal is a conflict relation, not a merge proposal', () async {
     final memories = <Memory>[
-      await _insert(db, '昭昭現在喜歡喝咖啡', triggers: '咖啡'),
-      await _insert(db, '昭昭現在不再喜歡喝咖啡', triggers: '咖啡'),
+      await _insert(db, '小禾現在喜歡喝咖啡', triggers: '咖啡'),
+      await _insert(db, '小禾現在不再喜歡喝咖啡', triggers: '咖啡'),
     ];
 
     final result = await ExistingMemoryScanner.scan(
@@ -78,9 +78,9 @@ void main() {
 
   test('overlapping duplicate pairs become one grouped proposal', () async {
     final memories = <Memory>[
-      await _insert(db, '昭昭喜歡在雨天窩在家裡看電影', triggers: '雨天,電影'),
-      await _insert(db, '昭昭喜歡雨天在家裡看電影', triggers: '雨天,電影'),
-      await _insert(db, '昭昭很喜歡雨天窩在家裡看電影', triggers: '雨天,電影'),
+      await _insert(db, '小禾喜歡在雨天窩在家裡看電影', triggers: '雨天,電影'),
+      await _insert(db, '小禾喜歡雨天在家裡看電影', triggers: '雨天,電影'),
+      await _insert(db, '小禾很喜歡雨天窩在家裡看電影', triggers: '雨天,電影'),
     ];
 
     final result = await ExistingMemoryScanner.scan(
@@ -97,7 +97,7 @@ void main() {
   test('one memory can connect to every qualifying neighbor', () async {
     final memories = <Memory>[
       for (var index = 0; index < 6; index++)
-        await _insert(db, '昭昭喜歡雨天看電影', triggers: '雨天,電影'),
+        await _insert(db, '小禾喜歡雨天看電影', triggers: '雨天,電影'),
     ];
 
     final result = await ExistingMemoryScanner.scan(
@@ -117,9 +117,9 @@ void main() {
 
   test('older overlapping pair proposals are consolidated safely', () async {
     final memories = <Memory>[
-      await _insert(db, '昭昭喜歡在雨天窩在家裡看電影', triggers: '雨天,電影'),
-      await _insert(db, '昭昭喜歡雨天在家裡看電影', triggers: '雨天,電影'),
-      await _insert(db, '昭昭很喜歡雨天窩在家裡看電影', triggers: '雨天,電影'),
+      await _insert(db, '小禾喜歡在雨天窩在家裡看電影', triggers: '雨天,電影'),
+      await _insert(db, '小禾喜歡雨天在家裡看電影', triggers: '雨天,電影'),
+      await _insert(db, '小禾很喜歡雨天窩在家裡看電影', triggers: '雨天,電影'),
     ];
     await MemoryGuardService.proposeExistingDuplicate(
       characterId: 'char-a',
@@ -178,8 +178,8 @@ void main() {
 
   test('suggested relation can be upgraded to a duplicate proposal', () async {
     final memories = <Memory>[
-      await _insert(db, '昭昭喜歡在雨天窩在家裡看電影', triggers: '雨天,電影'),
-      await _insert(db, '昭昭喜歡雨天在家裡看電影', triggers: '雨天,電影'),
+      await _insert(db, '小禾喜歡在雨天窩在家裡看電影', triggers: '雨天,電影'),
+      await _insert(db, '小禾喜歡雨天在家裡看電影', triggers: '雨天,電影'),
     ];
     await DatabaseHelper.upsertSpiderWebRelation(
       'char-a',
@@ -209,8 +209,8 @@ void main() {
 
   test('explicit selected-memory scan merges duplicates immediately', () async {
     final memories = <Memory>[
-      await _insert(db, '昭昭喜歡在雨天窩在家裡看電影', triggers: '雨天,電影'),
-      await _insert(db, '昭昭喜歡雨天窩在家裡看電影', triggers: '雨天,電影'),
+      await _insert(db, '小禾喜歡在雨天窩在家裡看電影', triggers: '雨天,電影'),
+      await _insert(db, '小禾喜歡雨天窩在家裡看電影', triggers: '雨天,電影'),
     ];
 
     final result = await ExistingMemoryScanner.scan(
@@ -235,15 +235,15 @@ void main() {
     final memories = <Memory>[
       await _insert(
         db,
-        '沈昭嶼在渡口接過白鶴印信',
-        triggers: '渡口,白鶴印信',
+        '許清川在渡口接過青鸞印信',
+        triggers: '渡口,青鸞印信',
         contextMode: ContextMode.rp,
         continuityId: 'route-a',
       ),
       await _insert(
         db,
-        '沈昭嶼在渡口接過白鶴印信',
-        triggers: '渡口,白鶴印信',
+        '許清川在渡口接過青鸞印信',
+        triggers: '渡口,青鸞印信',
         contextMode: ContextMode.rp,
         continuityId: 'route-a',
       ),
@@ -292,8 +292,8 @@ void main() {
     '83 percent content similarity enters review across categories',
     () async {
       final memories = <Memory>[
-        await _insert(db, '昭昭喜歡電影', triggers: '電影', category: '偏好'),
-        await _insert(db, '昭昭喜歡影', triggers: '電影', category: '重要事件'),
+        await _insert(db, '小禾喜歡電影', triggers: '電影', category: '偏好'),
+        await _insert(db, '小禾喜歡影', triggers: '電影', category: '重要事件'),
       ];
 
       final result = await ExistingMemoryScanner.scan(
@@ -313,8 +313,8 @@ void main() {
 
   test('new dedupe policy never revives a rejected proposal', () async {
     final memories = <Memory>[
-      await _insert(db, '昭昭喜歡電影', triggers: '電影'),
-      await _insert(db, '昭昭喜歡影', triggers: '電影'),
+      await _insert(db, '小禾喜歡電影', triggers: '電影'),
+      await _insert(db, '小禾喜歡影', triggers: '電影'),
     ];
     await ExistingMemoryScanner.scan(characterId: 'char-a', memories: memories);
     final proposal = (await MemoryGuardService.listForReview('char-a')).single;
@@ -339,6 +339,24 @@ void main() {
       whereArgs: [proposal.id],
     )).single;
     expect(rejected['status'], MemoryActionProposal.statusRejected);
+  });
+
+  test('selected-memory preview does not persist local scan results', () async {
+    final memories = <Memory>[
+      await _insert(db, '小禾喜歡電影', triggers: '電影'),
+      await _insert(db, '小禾喜歡影', triggers: '電影'),
+    ];
+
+    final preview = await ExistingMemoryScanner.scan(
+      characterId: 'char-a',
+      memories: memories,
+      applyImmediately: false,
+      persistSuggestions: false,
+    );
+
+    expect(preview.relations, hasLength(1));
+    expect(await DatabaseHelper.getSpiderWebLinks('char-a'), isEmpty);
+    expect(await MemoryGuardService.listForReview('char-a'), isEmpty);
   });
 
   test('suggested relation never participates in neural propagation', () async {

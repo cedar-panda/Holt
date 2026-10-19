@@ -295,7 +295,7 @@ void main() {
           id: 71,
           conversationId: 'conv-a',
           characterId: 'char-a',
-          text: '晏辭，你昨天是生理期第二天。我稱呼晏辭為大小姐。',
+          text: '顧遠，你昨天是生理期第二天。我稱呼顧遠為大小姐。',
           isUser: true,
           createdAt: DateTime(2026, 7, 18, 20, 30),
         ),
@@ -314,7 +314,7 @@ void main() {
             occurredOn: '2026-07-18',
             dateBasis: 'message_time',
             key: '生理週期',
-            value: '晏辭處於生理期第二天',
+            value: '顧遠處於生理期第二天',
             evidence: '你昨天是生理期第二天',
           ),
           TimelineEventCandidate(
@@ -323,8 +323,8 @@ void main() {
             sourceMessageIds: [71],
             occurredOn: '2026-07-18',
             dateBasis: 'message_time',
-            value: '昭昭稱呼晏辭為大小姐',
-            evidence: '我稱呼晏辭為大小姐',
+            value: '小禾稱呼顧遠為大小姐',
+            evidence: '我稱呼顧遠為大小姐',
           ),
         ],
       );
@@ -375,7 +375,7 @@ void main() {
             occurredOn: '2026-07-18',
             dateBasis: 'message_time',
             key: '生理週期',
-            value: '晏辭仍在生理期',
+            value: '顧遠仍在生理期',
             evidence: '你今天還是生理期',
           ),
         ],
@@ -411,7 +411,7 @@ void main() {
           occurredOn: '2026-07-18',
           dateBasis: 'message_time',
           key: '生理週期',
-          value: '晏辭仍在生理期',
+          value: '顧遠仍在生理期',
           // 模型即使漏引問號，本地仍會檢查完整來源消息。
           evidence: '你今天還是生理期',
         ),
@@ -454,7 +454,7 @@ void main() {
               occurredOn: '2026-07-18',
               dateBasis: 'relative',
               key: '健康',
-              value: '晏辭感冒',
+              value: '顧遠感冒',
               evidence: '你今天感冒了',
             ),
           ],
@@ -473,7 +473,7 @@ void main() {
               occurredOn: '2026-07-17',
               dateBasis: 'relative',
               key: '健康',
-              value: '晏辭健康正常',
+              value: '顧遠健康正常',
               evidence: '你昨天還很健康',
             ),
           ],
@@ -482,7 +482,7 @@ void main() {
       );
 
       final states = await CharacterTimelineService.getStates('char-a');
-      expect(states.single['value'], '晏辭感冒');
+      expect(states.single['value'], '顧遠感冒');
       expect(states.single['source_message_id'], 81);
     },
   );
@@ -508,7 +508,7 @@ void main() {
             occurredOn: '2026-07-20',
             dateBasis: 'relative',
             key: '生理週期',
-            value: '晏辭處於生理期第三天',
+            value: '顧遠處於生理期第三天',
             evidence: '你今天是生理期第三天',
           ),
         ],
@@ -521,7 +521,7 @@ void main() {
       id: 92,
       conversationId: 'conv-a',
       characterId: 'char-a',
-      text: '晏辭說，生理期已於昨天（2026-07-22）結束。',
+      text: '顧遠說，生理期已於昨天（2026-07-22）結束。',
       isUser: false,
       createdAt: DateTime(2026, 7, 23, 18, 50),
     );

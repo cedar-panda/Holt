@@ -26,7 +26,7 @@ void main() {
     await L.setLocale('zh_TW');
   });
 
-  testWidgets('English Mood Map header fits a narrow phone card', (
+  testWidgets('Mood Map stays collapsed until the user opens it', (
     tester,
   ) async {
     await tester.pumpWidget(
@@ -43,12 +43,31 @@ void main() {
         ),
       ),
     );
+    await tester.pump();
+
+    expect(find.text('Mood Map'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('emotion-panel-collapsed')),
+      findsOneWidget,
+    );
+    expect(find.byKey(const ValueKey('emotion-panel-expanded')), findsNothing);
+    expect(tester.takeException(), isNull);
+
+    await tester.tap(find.byKey(const ValueKey('emotion-panel-collapsed')));
+    await tester.pump();
     await tester.runAsync(
       () => Future<void>.delayed(const Duration(milliseconds: 120)),
     );
     await tester.pump();
 
-    expect(find.text('Mood Map'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('emotion-panel-expanded')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('emotion-panel-collapse')),
+      findsOneWidget,
+    );
     expect(tester.takeException(), isNull);
 
     await tester.pumpWidget(const SizedBox.shrink());

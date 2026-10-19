@@ -11,6 +11,18 @@ import 'package:project_yanci/theme/theme_presets.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  test('unwashed ink preset keeps its cool ink semantic palette', () {
+    final preset = findPreset('yanci');
+
+    expect(preset.name, '未洗硯');
+    expect(preset.isDark, isTrue);
+    expect(preset.bg1, const Color(0xFF121214));
+    expect(preset.aiBubble, const Color(0xFF1E1E22));
+    expect(preset.textPrimary, const Color(0xFFD8D6D2));
+    expect(preset.accent, const Color(0xFF8A9AAE));
+    expect(presets.where((item) => item.id == 'yanci'), hasLength(1));
+  });
+
   testWidgets(
     'bubble colors preview, persist per theme, and reset to preset defaults',
     (tester) async {

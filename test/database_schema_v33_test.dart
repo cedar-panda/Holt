@@ -33,7 +33,7 @@ void main() {
     () async {
       await DatabaseHelper.createSchemaForTesting(db);
 
-      expect(DatabaseHelper.schemaVersionForTesting, 77);
+      expect(DatabaseHelper.schemaVersionForTesting, 82);
       expect(
         await _columnNames(db, 'character_diaries'),
         containsAll(<String>[
@@ -56,11 +56,36 @@ void main() {
         await _columnNames(db, 'context_summaries'),
         contains('source_span_status'),
       );
+      expect(
+        await _columnNames(db, 'context_summary_segments'),
+        containsAll(<String>[
+          'source_summary_id',
+          'segment_order',
+          'content',
+          'keywords',
+        ]),
+      );
       expect(await _columnNames(db, 'characters'), contains('bio_clock'));
       expect(await _columnNames(db, 'characters'), contains('signature'));
       expect(
         await _columnNames(db, 'character_signatures'),
         containsAll(<String>['phase', 'signature', 'is_selected']),
+      );
+      expect(
+        await _columnNames(db, 'character_self_notes'),
+        containsAll(<String>[
+          'character_id',
+          'content',
+          'provider',
+          'model_id',
+          'model_version',
+          'source_conversation_id',
+          'source_message_ids_json',
+          'locked',
+          'long_term',
+          'created_at',
+          'updated_at',
+        ]),
       );
       expect(
         await _columnNames(db, 'characters'),
@@ -113,7 +138,7 @@ void main() {
       );
       expect(
         await _columnNames(db, 'usage_logs'),
-        containsAll(<String>['request_kind', 'cost_known']),
+        containsAll(<String>['request_kind', 'cost_known', 'conversation_id']),
       );
 
       final tables = await _objectNames(db, 'table');
@@ -148,6 +173,7 @@ void main() {
           'idx_messages_conv_time',
           'idx_mem_char_mode_time',
           'idx_mem_char_context_time',
+          'idx_usage_conversation_kind',
           'idx_spider_web_memory_1',
           'idx_spider_web_memory_2',
           'idx_archive_original_unique',
@@ -285,6 +311,36 @@ void main() {
     expect(await _objectNames(db, 'index'), contains('idx_usage_kind_ts'));
   });
 
+  test('v78 upgrade adds window attribution to usage rows', () async {
+    await DatabaseHelper.createSchemaForTesting(db);
+    await db.execute('ALTER TABLE usage_logs RENAME TO usage_logs_v77');
+    await db.execute('''
+      CREATE TABLE usage_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        timestamp TEXT NOT NULL,
+        provider TEXT NOT NULL,
+        model TEXT NOT NULL,
+        character_id TEXT DEFAULT 'default',
+        prompt_tokens INTEGER DEFAULT 0,
+        completion_tokens INTEGER DEFAULT 0,
+        cache_hit_tokens INTEGER DEFAULT 0,
+        cache_creation_tokens INTEGER DEFAULT 0,
+        estimated_cost REAL DEFAULT 0.0,
+        request_kind TEXT NOT NULL DEFAULT 'unknown',
+        cost_known INTEGER NOT NULL DEFAULT 0
+      )
+    ''');
+    await db.execute('DROP TABLE usage_logs_v77');
+
+    await DatabaseHelper.upgradeSchemaForTesting(db, 77);
+
+    expect(await _columnNames(db, 'usage_logs'), contains('conversation_id'));
+    expect(
+      await _objectNames(db, 'index'),
+      contains('idx_usage_conversation_kind'),
+    );
+  });
+
   test(
     'v52 repairs Daily-labelled memories with an RP source window',
     () async {
@@ -389,7 +445,7 @@ void main() {
         'continuity_id': 'route-red',
         'mode': 'story',
         'category': '伏筆',
-        'content': '沈昭嶼收起了琥珀吊墜',
+        'content': '許清川收起了琥珀吊墜',
         'created_at': '2026-09-24T00:00:00.000Z',
         'updated_at': '2026-09-24T00:00:00.000Z',
         'status': 'active',
@@ -397,7 +453,7 @@ void main() {
       });
       await db.insert('memories_fts', <String, Object?>{
         'rowid': memoryId,
-        'content': '沈昭嶼收起了琥珀吊墜',
+        'content': '許清川收起了琥珀吊墜',
         'triggers': '琥珀吊墜',
       });
       await db.insert('memories', <String, Object?>{
@@ -469,7 +525,7 @@ void main() {
       'character_id': 'char-a',
       'mode': 'normal',
       'category': 'event',
-      'content': '昭昭曾和 tata 一起去海邊散步',
+      'content': '小禾曾和 tata 一起去海邊散步',
       'created_at': now,
       'updated_at': now,
       'status': 'active',
@@ -493,7 +549,7 @@ void main() {
     );
     expect(
       chinese.map((memory) => memory.content),
-      contains('昭昭曾和 tata 一起去海邊散步'),
+      contains('小禾曾和 tata 一起去海邊散步'),
     );
   });
 
@@ -506,7 +562,7 @@ void main() {
       'continuity_id': 'route-blue',
       'mode': 'story',
       'category': '物品',
-      'content': '晏辭把琥珀吊墜交給了昭昭保管',
+      'content': '顧遠把琥珀吊墜交給了小禾保管',
       'created_at': now,
       'updated_at': now,
       'status': 'active',
@@ -521,7 +577,7 @@ void main() {
       continuityId: 'route-blue',
     );
 
-    expect(results.map((memory) => memory.content), contains('晏辭把琥珀吊墜交給了昭昭保管'));
+    expect(results.map((memory) => memory.content), contains('顧遠把琥珀吊墜交給了小禾保管'));
   });
 
   test(
@@ -549,7 +605,7 @@ void main() {
         'continuity_id': 'main',
         'mode': 'normal',
         'category': '偏好',
-        'content': '昭昭喜歡桂花烏龍茶',
+        'content': '小禾喜歡桂花烏龍茶',
         'created_at': now,
         'updated_at': now,
         'status': 'active',
@@ -562,7 +618,7 @@ void main() {
         characterId: 'char-a',
       );
 
-      expect(results.map((memory) => memory.content), contains('昭昭喜歡桂花烏龍茶'));
+      expect(results.map((memory) => memory.content), contains('小禾喜歡桂花烏龍茶'));
     },
   );
 
@@ -1710,6 +1766,23 @@ void main() {
 
       await _insertRelations(db, 'char-a', a1, a2);
       await _insertRelations(db, 'char-b', b1, b2);
+      final now = DateTime.now().toIso8601String();
+      await db.insert('emotion_points', {
+        'character_id': 'char-a#rp:route-a',
+        'type': 'comfort',
+        'x': 1.0,
+        'y': 2.0,
+        'concentration': 10.0,
+        'memory_id': a1,
+        'created_at': now,
+        'updated_at': now,
+      });
+      await db.insert('grudge_seals', {
+        'character_id': 'char-a#rp:route-a',
+        'memory_id': a1,
+        'negative_concentration': 10.0,
+        'sealed_at': now,
+      });
       await DatabaseHelper.archiveMemory(
         a1,
         'delete permanently',
@@ -1747,6 +1820,14 @@ void main() {
       expect(await _relationCount(db, 'spider_web_links', 'char-a'), 0);
       expect(await _relationCount(db, 'emotion_points', 'char-a'), 0);
       expect(await _relationCount(db, 'grudge_seals', 'char-a'), 0);
+      expect(
+        await db.query('emotion_points', where: 'memory_id = ?', whereArgs: [a1]),
+        isEmpty,
+      );
+      expect(
+        await db.query('grudge_seals', where: 'memory_id = ?', whereArgs: [a1]),
+        isEmpty,
+      );
       expect(await _relationCount(db, 'character_timeline', 'char-a'), 0);
       expect(await _relationCount(db, 'spider_web_links', 'char-b'), 1);
       expect(await _relationCount(db, 'emotion_points', 'char-b'), 1);
@@ -2081,6 +2162,32 @@ void main() {
       'reserved_at': now,
       'expires_at': now,
     });
+    await db.insert('emotion_points', {
+      'character_id': 'char-a#rp:route-a',
+      'type': 'comfort',
+      'x': 1.0,
+      'y': 2.0,
+      'concentration': 10.0,
+      'memory_id': a2,
+      'created_at': now,
+      'updated_at': now,
+    });
+    await db.insert('grudge_seals', {
+      'character_id': 'char-a#rp:route-a',
+      'memory_id': a2,
+      'negative_concentration': 10.0,
+      'sealed_at': now,
+    });
+    await db.insert('emotion_points', {
+      'character_id': 'char-b#rp:route-b',
+      'type': 'comfort',
+      'x': 1.0,
+      'y': 2.0,
+      'concentration': 10.0,
+      'memory_id': b1,
+      'created_at': now,
+      'updated_at': now,
+    });
 
     await DatabaseHelper.deleteCharacter('char-a');
 
@@ -2117,6 +2224,30 @@ void main() {
       await db.query('memories', where: 'id = ?', whereArgs: [b1]),
       isNotEmpty,
       reason: 'deleting char-a must not touch char-b',
+    );
+    expect(
+      await db.query(
+        'emotion_points',
+        where: 'character_id LIKE ?',
+        whereArgs: ['char-a#rp:%'],
+      ),
+      isEmpty,
+    );
+    expect(
+      await db.query(
+        'grudge_seals',
+        where: 'character_id LIKE ?',
+        whereArgs: ['char-a#rp:%'],
+      ),
+      isEmpty,
+    );
+    expect(
+      await db.query(
+        'emotion_points',
+        where: 'character_id = ?',
+        whereArgs: ['char-b#rp:route-b'],
+      ),
+      hasLength(1),
     );
   });
 

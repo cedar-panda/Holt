@@ -265,6 +265,12 @@ class ManualSummaryService {
 
     final savedContent = content;
     final tokenCount = TokenEstimator.estimate(savedContent);
+    final recallSegments = identity.contextMode == ContextMode.rp
+        ? ContextCompressor.buildRpRecallSegmentDrafts(
+            summary: savedContent,
+            modelSegments: decoded.recallSegments,
+          )
+        : const <ContextSummarySegmentDraft>[];
     final sourceMessageIds =
         sourceMessages
             .map((message) => message.id)
@@ -287,9 +293,31 @@ class ManualSummaryService {
       continuityId: identity.continuityId,
       expectedSourceMessages: sourceMessages,
       replaceSummaryId: rewriteTarget?['id'] as int?,
+      // A user-requested summary is also the recovery path when an older edit
+      // left repair jobs pending. Source revisions are still checked above and
+      // again inside the transaction, so this does not permit stale writes.
+      allowPendingRepairs: true,
+      recallSegments: recallSegments,
     );
     if (id <= 0) {
-      throw StateError('Summary source changed while generating');
+      final sourceStillCurrent =
+          sourceMessages.isEmpty ||
+          await DatabaseHelper.messageSnapshotsStillCurrent(sourceMessages);
+      if (!sourceStillCurrent) {
+        throw StateError('摘要期間原對話已被編輯，請重新摘要');
+      }
+      throw StateError('摘要已生成，但本地卷宗槽位已變更，請重試');
+    }
+    if (sourceMessageIds.isNotEmpty) {
+      await DatabaseHelper.completeCoveredSummaryRepairs(
+        characterId: characterId,
+        contextMode: identity.contextMode,
+        continuityId: identity.continuityId,
+        conversationId: conversationId,
+        sourceMessageStartId: sourceMessageIds.first,
+        sourceMessageEndId: sourceMessageIds.last,
+        replacementSummaryId: id,
+      );
     }
     final rpTimelineChanges =
         identity.contextMode == ContextMode.rp && sourceMessages.isNotEmpty
@@ -333,10 +361,18 @@ class ManualSummaryService {
       continuityId: identity.continuityId,
     );
     if (identity.contextMode == ContextMode.rp) {
+      await DatabaseHelper.restoreArchivedSummaryKeywords(
+        characterId: characterId,
+        contextMode: identity.contextMode,
+        continuityId: identity.continuityId,
+      );
+    }
+    if (identity.contextMode == ContextMode.rp) {
       unawaited(
         RpWorldbookService.maybeProcessAfterSummary(
           characterId: characterId,
           continuityId: identity.continuityId,
+          triggerConversationId: conversationId,
         ),
       );
     }
@@ -430,6 +466,7 @@ class ManualSummaryService {
       if (provider == 'openrouter') {
         return await _callOpenRouter(
           characterId: characterId,
+          conversationId: conversationId,
           model: model,
           excerpt: excerpt,
           userName: userName,
@@ -472,6 +509,7 @@ class ManualSummaryService {
         model: model,
         usage: usage ?? const ApiUsage(),
         characterId: characterId,
+        conversationId: conversationId,
         requestKind: ApiRequestKind.summary,
       );
       return response;
@@ -486,6 +524,7 @@ class ManualSummaryService {
 
   static Future<String> _callOpenRouter({
     required String characterId,
+    required String conversationId,
     required String model,
     required String excerpt,
     required String userName,
@@ -561,6 +600,7 @@ class ManualSummaryService {
       model: model,
       usage: usage ?? const ApiUsage(),
       characterId: characterId,
+      conversationId: conversationId,
       requestKind: ApiRequestKind.summary,
     );
 

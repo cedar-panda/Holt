@@ -28,8 +28,8 @@ void main() {
       _memory(2, ContextMode.daily, 'main', '桂花烏龍是日常喜好'),
       _memory(3, ContextMode.rp, 'route-red', '紅線琥珀吊墜伏筆'),
       _memory(4, ContextMode.rp, 'route-red', '琥珀吊墜藏有紅線線索'),
-      _memory(5, ContextMode.rp, 'route-blue', '藍線白鶴印信伏筆'),
-      _memory(6, ContextMode.rp, 'route-blue', '白鶴印信屬於藍線書院'),
+      _memory(5, ContextMode.rp, 'route-blue', '藍線青鸞印信伏筆'),
+      _memory(6, ContextMode.rp, 'route-blue', '青鸞印信屬於藍線書院'),
     ];
     for (final memory in memories) {
       await db.insert('memories', memory.toMap());

@@ -185,6 +185,87 @@ abstract final class GuideManual {
       ),
     ),
     GuideManualSection(
+      id: 'window_status',
+      title: L.pick(
+        en: 'Window model and activity',
+        zhTW: '窗口模型與活動',
+        zhCN: '窗口模型与活动',
+      ),
+      keywords: L
+          .pick(
+            en: 'window status,slider icon,model picker,window tokens,summary count,worldbook count,cache hits,window memories',
+            zhTW: '窗口狀態,三條拉桿,滑桿圖標,模型選擇,窗口Token,摘要次數,世界書次數,快取命中,已入庫記憶',
+            zhCN: '窗口状态,三条拉杆,滑杆图标,模型选择,窗口Token,摘要次数,世界书次数,缓存命中,已入库记忆',
+          )
+          .split(','),
+      body: L.pick(
+        en: 'The model row appears briefly when a chat window opens, then collapses into the three-slider icon at the upper right. Tap it to change the model and inspect this window\'s attributed tokens, summary runs, worldbook runs, cache hits and confirmed memories. Tap the memory count to review, edit or move those memories to the dusty box. Cache hits show “—” when the provider does not return reliable hit data. Holt does not guess historical token or worldbook activity created before window attribution was available.',
+        zhTW:
+            '進入對話窗口時，模型列會短暫顯示，之後收進右上角的三條滑桿圖標。點擊可切換模型，並查看歸屬於目前窗口的 Token、摘要觸發次數、世界書整理次數、快取命中與已確認入庫記憶。點擊記憶數量可查看、編輯，或把記憶移入積灰的小盒子。來源沒有可靠回傳快取資料時會顯示「—」；在窗口歸屬功能建立以前產生的歷史 Token 與世界書調用不會被猜測補算。',
+        zhCN:
+            '进入对话窗口时，模型栏会短暂显示，之后收进右上角的三条滑杆图标。点击可切换模型，并查看归属于当前窗口的 Token、摘要触发次数、世界书整理次数、缓存命中与已确认入库记忆。点击记忆数量可查看、编辑，或把记忆移入积灰的小盒子。来源没有可靠返回缓存数据时会显示“—”；在窗口归属功能建立以前产生的历史 Token 与世界书调用不会被猜测补算。',
+      ),
+      question: L.pick(
+        en: 'What does the three-slider icon in a chat window do?',
+        zhTW: '對話窗口右上角的三條滑桿是做什麼的？',
+        zhCN: '对话窗口右上角的三条滑杆是做什么的？',
+      ),
+    ),
+    GuideManualSection(
+      id: 'sidebar_settings',
+      title: L.pick(
+        en: 'Sidebar settings map',
+        zhTW: '側邊欄設定導覽',
+        zhCN: '侧边栏设置导览',
+      ),
+      keywords: L
+          .pick(
+            en: 'sidebar,settings,models,connections,system behavior,feature modules,usage,swipe',
+            zhTW: '側邊欄,設定,模型與連線,系統行為,功能模組開關,用量,左側滑動,入口在哪',
+            zhCN: '侧边栏,设置,模型与连接,系统行为,功能模块开关,用量,左侧滑动,入口在哪',
+          )
+          .split(','),
+      body: L.pick(
+        en: 'On Home or My, swipe right from the far-left edge to open the sidebar; swipe left or tap the uncovered area to close it. Models & connections contains Chat model and Other functional model settings. The latter holds summary, embedding recall, image, sticker-recognition and search models, plus favorite models. System behavior contains the mutually exclusive Context send limit and Cache hit controls, worldbook auto-organization and web search. Feature module switches opens Behavior / Output, prompt-based modules, chat-avatar visibility and Memory & Role. Usage stays pinned at the bottom. Unrelated expanded groups close when another group opens, so only the controls for the current task remain visible.',
+        zhTW:
+            '在「首頁」或「我的」從螢幕最左側向右滑即可打開側邊欄；向左滑或點擊右側空白處可收起。「模型與連線」包含聊天模型，以及「其他功能模型設定」；後者集中管理摘要、向量召回、畫圖、表情辨識、搜尋模型與收藏模型。「系統行為」包含互斥的上下文發送限制與緩存命中，以及世界書自動整理和網路搜尋。「功能模組開關」可進入對話行為／輸出格式、提示詞功能模組、頭像顯示、記憶與角色功能。「用量」固定在側邊欄底部。展開一項時，沒有關聯的其他項目會自動收起，只保留目前操作需要的內容。',
+        zhCN:
+            '在“首页”或“我的”从屏幕最左侧向右滑即可打开侧边栏；向左滑或点击右侧空白处可收起。“模型与连接”包含聊天模型，以及“其他功能模型设置”；后者集中管理摘要、向量召回、画图、表情识别、搜索模型与收藏模型。“系统行为”包含互斥的上下文发送限制与缓存命中，以及世界书自动整理和网络搜索。“功能模块开关”可进入对话行为／输出格式、提示词功能模块、头像显示、记忆与角色功能。“用量”固定在侧边栏底部。展开一项时，没有关联的其他项目会自动收起，只保留当前操作需要的内容。',
+      ),
+      question: L.pick(
+        en: 'Where are the settings in the sidebar?',
+        zhTW: '側邊欄裡的設定分別放在哪裡？',
+        zhCN: '侧边栏里的设置分别放在哪里？',
+      ),
+    ),
+    GuideManualSection(
+      id: 'home_greeting',
+      title: L.pick(
+        en: 'Model-generated home greeting',
+        zhTW: '首頁模型問候語',
+        zhCN: '首页模型问候语',
+      ),
+      keywords: L
+          .pick(
+            en: 'home greeting,home message,character card message,model output greeting,home marker,tool prompts',
+            zhTW: '首頁問候語,首頁留言,角色卡留言,模型輸出問候語,模型問候,工具系統提示詞,開關',
+            zhCN: '首页问候语,首页留言,角色卡留言,模型输出问候语,模型问候,工具系统提示词,开关',
+          )
+          .split(','),
+      body: L.pick(
+        en: 'Open the left sidebar, then go to Feature module switches → Feature modules (prompt switches) → Model-generated home greeting. This switch independently controls whether the model may write the short greeting shown on the Home character card. Turning off Tool prompts does not turn this greeting off; turning off the greeting stops its instruction and prevents its hidden output marker from being saved or shown.',
+        zhTW:
+            '從左側邊欄進入「功能模組開關」→「功能模組（提示詞開關）」→「模型輸出問候語」。這個開關只控制模型是否能在首頁角色卡留下短問候語，已與「工具系統提示詞」完全分開；關閉工具提示詞不會連帶關閉問候語。關閉模型輸出問候語後，系統不再注入該指令，也不會保存或顯示模型輸出的隱藏問候標記。',
+        zhCN:
+            '从左侧边栏进入“功能模块开关”→“功能模块（提示词开关）”→“模型输出问候语”。这个开关只控制模型是否能在首页角色卡留下短问候语，已与“工具系统提示词”完全分开；关闭工具提示词不会连带关闭问候语。关闭模型输出问候语后，系统不再注入该指令，也不会保存或显示模型输出的隐藏问候标记。',
+      ),
+      question: L.pick(
+        en: 'How do I turn off model-generated greetings on Home?',
+        zhTW: '怎麼關閉模型寫在首頁的問候語？',
+        zhCN: '怎么关闭模型写在首页的问候语？',
+      ),
+    ),
+    GuideManualSection(
       id: 'persona',
       title: L.pick(
         en: 'Brainstorming a character',
@@ -253,16 +334,16 @@ abstract final class GuideManual {
           )
           .split(','),
       body: L.pick(
-        en: 'Prompt cache mode preserves a stable prefix and can trigger its dedicated summary at the configured token threshold. Context-limit mode trims the active window and can use its own summary. They solve different problems; changing models, thinking state or stable prompt settings may create a new cache prefix. Summary frequency and limits remain user-configurable where exposed.',
+        en: 'Use Cache hit when the selected provider route supports prompt caching and the chat repeatedly sends a long, stable prefix. Holt recognizes eligible routes from both provider and model, including supported Claude routes, direct Gemini routes and providers with verified automatic caching; the current-window recommendation is safer than judging by a model name alone. Use Context send limit for Inkling, local models, routes without verifiable cache support, or when you prefer to cap the number of recent messages sent. The two modes are mutually exclusive. Enabling either mode also enables its dedicated summary when a summary model is configured; without one, summary stays off. Changing the model, Thinking state or stable prompt settings may create a new cache prefix, and provider billing remains authoritative.',
         zhTW:
-            '快取模式盡量維持穩定前綴，並可在設定的 Token 門檻觸發快取專用摘要；上下文限制模式則控制送出的有效窗口，並可使用上下文專用摘要。兩者處理的問題不同。切換模型、Thinking 狀態或穩定提示設定可能產生新的快取前綴；可見的摘要頻率與上限仍由使用者設定。',
+            '當所選來源路由支援提示詞快取，而且對話會反覆送出較長、穩定的前綴時，適合使用「緩存命中」。Holt 會同時依來源與模型判斷，包含受支援的 Claude 路由、Gemini 直連路由與已確認具有自動快取的來源；因此應優先看窗口內對目前模型顯示的建議，不要只憑模型名稱判斷。Inkling、本地模型、無法驗證快取能力的中轉路由，或希望直接限制近期消息發送條數時，適合使用「上下文發送限制」。兩種模式互斥；開啟任一模式時，若已選摘要模型會同步開啟對應專用摘要，沒有摘要模型則維持關閉。切換模型、Thinking 狀態或穩定提示設定可能產生新的快取前綴，實際計費仍以來源帳單為準。',
         zhCN:
-            '缓存模式尽量维持稳定前缀，并可在设置的 Token 门槛触发缓存专用摘要；上下文限制模式则控制送出的有效窗口，并可使用上下文专用摘要。两者处理的问题不同。切换模型、Thinking 状态或稳定提示设置可能产生新的缓存前缀；可见的摘要频率与上限仍由用户设置。',
+            '当所选来源路由支持提示词缓存，而且对话会反复送出较长、稳定的前缀时，适合使用“缓存命中”。Holt 会同时依来源与模型判断，包含受支持的 Claude 路由、Gemini 直连路由与已确认具有自动缓存的来源；因此应优先看窗口内对当前模型显示的建议，不要只凭模型名称判断。Inkling、本地模型、无法验证缓存能力的中转路由，或希望直接限制近期消息发送条数时，适合使用“上下文发送限制”。两种模式互斥；开启任一模式时，若已选摘要模型会同步开启对应专用摘要，没有摘要模型则维持关闭。切换模型、Thinking 状态或稳定提示设置可能产生新的缓存前缀，实际计费仍以来源账单为准。',
       ),
       question: L.pick(
-        en: 'Should I use cache or a context limit?',
-        zhTW: '快取和上下文限制要怎麼選？',
-        zhCN: '缓存和上下文限制要怎么选？',
+        en: 'Which models should use cache, and when should I use a context limit?',
+        zhTW: '哪些模型適合緩存命中？什麼時候改用上下文限制？',
+        zhCN: '哪些模型适合缓存命中？什么时候改用上下文限制？',
       ),
     ),
     GuideManualSection(
@@ -280,11 +361,11 @@ abstract final class GuideManual {
           )
           .split(','),
       body: L.pick(
-        en: 'User identities are separate from bot character cards. A profile can hold nickname, pronouns and an introduction, with Daily/RP variations where configured. A new window freezes the selected identity snapshot so later edits do not silently rewrite older dialogue. Character bindings help Holt select the intended identity for that character and story context.',
+        en: 'User identities are separate from bot character cards. A profile can hold nickname, pronouns and an introduction, with separate Daily/RP file content where configured. The bound character is shared by both modes. A new window freezes the selected identity snapshot so later edits do not silently rewrite older dialogue.',
         zhTW:
-            '使用者身分與對方角色卡是兩套資料。檔案可保存暱稱、稱謂／代詞與自我介紹，並在有設定時使用日常／RP 版本。新窗口會凍結建立當下的身分快照，後續修改不會偷偷改寫舊對話；角色綁定則協助 Holt 在對應角色與故事情境中選用正確身分。',
+            '使用者身分與對方角色卡是兩套資料。檔案可保存暱稱、稱謂／代詞與自我介紹，並分別保存日常／RP 內容；綁定角色則由兩種模式共用。新窗口會凍結建立當下的身分快照，後續修改不會偷偷改寫舊對話。',
         zhCN:
-            '用户身份与对方角色卡是两套资料。档案可保存昵称、称谓／代词与自我介绍，并在有设置时使用日常／RP 版本。新窗口会冻结建立当下的身份快照，后续修改不会偷偷改写旧对话；角色绑定则协助 Holt 在对应角色与故事情境中选用正确身份。',
+            '用户身份与对方角色卡是两套资料。档案可保存昵称、称谓／代词与自我介绍，并分别保存日常／RP 内容；绑定角色则由两种模式共用。新窗口会冻结建立当下的身份快照，后续修改不会偷偷改写旧对话。',
       ),
       question: L.pick(
         en: 'How do my identities and character bindings work?',
@@ -343,17 +424,17 @@ abstract final class GuideManual {
       title: L.pick(en: 'Errors and diagnostics', zhTW: '錯誤與診斷', zhCN: '错误与诊断'),
       keywords: L
           .pick(
-            en: 'error,diagnostic card,401,403,429,quota,retry,raw log',
-            zhTW: '報錯,錯誤卡,診斷卡,401,403,429,額度,重試,原始日誌',
-            zhCN: '报错,错误卡,诊断卡,401,403,429,额度,重试,原始日志',
+            en: 'error,diagnostic card,401,403,429,quota,retry,raw log,feedback,contact,email,report',
+            zhTW: '報錯,錯誤卡,診斷卡,401,403,429,額度,重試,原始日誌,回饋,回報,聯繫,郵件',
+            zhCN: '报错,错误卡,诊断卡,401,403,429,额度,重试,原始日志,反馈,回报,联系,邮件',
           )
           .split(','),
       body: L.pick(
         en: 'Request failures appear in place as persistent diagnostic cards rather than temporary blocking notices. The card gives a plain-language conclusion, lets you retry in place and keeps the raw provider log folded for copying. Authentication errors usually point to credentials or route restrictions; 429 may mean rate limiting or exhausted quota; 5xx means an upstream service problem.',
         zhTW:
-            '請求失敗會在原本回覆位置留下可持續查看的診斷卡，而不是用遮擋操作的短暫提示。卡片提供人話結論、原地重試與可展開複製的供應商原始日誌。401／403 通常涉及憑證、限額或節點限制；429 可能是請求過頻或額度用盡；5xx 多為上游服務故障。',
+            '請求失敗會在原本回覆位置留下可持續查看的診斷卡，而不是用遮擋操作的短暫提示。卡片提供人話結論、原地重試與可展開複製的供應商原始日誌。401／403 通常涉及憑證、限額或節點限制；429 可能是請求過頻或額度用盡；5xx 多為上游服務故障。若要提供回饋或回報錯誤，請寄信到 wrenmyco@proton.me；嚮導可根據最近五條已去除私人內容的本機報錯記錄協助起草，寄出前請先檢查。',
         zhCN:
-            '请求失败会在原本回复位置留下可持续查看的诊断卡，而不是用遮挡操作的短暂提示。卡片提供易懂结论、原地重试与可展开复制的供应商原始日志。401／403 通常涉及凭证、限额或节点限制；429 可能是请求过频或额度用尽；5xx 多为上游服务故障。',
+            '请求失败会在原本回复位置留下可持续查看的诊断卡，而不是用遮挡操作的短暂提示。卡片提供易懂结论、原地重试与可展开复制的供应商原始日志。401／403 通常涉及凭证、限额或节点限制；429 可能是请求过频或额度用尽；5xx 多为上游服务故障。若要提供反馈或报告错误，请发送邮件至 wrenmyco@proton.me；向导可根据最近五条已去除私人内容的本机报错记录协助起草，发送前请先检查。',
       ),
       question: L.pick(
         en: 'What should I do when an API request fails?',

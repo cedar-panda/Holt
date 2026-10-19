@@ -32,7 +32,7 @@ void main() {
     DatabaseHelper.useDatabaseForTesting(db);
 
     try {
-      await UserSettings.saveUserName('昭昭');
+      await UserSettings.saveUserName('小禾');
       final id = await InitialSetupService.createCharacter(
         const InitialCharacterDraft(
           name: '林澈',
@@ -42,7 +42,7 @@ void main() {
         ),
       );
 
-      expect(await UserSettings.getUserName(), '昭昭');
+      expect(await UserSettings.getUserName(), '小禾');
       expect(await UserSettings.getCharacterName(), '林澈');
       expect(await UserSettings.getActiveCharacterId(), id);
 
@@ -62,14 +62,14 @@ void main() {
     'theme pair can save both slots while activating the day theme',
     () async {
       await ThemeSettings.saveThemePair(
-        lightPresetId: 'latte',
+        lightPresetId: 'dawn',
         darkPresetId: 'mist',
-        activePresetId: 'latte',
+        activePresetId: 'dawn',
       );
 
-      expect(await ThemeSettings.getLastLightPreset(), 'latte');
+      expect(await ThemeSettings.getLastLightPreset(), 'dawn');
       expect(await ThemeSettings.getLastDarkPreset(), 'mist');
-      expect(await ThemeSettings.getThemePreset(), 'latte');
+      expect(await ThemeSettings.getThemePreset(), 'dawn');
       expect(await ThemeSettings.getDarkMode(), isFalse);
     },
   );
@@ -86,13 +86,13 @@ void main() {
 
     await tester.enterText(
       find.byKey(const ValueKey('initial-user-name')),
-      '昭昭',
+      '小禾',
     );
     await tester.tap(find.byKey(const ValueKey('initial-name-continue')));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
 
-    expect(await UserSettings.getUserName(), '昭昭');
+    expect(await UserSettings.getUserName(), '小禾');
     expect(find.textContaining('與你相伴的那個'), findsOneWidget);
     expect(find.text('跳過'), findsOneWidget);
     expect(
@@ -228,7 +228,7 @@ void main() {
         const Offset(-110, 0),
       );
       await tester.pumpAndSettle();
-      expect(find.text('微醺'), findsOneWidget);
+      expect(find.text('未洗硯'), findsOneWidget);
       expect(YanciTheme.presetId, 'ivory');
       expect(await ThemeSettings.getThemePreset(), 'ivory');
 
@@ -236,7 +236,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('現在先用哪一種？'), findsOneWidget);
       expect(find.text('初雪'), findsWidgets);
-      expect(find.text('微醺'), findsWidgets);
+      expect(find.text('未洗硯'), findsWidgets);
       expect(await ThemeSettings.getLastLightPreset(), 'ivory');
       expect(await ThemeSettings.getLastDarkPreset(), 'nightlamp');
 
@@ -244,10 +244,10 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('home-ready'), findsOneWidget);
-      expect(YanciTheme.presetId, 'tipsy');
-      expect(await ThemeSettings.getThemePreset(), 'tipsy');
+      expect(YanciTheme.presetId, 'yanci');
+      expect(await ThemeSettings.getThemePreset(), 'yanci');
       expect(await ThemeSettings.getLastLightPreset(), 'snow');
-      expect(await ThemeSettings.getLastDarkPreset(), 'tipsy');
+      expect(await ThemeSettings.getLastDarkPreset(), 'yanci');
       expect(await UserSettings.shouldShowInitialSetup(), isFalse);
       expect(await UserSettings.getInitialSetupStep(), 0);
       expect(tester.takeException(), isNull);

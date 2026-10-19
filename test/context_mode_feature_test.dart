@@ -46,22 +46,130 @@ void main() {
     expect(rp, contains('Transient fatigue'));
     expect(rp, contains('Keep one copy of each event'));
     expect(rp, contains('worldbook extraction'));
-    expect(rp, contains('3000 characters'));
+    expect(rp, contains('1600 characters'));
     expect(rp, contains('storyline_id'));
+    expect(rp, contains('24 changed characters'));
+    expect(rp, contains('matched-existing list is not exhaustive'));
     expect(rp, isNot(contains('Prior Context')));
     expect(rp, isNot(contains('menstrual')));
     expect(rp, isNot(contains('character health')));
   });
 
   test('RP summary ceiling scales with storyline source volume', () {
-    expect(ContextCompressor.suggestedRpSummaryMaxCharsForSource(99999), 3000);
-    expect(ContextCompressor.suggestedRpSummaryMaxCharsForSource(100000), 4500);
-    expect(ContextCompressor.suggestedRpSummaryMaxCharsForSource(300000), 6000);
-    expect(ContextCompressor.suggestedRpSummaryMaxCharsForSource(700000), 8000);
+    expect(ContextCompressor.suggestedRpSummaryMaxCharsForSource(99999), 1200);
+    expect(ContextCompressor.suggestedRpSummaryMaxCharsForSource(100000), 2200);
+    expect(ContextCompressor.suggestedRpSummaryMaxCharsForSource(300000), 2800);
+    expect(ContextCompressor.suggestedRpSummaryMaxCharsForSource(700000), 3400);
     expect(
       ContextCompressor.suggestedRpSummaryMaxCharsForSource(1200000),
-      10000,
+      4000,
     );
+  });
+
+  test('rolling summary anchors keep the two newest bases in order', () {
+    final formatted = ContextCompressor.formatRollingSummaryAnchorsForTesting(
+      <String>['摘要 A', '摘要 B'],
+    );
+
+    expect(formatted, contains('anchor 1'));
+    expect(formatted, contains('anchor 2'));
+    expect(formatted.indexOf('摘要 A'), lessThan(formatted.indexOf('摘要 B')));
+  });
+
+  test(
+    'RP rolling summary restores omitted event locally without another model call',
+    () {
+      const old = '''### ——主線——
+**[不可逆] 城門決裂**
+兩人在城門公開決裂，盟約因此終止並留下長期敵意。
+
+**[伏筆] 密函去向**
+密函被第三人帶走，去向仍未查明。''';
+      const next = '''### ——主線——
+**[伏筆] 密函去向**
+密函仍未尋回，但已確認最後出現在驛站。''';
+
+      final restored =
+          ContextCompressor.restoreMissingRpCarryoverEventsForTesting(
+            anchors: const <String>[old],
+            nextSummary: next,
+          );
+
+      expect(restored, contains('**[不可逆] 城門決裂**'));
+      expect(restored, contains('盟約因此終止'));
+      expect(
+        ContextCompressor.missingRpCarryoverTitlesForTesting(
+          anchors: const <String>[old],
+          nextSummary: restored,
+        ),
+        isEmpty,
+      );
+    },
+  );
+
+  test('RP rolling guard rejects summaries that erase prior events', () {
+    const prior = '''
+### ——主線——
+**[衝突] 青鸞印信交付**
+顧遠在渡口交付青鸞印信，清川因此允許他暫住。
+
+**[關係] 冬至之約**
+兩人在藥鋪約定冬至再會。
+''';
+    const incomplete = '''
+### ——主線——
+**[關係] 冬至之約**
+兩人在藥鋪約定冬至再會。
+''';
+    const complete = '''
+### ——主線——
+**[衝突] 青鸞印信交付**
+顧遠交付印信後獲准暫住。
+
+**[關係] 冬至之約**
+兩人仍約定冬至再會。
+''';
+
+    expect(
+      ContextCompressor.missingRpCarryoverTitlesForTesting(
+        anchors: const <String>[prior],
+        nextSummary: incomplete,
+      ),
+      <String>['青鸞印信交付'],
+    );
+    expect(
+      ContextCompressor.missingRpCarryoverTitlesForTesting(
+        anchors: const <String>[prior],
+        nextSummary: complete,
+      ),
+      isEmpty,
+    );
+  });
+
+  test('RP injection budgets retain complete event paragraphs', () {
+    final first = '事件一：${List.filled(180, '甲').join()}。';
+    final second = '事件二：${List.filled(180, '乙').join()}。';
+    final third = '事件三：${List.filled(180, '丙').join()}。';
+    final source = '$first\n\n$second\n\n$third';
+
+    final fitted = ContextCompressor.fitRpSummaryToCharacterBudget(
+      source,
+      first.length + second.length + 2,
+    );
+    expect(fitted, '$first\n\n$second');
+    expect(fitted, isNot(contains('事件三')));
+  });
+
+  test('chapter handoff prefers newer summaries inside one total budget', () {
+    final oldSummary = '舊事件：${List.filled(700, '舊').join()}。';
+    final newSummary = '新事件：${List.filled(700, '新').join()}。';
+    final fitted = ContextCompressor.fitRpSummariesToCharacterBudget(<String>[
+      oldSummary,
+      newSummary,
+    ], 900);
+
+    expect(fitted, contains('新事件'));
+    expect(fitted, isNot(contains('舊事件')));
   });
 
   test(
@@ -111,16 +219,61 @@ void main() {
     ]);
   });
 
+  test('RP envelope binds recall labels to exact summary segments', () {
+    final decoded = ContextCompressor.decodeSummaryEnvelope(r'''
+{"storyline_id":"story-a","summary":"第一段：渡口交付青鸞印信。\n\n第二段：兩人在藥鋪立下冬至之約。","timeline":[],"story_states":[],"story_characters":[],"relationships":[],"recall_segments":[{"segment_order":1,"title":"印信交付","content":"第一段：渡口交付青鸞印信。","keywords":["渡口交付青鸞印信","書院信物"]},{"segment_order":2,"title":"冬至之約","content":"第二段：兩人在藥鋪立下冬至之約。","keywords":["藥鋪冬至之約","立約等待"]},{"segment_order":3,"title":"不存在","content":"模型捏造的第三段。","keywords":["捏造事件"]}]}
+''');
+
+    expect(decoded.recallSegments, hasLength(2));
+    expect(decoded.recallSegments.first.content, '第一段：渡口交付青鸞印信。');
+    expect(decoded.recallSegments.first.keywords, <String>['渡口交付青鸞印信']);
+    expect(decoded.recallSegments.last.keywords, contains('藥鋪冬至之約'));
+    expect(decoded.recallSegments.last.keywords, hasLength(1));
+  });
+
+  test('RP recall fallback indexes each paragraph with one label', () {
+    final segments = ContextCompressor.buildRpRecallSegmentDrafts(
+      summary: '### ——主線——\n渡口交付青鸞印信。\n\n藥鋪立下冬至之約。',
+    );
+    expect(segments, hasLength(2));
+    expect(segments.every((segment) => segment.keywords.length == 1), isTrue);
+    expect(segments.first.content, '渡口交付青鸞印信。');
+    expect(segments.last.content, '藥鋪立下冬至之約。');
+  });
+
   test(
     'RP summary envelope keeps hidden character and relationship payloads',
     () {
       final decoded = ContextCompressor.decodeSummaryEnvelope('''
-{"summary":"### ——核心——\\n**[角色] 晏辭登場**","timeline":[],"story_characters":[{"name":"晏辭","source_message_ids":[1],"evidence":"晏辭登場"}],"relationships":[{"from":"昭嶼","to":"晏辭","source_message_ids":[1],"evidence":"讓他暫住"}]}
+{"summary":"### ——核心——\\n**[角色] 顧遠登場**","timeline":[],"story_characters":[{"name":"顧遠","source_message_ids":[1],"evidence":"顧遠登場"}],"relationships":[{"from":"清川","to":"顧遠","source_message_ids":[1],"evidence":"讓他暫住"}]}
 ''');
-      expect(decoded.storyCharacters.single['name'], '晏辭');
-      expect(decoded.relationships.single['from'], '昭嶼');
+      expect(decoded.storyCharacters.single['name'], '顧遠');
+      expect(decoded.relationships.single['from'], '清川');
     },
   );
+
+  test('RP compact character index fills missing detailed cards', () {
+    final decoded = ContextCompressor.decodeSummaryEnvelope('''
+{"storyline_id":"story-a","character_index":[{"entity_id":"new","name":"陸箏","source_message_ids":[19],"evidence":"大姐兒陸箏"},{"entity_id":"new","name":"裴昭","source_message_ids":[21],"evidence":"左相裴昭"}],"summary":"### ——主線——\\n家宴","timeline":[],"story_states":[],"story_characters":[{"entity_id":"new","name":"陸箏","identity":"鎮西大將軍","source_message_ids":[19],"evidence":"大姐兒陸箏"}],"relationships":[]}
+''');
+
+    expect(decoded.storyCharacters, hasLength(2));
+    expect(decoded.storyCharacters.map((item) => item['name']), <String>[
+      '陸箏',
+      '裴昭',
+    ]);
+    expect(decoded.storyCharacters.first['identity'], '鎮西大將軍');
+  });
+
+  test('RP truncated envelope still preserves summary and character index', () {
+    final decoded = ContextCompressor.decodeSummaryEnvelope('''
+{"storyline_id":"story-a","character_index":[{"entity_id":"new","name":"裴華","source_message_ids":[99],"evidence":"老三裴華"}],"summary":"### ——主線——\\n江南查案","timeline":[{"broken":
+''');
+
+    expect(decoded.storylineId, 'story-a');
+    expect(decoded.summary, contains('江南查案'));
+    expect(decoded.storyCharacters.single['name'], '裴華');
+  });
 
   testWidgets('mode pill switches and respects reduced motion', (tester) async {
     var mode = ContextMode.daily;
@@ -418,7 +571,7 @@ void main() {
           id: 31,
           conversationId: 'rp-c',
           characterId: 'char-a',
-          text: '晏辭帶著白鶴印來到藥鋪，昭嶼因此讓他暫住。',
+          text: '顧遠帶著青鸞印來到藥鋪，清川因此讓他暫住。',
           isUser: false,
         );
         await RpStoryService.storeExtraction(
@@ -428,28 +581,28 @@ void main() {
           sourceMessages: <Message>[source],
           characters: <Map<String, Object?>>[
             <String, Object?>{
-              'name': '晏辭',
+              'name': '顧遠',
               'gender': '男',
               'identity': '嵩臨書院書生',
               'relation_to_leads': '藥鋪暫住客',
               'recurrence': 'recurring',
               'tier': 'active',
               'source_message_ids': <int>[31],
-              'evidence': '晏辭帶著白鶴印來到藥鋪',
+              'evidence': '顧遠帶著青鸞印來到藥鋪',
             },
           ],
           relationships: <Map<String, Object?>>[
             <String, Object?>{
-              'from': '昭嶼',
-              'to': '晏辭',
+              'from': '清川',
+              'to': '顧遠',
               'direction': 'from_to',
               'current_relation': '允許暫住',
-              'origin': '晏辭帶來白鶴印',
+              'origin': '顧遠帶來青鸞印',
               'visibility': 'public',
-              'change': '昭嶼讓晏辭暫住藥鋪',
+              'change': '清川讓顧遠暫住藥鋪',
               'story_time': '到達首日',
               'source_message_ids': <int>[31],
-              'evidence': '昭嶼因此讓他暫住',
+              'evidence': '清川因此讓他暫住',
             },
           ],
         );
@@ -459,7 +612,11 @@ void main() {
             'char-a',
             continuityId: 'route-a',
           ),
-          hasLength(1),
+          // A source-validated relationship may mention a participant that the
+          // model forgot to repeat in story_characters. The store creates a
+          // minimal anchor so the edge remains visible instead of becoming an
+          // orphaned relationship.
+          hasLength(2),
         );
         expect(
           await RpStoryService.listCharacters(
@@ -472,7 +629,7 @@ void main() {
           'char-a',
           continuityId: 'route-a',
         );
-        expect(relations.single['origin'], '晏辭帶來白鶴印');
+        expect(relations.single['origin'], '顧遠帶來青鸞印');
         expect(
           await RpStoryService.relationshipEvents(
             relations.single['id'] as String,
@@ -484,7 +641,7 @@ void main() {
           id: 32,
           conversationId: 'rp-c',
           characterId: 'char-a',
-          text: '昭嶼與晏辭共同赴約，兩人開始互相信任。',
+          text: '清川與顧遠共同赴約，兩人開始互相信任。',
           isUser: false,
         );
         await RpStoryService.storeExtraction(
@@ -495,8 +652,8 @@ void main() {
           characters: const <Map<String, Object?>>[],
           relationships: <Map<String, Object?>>[
             <String, Object?>{
-              'from': '昭嶼',
-              'to': '晏辭',
+              'from': '清川',
+              'to': '顧遠',
               'direction': 'from_to',
               'current_relation': '開始互相信任',
               'origin': '後來共同赴約',
@@ -512,7 +669,7 @@ void main() {
           'char-a',
           continuityId: 'route-a',
         );
-        expect(updatedRelations.single['origin'], '晏辭帶來白鶴印');
+        expect(updatedRelations.single['origin'], '顧遠帶來青鸞印');
         expect(updatedRelations.single['current_relation'], '開始互相信任');
         expect(
           await RpStoryService.relationshipEvents(
@@ -520,6 +677,62 @@ void main() {
           ),
           hasLength(2),
         );
+
+        await RpStoryService.updateRelationship(
+          updatedRelations.single['id'] as String,
+          currentRelation: '開始互相信任',
+          origin: '顧遠帶來青鸞印',
+          visibility: 'public',
+        );
+        expect(
+          (await RpStoryService.listRelationships(
+            'char-a',
+            continuityId: 'route-a',
+          )).single['user_edited'],
+          0,
+        );
+
+        await RpStoryService.updateRelationship(
+          updatedRelations.single['id'] as String,
+          currentRelation: '使用者確認的互信同伴',
+          origin: '顧遠帶來青鸞印',
+          visibility: 'public',
+        );
+        final newest = Message(
+          id: 33,
+          conversationId: 'rp-c',
+          characterId: 'char-a',
+          text: '清川與顧遠交換信物，約定共同守住藥鋪。',
+          isUser: false,
+        );
+        await RpStoryService.storeExtraction(
+          characterId: 'char-a',
+          continuityId: 'route-a',
+          sourceConversationId: 'rp-c',
+          sourceMessages: <Message>[newest],
+          characters: const <Map<String, Object?>>[],
+          relationships: <Map<String, Object?>>[
+            <String, Object?>{
+              'from': '清川',
+              'to': '顧遠',
+              'direction': 'from_to',
+              'current_relation': '交換信物的守護同盟',
+              'origin': '後來交換信物',
+              'visibility': 'public',
+              'change': '兩人交換信物並約定共同守住藥鋪',
+              'story_time': '交換信物當日',
+              'source_message_ids': <int>[33],
+              'evidence': '清川與顧遠交換信物',
+            },
+          ],
+        );
+        final protectedRelations = await RpStoryService.listRelationships(
+          'char-a',
+          continuityId: 'route-a',
+        );
+        expect(protectedRelations.single['current_relation'], '使用者確認的互信同伴');
+        expect(protectedRelations.single['latest_change'], '兩人交換信物並約定共同守住藥鋪');
+        expect(protectedRelations.single['source_message_ids'], '[33]');
       },
     );
 
@@ -528,7 +741,7 @@ void main() {
         id: 41,
         conversationId: 'rp-c',
         characterId: 'char-a',
-        text: '晏辭與霍岑同時來到藥鋪。',
+        text: '顧遠與韓衡同時來到藥鋪。',
         isUser: false,
       );
       await RpStoryService.storeExtraction(
@@ -538,26 +751,26 @@ void main() {
         sourceMessages: <Message>[source],
         characters: <Map<String, Object?>>[
           <String, Object?>{
-            'name': '晏辭',
+            'name': '顧遠',
             'identity': '書生',
             'tier': 'active',
             'source_message_ids': <int>[41],
-            'evidence': '晏辭',
+            'evidence': '顧遠',
           },
           <String, Object?>{
-            'name': '霍岑',
+            'name': '韓衡',
             'identity': '少卿',
             'tier': 'active',
             'source_message_ids': <int>[41],
-            'evidence': '霍岑',
+            'evidence': '韓衡',
           },
         ],
         relationships: const <Map<String, Object?>>[],
       );
 
-      final prompt = await RpStoryService.recallPrompt('char-a', '霍岑走進藥鋪');
-      expect(prompt, contains('霍岑'));
-      expect(prompt, contains('晏辭'));
+      final prompt = await RpStoryService.recallPrompt('char-a', '韓衡走進藥鋪');
+      expect(prompt, contains('韓衡'));
+      expect(prompt, contains('顧遠'));
     });
 
     test(
@@ -566,10 +779,10 @@ void main() {
         const now = '2026-10-04T00:00:00.000Z';
         await db.insert('characters', <String, Object?>{
           'id': 'char-a',
-          'name': '晏辭',
+          'name': '顧遠',
           'gender': '男',
           'relationship': '同門',
-          'description': '沉穩寡言，隨身帶著白鶴印。',
+          'description': '沉穩寡言，隨身帶著青鸞印。',
           'created_at': now,
           'updated_at': now,
         });
@@ -579,9 +792,9 @@ void main() {
           'user_persona_snapshot': jsonEncode(<String, Object?>{
             'version': 2,
             'id': 'persona-a',
-            'display_name': '昭嶼',
+            'display_name': '清川',
             'pronouns': '他',
-            'bio': '沈家藥鋪主人',
+            'bio': '許家藥鋪主人',
             'prompt_content': '熟悉藥理。',
           }),
         });
@@ -603,12 +816,74 @@ void main() {
           'created_at': now,
           'updated_at': now,
         });
+        for (final person in const <Map<String, Object?>>[
+          <String, Object?>{
+            'id': 'person-involved',
+            'entity_key': 'P-0001',
+            'normalized_name': '顧遠',
+            'name': '顧遠',
+            'tier': 'active',
+          },
+          <String, Object?>{
+            'id': 'person-unrelated',
+            'entity_key': 'P-0002',
+            'normalized_name': '韓衡',
+            'name': '韓衡',
+            'tier': 'backstage',
+          },
+        ]) {
+          await db.insert('rp_story_characters', <String, Object?>{
+            ...person,
+            'character_id': 'char-a',
+            'continuity_id': 'main',
+            'last_seen_at': now,
+            'created_at': now,
+            'updated_at': now,
+          });
+        }
+        for (final state in const <Map<String, Object?>>[
+          <String, Object?>{
+            'id': 'state-related',
+            'state_key': 'body.P-0001.shoulder',
+            'state_type': 'body',
+            'subject_entity_key': 'P-0001',
+            'value': '左肩箭傷恢復中',
+            'status': 'recovering',
+            'evidence': '不應注入的逐字證據',
+          },
+          <String, Object?>{
+            'id': 'state-unrelated',
+            'state_key': 'body.P-0002.fever',
+            'state_type': 'body',
+            'subject_entity_key': 'P-0002',
+            'value': '無關人物的高熱',
+            'status': 'recovering',
+          },
+          <String, Object?>{
+            'id': 'state-dream',
+            'state_key': 'body.P-0001.dream_wound',
+            'state_type': 'body',
+            'subject_entity_key': 'P-0001',
+            'narrative_layer': 'dream',
+            'value': '夢中傷勢',
+            'status': 'recovering',
+          },
+        ]) {
+          await db.insert('rp_story_states', <String, Object?>{
+            ...state,
+            'character_id': 'char-a',
+            'continuity_id': 'main',
+            'narrative_layer': state['narrative_layer'] ?? 'main',
+            'created_at': now,
+            'updated_at': now,
+          });
+        }
 
         final context = await ContextCompressor.buildRpArchiveContext(
           characterId: 'char-a',
           continuityId: 'main',
           conversationId: 'rp-profile-c',
-          sourceText: '昭嶼問晏辭是否找到雪嶺青。',
+          sourceText: '清川問顧遠是否找到雪嶺青。',
         );
 
         expect(context, contains('【本輪參與劇情的具體人設】'));
@@ -616,6 +891,10 @@ void main() {
         expect(context, contains('熟悉藥理'));
         expect(context, contains('【本輪關鍵詞召回的世界書】'));
         expect(context, contains('只生長於嵩臨山背面崖壁'));
+        expect(context, contains('左肩箭傷恢復中'));
+        expect(context, isNot(contains('無關人物的高熱')));
+        expect(context, isNot(contains('夢中傷勢')));
+        expect(context, isNot(contains('不應注入的逐字證據')));
       },
     );
 
@@ -626,7 +905,7 @@ void main() {
           id: 42,
           conversationId: 'rp-c',
           characterId: 'char-a',
-          text: '晏辭與霍岑因白鶴印結盟，開始彼此信任。',
+          text: '顧遠與韓衡因青鸞印結盟，開始彼此信任。',
           isUser: false,
         );
         await RpStoryService.storeExtraction(
@@ -636,30 +915,30 @@ void main() {
           sourceMessages: <Message>[source],
           characters: <Map<String, Object?>>[
             <String, Object?>{
-              'name': '晏辭',
+              'name': '顧遠',
               'identity': '書生',
               'tier': 'active',
               'source_message_ids': <int>[42],
-              'evidence': '晏辭',
+              'evidence': '顧遠',
             },
             <String, Object?>{
-              'name': '霍岑',
+              'name': '韓衡',
               'identity': '少卿',
               'tier': 'active',
               'source_message_ids': <int>[42],
-              'evidence': '霍岑',
+              'evidence': '韓衡',
             },
           ],
           relationships: <Map<String, Object?>>[
             <String, Object?>{
-              'from': '晏辭',
-              'to': '霍岑',
+              'from': '顧遠',
+              'to': '韓衡',
               'direction': 'mutual',
               'current_relation': '盟友',
-              'origin': '因白鶴印結盟',
-              'closeness_catalyst': '共同守住白鶴印',
+              'origin': '因青鸞印結盟',
+              'closeness_catalyst': '共同守住青鸞印',
               'source_message_ids': <int>[42],
-              'evidence': '因白鶴印結盟',
+              'evidence': '因青鸞印結盟',
             },
           ],
         );
@@ -668,8 +947,8 @@ void main() {
           'char-a',
           '他沒有鬆開對方的手。',
         );
-        expect(prompt, contains('晏辭 → 霍岑'));
-        expect(prompt, contains('因白鶴印結盟'));
+        expect(prompt, contains('顧遠 → 韓衡'));
+        expect(prompt, contains('因青鸞印結盟'));
       },
     );
 
@@ -816,7 +1095,7 @@ void main() {
 
         final prompt = await RpCharacterTimelineService.recallPrompt(
           'char-a',
-          '繼續前進',
+          '回想劇情事件 205',
         );
         expect(prompt, contains('劇情事件 205'));
         expect(prompt, isNot(contains('劇情事件 1\n')));

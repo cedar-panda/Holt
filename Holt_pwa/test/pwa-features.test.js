@@ -55,7 +55,7 @@ test("HTTP 403 exposes a safe upstream reason and relay guidance", () => {
 });
 
 test("companion tags stay hidden while visible reply text remains", () => {
-  const raw = '在這裡。<memo>[重要事件] 昭昭回來了 @回來</memo><emo>安全感|70,20|55|重逢</emo><transfer amount="30"/>[sticker:wave]';
+  const raw = '在這裡。<memo>[重要事件] 小禾回來了 @回來</memo><emo>安全感|70,20|55|重逢</emo><transfer amount="30"/>[sticker:wave]';
   assert.equal(stripCompanionTags(raw), "在這裡。");
 });
 
@@ -77,7 +77,7 @@ test("local window summary excludes media and keeps speaker identity", () => {
 
 test("companion prompt only advertises executors enabled in PWA", () => {
   const settings = { memory: true, emotion: true, bioClock: true, timeline: true, homeNote: true, whisper: true, scratch: true, transfer: true, stickers: true };
-  const prompt = buildCompanionAbilityPrompt({ settings, userName: "昭昭", characterName: "林澈", stickerIds: ["wave"] });
+  const prompt = buildCompanionAbilityPrompt({ settings, userName: "小禾", characterName: "林澈", stickerIds: ["wave"] });
   assert.match(prompt, /<memo>/);
   assert.match(prompt, /<scratch who="char"\/>/);
   assert.match(prompt, /\[sticker:ID\]/);

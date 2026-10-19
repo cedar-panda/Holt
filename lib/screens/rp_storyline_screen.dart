@@ -7,6 +7,7 @@ import '../theme/app_theme.dart';
 import '../widgets/gradient_background.dart';
 import 'memory_screen.dart';
 import 'rp_story_relationship_screen.dart';
+import 'rp_storyline_timeline_screen.dart';
 import 'rp_worldbook_screen.dart';
 
 const String _manageStorylinesResult = '__manage_storylines__';
@@ -371,6 +372,20 @@ class _RpStorylineScreenState extends State<RpStorylineScreen> {
     final duration = reduceMotion
         ? Duration.zero
         : const Duration(milliseconds: 180);
+    final archiveLinkStyle = TextButton.styleFrom(
+      minimumSize: const Size(0, 44),
+      padding: const EdgeInsets.symmetric(horizontal: 4),
+      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      alignment: Alignment.center,
+      textStyle: YanciTheme.bodyText.copyWith(height: 1.2),
+    );
+    final archiveSeparator = Text(
+      '｜',
+      style: YanciTheme.bodyText.copyWith(
+        height: 1.2,
+        color: YanciTheme.textSecondary.withValues(alpha: 0.52),
+      ),
+    );
     return AnimatedOpacity(
       key: ValueKey<String>('storyline-$id'),
       duration: duration,
@@ -457,56 +472,87 @@ class _RpStorylineScreenState extends State<RpStorylineScreen> {
             ),
             if (!archived) ...[
               const SizedBox(height: 4),
-              Wrap(
-                spacing: 6,
-                runSpacing: 2,
+              Row(
                 children: [
-                  TextButton(
-                    onPressed: () => Navigator.of(context).push(
-                      MaterialPageRoute<void>(
-                        builder: (_) => MemoryScreen(
-                          characterId: widget.characterId,
-                          contextMode: ContextMode.rp,
-                          continuityId: id,
-                          scopeLabel: rpStorylineDisplayName(row, index + 1),
+                  Expanded(
+                    child: TextButton(
+                      style: archiveLinkStyle,
+                      onPressed: () => Navigator.of(context).push(
+                        MaterialPageRoute<void>(
+                          builder: (_) => RpWorldbookScreen(
+                            characterId: widget.characterId,
+                            continuityId: id,
+                          ),
                         ),
                       ),
-                    ),
-                    child: Text(
-                      L.pick(
-                        en: 'Memories & summaries',
-                        zhTW: '記憶與摘要',
-                        zhCN: '记忆与摘要',
+                      child: Text(
+                        L.pick(en: 'Worldbook', zhTW: '世界書', zhCN: '世界书'),
+                        textAlign: TextAlign.center,
                       ),
                     ),
                   ),
-                  TextButton(
-                    onPressed: () => Navigator.of(context).push(
-                      MaterialPageRoute<void>(
-                        builder: (_) => RpStoryRelationshipScreen(
-                          characterId: widget.characterId,
-                          continuityId: id,
+                  archiveSeparator,
+                  Expanded(
+                    child: TextButton(
+                      style: archiveLinkStyle,
+                      onPressed: () => Navigator.of(context).push(
+                        MaterialPageRoute<void>(
+                          builder: (_) => RpStoryRelationshipScreen(
+                            characterId: widget.characterId,
+                            continuityId: id,
+                          ),
                         ),
                       ),
-                    ),
-                    child: Text(
-                      L.pick(en: 'Relationships', zhTW: '人物關係', zhCN: '人物关系'),
+                      child: Text(
+                        L.pick(en: 'Relationships', zhTW: '人物關係', zhCN: '人物关系'),
+                        textAlign: TextAlign.center,
+                      ),
                     ),
                   ),
-                  TextButton(
-                    onPressed: () => Navigator.of(context).push(
-                      MaterialPageRoute<void>(
-                        builder: (_) => RpWorldbookScreen(
-                          characterId: widget.characterId,
-                          continuityId: id,
+                  archiveSeparator,
+                  Expanded(
+                    child: TextButton(
+                      style: archiveLinkStyle,
+                      onPressed: () => Navigator.of(context).push(
+                        MaterialPageRoute<void>(
+                          builder: (_) => RpStorylineTimelineScreen(
+                            characterId: widget.characterId,
+                            continuityId: id,
+                            storylineLabel: rpStorylineDisplayName(
+                              row,
+                              index + 1,
+                            ),
+                          ),
                         ),
                       ),
-                    ),
-                    child: Text(
-                      L.pick(en: 'Worldbook', zhTW: '世界書', zhCN: '世界书'),
+                      child: Text(
+                        L.pick(en: 'Timeline', zhTW: '時間線', zhCN: '时间线'),
+                        textAlign: TextAlign.center,
+                      ),
                     ),
                   ),
                 ],
+              ),
+              Center(
+                child: TextButton(
+                  onPressed: () => Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => MemoryScreen(
+                        characterId: widget.characterId,
+                        contextMode: ContextMode.rp,
+                        continuityId: id,
+                        scopeLabel: rpStorylineDisplayName(row, index + 1),
+                      ),
+                    ),
+                  ),
+                  child: Text(
+                    L.pick(
+                      en: 'Memories & summaries',
+                      zhTW: '記憶與摘要',
+                      zhCN: '记忆与摘要',
+                    ),
+                  ),
+                ),
               ),
             ],
           ],

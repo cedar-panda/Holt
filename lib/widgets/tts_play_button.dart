@@ -176,7 +176,7 @@ class _TtsPlayButtonState extends State<TtsPlayButton>
   Widget _buildPlayingBars() {
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
-      crossAxisAlignment: CrossAxisAlignment.end,
+      crossAxisAlignment: CrossAxisAlignment.center,
       children: List.generate(3, (i) {
         return AnimatedBuilder(
           animation: _barCtrls[i],
@@ -186,8 +186,8 @@ class _TtsPlayButtonState extends State<TtsPlayButton>
             final h = minH + _barCtrls[i].value * (maxH - minH);
 
             return Container(
-              margin: const EdgeInsets.symmetric(horizontal: 0.8),
-              width: 2,
+              margin: const EdgeInsets.symmetric(horizontal: 0.6),
+              width: 1.5,
               height: h,
               decoration: BoxDecoration(
                 color: YanciTheme.accent.withValues(

@@ -44,37 +44,66 @@ void main() {
     await tester.pump(const Duration(milliseconds: 10));
   });
 
-  testWidgets('RP Profile field and storage preserve the complete multiline guide', (
-    tester,
-  ) async {
+  testWidgets(
+    'RP Profile field and storage preserve the complete multiline guide',
+    (tester) async {
+      await tester.pumpWidget(
+        const MaterialApp(home: ProfileScreen(initialMode: ContextMode.rp)),
+      );
+      await _waitForAsyncScreen(tester);
+
+      const guide = '第一行身分\n第二行行為邊界\n第三行敘事偏好';
+      final field = find.byKey(const Key('profile_system_prompt_field'));
+      await tester.enterText(field, guide);
+      expect(tester.widget<TextField>(field).controller?.text, guide);
+
+      await tester.runAsync(
+        () => UserPersonaService.saveProfileGuide(
+          UserPersonaService.defaultPersonaId,
+          ContextMode.rp,
+          guide,
+        ),
+      );
+
+      final stored = await tester.runAsync(
+        () => UserPersonaService.profileGuide(
+          UserPersonaService.defaultPersonaId,
+          ContextMode.rp,
+        ),
+      );
+      expect(stored, guide);
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump(const Duration(milliseconds: 10));
+    },
+  );
+
+  testWidgets('communication guide opens the expanded editor', (tester) async {
     await tester.pumpWidget(
-      const MaterialApp(home: ProfileScreen(initialMode: ContextMode.rp)),
+      const MaterialApp(home: ProfileScreen(initialMode: ContextMode.daily)),
     );
     await _waitForAsyncScreen(tester);
 
-    const guide = '第一行身分\n第二行行為邊界\n第三行敘事偏好';
-    final field = find.byKey(const Key('profile_system_prompt_field'));
-    await tester.enterText(field, guide);
-    expect(tester.widget<TextField>(field).controller?.text, guide);
+    await tester.tap(find.byKey(const Key('profile-expand-guide-button')));
+    await tester.pumpAndSettle();
 
-    await tester.runAsync(
-      () => UserPersonaService.saveProfileGuide(
-        UserPersonaService.defaultPersonaId,
-        ContextMode.rp,
-        guide,
+    expect(
+      find.byKey(const Key('profile_system_prompt_expanded_field')),
+      findsOneWidget,
+    );
+    final expanded = tester.widget<TextField>(
+      find.byKey(const Key('profile_system_prompt_expanded_field')),
+    );
+    expect(
+      expanded.controller,
+      same(
+        tester
+            .widget<TextField>(
+              find.byKey(const Key('profile_system_prompt_field')),
+            )
+            .controller,
       ),
     );
-
-    final stored = await tester.runAsync(
-      () => UserPersonaService.profileGuide(
-        UserPersonaService.defaultPersonaId,
-        ContextMode.rp,
-      ),
-    );
-    expect(stored, guide);
-
-    await tester.pumpWidget(const SizedBox.shrink());
-    await tester.pump(const Duration(milliseconds: 10));
   });
 }
 

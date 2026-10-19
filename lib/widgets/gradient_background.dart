@@ -1,6 +1,8 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:math';
 import 'dart:ui' show ImageFilter, TileMode;
+import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -37,6 +39,9 @@ class GradientBackground extends StatelessWidget {
   final BackgroundTransitionDirection transitionDirection;
   final int transitionRevision;
   final Duration transitionDuration;
+  final Duration? customBackgroundTransitionDuration;
+  final BackgroundTransitionDirection customBackgroundTransitionDirection;
+  final double customBackgroundOpacity;
   final ValueListenable<BackgroundSwipeTransition>? swipeTransition;
 
   const GradientBackground({
@@ -49,6 +54,10 @@ class GradientBackground extends StatelessWidget {
     this.transitionDirection = BackgroundTransitionDirection.rightToLeft,
     this.transitionRevision = 0,
     this.transitionDuration = const Duration(seconds: 1),
+    this.customBackgroundTransitionDuration,
+    this.customBackgroundTransitionDirection =
+        BackgroundTransitionDirection.rightToLeft,
+    this.customBackgroundOpacity = 1,
     this.swipeTransition,
   });
 
@@ -93,7 +102,15 @@ class GradientBackground extends StatelessWidget {
       child: Stack(
         fit: StackFit.expand,
         children: [
-          customBackground,
+          _AnimatedCustomBackgroundVisibility(
+            opacity: customBackgroundOpacity,
+            duration: customBackgroundTransitionDuration ?? transitionDuration,
+            direction: customBackgroundTransitionDirection,
+            child: Stack(
+              fit: StackFit.expand,
+              children: <Widget>[customBackground],
+            ),
+          ),
           CustomPaint(painter: _DitherPainter(), child: child),
         ],
       ),
@@ -111,6 +128,124 @@ class GradientBackground extends StatelessWidget {
       );
     }
     return surface;
+  }
+}
+
+/// 在主題底色與角色綁定背景之間做柔和交接。
+///
+/// 保持實際背景來源不變，只調整其可見度；因此角色頁可以回到純主題色，
+/// 再切回首頁／我的時仍沿用首頁目前交流角色的綁定背景。
+class _AnimatedCustomBackgroundVisibility extends StatefulWidget {
+  const _AnimatedCustomBackgroundVisibility({
+    required this.opacity,
+    required this.duration,
+    required this.direction,
+    required this.child,
+  });
+
+  final double opacity;
+  final Duration duration;
+  final BackgroundTransitionDirection direction;
+  final Widget child;
+
+  @override
+  State<_AnimatedCustomBackgroundVisibility> createState() =>
+      _AnimatedCustomBackgroundVisibilityState();
+}
+
+class _AnimatedCustomBackgroundVisibilityState
+    extends State<_AnimatedCustomBackgroundVisibility>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+  late BackgroundTransitionDirection _direction;
+  bool _revealing = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _direction = widget.direction;
+    _controller = AnimationController(
+      vsync: this,
+      duration: widget.duration,
+      value: widget.opacity.clamp(0.0, 1.0),
+    );
+  }
+
+  @override
+  void didUpdateWidget(_AnimatedCustomBackgroundVisibility oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _controller.duration = widget.duration;
+    final target = widget.opacity.clamp(0.0, 1.0);
+    if ((target - oldWidget.opacity.clamp(0.0, 1.0)).abs() > 0.001) {
+      _direction = widget.direction;
+      _revealing = target > _controller.value;
+      _controller.animateTo(target, curve: Curves.easeInOutCubic);
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final reduceMotion = MediaQuery.disableAnimationsOf(context);
+    if (reduceMotion) {
+      return widget.opacity <= 0.001
+          ? const SizedBox.shrink()
+          : Opacity(opacity: widget.opacity, child: widget.child);
+    }
+    return AnimatedBuilder(
+      animation: _controller,
+      child: widget.child,
+      builder: (context, child) {
+        final value = _controller.value;
+        if (value <= 0.001) return const SizedBox.shrink();
+        if (value >= 0.999 && !_controller.isAnimating) return child!;
+        final transitionProgress = _revealing ? value : 1 - value;
+        // Match the home character carousel's visual rhythm: the outgoing
+        // background cross-fades as the blur peaks around the hand-off, while
+        // the feathered edge preserves the tab's spatial direction.
+        final blur =
+            (pow(sin(pi * transitionProgress), 0.75) * 10).toDouble();
+        final revealDirection = _revealing ? _direction : _opposite(_direction);
+        final translated = Opacity(
+          opacity: value,
+          child: FractionalTranslation(
+            translation: Offset(
+              (revealDirection == BackgroundTransitionDirection.rightToLeft
+                      ? 1
+                      : -1) *
+                  .035 *
+                  (1 - transitionProgress),
+              0,
+            ),
+            child: _FeatheredReveal(
+              progress: value,
+              direction: revealDirection,
+              child: child!,
+            ),
+          ),
+        );
+        return KeyedSubtree(
+          key: const ValueKey('custom-background-visibility'),
+          child: ClipRect(
+            child: blur <= 0.01
+                ? translated
+                : ImageFiltered(
+                    imageFilter: ImageFilter.blur(
+                      sigmaX: blur,
+                      sigmaY: blur,
+                      tileMode: TileMode.clamp,
+                    ),
+                    child: translated,
+                  ),
+          ),
+        );
+      },
+    );
   }
 }
 
@@ -261,20 +396,270 @@ Widget _backgroundImage(YanciBackgroundScope scope, BackgroundPreset? preset) {
       );
     },
   );
+  if (blur <= 0.01) {
+    return RepaintBoundary(child: ClipRect(child: image));
+  }
+  final live = ImageFiltered(
+    imageFilter: ImageFilter.blur(
+      sigmaX: blur.clamp(0.0, 20.0).toDouble(),
+      sigmaY: blur.clamp(0.0, 20.0).toDouble(),
+      tileMode: TileMode.clamp,
+    ),
+    child: image,
+  );
   return RepaintBoundary(
     child: ClipRect(
-      child: blur <= 0.01
-          ? image
-          : ImageFiltered(
-              imageFilter: ImageFilter.blur(
-                sigmaX: blur.clamp(0.0, 20.0).toDouble(),
-                sigmaY: blur.clamp(0.0, 20.0).toDouble(),
-                tileMode: TileMode.clamp,
-              ),
-              child: image,
-            ),
+      child: LayoutBuilder(
+        builder: (context, constraints) => _BakedBlurBackground(
+          file: file,
+          scale: scale,
+          offsetX: offsetX,
+          offsetY: offsetY,
+          blur: blur,
+          size: constraints.biggest,
+          devicePixelRatio: MediaQuery.devicePixelRatioOf(context),
+          live: live,
+        ),
+      ),
     ),
   );
+}
+
+/// 靜態背景圖的模糊預烘焙。
+///
+/// Impeller 沒有 raster cache：粒子或串流每刷一幀，`ImageFiltered` 的全螢幕
+/// 模糊就重算一次。這裡在背景／模糊參數改變時把結果畫成一張圖，之後每幀只
+/// 貼圖。烘焙完成前（或拖動滑桿時）先顯示即時模糊，不會閃白。
+class _BakedBlurBackground extends StatefulWidget {
+  const _BakedBlurBackground({
+    required this.file,
+    required this.scale,
+    required this.offsetX,
+    required this.offsetY,
+    required this.blur,
+    required this.size,
+    required this.devicePixelRatio,
+    required this.live,
+  });
+
+  final File file;
+  final double scale;
+  final double offsetX;
+  final double offsetY;
+  final double blur;
+  final Size size;
+  final double devicePixelRatio;
+  final Widget live;
+
+  @override
+  State<_BakedBlurBackground> createState() => _BakedBlurBackgroundState();
+}
+
+class _BakedBlurBackgroundState extends State<_BakedBlurBackground> {
+  /// 參數停止變動多久後才烘焙（拖滑桿時只顯示即時模糊）。
+  static const Duration _bakeDebounce = Duration(milliseconds: 250);
+
+  /// sigma ≥ 這個值時用半解析度烘焙：模糊後沒有細節，肉眼看不出差別。
+  static const double _halfResolutionMinBlur = 3;
+
+  /// 最多保留幾張烘焙結果（首頁／聊天／切換來回時重用）。
+  static const int _cacheLimit = 3;
+  static final Map<String, ui.Image> _cache = <String, ui.Image>{};
+
+  ui.Image? _image;
+  String? _imageKey;
+  String? _pendingKey;
+  Timer? _timer;
+
+  String get _key {
+    var modified = 0;
+    try {
+      modified = widget.file.lastModifiedSync().millisecondsSinceEpoch;
+    } catch (_) {
+      // 讀不到修改時間時只用路徑與參數當 key。
+    }
+    return <Object>[
+      widget.file.path,
+      modified,
+      widget.scale,
+      widget.offsetX,
+      widget.offsetY,
+      widget.blur,
+      widget.size.width,
+      widget.size.height,
+      widget.devicePixelRatio,
+    ].join('|');
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _schedule(debounce: false, rebuild: false);
+  }
+
+  @override
+  void didUpdateWidget(_BakedBlurBackground oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final key = _key;
+    if (key != _imageKey && key != _pendingKey) {
+      // didUpdateWidget 之後一定會 build，不需要 setState。
+      _schedule(debounce: true, rebuild: false);
+    }
+  }
+
+  void _schedule({required bool debounce, required bool rebuild}) {
+    final key = _key;
+    _pendingKey = key;
+    _timer?.cancel();
+    final cached = _cache.remove(key);
+    if (cached != null) {
+      _cache[key] = cached; // 移到最新（LRU）
+      _pendingKey = null;
+      _show(key, cached.clone(), rebuild: rebuild);
+      return;
+    }
+    if (widget.size.isEmpty || !widget.size.isFinite) return;
+    _timer = Timer(
+      debounce ? _bakeDebounce : Duration.zero,
+      () => unawaited(_bake(key)),
+    );
+  }
+
+  Future<void> _bake(String key) async {
+    try {
+      final baked = await _render();
+      if (!mounted || _pendingKey != key) {
+        baked.dispose();
+        return;
+      }
+      _cache[key] = baked;
+      while (_cache.length > _cacheLimit) {
+        _cache.remove(_cache.keys.first)?.dispose();
+      }
+      _pendingKey = null;
+      _show(key, baked.clone(), rebuild: true);
+    } catch (error) {
+      // 烘焙失敗就維持即時模糊，畫面不受影響。
+      debugPrint('Background blur bake failed: $error');
+    }
+  }
+
+  void _show(String key, ui.Image image, {required bool rebuild}) {
+    final previous = _image;
+    _image = image;
+    _imageKey = key;
+    if (rebuild && mounted) setState(() {});
+    previous?.dispose();
+  }
+
+  /// 重現 `_backgroundImage` 的版面：cover → 以中心縮放 → 位移 → 模糊。
+  /// 全部在物理像素座標下畫，模糊 sigma 同步換算，不依賴畫布矩陣。
+  Future<ui.Image> _render() async {
+    final w = widget.size.width;
+    final h = widget.size.height;
+    final dpr = widget.devicePixelRatio;
+    final resolution = widget.blur >= _halfResolutionMinBlur ? 0.5 : 1.0;
+    final k = dpr * resolution;
+    final pixelWidth = max(1, (w * k).round());
+    final pixelHeight = max(1, (h * k).round());
+
+    final bytes = await widget.file.readAsBytes();
+    final decodeHeight = (h * dpr * widget.scale.clamp(1.0, 2.0)).ceil();
+    final codec = await ui.instantiateImageCodec(
+      bytes,
+      targetHeight: decodeHeight,
+      allowUpscaling: false,
+    );
+    final frame = await codec.getNextFrame();
+    codec.dispose();
+    final source = frame.image;
+    try {
+      final imageSize = Size(
+        source.width.toDouble(),
+        source.height.toDouble(),
+      );
+      final box = Offset.zero & Size(w, h);
+      final fitted = applyBoxFit(BoxFit.cover, imageSize, box.size);
+      final sourceRect = Alignment.center.inscribe(
+        fitted.source,
+        Offset.zero & imageSize,
+      );
+      final fittedRect = Alignment.center.inscribe(fitted.destination, box);
+      final s = widget.scale.clamp(0.8, 2.0).toDouble();
+      final c = box.center;
+      final shift = Offset(
+        widget.offsetX.clamp(-0.5, 0.5).toDouble() * w,
+        widget.offsetY.clamp(-0.5, 0.5).toDouble() * h,
+      );
+      final logicalRect = Rect.fromLTRB(
+        c.dx + (fittedRect.left - c.dx) * s,
+        c.dy + (fittedRect.top - c.dy) * s,
+        c.dx + (fittedRect.right - c.dx) * s,
+        c.dy + (fittedRect.bottom - c.dy) * s,
+      ).shift(shift);
+      final pixelRect = Rect.fromLTRB(
+        logicalRect.left * k,
+        logicalRect.top * k,
+        logicalRect.right * k,
+        logicalRect.bottom * k,
+      );
+      final sigma = widget.blur.clamp(0.0, 20.0).toDouble() * k;
+
+      final recorder = ui.PictureRecorder();
+      final canvas = Canvas(
+        recorder,
+        Offset.zero & Size(pixelWidth.toDouble(), pixelHeight.toDouble()),
+      );
+      canvas.saveLayer(
+        null,
+        Paint()
+          ..imageFilter = ImageFilter.blur(
+            sigmaX: sigma,
+            sigmaY: sigma,
+            tileMode: TileMode.clamp,
+          ),
+      );
+      canvas.drawImageRect(
+        source,
+        sourceRect,
+        pixelRect,
+        Paint()
+          ..filterQuality = FilterQuality.high
+          ..isAntiAlias = true,
+      );
+      canvas.restore();
+      final picture = recorder.endRecording();
+      try {
+        return await picture.toImage(pixelWidth, pixelHeight);
+      } finally {
+        picture.dispose();
+      }
+    } finally {
+      source.dispose();
+    }
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    _image?.dispose();
+    _image = null;
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final image = _image;
+    if (image == null || _imageKey != _key) return widget.live;
+    // RawImage 會接管並在替換時 dispose 傳入的 clone；State 保留自己的那份。
+    return RawImage(
+      image: image.clone(),
+      width: widget.size.width,
+      height: widget.size.height,
+      fit: BoxFit.fill,
+      filterQuality: FilterQuality.medium,
+    );
+  }
 }
 
 class _FeatheredBackgroundTransition extends StatefulWidget {
@@ -475,6 +860,13 @@ class ChatBackgroundPresetScope extends InheritedWidget {
     this.foreground,
     required super.child,
   });
+
+  /// Adaptive foreground and bubble colors belong to the chat image only.
+  /// A home-only image in the same preset must not tint a theme-backed chat.
+  bool get hasCustomImage {
+    final path = preset?.chatPath.trim() ?? '';
+    return path.isNotEmpty && File(path).existsSync();
+  }
 
   static ChatBackgroundPresetScope? of(BuildContext context) =>
       context.dependOnInheritedWidgetOfExactType<ChatBackgroundPresetScope>();

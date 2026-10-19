@@ -39,6 +39,8 @@ void main() {
       find.byKey(const Key('api_settings_model_refresh_button')),
       findsOneWidget,
     );
+    expect(find.byType(OutlinedButton), findsNothing);
+    expect(find.byType(TextButton), findsOneWidget);
 
     await tester.tap(
       find.byKey(const Key('api_settings_model_refresh_button')),

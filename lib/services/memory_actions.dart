@@ -4,7 +4,9 @@ import '../memory/retriever.dart';
 import '../models/memory.dart';
 import '../models/context_mode.dart';
 import 'locale_strings.dart';
+import 'model_action_protocol.dart';
 import 'memory_guard_service.dart';
+import 'settings/memory_settings.dart';
 
 /// 模型自主記憶動作
 ///
@@ -45,6 +47,15 @@ class MemoryActions {
     if (log.trim().isNotEmpty) state.actionLog.add(log.trim());
   }
 
+  /// Lets another private model-action processor contribute to the same
+  /// per-reply activity log without owning or resetting memory state.
+  static void registerExternalAction(String windowId, String log) {
+    final normalized = log.trim();
+    if (normalized.isEmpty) return;
+    final state = _statesByWindow.putIfAbsent(windowId, _MemoryActionState.new);
+    state.actionLog.add(normalized);
+  }
+
   static String? lastSearchQueryFor(String windowId) =>
       _statesByWindow[windowId]?.lastSearchQuery;
 
@@ -57,6 +68,14 @@ class MemoryActions {
 
   static void releaseWindow(String windowId) {
     _statesByWindow.remove(windowId);
+  }
+
+  static Future<void> bindSelfNotesToMessage(
+    String windowId,
+    int messageId,
+  ) async {
+    final ids = _statesByWindow[windowId]?.selfNoteIds ?? const <int>[];
+    await DatabaseHelper.bindSelfNotesToMessage(ids, messageId);
   }
 
   static String _clip(String s, [int n = 26]) =>
@@ -97,6 +116,7 @@ class MemoryActions {
     bool resetState = true,
     bool captureSearchQuery = false,
   }) {
+    text = ModelActionProtocol.normalizeForLegacyProcessors(text);
     late final _MemoryActionState state;
     if (resetState) {
       state = _resetState(windowId);
@@ -136,60 +156,72 @@ class MemoryActions {
     if (contextMode == ContextMode.rp) {
       return L.pick(
         en: '''■ RP memory
-  <memo>[Category] Content @trigger1,trigger2</memo>
+  {"type":"memory.propose","arguments":{"category":"Category","content":"durable fact in third person","triggers":["event trigger","specific result"]}}
   Keep only durable plot facts, relationship changes, promises, established setting facts, and unresolved threads supported by this RP window. Use third person, max 2 entries and 2 triggers each.
-  <search_chat scope="current|daily|rp|all">keyword</search_chat>
-  Search exact past context when needed. Prefer scope="rp" in RP; use all only when cross-mode context is genuinely useful. Never mention searching or hidden records.''',
+  {"type":"search.chat","arguments":{"scope":"rp","query":"keyword"}}
+  Search exact past context when needed. Prefer scope="rp" in RP; use all only when cross-mode context is genuinely useful. Never mention searching or hidden records.
+  If the latest user message explicitly corrects a supplied RP chronology/state record, you may update that existing record only:
+  {"type":"rp.timeline.correct","arguments":{"event_key":"existing event_key","value":"corrected event fact","story_time":"optional corrected story time","evidence":"exact quote from the latest user message"}}
+  {"type":"rp.state.correct","arguments":{"state_key":"existing state_key","value":"corrected current fact","status":"valid status for this state type","evidence":"exact quote from the latest user message"}}
+  Reuse a key shown in the supplied references. Never create a key, infer a correction from character dialogue, or revise a record without an exact quote from the latest user message.''',
         zhTW: '''■ RP 記憶
-  <memo>[類別] 內容 @觸發詞1,觸發詞2</memo>
+  {"type":"memory.propose","arguments":{"category":"類別","content":"第三人稱耐久事實","triggers":["事件觸發詞","具體結果"]}}
   只記本 RP 窗口正文支持、對後續有持續價值的劇情事實、關係轉折、承諾、已確立設定與未完線索。使用第三人稱，每次最多 2 條，每條最多 2 個觸發詞。
-  <search_chat scope="current|daily|rp|all">關鍵詞</search_chat>
-  需要精確過往內容時才搜尋；RP 中優先選 rp，只有確實需要跨模式時才選 all。不得向使用者提及搜尋或隱藏記錄。''',
+  {"type":"search.chat","arguments":{"scope":"rp","query":"關鍵詞"}}
+  需要精確過往內容時才搜尋；RP 中優先選 rp，只有確實需要跨模式時才選 all。不得向使用者提及搜尋或隱藏記錄。
+  若最新一則 user 訊息明確指出已注入的 RP 時間線／劇情狀態記錯，可只修正該既有記錄：
+  {"type":"rp.timeline.correct","arguments":{"event_key":"既有 event_key","value":"修正後事件事實","story_time":"可選的修正後劇情時間","evidence":"最新 user 訊息中的逐字原文"}}
+  {"type":"rp.state.correct","arguments":{"state_key":"既有 state_key","value":"修正後當前事實","status":"該狀態類型的合法值","evidence":"最新 user 訊息中的逐字原文"}}
+  必須沿用參考區塊提供的 key。不得自創 key、不得把角色台詞視為 user 修正，也不得在沒有最新 user 逐字證據時改動記錄。''',
         zhCN: '''■ RP 记忆
-  <memo>[类别] 内容 @触发词1,触发词2</memo>
+  {"type":"memory.propose","arguments":{"category":"类别","content":"第三人称耐久事实","triggers":["事件触发词","具体结果"]}}
   只记本 RP 窗口正文支持、对后续有持续价值的剧情事实、关系转折、承诺、已确立设定与未完线索。使用第三人称，每次最多 2 条，每条最多 2 个触发词。
-  <search_chat scope="current|daily|rp|all">关键词</search_chat>
-  需要精确过往内容时才搜索；RP 中优先选择 rp，只有确实需要跨模式时才选 all。不得向用户提及搜索或隐藏记录。''',
+  {"type":"search.chat","arguments":{"scope":"rp","query":"关键词"}}
+  需要精确过往内容时才搜索；RP 中优先选择 rp，只有确实需要跨模式时才选 all。不得向用户提及搜索或隐藏记录。
+  若最新一条 user 消息明确指出已注入的 RP 时间线／剧情状态记错，可只修正该既有记录：
+  {"type":"rp.timeline.correct","arguments":{"event_key":"既有 event_key","value":"修正后事件事实","story_time":"可选的修正后剧情时间","evidence":"最新 user 消息中的逐字原文"}}
+  {"type":"rp.state.correct","arguments":{"state_key":"既有 state_key","value":"修正后当前事实","status":"该状态类型的合法值","evidence":"最新 user 消息中的逐字原文"}}
+  必须沿用参考区块提供的 key。不得自创 key、不得把角色台词视为 user 修正，也不得在没有最新 user 逐字证据时改动记录。''',
       );
     }
     if (L.locale == 'en') {
       return '''■ Memory
-  <memo>[Category] Content @trigger1,trigger2</memo>
+  {"type":"memory.propose","arguments":{"category":"Preference | Promise | Important Event","content":"third-person durable fact","triggers":["event trigger"]}}
       Categories: Preference | Promise | Important Event
   Preference: Only record truly meaningful preferences.
   Write in third person: use your character name and "$name". Example: "$name kissed $charName yesterday".
   Max 2 triggers, pick the most relevant words.
   Max 2 entries per reply. Only record what's truly worth keeping long-term.
 
-  <memo_del>id</memo_del>  Delete outdated/wrong memories (comma-separated, recoverable)
-  <memo_merge>id,id|[Category] new content @triggers</memo_merge>  Merge duplicates into one
+  {"type":"memory.delete","arguments":{"ids":["id"]}}  Delete outdated/wrong memories (recoverable)
+  {"type":"memory.merge","arguments":{"ids":["id1","id2"],"category":"Category","content":"rebuilt fact","triggers":["trigger"]}}  Merge duplicates into one
   Only delete/merge what you're sure about. Injected memories carry ids like [#12·Promise] — never mention ids in conversation, refer to content directly.
 
-  <persona_note>one sentence</persona_note>
+  {"type":"self_note.add","arguments":{"content":"one sentence"}}
   Use when you form a new lasting understanding of yourself, your speech patterns, or how you interact with $name. You must record this inner monologue or character profile update.
 
-  <search_chat scope="current|daily|rp|all">keyword</search_chat>
+  {"type":"search.chat","arguments":{"scope":"daily","query":"keyword"}}
   Internal retrieval for past conversations. Prefer daily here; choose rp or all only when genuinely useful. The system will provide hidden results; never mention searching, records, keywords, or tools to $name. Max 1 per reply.''';
     }
     return L.pick(
       en: '',
       zhTW:
           '''■ 記憶
-  <memo>[類別] 內容 @觸發詞1,觸發詞2</memo>
+  {"type":"memory.propose","arguments":{"category":"偏好｜約定｜重要事件","content":"第三人稱耐久事實","triggers":["事件觸發詞"]}}
   類別：偏好｜約定｜重要事件
   偏好：只記真正有意義的偏好。
   建議用第三人稱記錄，如「$name昨天親了$charName」。
   觸發詞最多 2 個，選關聯性最高的詞。
   一次至多 2 條。只記你認為真正值得長久保留的。
 
-  <memo_del>id</memo_del>  刪除過時記憶（逗號分隔多個，可恢復）
-  <memo_merge>id,id|[類別] 新內容 @觸發詞</memo_merge>  合併重複記憶為一條
+  {"type":"memory.delete","arguments":{"ids":["id"]}}  刪除過時記憶（可恢復）
+  {"type":"memory.merge","arguments":{"ids":["id1","id2"],"category":"類別","content":"重構後內容","triggers":["觸發詞"]}}  合併重複記憶為一條
   系統帶入的記憶編號如 [#12·約定]，這些是給你看的提示，回覆時自然地聊內容就好。
 
-  <persona_note>一句話</persona_note>
+  {"type":"self_note.add","arguments":{"content":"一句話"}}
   當你對自己有新的認知，或是對$name有新的感覺時，可以記下來作為內心獨白。最多可記十二條，新進舊出。
 
-  <search_chat scope="current|daily|rp|all">關鍵詞</search_chat>
+  {"type":"search.chat","arguments":{"scope":"daily","query":"關鍵詞"}}
   回想過去聊天內容時使用；日常模式優先選 daily，只有確實需要時才選 rp 或 all。一次最多 1 個。''',
     );
   }
@@ -204,7 +236,12 @@ class MemoryActions {
     bool resetState = true,
     ContextMode contextMode = ContextMode.daily,
     String continuityId = 'main',
+    String provider = '',
+    String modelId = '',
+    String modelVersion = '',
+    int? sourceMessageId,
   }) async {
+    text = ModelActionProtocol.normalizeForLegacyProcessors(text);
     final state = resetState
         ? _resetState(windowId)
         : _statesByWindow.putIfAbsent(windowId, _MemoryActionState.new);
@@ -232,8 +269,11 @@ class MemoryActions {
         finalContent = '[$dateStr] $finalContent';
       }
 
+      // 情緒座標按範圍讀：RP 故事線與日常各自一份（平行時空）。
       final points = emotionEnabled
-          ? await EmotionCoordinates.activePoints(characterId)
+          ? await EmotionCoordinates.activePoints(
+              EmotionCoordinates.scopeId(characterId, contextMode, continuityId),
+            )
           : const <EmotionPoint>[];
       int? emoX, emoY, emoRes;
       if (points.isNotEmpty) {
@@ -294,8 +334,21 @@ class MemoryActions {
       if (noteCount >= 2) break;
       final note = m.group(1)!.trim();
       if (note.isEmpty) continue;
-      final changed = await DatabaseHelper.appendSelfNote(characterId, note);
-      if (changed) state.actionLog.add('✎ 自我註記 ${_clip(note)}');
+      final retainLongTerm = await MemorySettings.getSelfNotesLongTermEnabled();
+      final result = await DatabaseHelper.appendSelfNoteDetailed(
+        characterId,
+        note,
+        retainLongTerm: retainLongTerm,
+        provider: provider,
+        modelId: modelId,
+        modelVersion: modelVersion,
+        sourceConversationId: windowId,
+        sourceMessageIds: <int>[?sourceMessageId],
+      );
+      if (result.accepted) {
+        if (result.recordId != null) state.selfNoteIds.add(result.recordId!);
+        state.actionLog.add('✎ 自我註記 ${_clip(note)}');
+      }
       noteCount++;
     }
     int noteStripCount = 0;
@@ -526,6 +579,7 @@ class _MemoryActionState {
   int? lastInsertedMemoryId;
   final List<String> actionLog = [];
   final List<String> proposalIds = [];
+  final List<int> selfNoteIds = [];
   String? lastSearchQuery;
   String lastSearchScope = 'current';
 }

@@ -15,9 +15,7 @@ import '../services/locale_strings.dart';
 import '../main.dart' show themeNotifier;
 import '../widgets/coin_amount_text.dart';
 import '../widgets/gradient_background.dart';
-import '../widgets/starfield_painter.dart';
-import '../widgets/rain_painter.dart';
-import '../widgets/neural_field.dart';
+import '../widgets/ambient_particles.dart';
 import '../memory/database.dart';
 import '../models/message.dart';
 import '../models/context_mode.dart';
@@ -34,25 +32,31 @@ import '../services/background_preset_service.dart';
 import '../services/background_foreground_service.dart';
 import '../services/user_persona_service.dart';
 import '../services/scratch_service.dart';
+import '../services/sticker_service.dart';
 import '../services/tool_feature_settings.dart';
 import '../services/guide_service.dart';
+import '../services/app_error_log_service.dart';
 import '../services/settings/guide_settings.dart';
 import '../widgets/orbit_loading_indicator.dart';
 import '../widgets/yanci_bottom_nav_bar.dart';
+import '../widgets/widow_safe_text.dart';
 import '../widgets/character_signature_panel.dart';
 import '../widgets/character_signature_history_sheet.dart';
 import '../widgets/context_mode_pill.dart';
 import '../widgets/user_persona_avatar_pair.dart';
 import '../widgets/user_persona_switcher.dart';
 import '../widgets/anniversary_panel.dart';
-import '../widgets/guide_entry.dart';
 import '../services/settings/context_mode_settings.dart';
 import '../utils/latest_request_gate.dart';
 import 'manual_summary_clean_screen.dart';
 import 'profile_screen.dart';
+import 'character_list_screen.dart';
+import 'sticker_library_screen.dart';
 import 'user_profile_screen.dart';
 import 'local_device_sync_screen.dart';
 import 'external_chat_import_screen.dart';
+import '../widgets/sidebar/holt_sidebar_shell.dart';
+import '../widgets/sidebar/holt_control_sidebar.dart';
 
 part 'home_screen_profile.dart';
 
@@ -71,7 +75,9 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen>
     with TickerProviderStateMixin, WidgetsBindingObserver {
   static const double _homeCarouselOffsetY = 20.0;
-  int _currentTab = 2; // 首頁居中
+  final GlobalKey<HoltSidebarShellState> _sidebarKey =
+      GlobalKey<HoltSidebarShellState>();
+  int _currentTab = 1; // 首頁居中
   List<Map<String, dynamic>> _characters = [];
   String _activeCharacterId = 'default';
   BackgroundPreset? _boundBackgroundPreset;
@@ -88,6 +94,11 @@ class _HomeScreenState extends State<HomeScreen>
         const BackgroundSwipeTransition(),
       );
   static const Duration _characterArrivalDuration = Duration(seconds: 1);
+  static const Duration _tabBackgroundTransitionDuration = Duration(
+    milliseconds: 360,
+  );
+  BackgroundTransitionDirection _tabBackgroundTransitionDirection =
+      BackgroundTransitionDirection.rightToLeft;
   String? _latestNote;
   List<String> _randomNotes = [];
   int _randomNoteIndex = 0;
@@ -95,6 +106,8 @@ class _HomeScreenState extends State<HomeScreen>
   // 角色輪盤
   PageController? _carouselController;
   int _currentCarouselPage = 0;
+  int _characterCarouselRevision = 0;
+  bool _suspendCharacterCarouselSelection = false;
   Timer? _onlineDwellTimer;
   bool _onlineDwellReady = false;
   bool _onlineDwellElapsed = false;
@@ -111,7 +124,6 @@ class _HomeScreenState extends State<HomeScreen>
   // 用戶貝殼餘額
   int _userCoins = 0;
   bool _shellEconomyEnabled = true;
-  bool _shopEnabled = true;
   StreamSubscription<int>? _userCoinsSub;
 
   static const Duration _autoBackupInterval = Duration(hours: 1);
@@ -338,7 +350,10 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   void _syncHomeAnimations() {
-    final shouldAnimate = mounted && !_reduceMotion && _currentTab != 4;
+    // The ECG only exists on the home tab. IndexedStack keeps sibling tabs
+    // alive, so checking merely "not profile" left this ticker running behind
+    // the character page.
+    final shouldAnimate = mounted && !_reduceMotion && _currentTab == 1;
     if (shouldAnimate) {
       if (!_ecgController.isAnimating) _ecgController.repeat();
     } else {
@@ -456,7 +471,6 @@ class _HomeScreenState extends State<HomeScreen>
     if (!mounted) return;
     setState(() {
       _shellEconomyEnabled = enabled;
-      _shopEnabled = features.shopEnabled;
     });
     if (enabled) unawaited(_loadUserCoins());
   }
@@ -476,6 +490,42 @@ class _HomeScreenState extends State<HomeScreen>
       next[index] = refreshed;
       _characters = next;
     });
+  }
+
+  Future<T?> _pushChatRoute<T>({
+    required Object arguments,
+    String? restoreCharacterId,
+  }) async {
+    final expectedCharacterId = restoreCharacterId ?? _activeCharacterId;
+    _suspendCharacterCarouselSelection = true;
+    try {
+      return await Navigator.of(
+        context,
+      ).pushNamed<T>('/chat', arguments: arguments);
+    } finally {
+      _suspendCharacterCarouselSelection = false;
+      if (mounted) {
+        await _restoreCharacterAfterChat(expectedCharacterId);
+      }
+    }
+  }
+
+  Future<void> _restoreCharacterAfterChat(String characterId) async {
+    final targetIndex = _characters.indexWhere(
+      (character) => character['id'] == characterId,
+    );
+    if (targetIndex < 0) return;
+
+    if (_activeCharacterId != characterId) {
+      await _selectCharacter(characterId);
+    }
+    if (!mounted) return;
+
+    _currentCarouselPage = targetIndex;
+    final controller = _carouselController;
+    if (controller != null && controller.hasClients) {
+      controller.jumpToPage(targetIndex);
+    }
   }
 
   String _userName = '';
@@ -621,7 +671,8 @@ class _HomeScreenState extends State<HomeScreen>
     final chars = results[0] as List<Map<String, dynamic>>;
     final globalRp = results[1] as bool;
     final toolFeatures = results[2] as ToolFeatureState;
-    final activeId = selectId ?? await UserSettings.getActiveCharacterId();
+    final requestedActiveId =
+        selectId ?? await UserSettings.getActiveCharacterId();
     final backgroundEntries =
         await Future.wait<MapEntry<String, BackgroundPreset?>>(
           chars.map((character) async {
@@ -635,17 +686,20 @@ class _HomeScreenState extends State<HomeScreen>
     final boundBackgrounds = Map<String, BackgroundPreset?>.fromEntries(
       backgroundEntries,
     );
+    final requestedIndex = chars.indexWhere(
+      (character) => character['id'] == requestedActiveId,
+    );
+    final activeIndex = requestedIndex >= 0 ? requestedIndex : 0;
+    final activeId = chars.isEmpty
+        ? 'default'
+        : chars[activeIndex]['id'] as String;
     final boundBackground = boundBackgrounds[activeId];
 
-    int activeIndex = 0;
-    for (int i = 0; i < chars.length; i++) {
-      if (chars[i]['id'] == activeId) {
-        activeIndex = i;
-        break;
-      }
-    }
-
     if (!mounted || !_charactersGate.isCurrent(generation)) return;
+    // Invalidate callbacks from the outgoing PageView before replacing the
+    // list. A newly-created character sorts to index 0; without this guard an
+    // old page index can be interpreted against the new list and select it.
+    _characterCarouselRevision++;
     _carouselController?.removeListener(_handleCharacterCarouselMotion);
     _carouselController?.dispose();
     _carouselController = PageController(
@@ -664,8 +718,10 @@ class _HomeScreenState extends State<HomeScreen>
       _boundBackgroundPresets = boundBackgrounds;
       _globalRpEnabled = globalRp;
       _shellEconomyEnabled = toolFeatures.shellEconomyEnabled;
-      _shopEnabled = toolFeatures.shopEnabled;
     });
+    if (activeId != requestedActiveId) {
+      unawaited(UserSettings.saveActiveCharacterId(activeId));
+    }
     _publishBackgroundSwipeTransition(page: activeIndex.toDouble());
     unawaited(_loadHomeForegroundPalette(boundBackground));
     _beginOnlineDwell(activeId);
@@ -920,7 +976,7 @@ class _HomeScreenState extends State<HomeScreen>
       await DatabaseHelper.createConversation(conv);
 
       if (mounted) {
-        await Navigator.of(context).pushNamed('/chat', arguments: convId);
+        await _pushChatRoute(arguments: convId, restoreCharacterId: charId);
         if (await DatabaseHelper.getMessageCount(convId) == 0) {
           if (KeepAliveService.instance.activeConversationId == convId) {
             await KeepAliveService.instance.stop();
@@ -992,53 +1048,85 @@ class _HomeScreenState extends State<HomeScreen>
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      extendBody: true,
-      body: GradientBackground(
+    return HoltSidebarShell(
+      key: _sidebarKey,
+      sidebar: HoltControlSidebar(
+        guideVisible: _guideAvailable,
+        shellEconomyVisible: _shellEconomyEnabled,
+        shellBalance: _userCoins,
+        onGuideTap: () {
+          if (_showGuideIntro) {
+            unawaited(GuideSettings.markIntroSeen());
+            setState(() => _showGuideIntro = false);
+          }
+          unawaited(_openGuide());
+        },
+        onShopTap: () => unawaited(_showShopBottomSheet(context)),
+        onBackpackTap: () =>
+            unawaited(_showBackpackBottomSheet(context, 'user')),
+      ),
+      background: GradientBackground(
+        // 背景來源始終是首頁目前交流角色；角色頁只把綁定圖片柔和
+        // 淡出至主題底色，不讓角色卡輪盤的瀏覽位置改變背景來源。
         scope: YanciBackgroundScope.home,
         presetOverride: _boundBackgroundPreset,
         transitionDirection: _backgroundTransitionDirection,
         transitionRevision: _backgroundTransitionRevision,
         transitionDuration: _characterArrivalDuration,
+        customBackgroundTransitionDuration: _tabBackgroundTransitionDuration,
+        customBackgroundTransitionDirection: _tabBackgroundTransitionDirection,
+        customBackgroundOpacity: _currentTab == 0 ? 0 : 1,
         swipeTransition: _backgroundSwipeTransition,
         child: Stack(
           children: [
-            Positioned.fill(
+            Positioned(
+              left: 0,
+              right: 0,
+              top: 0,
+              bottom: 88,
               child: TickerMode(
-                enabled:
-                    YanciTheme.starEnabled &&
-                    _currentTab != 4 &&
-                    !_reduceMotion,
+                enabled: YanciTheme.starEnabled && !_reduceMotion,
                 child: Offstage(
-                  offstage: !YanciTheme.starEnabled || _currentTab == 4,
-                  child: RepaintBoundary(
-                    child: switch (YanciTheme.bgEffect) {
-                      'stars' => const StarfieldWidget(starCount: 18),
-                      'rain' => const RainWidget(dropCount: 30),
-                      _ => const NeuralFieldWidget(nodeCount: 18),
-                    },
-                  ),
+                  offstage: !YanciTheme.starEnabled,
+                  child: const RepaintBoundary(child: AmbientParticleField()),
                 ),
               ),
             ),
-            SafeArea(child: _buildCurrentPage()),
           ],
         ),
       ),
-      bottomNavigationBar: YanciBottomNavBar(
-        activeIndex: _currentTab,
-        reduceMotion: _reduceMotion,
-        backgroundPalette: _homeForegroundPalette,
-        onTap: _handleNavTap,
+      child: Scaffold(
+        extendBody: true,
+        backgroundColor: Colors.transparent,
+        body: SafeArea(child: _buildCurrentPage()),
+        bottomNavigationBar: YanciBottomNavBar(
+          activeIndex: _currentTab,
+          reduceMotion: _reduceMotion,
+          backgroundPalette: _currentTab == 0 ? null : _homeForegroundPalette,
+          onTap: _handleNavTap,
+        ),
       ),
     );
   }
 
   Widget _buildCurrentPage() {
-    // IndexedStack 保持 home 頁存活，切到 profile 再切回來不丟輪盤選中
+    // 三個底部導航頁保持同層且持續存活；角色頁不再 push 新 route，
+    // 因此底部導航和外層側邊欄手勢都不會消失。
     return IndexedStack(
-      index: _currentTab == 4 ? 1 : 0,
-      children: [_buildHomePage(), _buildProfilePage()],
+      index: _currentTab,
+      children: [
+        TickerMode(
+          enabled: _currentTab == 0,
+          child: CharacterListScreen(
+            embedded: true,
+            activeCharacterId: _activeCharacterId,
+            onActiveCharacterChanged: (id) =>
+                unawaited(_loadCharacters(selectId: id)),
+          ),
+        ),
+        TickerMode(enabled: _currentTab == 1, child: _buildHomePage()),
+        TickerMode(enabled: _currentTab == 2, child: _buildProfilePage()),
+      ],
     );
   }
 
@@ -1137,31 +1225,80 @@ class _HomeScreenState extends State<HomeScreen>
                 ),
               ),
             ),
-            // ═══ 用戶貝殼餘額（左上角）═══
-            if (_shellEconomyEnabled)
-              Positioned(
-                top: 12,
-                left: 20,
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 4,
-                    vertical: 7,
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Image.asset(
-                        'assets/images/shell_coin.png',
-                        width: 20,
-                        height: 20,
-                        filterQuality: FilterQuality.none,
+            // ═══ 側邊欄入口與貝殼餘額（左上角）═══
+            Positioned(
+              top: 12,
+              left: 12,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Tooltip(
+                    message: L.pick(
+                      en: 'Open settings',
+                      zhTW: '打開設定',
+                      zhCN: '打开设置',
+                    ),
+                    child: IconButton(
+                      onPressed: () => _sidebarKey.currentState?.open(),
+                      icon: Icon(
+                        Icons.menu_rounded,
+                        size: 23,
+                        color:
+                            _homeForegroundPalette?.primary ??
+                            YanciTheme.textSecondary.withValues(alpha: 0.68),
                       ),
-                      const SizedBox(width: 6),
-                      CoinAmountText(_userCoins),
-                    ],
+                      constraints: const BoxConstraints.tightFor(
+                        width: 48,
+                        height: 48,
+                      ),
+                    ),
                   ),
-                ),
+                  if (_shellEconomyEnabled) ...[
+                    const SizedBox(width: 2),
+                    Tooltip(
+                      message: L.pick(
+                        en: 'Open Shell Shop',
+                        zhTW: '點擊餘額進入貝殼商店',
+                        zhCN: '点击余额进入贝壳商店',
+                      ),
+                      child: Semantics(
+                        button: true,
+                        label: L.pick(
+                          en: 'Shell balance $_userCoins; open shop',
+                          zhTW: '貝殼餘額 $_userCoins；進入商店',
+                          zhCN: '贝壳余额 $_userCoins；进入商店',
+                        ),
+                        child: InkWell(
+                          borderRadius: BorderRadius.circular(12),
+                          onTap: () => unawaited(_showShopBottomSheet(context)),
+                          child: ConstrainedBox(
+                            constraints: const BoxConstraints(minHeight: 44),
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 6,
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Image.asset(
+                                    'assets/images/shell_coin.png',
+                                    width: 20,
+                                    height: 20,
+                                    filterQuality: FilterQuality.none,
+                                  ),
+                                  const SizedBox(width: 6),
+                                  CoinAmountText(_userCoins),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
               ),
+            ),
             // ═══ 歷史對話按鈕（右上角）═══
             Positioned(
               top: 12,
@@ -1190,25 +1327,6 @@ class _HomeScreenState extends State<HomeScreen>
                 ),
               ),
             ),
-            if (_guideAvailable)
-              Positioned(
-                top: 12,
-                right: 68,
-                width: 220,
-                child: GuideEntry(
-                  showIntro: _showGuideIntro,
-                  reduceMotion: _reduceMotion,
-                  color:
-                      _homeForegroundPalette?.primary ??
-                      YanciTheme.textSecondary.withValues(alpha: .68),
-                  onTap: () => unawaited(_openGuide()),
-                  onIntroCompleted: () {
-                    if (!_showGuideIntro) return;
-                    unawaited(GuideSettings.markIntroSeen());
-                    if (mounted) setState(() => _showGuideIntro = false);
-                  },
-                ),
-              ),
           ],
         );
       },
@@ -1226,6 +1344,7 @@ class _HomeScreenState extends State<HomeScreen>
     }
 
     if (noteToShow != null) {
+      final notePreview = noteToShow.replaceAll(RegExp(r'\s+'), ' ').trim();
       return Semantics(
         button: true,
         label: L.pick(en: 'Open notes', zhTW: '開啟便箋'),
@@ -1234,8 +1353,8 @@ class _HomeScreenState extends State<HomeScreen>
           onTap: _showNotesSheet,
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 32),
-            child: Text(
-              '「$noteToShow」',
+            child: WidowSafeText(
+              '「$notePreview」',
               style: TextStyle(
                 fontSize: 20,
                 fontWeight: FontWeight.w300,
@@ -1247,6 +1366,9 @@ class _HomeScreenState extends State<HomeScreen>
                 height: 1.4,
               ),
               textAlign: TextAlign.center,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              balanceLines: true,
             ),
           ),
         ),
@@ -1278,7 +1400,7 @@ class _HomeScreenState extends State<HomeScreen>
         onTap: _showNotesSheet,
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 32),
-          child: Text(
+          child: WidowSafeText(
             greeting,
             style: TextStyle(
               fontSize: 22,
@@ -1290,6 +1412,9 @@ class _HomeScreenState extends State<HomeScreen>
               height: 1.4,
             ),
             textAlign: TextAlign.center,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            balanceLines: true,
           ),
         ),
       ),
@@ -1339,6 +1464,7 @@ class _HomeScreenState extends State<HomeScreen>
     final carouselWidth = min(MediaQuery.sizeOf(context).width - 28, 380.0);
     final canGoPrevious = _currentCarouselPage > 0;
     final canGoNext = _currentCarouselPage < _characters.length - 1;
+    final carouselRevision = _characterCarouselRevision;
 
     void moveCarouselTo(int index) {
       final controller = _carouselController;
@@ -1358,9 +1484,16 @@ class _HomeScreenState extends State<HomeScreen>
             child: SizedBox(
               width: carouselWidth,
               child: PageView.builder(
+                key: ValueKey('home-character-carousel-$carouselRevision'),
                 controller: _carouselController!,
                 itemCount: _characters.length,
                 onPageChanged: (index) {
+                  if (_suspendCharacterCarouselSelection ||
+                      carouselRevision != _characterCarouselRevision ||
+                      index < 0 ||
+                      index >= _characters.length) {
+                    return;
+                  }
                   _currentCarouselPage = index;
                   final id = _characters[index]['id'] as String;
                   unawaited(_selectCharacter(id));
@@ -1731,6 +1864,17 @@ class _HomeScreenState extends State<HomeScreen>
     final imagePrimary = _homeForegroundPalette?.primary;
     final imageSecondary = _homeForegroundPalette?.secondary;
     final imageSubtle = _homeForegroundPalette?.subtle;
+    final homePath = _boundBackgroundPreset?.homePath.trim() ?? '';
+    final hasCustomHomeImage =
+        homePath.isNotEmpty && File(homePath).existsSync();
+    final dominant = _homeForegroundPalette?.dominant;
+    final adaptiveSolid = dominant == null
+        ? YanciTheme.surfacePanel
+        : Color.lerp(
+            dominant,
+            dominant.computeLuminance() < 0.42 ? Colors.black : Colors.white,
+            dominant.computeLuminance() < 0.42 ? 0.48 : 0.72,
+          )!;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 4),
       child: Row(
@@ -1741,10 +1885,9 @@ class _HomeScreenState extends State<HomeScreen>
             child: GestureDetector(
               onTap: () async {
                 if (_keepAliveConvId == null) return;
-                await Navigator.pushNamed(
-                  context,
-                  '/chat',
-                  arguments: _keepAliveConvId,
+                await _pushChatRoute(
+                  arguments: _keepAliveConvId!,
+                  restoreCharacterId: _activeCharacterId,
                 );
                 await _refreshAfterChatReturn();
               },
@@ -1754,12 +1897,18 @@ class _HomeScreenState extends State<HomeScreen>
                   vertical: 10,
                 ),
                 decoration: BoxDecoration(
-                  color: YanciTheme.isDark
+                  color: hasCustomHomeImage
+                      ? adaptiveSolid.withValues(alpha: 0.9)
+                      : YanciTheme.isDark
                       ? Colors.white.withValues(alpha: 0.06)
                       : Colors.white.withValues(alpha: 0.4),
                   borderRadius: BorderRadius.circular(20),
                   border: Border.all(
-                    color: YanciTheme.accent.withValues(alpha: 0.2),
+                    color: hasCustomHomeImage
+                        ? (imageSecondary ?? YanciTheme.accent).withValues(
+                            alpha: 0.22,
+                          )
+                        : YanciTheme.accent.withValues(alpha: 0.2),
                     width: 0.5,
                   ),
                 ),
@@ -1915,10 +2064,9 @@ class _HomeScreenState extends State<HomeScreen>
     if (choice == 'all') {
       await _confirmManualSummaryAll(convId);
     } else if (choice == 'selected') {
-      await Navigator.pushNamed(
-        context,
-        '/chat',
+      await _pushChatRoute(
         arguments: {'conversationId': convId, 'manualSummarySelection': true},
+        restoreCharacterId: _activeCharacterId,
       );
       await _refreshAfterChatReturn();
     } else if (choice == 'memory_summary') {
@@ -2031,6 +2179,11 @@ class _HomeScreenState extends State<HomeScreen>
         excerpt: e.excerpt,
       );
     } catch (e) {
+      await AppErrorLogService.record(
+        error: e,
+        trigger: 'functional_summary_model_request',
+        source: 'functional_model',
+      );
       if (!mounted) return;
       showThemedPillNotice(
         context,
@@ -2587,9 +2740,10 @@ class _HomeScreenState extends State<HomeScreen>
                                   borderRadius: BorderRadius.circular(12),
                                   onTap: () async {
                                     Navigator.pop(dialogCtx);
-                                    await Navigator.of(
-                                      context,
-                                    ).pushNamed('/chat', arguments: conv.id);
+                                    await _pushChatRoute(
+                                      arguments: conv.id,
+                                      restoreCharacterId: charId,
+                                    );
                                     await _refreshAfterChatReturn();
                                   },
                                   child: Padding(
@@ -2897,24 +3051,19 @@ class _HomeScreenState extends State<HomeScreen>
   // ═══════════════════════════════════
 
   Future<void> _handleNavTap(int index) async {
+    if (index == _currentTab) return;
     HapticFeedback.selectionClick();
-    if (index == 0) {
-      await Navigator.of(context).pushNamed('/api_settings');
-      if (mounted) unawaited(_refreshGuideAvailability());
-      return;
-    }
-    if (index == 1) {
-      Navigator.of(context).pushNamed('/usage');
-      return;
-    }
-    if (index == 3) {
+    if (index == 0 && _currentTab != 0) {
       await UserSettings.saveActiveCharacterId(_activeCharacterId);
       if (!mounted) return;
-      await Navigator.of(context).pushNamed('/character_list');
-      if (mounted) _loadCharacters();
-      return;
     }
-    setState(() => _currentTab = index);
+    setState(() {
+      _tabBackgroundTransitionDirection = index < _currentTab
+          ? BackgroundTransitionDirection.leftToRight
+          : BackgroundTransitionDirection.rightToLeft;
+      _currentTab = index;
+    });
+    if (index != 0) unawaited(_loadCharacters());
     _syncHomeAnimations();
   }
 }

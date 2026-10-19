@@ -11,6 +11,7 @@ import 'package:project_yanci/models/message.dart';
 import 'package:project_yanci/services/api_adapter.dart';
 import 'package:project_yanci/services/gemini_service.dart';
 import 'package:project_yanci/services/locale_strings.dart';
+import 'package:project_yanci/services/sse_stream.dart';
 
 String _text(int length, String value) =>
     List<String>.filled(length, value, growable: false).join();
@@ -142,6 +143,145 @@ void main() {
     },
   );
 
+  test(
+    'Gemini explicit cache rolls forward after enough stable history accrues',
+    () async {
+      var createCount = 0;
+      final generationBodies = <Map<String, dynamic>>[];
+      final service = GeminiService(
+        apiKey: 'history-cache-roll-forward-key',
+        modelId: 'gemini-3.8-flash',
+        clientFactory: () => MockClient((request) async {
+          final body = jsonDecode(request.body) as Map<String, dynamic>;
+          if (request.url.path.endsWith('/cachedContents')) {
+            createCount++;
+            return http.Response(
+              jsonEncode(<String, String>{
+                'name': 'cachedContents/rolling-$createCount',
+              }),
+              200,
+            );
+          }
+          generationBodies.add(body);
+          return http.Response(jsonEncode(_successResponse()), 200);
+        }),
+      );
+      final prompt = StructuredPrompt(
+        sessionIdentity: _identity('gemini-history-roll-forward'),
+        staticPart: _text(5000, 's'),
+      );
+      final initialMessages = <Map<String, String>>[
+        <String, String>{'role': 'user', 'content': _text(5000, 'u')},
+        <String, String>{'role': 'assistant', 'content': _text(5000, 'a')},
+        <String, String>{'role': 'user', 'content': _text(5000, 'v')},
+        <String, String>{'role': 'assistant', 'content': 'latest assistant'},
+        <String, String>{'role': 'user', 'content': 'latest user'},
+      ];
+
+      await service.sendMessage(
+        messages: initialMessages,
+        model: 'gemini-3.8-flash',
+        structuredPrompt: prompt,
+      );
+      final expandedMessages = <Map<String, String>>[
+        ...initialMessages.take(3),
+        <String, String>{'role': 'assistant', 'content': _text(9000, 'b')},
+        <String, String>{'role': 'user', 'content': _text(9000, 'w')},
+        <String, String>{
+          'role': 'assistant',
+          'content': 'new latest assistant',
+        },
+        <String, String>{'role': 'user', 'content': 'new latest user'},
+      ];
+      await service.sendMessage(
+        messages: expandedMessages,
+        model: 'gemini-3.8-flash',
+        structuredPrompt: prompt,
+      );
+
+      expect(createCount, 2);
+      expect(generationBodies.map((body) => body['cachedContent']), <String>[
+        'cachedContents/rolling-1',
+        'cachedContents/rolling-2',
+      ]);
+      expect(GeminiService.lastCacheStats['cache_history_messages'], 5);
+    },
+  );
+
+  test('Gemini 4 Argon uses implicit cache with complete context', () async {
+    final requestedPaths = <String>[];
+    final generationBodies = <Map<String, dynamic>>[];
+    final service = GeminiService(
+      apiKey: 'argon-implicit-cache-key',
+      modelId: 'gemini-4-argon',
+      clientFactory: () => MockClient((request) async {
+        requestedPaths.add(request.url.path);
+        generationBodies.add(jsonDecode(request.body) as Map<String, dynamic>);
+        return http.Response(jsonEncode(_successResponse()), 200);
+      }),
+    );
+    final messages = <Map<String, String>>[
+      <String, String>{'role': 'user', 'content': _text(8000, 'u')},
+      <String, String>{'role': 'assistant', 'content': _text(8000, 'a')},
+      <String, String>{'role': 'user', 'content': _text(8000, 'v')},
+    ];
+    final prompt = StructuredPrompt(
+      sessionIdentity: _identity('gemini-argon-window'),
+      staticPart: _text(5000, 's'),
+      liveStatePart: 'current memory',
+    );
+
+    ApiUsage? usage;
+    await service.sendMessage(
+      messages: messages,
+      model: 'gemini-4-argon',
+      structuredPrompt: prompt,
+      onUsage: (value) => usage = value,
+    );
+
+    expect(requestedPaths, everyElement(isNot(endsWith('/cachedContents'))));
+    final body = generationBodies.single;
+    expect(body.containsKey('cachedContent'), isFalse);
+    expect(body.containsKey('systemInstruction'), isTrue);
+    expect(body['contents'], hasLength(messages.length));
+    final generationConfig = body['generationConfig'] as Map;
+    expect(generationConfig['maxOutputTokens'], 32768);
+    expect(generationConfig['thinkingConfig'], <String, Object?>{
+      'thinkingLevel': 'low',
+      'includeThoughts': false,
+    });
+    expect(usage?.cacheReadTokens, 4700);
+    expect(usage?.raw['cache_implicit'], 1);
+    expect(usage?.raw['cache_threshold'], 4096);
+    expect(usage?.raw['cache_history_messages'], messages.length);
+  });
+
+  test('Gemini 4 Argon exposes medium thinking only when enabled', () async {
+    late Map<String, dynamic> requestBody;
+    final service = GeminiService(
+      apiKey: 'argon-thinking-key',
+      modelId: 'gemini-4-argon',
+      thinkingEnabled: true,
+      clientFactory: () => MockClient((request) async {
+        requestBody = jsonDecode(request.body) as Map<String, dynamic>;
+        return http.Response(jsonEncode(_successResponse()), 200);
+      }),
+    );
+
+    await service.sendMessage(
+      messages: const <Map<String, String>>[
+        <String, String>{'role': 'user', 'content': 'hello'},
+      ],
+      model: 'gemini-4-argon',
+    );
+
+    final generationConfig = requestBody['generationConfig'] as Map;
+    expect(generationConfig['thinkingConfig'], <String, Object?>{
+      'thinkingLevel': 'medium',
+      'includeThoughts': true,
+    });
+  });
+
   test('below-threshold static prompt can qualify with old chat history', () {
     final prompt = StructuredPrompt(
       sessionIdentity: _identity('gemini-history-threshold'),
@@ -174,6 +314,14 @@ void main() {
         model: 'gemini-3.8-flash',
       ),
       isTrue,
+    );
+    expect(
+      GeminiService.hasCacheableExplicitPrefix(
+        prompt: prompt,
+        messages: longMessages,
+        model: 'gemini-4-argon',
+      ),
+      isFalse,
     );
   });
 
@@ -213,6 +361,45 @@ void main() {
       emitsInOrder(<Object>[
         'partial reply',
         emitsError(isA<GeminiResponseTruncatedException>()),
+      ]),
+    );
+  });
+
+  test('stream EOF without finish reason is kept as incomplete', () async {
+    SharedPreferences.setMockInitialValues(<String, Object>{
+      'enable_prompt_caching': false,
+    });
+    final service = GeminiService(
+      apiKey: 'stream-eof-test-key',
+      clientFactory: () => MockClient((_) async {
+        return http.Response(
+          'data: ${jsonEncode(<String, Object?>{
+            'candidates': <Object?>[
+              <String, Object?>{
+                'content': <String, Object?>{
+                  'parts': <Object?>[
+                    <String, Object?>{'text': 'partial reply'},
+                  ],
+                },
+              },
+            ],
+          })}\n\n',
+          200,
+          headers: const <String, String>{'content-type': 'text/event-stream'},
+        );
+      }),
+    );
+
+    await expectLater(
+      service.sendMessageStream(
+        messages: const <Map<String, String>>[
+          <String, String>{'role': 'user', 'content': 'hello'},
+        ],
+        model: 'gemini-4-argon',
+      ),
+      emitsInOrder(<Object>[
+        'partial reply',
+        emitsError(isA<StreamEndedWithoutTerminalException>()),
       ]),
     );
   });

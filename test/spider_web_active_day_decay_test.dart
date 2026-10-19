@@ -48,7 +48,13 @@ void main() {
   test(
     'one or many messages on a date count as one daily active day',
     () async {
-      final day = DateTime.now().subtract(const Duration(days: 2));
+      final now = DateTime.now();
+      final day = DateTime(
+        now.year,
+        now.month,
+        now.day,
+        12,
+      ).subtract(const Duration(days: 2));
       await _insertUserMessage(db, 'daily-window', day);
       await _insertUserMessage(
         db,

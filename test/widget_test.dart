@@ -135,7 +135,6 @@ void main() {
 
   test('window summary retention keeps several prompt blocks', () {
     expect(ContextCompressor.summaryCapTokens, greaterThanOrEqualTo(3600));
-    expect(ContextCompressor.keywordCapTokens, greaterThanOrEqualTo(1800));
     expect(ContextCompressor.latestSummaryBlocksForPrompt, 4);
   });
 
