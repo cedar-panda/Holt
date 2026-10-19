@@ -7,10 +7,10 @@
 - **測試資料一律用虛構內容。** 不得使用昭昭與晏辭的真實對話、RP 劇情、真實姓名（晏辭、昭昭、昭嶼、沈昭嶼等）或個人資訊。現有測試已統一改名：沈昭嶼→許清川、昭嶼→清川、昭昭→小禾、晏辭→顧遠、白鶴印→青鸞印、霍岑→韓衡。
 
 ## 進行中
-- （無）
+- Codex：拆檔中，`lib/memory/`、`lib/screens/` 請勿修改。
 
 ## 等待中
-- Codex：今天所有改動驗收、commit 之後，才開始 `docs/refactor/split_large_files_plan_v2_2026-10-19.md`。
+- （無）
 
 ## 完成
 - （2026-10-19）Codex：將非專案內容搬到 `~/Desktop/非項目內容/`，包含 `backups/`、`recovery/`、`Claude outputs/`、`_archive_dev/`、4 份 `Holtv*.apk`、`flutter_01.log`、`user_persona_avatar_pair.dart.bak`；另清除 `tool/__pycache__`。原目的地總大小約 33GB，Git 無刪除狀態；其後依昭昭指示只保留最新 3 份 `ios-*` 備份，另外 48 份（約 27GB）移至 macOS 廢紙簍，尚未永久刪除。

@@ -1,0 +1,5 @@
+Command: flutter test --reporter compact
+Exit code: 0
+Result: All tests passed.
+Passed: 961
+Elapsed: 20s
