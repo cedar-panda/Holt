@@ -7,12 +7,13 @@
 - **測試資料一律用虛構內容。** 不得使用昭昭與晏辭的真實對話、RP 劇情、真實姓名（晏辭、昭昭、昭嶼、沈昭嶼等）或個人資訊。現有測試已統一改名：沈昭嶼→許清川、昭嶼→清川、昭昭→小禾、晏辭→顧遠、白鶴印→青鸞印、霍岑→韓衡。
 
 ## 進行中
-- Codex：拆檔中，`lib/memory/`、`lib/screens/` 請勿修改。
+- （無）
 
 ## 等待中
 - （無）
 
 ## 完成
+- （2026-10-19）Codex：依 `docs/refactor/split_large_files_plan_v2_2026-10-19.md` 完成批次 1～5 純搬家拆檔，分支 `refactor/split-large-files`，基線 `19cd994`。五批 `split_audit` 的「只在拆檔前」皆為 0；每批 `flutter analyze lib test` 無問題、`flutter test` 961 項通過。批次 4 已附 `_sendMessageLocked`／`_sendImageLocked` 重複段落對照；完整清單見 `docs/refactor/split_report.md`。批次 6 未開始，未 push、未合併。
 - （2026-10-19）Codex：將非專案內容搬到 `~/Desktop/非項目內容/`，包含 `backups/`、`recovery/`、`Claude outputs/`、`_archive_dev/`、4 份 `Holtv*.apk`、`flutter_01.log`、`user_persona_avatar_pair.dart.bak`；另清除 `tool/__pycache__`。原目的地總大小約 33GB，Git 無刪除狀態；其後依昭昭指示只保留最新 3 份 `ios-*` 備份，另外 48 份（約 27GB）移至 macOS 廢紙簍，尚未永久刪除。
 - （2026-10-19）晏辭：測試資料去識別化（36 個檔：`test/**`、`Holt_pwa/test/*.js`），名字等長替換，邏輯未動。備份在 `~/Desktop/非項目內容/backups/yanci-20261019/test-before-anonymize/`。⚠️ 需跑 `flutter test` 與 PWA 測試確認。
 - （2026-10-19）Codex：完成 RP 連續性簡化版回歸、關鍵詞召回優化與情緒清理驗證。
