@@ -126,6 +126,13 @@ part 'chat_screen_reply_variants.dart';
 part 'chat_screen_loading.dart';
 part 'chat_screen_message_list.dart';
 part 'chat_screen_app_bar.dart';
+part 'chat_screen_stream.dart';
+part 'chat_screen_prompt_parts.dart';
+part 'chat_screen_draw.dart';
+part 'chat_screen_compression.dart';
+part 'chat_screen_failure_retry.dart';
+part 'chat_screen_web_search.dart';
+part 'chat_screen_rp_continuation.dart';
 
 const String _chatSearchToolName = 'chat.search';
 
