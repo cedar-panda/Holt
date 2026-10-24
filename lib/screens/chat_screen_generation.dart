@@ -1779,6 +1779,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
 
       if (mounted) {
         _refreshChatState(() {
+          _markFreshAssistantContext(insertedId);
           _messages.add(aiMsgWithId);
           if (completedWebSearchResult != null) {
             _webSearchResultsByMessageId[insertedId] = completedWebSearchResult;
@@ -3027,6 +3028,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
 
       if (mounted) {
         _refreshChatState(() {
+          _markFreshAssistantContext(imgAiId);
           _messages.add(aiMsgWithId);
           _clearStreamQueue();
           _setGenerating(false);

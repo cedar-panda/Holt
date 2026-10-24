@@ -26,6 +26,7 @@
 - 人設卡頁以 dirty tracking + `PopScope` 攔截返回，提供儲存並離開／捨棄／取消；分享前先保存目前表單，編輯其他角色不偷換全域 active character。
 - 世界書、人物與狀態列表預覽不攔截文字選取，整張卡可點；枚舉欄位使用具三語標籤的選擇器。鍵盤彈窗由自持 controller 的 state 管理，退場動畫完成後才 dispose。
 - 圖片生成停止會取消本輪 token 並清除 `generating` 佔位，遲到圖片不再寫入訊息；記憶頁系統返回會攜帶摘要修改結果。
+- AI 串流氣泡轉成正式訊息時不重播入場動畫；剛解析出的 Thinking／Memory／Mood 使用 220ms 的淡入與尺寸過渡，平鋪模式維持在 40pt 頭像列內，一般氣泡模式平滑展開。歷史消息、截圖模式與「減少動態效果」不等待這段動畫。
 
 ## 檢索方式（字面 / BM25 / 向量 / 名字觸發 / 無）
 無。
@@ -48,6 +49,7 @@
 - `test/ui_operability_test.dart`
 - `test/input_bar_test.dart`
 - `test/chat_bubble_card_width_test.dart`
+- `test/chat_bubble_thinking_test.dart`
 - `test/chat_model_picker_test.dart`
 - `test/tts_play_button_test.dart`
 - `test/rp_worldbook_service_test.dart`

@@ -60,6 +60,15 @@ class ChatBubble extends StatefulWidget {
   final bool selected;
   final VoidCallback? onSelectionToggle;
   final bool captureMode;
+
+  /// Whether this widget should play the message entrance animation.
+  /// Persisted assistant messages have already animated on the streaming
+  /// surface, so replaying here would briefly make completed text invisible.
+  final bool animateEntry;
+
+  /// Smoothly reveals metadata that only becomes available after the streamed
+  /// reply is parsed and persisted. Historical messages render immediately.
+  final bool animateContextReveal;
   final bool forceThemeBubbleColors;
   final bool? thinkingExpandedOverride;
   final bool includeThinkingDetails;
@@ -121,6 +130,8 @@ class ChatBubble extends StatefulWidget {
     this.selected = false,
     this.onSelectionToggle,
     this.captureMode = false,
+    this.animateEntry = true,
+    this.animateContextReveal = false,
     this.forceThemeBubbleColors = false,
     this.thinkingExpandedOverride,
     this.includeThinkingDetails = true,
@@ -166,10 +177,13 @@ class _ChatBubbleState extends State<ChatBubble>
   late Animation<double> _contentOpacity;
   late Animation<double> _avatarOpacity; // 頭像原地漸顯，不參與氣泡縮放
   bool _didStartEntryAnimation = false;
+  late bool _contextRevealVisible;
+  bool _didScheduleContextReveal = false;
 
   @override
   void initState() {
     super.initState();
+    _contextRevealVisible = !widget.animateContextReveal;
     _entryCtrl = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 240),
@@ -258,10 +272,22 @@ class _ChatBubbleState extends State<ChatBubble>
     super.didChangeDependencies();
     if (_didStartEntryAnimation) return;
     _didStartEntryAnimation = true;
-    if (widget.captureMode || MediaQuery.disableAnimationsOf(context)) {
+    final reduceMotion = MediaQuery.disableAnimationsOf(context);
+    if (!widget.animateEntry || widget.captureMode || reduceMotion) {
       _entryCtrl.value = 1;
     } else {
       _entryCtrl.forward();
+    }
+    if (!_contextRevealVisible && !_didScheduleContextReveal) {
+      _didScheduleContextReveal = true;
+      if (widget.captureMode || reduceMotion) {
+        _contextRevealVisible = true;
+      } else {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          setState(() => _contextRevealVisible = true);
+        });
+      }
     }
   }
 
@@ -269,6 +295,31 @@ class _ChatBubbleState extends State<ChatBubble>
   void didUpdateWidget(covariant ChatBubble oldWidget) {
     super.didUpdateWidget(oldWidget);
     _thinkingSheet.notify();
+  }
+
+  Widget _contextReveal(Widget child) {
+    final reduceMotion =
+        widget.captureMode || MediaQuery.disableAnimationsOf(context);
+    final duration = reduceMotion
+        ? Duration.zero
+        : const Duration(milliseconds: 220);
+    final visible =
+        !widget.animateContextReveal || _contextRevealVisible || reduceMotion;
+    return ClipRect(
+      child: AnimatedAlign(
+        key: const ValueKey('context-reveal-anchor'),
+        alignment: Alignment.topLeft,
+        heightFactor: visible ? 1 : 0,
+        duration: duration,
+        curve: Curves.easeOutCubic,
+        child: AnimatedOpacity(
+          opacity: visible ? 1 : 0,
+          duration: duration,
+          curve: Curves.easeOutCubic,
+          child: child,
+        ),
+      ),
+    );
   }
 
   Future<void> _checkSaved() async {
@@ -736,18 +787,21 @@ class _ChatBubbleState extends State<ChatBubble>
                                 if (hasContextTree) ...[
                                   const SizedBox(width: 12),
                                   Flexible(
-                                    child: RepaintBoundary(
-                                      key: const ValueKey(
-                                        'avatar-side-context-anchor',
-                                      ),
-                                      child: _buildContextTree(
-                                        thinking: widget.includeThinkingDetails
-                                            ? thinking
-                                            : null,
-                                        memoryLog: visibleMemoryLog,
-                                        emotionLog: visibleEmotionLog,
-                                        emotionCoordinate:
-                                            visibleEmotionCoordinate,
+                                    child: _contextReveal(
+                                      RepaintBoundary(
+                                        key: const ValueKey(
+                                          'avatar-side-context-anchor',
+                                        ),
+                                        child: _buildContextTree(
+                                          thinking:
+                                              widget.includeThinkingDetails
+                                              ? thinking
+                                              : null,
+                                          memoryLog: visibleMemoryLog,
+                                          emotionLog: visibleEmotionLog,
+                                          emotionCoordinate:
+                                              visibleEmotionCoordinate,
+                                        ),
                                       ),
                                     ),
                                   ),
@@ -756,26 +810,26 @@ class _ChatBubbleState extends State<ChatBubble>
                             ),
                             const SizedBox(height: 8),
                           ] else if (hasContextTree)
-                            Padding(
-                              padding: const EdgeInsets.only(
-                                left: 4,
-                                bottom: 2,
-                              ),
-                              child: RepaintBoundary(
-                                key: const ValueKey(
-                                  'avatar-side-context-anchor',
-                                ),
-                                child: _buildContextTree(
-                                  thinking: widget.includeThinkingDetails
-                                      ? thinking
-                                      : null,
-                                  memoryLog: visibleMemoryLog,
-                                  emotionLog: visibleEmotionLog,
-                                  emotionCoordinate: visibleEmotionCoordinate,
+                            _contextReveal(
+                              Padding(
+                                padding: const EdgeInsets.only(left: 4),
+                                child: RepaintBoundary(
+                                  key: const ValueKey(
+                                    'avatar-side-context-anchor',
+                                  ),
+                                  child: _buildContextTree(
+                                    thinking: widget.includeThinkingDetails
+                                        ? thinking
+                                        : null,
+                                    memoryLog: visibleMemoryLog,
+                                    emotionLog: visibleEmotionLog,
+                                    emotionCoordinate: visibleEmotionCoordinate,
+                                  ),
                                 ),
                               ),
                             ),
                           Opacity(
+                            key: const ValueKey('chat-bubble-entry-opacity'),
                             opacity: _bubbleOpacity.value,
                             child: Transform(
                               alignment: origin,
@@ -2062,8 +2116,7 @@ class _ChatBubbleState extends State<ChatBubble>
               onTap: onTap,
               child: Container(
                 key: const ValueKey('thinking-chain-container'),
-                constraints: const BoxConstraints(minHeight: 44),
-                margin: const EdgeInsets.only(bottom: 2),
+                constraints: const BoxConstraints(minHeight: 40),
                 padding: const EdgeInsets.symmetric(horizontal: 10),
                 alignment: Alignment.centerLeft,
                 child: Row(
@@ -2324,8 +2377,7 @@ class _ChatBubbleState extends State<ChatBubble>
               onTap: onTap,
               child: Container(
                 key: containerKey,
-                constraints: const BoxConstraints(minHeight: 44),
-                margin: const EdgeInsets.only(bottom: 2),
+                constraints: const BoxConstraints(minHeight: 40),
                 padding: const EdgeInsets.symmetric(horizontal: 10),
                 alignment: Alignment.centerLeft,
                 child: Row(

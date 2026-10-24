@@ -3,6 +3,15 @@
 part of 'chat_screen.dart';
 
 extension _ChatStreamMethods on _ChatScreenState {
+  void _markFreshAssistantContext(int messageId) {
+    _freshAssistantContextTimer?.cancel();
+    _freshAssistantContextMessageId = messageId;
+    _freshAssistantContextTimer = Timer(const Duration(milliseconds: 360), () {
+      if (!mounted || _freshAssistantContextMessageId != messageId) return;
+      _refreshChatState(() => _freshAssistantContextMessageId = null);
+    });
+  }
+
   void _setGenerating(bool v) {
     if (_isGenerating == v) return;
     _isGenerating = v;

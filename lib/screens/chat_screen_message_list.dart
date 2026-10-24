@@ -579,6 +579,12 @@ extension _ChatMessageListMethods on _ChatScreenState {
                 selected:
                     item.dbMessageId != null &&
                     _manualSummarySelectedIds.contains(item.dbMessageId),
+                // The assistant already entered as the streaming bubble.
+                // Persisting it must not replay the text-hidden entrance.
+                animateEntry: item.isUser,
+                animateContextReveal:
+                    !item.isUser &&
+                    item.dbMessageId == _freshAssistantContextMessageId,
                 onSelectionToggle: item.dbMessageId == null
                     ? null
                     : () => _toggleManualSummaryMessage(item.dbMessageId!),
@@ -731,6 +737,7 @@ extension _ChatMessageListMethods on _ChatScreenState {
                       groupedWithPrevious: groupedWithPrevious,
                       avatarPath: _charAvatarPath,
                       webSearchTrace: pendingWebSearchTrace,
+                      animateEntry: true,
                     );
                   }
                   final parts = _streamingSplitParts();
@@ -773,6 +780,7 @@ extension _ChatMessageListMethods on _ChatScreenState {
                           webSearchTrace: streamIdx == parts.length - 1
                               ? pendingWebSearchTrace
                               : null,
+                          animateEntry: true,
                         ),
                     ],
                   );

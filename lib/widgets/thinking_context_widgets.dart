@@ -97,8 +97,7 @@ class ThinkingSheetLauncher extends StatelessWidget {
         onTap: onTap,
         child: Container(
           key: const ValueKey('thinking-chain-container'),
-          constraints: const BoxConstraints(minHeight: 44),
-          margin: const EdgeInsets.only(bottom: 2),
+          constraints: const BoxConstraints(minHeight: 40),
           padding: const EdgeInsets.symmetric(horizontal: 10),
           alignment: Alignment.centerLeft,
           child: Row(

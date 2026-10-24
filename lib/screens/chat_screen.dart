@@ -313,6 +313,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   bool _isGeneratingImage = false;
   int _imageGenerationEpoch = 0;
   bool _streamSurfaceVisible = false;
+  int? _freshAssistantContextMessageId;
+  Timer? _freshAssistantContextTimer;
   bool _isCapturingLongScreenshot = false;
 
   bool _sendSubmissionInProgress = false;
@@ -697,6 +699,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     _headerModelDetailsTimer?.cancel();
     _clearStreamQueue();
     _streamSurfaceDelayTimer?.cancel();
+    _freshAssistantContextTimer?.cancel();
     _generationForegroundStartTimer?.cancel();
     _generationForegroundEndTimer?.cancel();
     unawaited(GenerationForegroundGuard.end());

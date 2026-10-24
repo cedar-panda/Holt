@@ -121,6 +121,114 @@ void main() {
     expect(multiline, BorderRadius.circular(23));
   });
 
+  testWidgets('persisted assistant content does not replay entry opacity', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: ChatBubble(
+            text: '已經顯示完成的正文',
+            isUser: false,
+            animateEntry: false,
+          ),
+        ),
+      ),
+    );
+
+    final opacity = tester.widget<Opacity>(
+      find.byKey(const ValueKey('chat-bubble-entry-opacity')),
+    );
+    expect(opacity.opacity, 1);
+  });
+
+  testWidgets('normal bubble reveals late Memory without a hard layout jump', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    final originalFlatMode = YanciTheme.aiBubbleFlat;
+    YanciTheme.aiBubbleFlat = false;
+    addTearDown(() => YanciTheme.aiBubbleFlat = originalFlatMode);
+
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: ChatBubble(
+            text: '正文',
+            isUser: false,
+            memoryLog: '記憶已整理\nDone',
+            animateEntry: false,
+            animateContextReveal: true,
+          ),
+        ),
+      ),
+    );
+
+    final bubble = find.byKey(const ValueKey('chat-bubble-surface'));
+    final initialTop = tester.getTopLeft(bubble).dy;
+    expect(
+      tester
+          .getSize(find.byKey(const ValueKey('context-reveal-anchor')))
+          .height,
+      0,
+    );
+
+    // Let the post-frame reveal request start the implicit animation before
+    // measuring its midpoint.
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 110));
+    final halfwayTop = tester.getTopLeft(bubble).dy;
+    expect(halfwayTop, greaterThan(initialTop));
+
+    await tester.pump(const Duration(milliseconds: 150));
+    final finalTop = tester.getTopLeft(bubble).dy;
+    expect(finalTop, greaterThan(halfwayTop));
+    expect(
+      tester
+          .getSize(find.byKey(const ValueKey('memory-root-container')))
+          .height,
+      lessThanOrEqualTo(40),
+    );
+  });
+
+  testWidgets('flat metadata reveal stays inside the avatar row height', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    final originalFlatMode = YanciTheme.aiBubbleFlat;
+    YanciTheme.aiBubbleFlat = true;
+    addTearDown(() => YanciTheme.aiBubbleFlat = originalFlatMode);
+
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: ChatBubble(
+            text: '平鋪正文',
+            isUser: false,
+            showAvatar: true,
+            memoryLog: '記憶已整理\nDone',
+            animateEntry: false,
+            animateContextReveal: true,
+          ),
+        ),
+      ),
+    );
+
+    final bubble = find.byKey(const ValueKey('chat-bubble-surface'));
+    final initialTop = tester.getTopLeft(bubble).dy;
+    await tester.pump(const Duration(milliseconds: 260));
+    final finalTop = tester.getTopLeft(bubble).dy;
+    expect(finalTop, closeTo(initialTop, 0.5));
+    expect(
+      tester
+          .getSize(find.byKey(const ValueKey('memory-root-container')))
+          .height,
+      lessThanOrEqualTo(40),
+    );
+  });
+
   testWidgets('context metadata floats independently beside the avatar', (
     tester,
   ) async {
