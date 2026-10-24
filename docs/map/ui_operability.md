@@ -12,12 +12,15 @@
 - 設定頁本地狀態：`lib/screens/cost_context_screen.dart:_CostContextScreenState._loadSettings` 與各 `_toggle*` 方法。
 - 側邊欄數字提交：`lib/widgets/sidebar/sidebar_behavior_settings.dart:_CommittedCountFieldState._commit`。
 - 角色輪盤目前頁：`lib/screens/character_list_screen.dart:PageView.builder.onPageChanged`。
+- 便箋顯示時間：`lib/screens/home_screen_sheets.dart:_formatNoteTimestamp` 將資料庫 ISO 時間轉為本地 `MM/dd HH:mm`，不再露出 `T`。
 
 ## 誰讀取、怎麼注入（檔案：函式；注入 prompt 的哪一層）
 - 氣泡工具熱區：`lib/widgets/chat_bubble.dart:_buildToolbarTapTarget`。
 - 待發內容取消與滾底：`lib/widgets/input_bar.dart:build`、`lib/screens/chat_screen.dart:_ChatScreenState.build`。
 - 多角色指示：`lib/screens/character_list_screen.dart:_buildPageIndicator`，最多繪製五顆局部圓點並附目前／總數。
 - 大字體：`CharacterListScreen.build` 增加卡片高度；`CharacterSignaturePanel._buildPanel` 先量測再決定高度。
+- 角色輪盤高度：`CharacterListScreen.build` 依可用螢幕高度取約 40%，並限制在 320～380pt，再疊加既有文字放大補償；iOS／Android 不再使用 310／400 兩套斷裂的固定高度。
+- 彈窗與選單表面：初次命名、便箋、歷史編輯／刪除、圖片／文字選單、刮刮卡與轉帳面板共用 `YanciTheme.surfacePanel`／`glassBorder`，沒有新增即時 `BackdropFilter`。
 - 模型入口：`lib/screens/chat_screen_app_bar.dart:_buildAppBar` 擴大中央模型入口熱區並提高次級文字辨識度。
 - 這些 UI 狀態不注入 prompt。
 - 人設卡頁以 dirty tracking + `PopScope` 攔截返回，提供儲存並離開／捨棄／取消；分享前先保存目前表單，編輯其他角色不偷換全域 active character。
@@ -49,6 +52,8 @@
 - `test/tts_play_button_test.dart`
 - `test/rp_worldbook_service_test.dart`
 - `test/chat_window_status_test.dart`
+- `test/theme_workshop_bubble_customization_test.dart`
+- `test/ambient_particles_test.dart`
 
 ## ❓ 不確定的地方
 - VoiceOver／TalkBack 的實際焦點順序、窄螢幕最大文字、任意自訂背景對比與左緣側邊欄手勢仍需真機驗收。

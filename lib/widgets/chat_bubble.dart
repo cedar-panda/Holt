@@ -330,8 +330,9 @@ class _ChatBubbleState extends State<ChatBubble>
       builder: (_) => Container(
         margin: const EdgeInsets.all(12),
         decoration: BoxDecoration(
-          color: YanciTheme.isDark ? const Color(0xF0302830) : Colors.white,
-          borderRadius: BorderRadius.circular(14),
+          color: YanciTheme.surfacePanel.withValues(alpha: 0.98),
+          borderRadius: BorderRadius.circular(YanciTheme.radiusInput),
+          border: Border.all(color: YanciTheme.glassBorder, width: 0.5),
         ),
         child: SafeArea(
           child: Column(
@@ -523,9 +524,7 @@ class _ChatBubbleState extends State<ChatBubble>
       context: ctx,
       position: RelativeRect.fromLTRB(pos.dx, pos.dy, pos.dx, pos.dy),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      color: YanciTheme.isDark
-          ? const Color(0xF0302830)
-          : Colors.white.withValues(alpha: 0.97),
+      color: YanciTheme.surfacePanel.withValues(alpha: 0.98),
       items: items,
     ).then((v) {
       if (v == 'copy') {
@@ -546,6 +545,32 @@ class _ChatBubbleState extends State<ChatBubble>
     });
   }
 
+  bool _usesSingleLinePill(
+    BuildContext context,
+    String text,
+    double screenWidth,
+  ) {
+    final value = text.trim();
+    if (value.isEmpty || value.contains('\n')) return false;
+    // 區塊型 Markdown 與表情標籤即使字面只有一行，也不是短句氣泡。
+    if (RegExp(
+      r'^(#{1,6}|>|[-*+]\s|\d+[.)]\s|```|\[sticker:)',
+    ).hasMatch(value)) {
+      return false;
+    }
+    final maxTextWidth =
+        screenWidth * (widget.showAvatar ? 0.62 : 0.72) -
+        YanciTheme.spacingMd * 2;
+    if (maxTextWidth <= 0) return false;
+    final painter = TextPainter(
+      text: TextSpan(text: value, style: YanciTheme.bodyText),
+      maxLines: 2,
+      textDirection: Directionality.of(context),
+      textScaler: MediaQuery.textScalerOf(context),
+    )..layout(maxWidth: maxTextWidth);
+    return painter.computeLineMetrics().length == 1;
+  }
+
   @override
   Widget build(BuildContext context) {
     final sw = MediaQuery.of(context).size.width;
@@ -556,9 +581,7 @@ class _ChatBubbleState extends State<ChatBubble>
         (_chatBackgroundScope == null
             ? _hasCustomChatBackground()
             : _chatBackgroundScope!.hasCustomImage);
-    final r = widget.isUser
-        ? YanciTheme.bubbleRadiusUser
-        : YanciTheme.radiusBubble;
+    final r = YanciTheme.radiusBubble.clamp(6.0, 32.0);
     final (thinking, rawDisplay) = widget.isUser
         ? (null, widget.text)
         : _parseThinking(widget.text);
@@ -798,8 +821,16 @@ class _ChatBubbleState extends State<ChatBubble>
                                               hasCustomChatBackground
                                               ? _chatBackgroundBubbleOpacity()
                                               : 1.0;
+                                          final isSingleLinePill =
+                                              _usesSingleLinePill(
+                                                context,
+                                                displayText,
+                                                sw,
+                                              );
                                           final bubbleRadius =
-                                              BorderRadius.circular(r);
+                                              BorderRadius.circular(
+                                                isSingleLinePill ? 999 : r,
+                                              );
                                           final bubble = Container(
                                             key: const ValueKey(
                                               'chat-bubble-surface',
@@ -1320,14 +1351,16 @@ class _ChatBubbleState extends State<ChatBubble>
     if (widget.forceThemeBubbleColors) return YanciTheme.aiBubble;
     if (_chatBackgroundScope != null) {
       if (!_chatBackgroundScope!.hasCustomImage) return YanciTheme.aiBubble;
-      final base = _scopedBackgroundPreset?.chatAiBubbleColor == null
+      final custom = _scopedBackgroundPreset?.chatAiBubbleColor == null
           ? YanciTheme.bubbleColorOverride(
                   YanciTheme.presetId,
                   ThemeBubbleColorRole.aiBubble,
                 ) ??
-                _chatBackgroundScope?.palette?.aiBubble ??
-                YanciTheme.aiBubble
+                _chatBackgroundScope?.palette?.aiBubble
           : Color(_scopedBackgroundPreset!.chatAiBubbleColor!);
+      final base = custom == null
+          ? YanciTheme.aiBubble
+          : YanciTheme.applyBubbleBrightness(custom);
       return base.withValues(alpha: _chatBackgroundBubbleOpacity());
     }
     final preset = _scopedBackgroundPreset;
@@ -1336,7 +1369,9 @@ class _ChatBubbleState extends State<ChatBubble>
     }
     return (preset.chatAiBubbleColor == null
             ? YanciTheme.chatBackgroundAiBubbleColor.withValues(alpha: 1)
-            : Color(preset.chatAiBubbleColor!))
+            : YanciTheme.applyBubbleBrightness(
+                Color(preset.chatAiBubbleColor!),
+              ))
         .withValues(alpha: _chatBackgroundBubbleOpacity());
   }
 
@@ -1344,14 +1379,16 @@ class _ChatBubbleState extends State<ChatBubble>
     if (widget.forceThemeBubbleColors) return YanciTheme.userBubble;
     if (_chatBackgroundScope != null) {
       if (!_chatBackgroundScope!.hasCustomImage) return YanciTheme.userBubble;
-      final base = _scopedBackgroundPreset?.chatUserBubbleColor == null
+      final custom = _scopedBackgroundPreset?.chatUserBubbleColor == null
           ? YanciTheme.bubbleColorOverride(
                   YanciTheme.presetId,
                   ThemeBubbleColorRole.userBubble,
                 ) ??
-                _chatBackgroundScope?.palette?.userBubble ??
-                YanciTheme.userBubble
+                _chatBackgroundScope?.palette?.userBubble
           : Color(_scopedBackgroundPreset!.chatUserBubbleColor!);
+      final base = custom == null
+          ? YanciTheme.userBubble
+          : YanciTheme.applyBubbleBrightness(custom);
       return base.withValues(alpha: _chatBackgroundBubbleOpacity());
     }
     final preset = _scopedBackgroundPreset;
@@ -1360,7 +1397,9 @@ class _ChatBubbleState extends State<ChatBubble>
     }
     return (preset.chatUserBubbleColor == null
             ? YanciTheme.chatBackgroundUserBubbleColor.withValues(alpha: 1)
-            : Color(preset.chatUserBubbleColor!))
+            : YanciTheme.applyBubbleBrightness(
+                Color(preset.chatUserBubbleColor!),
+              ))
         .withValues(alpha: _chatBackgroundBubbleOpacity());
   }
 

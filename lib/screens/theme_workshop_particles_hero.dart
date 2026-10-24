@@ -263,7 +263,6 @@ extension _ThemeWorkshopParticleHeroMethods on _ThemeWorkshopScreenState {
   }
 
   Widget _buildHeroCard(ThemePreset preset) {
-    final r = _bubbleRadius.clamp(6.0, 32.0);
     return Container(
       height: 200,
       decoration: BoxDecoration(
@@ -302,7 +301,7 @@ extension _ThemeWorkshopParticleHeroMethods on _ThemeWorkshopScreenState {
                   ? null
                   : BoxDecoration(
                       color: YanciTheme.aiBubble,
-                      borderRadius: BorderRadius.circular(r * 0.5),
+                      borderRadius: BorderRadius.circular(999),
                       border: Border.all(
                         color: preset.aiBubbleBorder.withValues(alpha: 0.5),
                         width: 0.5,
@@ -336,7 +335,7 @@ extension _ThemeWorkshopParticleHeroMethods on _ThemeWorkshopScreenState {
               constraints: const BoxConstraints(minWidth: 64),
               decoration: BoxDecoration(
                 color: YanciTheme.userBubble,
-                borderRadius: BorderRadius.circular(r * 0.5),
+                borderRadius: BorderRadius.circular(999),
                 border: Border.all(
                   color: preset.userBubbleBorder.withValues(alpha: 0.5),
                   width: 0.5,

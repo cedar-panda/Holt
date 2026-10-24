@@ -213,11 +213,10 @@ class _HomeScreenState extends State<HomeScreen>
           context: context,
           barrierDismissible: false,
           builder: (ctx) => AlertDialog(
-            backgroundColor: YanciTheme.isDark
-                ? const Color(0xFF252228)
-                : Colors.white,
+            backgroundColor: YanciTheme.surfacePanel,
             shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(20),
+              borderRadius: BorderRadius.circular(YanciTheme.radiusSheet),
+              side: BorderSide(color: YanciTheme.glassBorder, width: 0.5),
             ),
             title: Text(
               L.get('first_time_title'),
@@ -1429,28 +1428,17 @@ class _HomeScreenState extends State<HomeScreen>
   // 角色輪盤（卡片式撥動切換 + 居中放大 + 兩側漸小漸淡）
   // ═══════════════════════════════════
 
-
   // ═══════════════════════════════════
   // 心跳數值顯示（輪盤正下方）
   // ═══════════════════════════════════
-
 
   // ═══════════════════════════════════
   // 正在聊窗口入口
   // ═══════════════════════════════════
 
-
-
-
-
-
-
-
   // ═══════════════════════════════════
   // 心電圖動畫（貫穿橫屏中段）
   // ═══════════════════════════════════
-
-
 
   /// 便利貼面板
 
@@ -1463,7 +1451,6 @@ class _HomeScreenState extends State<HomeScreen>
   // ═══════════════════════════════════
   // 編輯對話標題
   // ═══════════════════════════════════
-
 
   // ═══════════════════════════════════
   // 我的 tab

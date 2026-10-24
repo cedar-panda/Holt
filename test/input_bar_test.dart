@@ -170,6 +170,13 @@ void main() {
       Brightness.dark,
     );
 
+    await tester.tap(find.byKey(const ValueKey('input_bar_add_button')));
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(
+      tester.widget<Text>(find.text('Photo')).style?.color,
+      const Color(0xFF777777),
+    );
+
     await pump(
       BackgroundPreset(
         slot: 2,

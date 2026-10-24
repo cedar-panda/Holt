@@ -195,28 +195,28 @@ extension _ThemeWorkshopBackgroundLogic on _ThemeWorkshopScreenState {
       };
 
   Color _chatBackgroundColor(_ChatBackgroundColorRole role) => switch (role) {
-    _ChatBackgroundColorRole.aiBubble =>
-      (_chatBgAiBubbleColor ??
-              YanciTheme.bubbleColorOverride(
-                YanciTheme.presetId,
-                ThemeBubbleColorRole.aiBubble,
-              ) ??
-              BackgroundForegroundService.cachedChatBubblePalette(
-                _chatBgPath,
-              )?.aiBubble ??
-              YanciTheme.aiBubble)
-          .withValues(alpha: _chatBackgroundBubbleOpacity),
-    _ChatBackgroundColorRole.userBubble =>
-      (_chatBgUserBubbleColor ??
-              YanciTheme.bubbleColorOverride(
-                YanciTheme.presetId,
-                ThemeBubbleColorRole.userBubble,
-              ) ??
-              BackgroundForegroundService.cachedChatBubblePalette(
-                _chatBgPath,
-              )?.userBubble ??
-              YanciTheme.userBubble)
-          .withValues(alpha: _chatBackgroundBubbleOpacity),
+    _ChatBackgroundColorRole.aiBubble => _resolvedChatBackgroundBubbleColor(
+      manual: _chatBgAiBubbleColor,
+      themeOverride: YanciTheme.bubbleColorOverride(
+        YanciTheme.presetId,
+        ThemeBubbleColorRole.aiBubble,
+      ),
+      automatic: BackgroundForegroundService.cachedChatBubblePalette(
+        _chatBgPath,
+      )?.aiBubble,
+      fallback: YanciTheme.aiBubble,
+    ),
+    _ChatBackgroundColorRole.userBubble => _resolvedChatBackgroundBubbleColor(
+      manual: _chatBgUserBubbleColor,
+      themeOverride: YanciTheme.bubbleColorOverride(
+        YanciTheme.presetId,
+        ThemeBubbleColorRole.userBubble,
+      ),
+      automatic: BackgroundForegroundService.cachedChatBubblePalette(
+        _chatBgPath,
+      )?.userBubble,
+      fallback: YanciTheme.userBubble,
+    ),
     _ChatBackgroundColorRole.bubbleText =>
       _chatBgBubbleTextColor ??
           YanciTheme.bubbleColorOverride(
@@ -234,6 +234,19 @@ extension _ThemeWorkshopBackgroundLogic on _ThemeWorkshopScreenState {
           )?.thinkingText ??
           Color.lerp(YanciTheme.textSecondary, YanciTheme.textPrimary, 0.34)!,
   };
+
+  Color _resolvedChatBackgroundBubbleColor({
+    required Color? manual,
+    required Color? themeOverride,
+    required Color? automatic,
+    required Color fallback,
+  }) {
+    final custom = manual ?? themeOverride ?? automatic;
+    return (custom == null
+            ? fallback
+            : YanciTheme.applyBubbleBrightness(custom))
+        .withValues(alpha: _chatBackgroundBubbleOpacity);
+  }
 
   Future<void> _saveChatBackgroundColor(
     _ChatBackgroundColorRole role,

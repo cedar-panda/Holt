@@ -647,12 +647,11 @@ class _InputBarState extends State<InputBar> with TickerProviderStateMixin {
                                             child: Icon(
                                               Icons.add_rounded,
                                               size: 23,
-                                              color: YanciTheme.textSecondary
-                                                  .withValues(
-                                                    alpha: _drawerOpen
-                                                        ? 0.78
-                                                        : 0.55,
-                                                  ),
+                                              color: inputBarText.withValues(
+                                                alpha: _drawerOpen
+                                                    ? 0.78
+                                                    : 0.55,
+                                              ),
                                             ),
                                           ),
                                         ),
@@ -991,7 +990,18 @@ class _InputBarState extends State<InputBar> with TickerProviderStateMixin {
               child: _drawerOpen
                   ? Padding(
                       padding: const EdgeInsets.only(top: 10),
-                      child: _buildActionPanel(),
+                      child: _buildActionPanel(
+                        foreground: inputBarText,
+                        accent: hasCustomChatImage
+                            ? Color.lerp(inputBarText, inputBarBg, 0.16)!
+                            : YanciTheme.accent,
+                        surface: hasCustomChatImage
+                            ? inputBarBg.withValues(
+                                alpha: math.max(inputBarBg.a, 0.82),
+                              )
+                            : YanciTheme.glassWhite.withValues(alpha: 0.18),
+                        border: inputBarBorder,
+                      ),
                     )
                   : const SizedBox(width: double.infinity, height: 0),
             ),
@@ -1037,7 +1047,30 @@ class _InputBarState extends State<InputBar> with TickerProviderStateMixin {
     if (_focusNode.hasFocus && _drawerOpen) _setDrawerOpen(false);
   }
 
-  Widget _buildActionPanel() {
+  Widget _buildActionPanel({
+    required Color foreground,
+    required Color accent,
+    required Color surface,
+    required Color border,
+  }) {
+    Widget action({
+      IconData? iconData,
+      String? assetPath,
+      required String label,
+      required VoidCallback onTap,
+      bool wide = false,
+    }) => _drawerAction(
+      iconData: iconData,
+      assetPath: assetPath,
+      label: label,
+      onTap: onTap,
+      wide: wide,
+      foreground: foreground,
+      accent: accent,
+      surface: surface,
+      border: border,
+    );
+
     return Semantics(
       container: true,
       label: L.pick(en: 'Message add actions', zhTW: '消息添加工具', zhCN: '消息添加工具'),
@@ -1054,7 +1087,7 @@ class _InputBarState extends State<InputBar> with TickerProviderStateMixin {
                 if (widget.onStoryArchiveTap != null)
                   SizedBox(
                     width: wideWidth,
-                    child: _drawerAction(
+                    child: action(
                       iconData: Icons.menu_book_outlined,
                       label: L.pick(
                         en: 'Story archive',
@@ -1069,7 +1102,7 @@ class _InputBarState extends State<InputBar> with TickerProviderStateMixin {
                   ),
                 SizedBox(
                   width: width,
-                  child: _drawerAction(
+                  child: action(
                     iconData: Icons.image_outlined,
                     label: L.pick(en: 'Photo', zhTW: '圖片', zhCN: '图片'),
                     onTap: () => _runPanelAction(_pickImageFromGallery),
@@ -1077,7 +1110,7 @@ class _InputBarState extends State<InputBar> with TickerProviderStateMixin {
                 ),
                 SizedBox(
                   width: width,
-                  child: _drawerAction(
+                  child: action(
                     iconData: Icons.emoji_emotions_outlined,
                     label: L.pick(en: 'Sticker', zhTW: '表情包', zhCN: '表情包'),
                     onTap: () =>
@@ -1087,7 +1120,7 @@ class _InputBarState extends State<InputBar> with TickerProviderStateMixin {
                 if (widget.onCallTap != null)
                   SizedBox(
                     width: width,
-                    child: _drawerAction(
+                    child: action(
                       iconData: Icons.call_outlined,
                       label: L.pick(en: 'Call', zhTW: '打電話', zhCN: '打电话'),
                       onTap: () =>
@@ -1097,7 +1130,7 @@ class _InputBarState extends State<InputBar> with TickerProviderStateMixin {
                 if (widget.showTransfer)
                   SizedBox(
                     width: width,
-                    child: _drawerAction(
+                    child: action(
                       assetPath: 'assets/images/shell_coin.png',
                       label: L.pick(en: 'Transfer', zhTW: '轉帳', zhCN: '转账'),
                       onTap: () => _runPanelAction(_showTransferDialog),
@@ -1106,7 +1139,7 @@ class _InputBarState extends State<InputBar> with TickerProviderStateMixin {
                 if (widget.showScratch)
                   SizedBox(
                     width: width,
-                    child: _drawerAction(
+                    child: action(
                       iconData: Icons.local_activity_outlined,
                       label: L.pick(
                         en: 'Scratch card',
@@ -1119,7 +1152,7 @@ class _InputBarState extends State<InputBar> with TickerProviderStateMixin {
                 if (widget.showShop)
                   SizedBox(
                     width: width,
-                    child: _drawerAction(
+                    child: action(
                       iconData: Icons.storefront_outlined,
                       label: L.pick(
                         en: 'Gift shop',
@@ -1133,7 +1166,7 @@ class _InputBarState extends State<InputBar> with TickerProviderStateMixin {
                 if (widget.showBackpack)
                   SizedBox(
                     width: width,
-                    child: _drawerAction(
+                    child: action(
                       iconData: Icons.backpack_outlined,
                       label: L.pick(en: 'Backpack', zhTW: '背包', zhCN: '背包'),
                       onTap: () =>
@@ -1143,7 +1176,7 @@ class _InputBarState extends State<InputBar> with TickerProviderStateMixin {
                 if (widget.showMarriageCert)
                   SizedBox(
                     width: width,
-                    child: _drawerAction(
+                    child: action(
                       iconData: Icons.history_edu_outlined,
                       label: L.pick(
                         en: 'Marriage letter',
@@ -1168,6 +1201,10 @@ class _InputBarState extends State<InputBar> with TickerProviderStateMixin {
     required String label,
     required VoidCallback onTap,
     bool wide = false,
+    required Color foreground,
+    required Color accent,
+    required Color surface,
+    required Color border,
   }) {
     return Semantics(
       button: true,
@@ -1184,8 +1221,9 @@ class _InputBarState extends State<InputBar> with TickerProviderStateMixin {
               vertical: 9,
             ),
             decoration: BoxDecoration(
-              color: YanciTheme.glassWhite.withValues(alpha: 0.18),
+              color: surface,
               borderRadius: BorderRadius.circular(17),
+              border: Border.all(color: border, width: 0.5),
             ),
             child: Flex(
               direction: wide ? Axis.horizontal : Axis.vertical,
@@ -1195,7 +1233,7 @@ class _InputBarState extends State<InputBar> with TickerProviderStateMixin {
                   width: 28,
                   height: 28,
                   child: iconData != null
-                      ? Icon(iconData, size: 25, color: YanciTheme.accent)
+                      ? Icon(iconData, size: 25, color: accent)
                       : Image.asset(
                           assetPath!,
                           width: 25,
@@ -1211,7 +1249,7 @@ class _InputBarState extends State<InputBar> with TickerProviderStateMixin {
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
-                        color: YanciTheme.textPrimary,
+                        color: foreground,
                         fontFamily: YanciTheme.fontFamily,
                         fontSize: 12,
                         fontWeight: FontWeight.w600,
@@ -1225,7 +1263,7 @@ class _InputBarState extends State<InputBar> with TickerProviderStateMixin {
                     overflow: TextOverflow.ellipsis,
                     textAlign: TextAlign.center,
                     style: TextStyle(
-                      color: YanciTheme.textPrimary,
+                      color: foreground,
                       fontFamily: YanciTheme.fontFamily,
                       fontSize: 11.5,
                       fontWeight: FontWeight.w500,
@@ -1265,10 +1303,11 @@ class _InputBarState extends State<InputBar> with TickerProviderStateMixin {
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        backgroundColor: YanciTheme.isDark
-            ? const Color(0xFF1E1E2E)
-            : Colors.white,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(YanciTheme.radiusSheet),
+          side: BorderSide(color: YanciTheme.glassBorder, width: 0.5),
+        ),
+        backgroundColor: YanciTheme.surfacePanel,
         title: Row(
           children: [
             Image.asset(
@@ -1345,11 +1384,12 @@ class _InputBarState extends State<InputBar> with TickerProviderStateMixin {
           ),
           child: Container(
             decoration: BoxDecoration(
-              color: YanciTheme.isDark
-                  ? const Color(0xFF1E1C22)
-                  : const Color(0xFFFDFCFE),
+              color: YanciTheme.surfacePanel,
               borderRadius: const BorderRadius.vertical(
-                top: Radius.circular(20),
+                top: Radius.circular(YanciTheme.radiusSheet),
+              ),
+              border: Border(
+                top: BorderSide(color: YanciTheme.glassBorder, width: 0.5),
               ),
               boxShadow: [
                 BoxShadow(
@@ -1381,9 +1421,7 @@ class _InputBarState extends State<InputBar> with TickerProviderStateMixin {
                       child: Container(
                         height: 40,
                         decoration: BoxDecoration(
-                          color: YanciTheme.isDark
-                              ? const Color(0xFF28252C)
-                              : const Color(0xFFF3F0F5),
+                          color: YanciTheme.glassInputBg,
                           borderRadius: BorderRadius.circular(20),
                           border: Border.all(
                             color: YanciTheme.accent.withValues(alpha: 0.2),
@@ -1443,26 +1481,30 @@ class _InputBarState extends State<InputBar> with TickerProviderStateMixin {
                         width: 40,
                         height: 40,
                         decoration: BoxDecoration(
-                          gradient: const LinearGradient(
-                            colors: [Color(0xFF8B2C4F), Color(0xFFC05C7E)],
+                          gradient: LinearGradient(
+                            colors: [YanciTheme.accent, YanciTheme.accentLight],
                             begin: Alignment.topLeft,
                             end: Alignment.bottomRight,
                           ),
                           shape: BoxShape.circle,
                           boxShadow: [
                             BoxShadow(
-                              color: const Color(
-                                0xFF8B2C4F,
-                              ).withValues(alpha: 0.3),
+                              color: YanciTheme.accent.withValues(alpha: 0.3),
                               blurRadius: 6,
                               offset: const Offset(0, 2),
                             ),
                           ],
                         ),
-                        child: const Center(
+                        child: Center(
                           child: Icon(
                             Icons.arrow_forward_rounded,
-                            color: Colors.white,
+                            color:
+                                ThemeData.estimateBrightnessForColor(
+                                      YanciTheme.accent,
+                                    ) ==
+                                    Brightness.dark
+                                ? Colors.white
+                                : Colors.black87,
                             size: 20,
                           ),
                         ),

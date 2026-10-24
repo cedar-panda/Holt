@@ -84,6 +84,43 @@ void main() {
     }
   });
 
+  testWidgets('one rendered line is a pill and multiline keeps theme radius', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    final originalFlatMode = YanciTheme.aiBubbleFlat;
+    final originalRadius = YanciTheme.bubbleRadius;
+    YanciTheme.aiBubbleFlat = false;
+    YanciTheme.bubbleRadius = 23;
+    addTearDown(() {
+      YanciTheme.aiBubbleFlat = originalFlatMode;
+      YanciTheme.bubbleRadius = originalRadius;
+    });
+
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: Column(
+            children: [
+              ChatBubble(text: '短句', isUser: true, captureMode: true),
+              ChatBubble(text: '第一行\n第二行', isUser: true, captureMode: true),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    final surfaces = tester
+        .widgetList<Container>(
+          find.byKey(const ValueKey('chat-bubble-surface')),
+        )
+        .toList();
+    final pill = (surfaces[0].decoration! as BoxDecoration).borderRadius;
+    final multiline = (surfaces[1].decoration! as BoxDecoration).borderRadius;
+    expect(pill, BorderRadius.circular(YanciTheme.radiusPill));
+    expect(multiline, BorderRadius.circular(23));
+  });
+
   testWidgets('context metadata floats independently beside the avatar', (
     tester,
   ) async {

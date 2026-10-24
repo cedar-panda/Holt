@@ -34,6 +34,17 @@ class AmbientParticleField extends StatefulWidget {
     this.dandelionCount = 16,
   });
 
+  /// 1～50 的每一段都要有意義，同時保留既有三個視覺錨點：
+  /// 1 = 0.4x、12 = 1.0x（預設）、50 = 1.6x（既有最高密度）。
+  /// 這不提高目前最高粒子量，只修掉 20～50 以前全部卡在 1.6x 的假範圍。
+  static double densityScaleFor(int density) {
+    final value = density.clamp(1, 50);
+    if (value <= 12) {
+      return 0.4 + ((value - 1) / 11) * 0.6;
+    }
+    return 1.0 + ((value - 12) / 38) * 0.6;
+  }
+
   @override
   State<AmbientParticleField> createState() => _AmbientParticleFieldState();
 }
@@ -200,7 +211,7 @@ class _AmbientParticleFieldState extends State<AmbientParticleField>
   }
 
   int _scaledCount(int baseCount) {
-    final scale = (YanciTheme.starDensity / 12.0).clamp(0.4, 1.6);
+    final scale = AmbientParticleField.densityScaleFor(YanciTheme.starDensity);
     return max(1, (baseCount * scale).round());
   }
 
@@ -1000,11 +1011,8 @@ class FogParticleWidget extends StatefulWidget {
   final ValueListenable<double> clock;
   final int fogCount;
 
-  const FogParticleWidget({
-    super.key,
-    required this.clock,
-    this.fogCount = 4,
-  }) : assert(fogCount > 0);
+  const FogParticleWidget({super.key, required this.clock, this.fogCount = 4})
+    : assert(fogCount > 0);
 
   @override
   State<FogParticleWidget> createState() => _FogParticleWidgetState();
@@ -1015,8 +1023,7 @@ class _FogParticleWidgetState extends State<FogParticleWidget> {
   late final List<_SilkRibbon> _ribbons;
 
   double _r(double min, double span) => min + _random.nextDouble() * span;
-  double _omega(double minPeriod, double span) =>
-      2 * pi / _r(minPeriod, span);
+  double _omega(double minPeriod, double span) => 2 * pi / _r(minPeriod, span);
 
   @override
   void initState() {
@@ -1099,8 +1106,7 @@ class _SilkPainter extends CustomPainter {
       final len = r.length * w;
       final travel = (r.startX + r.direction * t / r.period) % 1.0;
       final x0 = -len + travel * (w + len);
-      final baseY =
-          (r.baseY + sin(t * 2 * pi / r.bobPeriod + r.p1) * 0.03) * h;
+      final baseY = (r.baseY + sin(t * 2 * pi / r.bobPeriod + r.p1) * 0.03) * h;
 
       for (var i = 0; i <= _samples; i++) {
         final u = i / _samples;

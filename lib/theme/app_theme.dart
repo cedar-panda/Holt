@@ -17,7 +17,11 @@ class YanciTheme {
   /// 給無限滑桿等於發一把能把可讀性調碎的錘子。±6% 內最差對比仍 >4.5。
   static double bubbleBrightness = 0.0;
   static double bubbleRadius = 20.0;
-  static double bubbleRadiusUser = 16.0;
+
+  /// 聊天室只有一個「圓角」控制項，因此 AI / User 必須讀同一個值。
+  /// 說話方向與群組內側角的差異由氣泡形狀處理，不再藏一個固定的
+  /// User 半徑，避免主題工坊看得到變化、實際 User 氣泡卻不動。
+  static double get bubbleRadiusUser => bubbleRadius;
   static bool starEnabled = true;
   static int starDensity = 12; // 粒子數
   static String? particleEffectOverride;
@@ -124,19 +128,19 @@ class YanciTheme {
   static List<Color> get backgroundGradient => _preset.gradient;
 
   /// 氣泡明度偏移（見 bubbleBrightness 註釋）
-  static Color _shiftBubble(Color c) {
+  static Color applyBubbleBrightness(Color c) {
     if (bubbleBrightness == 0) return c;
     final hsl = HSLColor.fromColor(c);
     final l = (hsl.lightness + bubbleBrightness * 0.06).clamp(0.0, 1.0);
     return hsl.withLightness(l).toColor();
   }
 
-  static Color get aiBubble =>
-      (_aiBubbleOverrides[_preset.id] ?? _shiftBubble(_preset.aiBubble))
-          .withValues(alpha: bubbleOpacity);
-  static Color get userBubble =>
-      (_userBubbleOverrides[_preset.id] ?? _shiftBubble(_preset.userBubble))
-          .withValues(alpha: bubbleOpacity);
+  static Color get aiBubble => applyBubbleBrightness(
+    _aiBubbleOverrides[_preset.id] ?? _preset.aiBubble,
+  ).withValues(alpha: bubbleOpacity);
+  static Color get userBubble => applyBubbleBrightness(
+    _userBubbleOverrides[_preset.id] ?? _preset.userBubble,
+  ).withValues(alpha: bubbleOpacity);
 
   /// AI 氣泡漸變（頂粉→底白），null 則純色
   static Gradient? get aiBubbleGradient {
@@ -146,8 +150,12 @@ class YanciTheme {
       begin: Alignment.topCenter,
       end: Alignment.bottomCenter,
       colors: [
-        _shiftBubble(_preset.aiBubbleTop!).withValues(alpha: bubbleOpacity),
-        _shiftBubble(_preset.aiBubble).withValues(alpha: bubbleOpacity),
+        applyBubbleBrightness(
+          _preset.aiBubbleTop!,
+        ).withValues(alpha: bubbleOpacity),
+        applyBubbleBrightness(
+          _preset.aiBubble,
+        ).withValues(alpha: bubbleOpacity),
       ],
     );
   }
@@ -191,14 +199,19 @@ class YanciTheme {
       chatBackgroundBubbleOpacityOverride ??
       chatBackgroundAutoOpacity ??
       bubbleOpacity;
-  static Color get chatBackgroundAiBubbleColor =>
-      (chatBackgroundAiBubbleOverride ?? chatBackgroundAutoAiBubble ?? aiBubble)
-          .withValues(alpha: chatBackgroundBubbleOpacity);
-  static Color get chatBackgroundUserBubbleColor =>
-      (chatBackgroundUserBubbleOverride ??
-              chatBackgroundAutoUserBubble ??
-              userBubble)
-          .withValues(alpha: chatBackgroundBubbleOpacity);
+  static Color get chatBackgroundAiBubbleColor {
+    final custom = chatBackgroundAiBubbleOverride ?? chatBackgroundAutoAiBubble;
+    return (custom == null ? aiBubble : applyBubbleBrightness(custom))
+        .withValues(alpha: chatBackgroundBubbleOpacity);
+  }
+
+  static Color get chatBackgroundUserBubbleColor {
+    final custom =
+        chatBackgroundUserBubbleOverride ?? chatBackgroundAutoUserBubble;
+    return (custom == null ? userBubble : applyBubbleBrightness(custom))
+        .withValues(alpha: chatBackgroundBubbleOpacity);
+  }
+
   static Color get chatBackgroundBubbleTextColor =>
       chatBackgroundBubbleTextOverride ??
       chatBackgroundAutoBubbleText ??
@@ -291,6 +304,11 @@ class YanciTheme {
   static const double radiusMd = 16.0;
   static const double radiusLg = 24.0;
   static const double radiusXl = 32.0;
+  // 語義化圓角供新元件使用；保留既有尺寸 token，避免舊頁面被連帶改形。
+  static const double radiusInput = 14.0;
+  static const double radiusCard = 22.0;
+  static const double radiusSheet = 22.0;
+  static const double radiusPill = 999.0;
   static double get radiusBubble => bubbleRadius;
 
   // ═══════════════════════════════════

@@ -11,6 +11,45 @@ import 'package:project_yanci/theme/theme_presets.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  test('bubble radius and brightness share the same runtime source', () {
+    final originalPreset = YanciTheme.presetId;
+    final originalRadius = YanciTheme.bubbleRadius;
+    final originalBrightness = YanciTheme.bubbleBrightness;
+    final originalOverride = YanciTheme.bubbleColorOverride(
+      'ivory',
+      ThemeBubbleColorRole.userBubble,
+    );
+    addTearDown(() {
+      YanciTheme.setBubbleColorOverride(
+        'ivory',
+        ThemeBubbleColorRole.userBubble,
+        originalOverride,
+      );
+      YanciTheme.bubbleRadius = originalRadius;
+      YanciTheme.bubbleBrightness = originalBrightness;
+      YanciTheme.setPreset(originalPreset);
+    });
+
+    YanciTheme.setPreset('ivory');
+    YanciTheme.bubbleRadius = 27;
+    expect(YanciTheme.bubbleRadiusUser, 27);
+
+    YanciTheme.setBubbleColorOverride(
+      'ivory',
+      ThemeBubbleColorRole.userBubble,
+      const Color(0xFF557799),
+    );
+    YanciTheme.bubbleBrightness = 0;
+    final neutral = YanciTheme.userBubble;
+    YanciTheme.bubbleBrightness = 1;
+    final brighter = YanciTheme.userBubble;
+    expect(brighter, isNot(neutral));
+    expect(
+      HSLColor.fromColor(brighter).lightness,
+      greaterThan(HSLColor.fromColor(neutral).lightness),
+    );
+  });
+
   test('unwashed ink preset keeps its cool ink semantic palette', () {
     final preset = findPreset('yanci');
 

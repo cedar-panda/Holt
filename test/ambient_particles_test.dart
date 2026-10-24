@@ -22,6 +22,23 @@ void main() {
     YanciTheme.particleEffectOverride = null;
   });
 
+  test(
+    'particle density uses the whole slider range without changing anchors',
+    () {
+      expect(AmbientParticleField.densityScaleFor(1), 0.4);
+      expect(AmbientParticleField.densityScaleFor(12), 1.0);
+      expect(AmbientParticleField.densityScaleFor(50), 1.6);
+      expect(
+        AmbientParticleField.densityScaleFor(6),
+        lessThan(AmbientParticleField.densityScaleFor(12)),
+      );
+      expect(
+        AmbientParticleField.densityScaleFor(30),
+        greaterThan(AmbientParticleField.densityScaleFor(12)),
+      );
+    },
+  );
+
   testWidgets('ambient particle field exposes every supported style', (
     tester,
   ) async {

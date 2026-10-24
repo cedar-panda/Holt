@@ -21,6 +21,9 @@
 - 貓爪發送鍵：無輸入時沿用主題 accent 染色；有文字或待發內容而亮起時，按 accent 亮度選深／白色線條，維持與亮起圓底的對比。只影響貓爪的亮起狀態，PNG 透明度與發送動畫不變。
 - 等待提示：`lib/widgets/chat_bubble.dart:_TypingIndicatorState`
 - 氣泡複製／書籤／朗讀的透明操作熱區：`lib/widgets/chat_bubble.dart:_buildToolbarTapTarget`
+- 聊天氣泡形狀：`lib/widgets/chat_bubble.dart:_usesSingleLinePill` 先以實際字級與可用寬度排版；真正只有一行的自然語言使用膠囊，換行或區塊內容使用主題工坊設定的大圓角。AI／User 共用同一個圓角設定來源。
+- 氣泡明度與透明度：`lib/theme/app_theme.dart:applyBubbleBrightness`、`chatBackgroundAiBubbleColor`、`chatBackgroundUserBubbleColor`；主題覆蓋色與自訂背景配色都走同一套微調，主題工坊預覽與聊天室一致。
+- 加號工具盒：`lib/widgets/input_bar.dart:_buildActionPanel`；自訂對話背景存在時，文字、圖標、襯底與 0.5px 邊框沿用輸入框的自適應配色，沒有背景時維持主題預設。
 - 兩者都是本地 UI，不注入任何 prompt，也不新增 API 請求。
 
 ## 檢索方式（字面 / BM25 / 向量 / 名字觸發 / 無）
@@ -31,6 +34,7 @@
 
 ## 相關開關
 - 主題工坊「發送鍵」四種樣式。
+- 主題工坊「氣泡圓角／明度／透明度」直接影響實際聊天氣泡；單行膠囊只改幾何外形，不覆寫使用者保存的多行圓角值。
 - 自訂圖必須為 1:1 PNG；檔案遺失或讀取失敗時回退葉子。
 - 等待前 5 秒只顯示三點；第 5 秒起在右側顯示秒數，第一個正文字符出現後整體消失。
 - 系統「減少動態效果」開啟時，等待三點、TTS 連接軌道與播放音條保留狀態提示但停止循環位移。

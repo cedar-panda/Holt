@@ -2,6 +2,19 @@
 
 part of 'home_screen.dart';
 
+String _formatNoteTimestamp(Object? raw) {
+  final value = raw?.toString().trim() ?? '';
+  if (value.isEmpty) return '';
+  final parsed = DateTime.tryParse(value)?.toLocal();
+  if (parsed != null) {
+    String twoDigits(int number) => number.toString().padLeft(2, '0');
+    return '${twoDigits(parsed.month)}/${twoDigits(parsed.day)} '
+        '${twoDigits(parsed.hour)}:${twoDigits(parsed.minute)}';
+  }
+  final friendly = value.replaceFirst('T', ' ');
+  return friendly.length <= 16 ? friendly : friendly.substring(0, 16);
+}
+
 extension _HomeSheetMethods on _HomeScreenState {
   double get _homeCarouselOffsetY => _HomeScreenState._homeCarouselOffsetY;
 
@@ -21,11 +34,12 @@ extension _HomeSheetMethods on _HomeScreenState {
             ),
             child: Container(
               decoration: BoxDecoration(
-                color: YanciTheme.isDark
-                    ? const Color(0xF0252228)
-                    : Colors.white.withValues(alpha: 0.97),
+                color: YanciTheme.surfacePanel.withValues(alpha: 0.98),
                 borderRadius: const BorderRadius.vertical(
-                  top: Radius.circular(YanciTheme.radiusLg),
+                  top: Radius.circular(YanciTheme.radiusSheet),
+                ),
+                border: Border(
+                  top: BorderSide(color: YanciTheme.glassBorder, width: 0.5),
                 ),
               ),
               padding: const EdgeInsets.all(YanciTheme.spacingMd),
@@ -187,11 +201,7 @@ extension _HomeSheetMethods on _HomeScreenState {
                                     ),
                                   ),
                                   Text(
-                                    ((n['created_at'] as String?)?.substring(
-                                          5,
-                                          16,
-                                        ) ??
-                                        ''),
+                                    _formatNoteTimestamp(n['created_at']),
                                     style: TextStyle(
                                       fontSize: 10,
                                       color: YanciTheme.textSecondary
@@ -567,9 +577,7 @@ extension _HomeSheetMethods on _HomeScreenState {
                                                       ),
                                                 ),
                                                 backgroundColor:
-                                                    YanciTheme.isDark
-                                                    ? const Color(0xFF1E1E2E)
-                                                    : Colors.white,
+                                                    YanciTheme.surfacePanel,
                                                 content: Text(
                                                   L.pick(
                                                     en: 'Delete this conversation?',
@@ -683,9 +691,11 @@ extension _HomeSheetMethods on _HomeScreenState {
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: YanciTheme.isDark
-            ? const Color(0xFF252228)
-            : Colors.white,
+        backgroundColor: YanciTheme.surfacePanel,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(YanciTheme.radiusSheet),
+          side: BorderSide(color: YanciTheme.glassBorder, width: 0.5),
+        ),
         title: Text(
           L.get('history_edit_title'),
           style: YanciTheme.headingMedium,

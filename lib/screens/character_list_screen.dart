@@ -448,9 +448,10 @@ class _CharacterListScreenState extends State<CharacterListScreen> {
                       )
                     : SizedBox(
                         height:
-                            (Theme.of(context).platform == TargetPlatform.iOS
-                                ? 310
-                                : 400) +
+                            (MediaQuery.sizeOf(context).height * 0.4).clamp(
+                              320.0,
+                              380.0,
+                            ) +
                             ((YanciTheme.fontScale *
                                             MediaQuery.textScalerOf(
                                               context,

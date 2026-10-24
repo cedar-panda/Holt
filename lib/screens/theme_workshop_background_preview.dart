@@ -265,7 +265,6 @@ extension _ThemeWorkshopBackgroundPreview on _ThemeWorkshopScreenState {
     final thinkingColor = _chatBackgroundColor(
       _ChatBackgroundColorRole.thinkingText,
     );
-    final r = _bubbleRadius * 0.42; // 按比例縮放圓角
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 8),
       child: Column(
@@ -290,7 +289,6 @@ extension _ThemeWorkshopBackgroundPreview on _ThemeWorkshopScreenState {
               ),
               borderColor: YanciTheme.aiBubbleBorder,
               text: L.get('theme_preview_hi'),
-              radius: r,
               isUser: false,
             ),
           ),
@@ -305,7 +303,6 @@ extension _ThemeWorkshopBackgroundPreview on _ThemeWorkshopScreenState {
               ),
               borderColor: YanciTheme.userBubbleBorder,
               text: L.get('theme_preview_reply'),
-              radius: r,
               isUser: true,
             ),
           ),
@@ -320,10 +317,8 @@ extension _ThemeWorkshopBackgroundPreview on _ThemeWorkshopScreenState {
     required Color textColor,
     required Color borderColor,
     required String text,
-    required double radius,
     required bool isUser,
   }) {
-    final r = radius.clamp(3.0, 14.0);
     final flat = !isUser && _aiBubbleFlat;
     return Container(
       constraints: BoxConstraints(maxWidth: flat ? 120 : 84),
@@ -335,7 +330,7 @@ extension _ThemeWorkshopBackgroundPreview on _ThemeWorkshopScreenState {
           ? null
           : BoxDecoration(
               color: color,
-              borderRadius: BorderRadius.circular(r),
+              borderRadius: BorderRadius.circular(999),
               border: Border.all(
                 color: borderColor.withValues(alpha: 0.5),
                 width: 0.4,
@@ -378,7 +373,6 @@ extension _ThemeWorkshopBackgroundPreview on _ThemeWorkshopScreenState {
     final thinkingColor = _chatBackgroundColor(
       _ChatBackgroundColorRole.thinkingText,
     );
-    final r = _bubbleRadius.clamp(6.0, 32.0);
     return SizedBox(
       key: const ValueKey('chat-background-color-preview'),
       height: 178,
@@ -426,7 +420,6 @@ extension _ThemeWorkshopBackgroundPreview on _ThemeWorkshopScreenState {
                   ),
                   borderColor: YanciTheme.aiBubbleBorder,
                   text: L.get('theme_preview_hi'),
-                  radius: r,
                   isUser: false,
                 ),
               ),
@@ -443,7 +436,6 @@ extension _ThemeWorkshopBackgroundPreview on _ThemeWorkshopScreenState {
                   ),
                   borderColor: YanciTheme.userBubbleBorder,
                   text: L.get('theme_preview_reply'),
-                  radius: r,
                   isUser: true,
                 ),
               ),
@@ -459,7 +451,6 @@ extension _ThemeWorkshopBackgroundPreview on _ThemeWorkshopScreenState {
     required Color textColor,
     required Color borderColor,
     required String text,
-    required double radius,
     required bool isUser,
   }) {
     final flat = !isUser && _aiBubbleFlat;
@@ -473,7 +464,7 @@ extension _ThemeWorkshopBackgroundPreview on _ThemeWorkshopScreenState {
           ? null
           : BoxDecoration(
               color: color,
-              borderRadius: BorderRadius.circular(radius),
+              borderRadius: BorderRadius.circular(999),
               border: Border.all(
                 color: borderColor.withValues(alpha: 0.5),
                 width: 0.5,
@@ -513,8 +504,6 @@ extension _ThemeWorkshopBackgroundPreview on _ThemeWorkshopScreenState {
         role == _ChatBackgroundColorRole.thinkingText ||
         role == _ChatBackgroundColorRole.bubbleText;
     final isUser = role == _ChatBackgroundColorRole.userBubble;
-    final r = _bubbleRadius.clamp(6.0, 32.0) * 0.6;
-
     // 氣泡型色塊 / 文字色條
     Widget colorChip;
     if (isText) {
@@ -554,7 +543,7 @@ extension _ThemeWorkshopBackgroundPreview on _ThemeWorkshopScreenState {
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
         decoration: BoxDecoration(
           color: color,
-          borderRadius: BorderRadius.circular(r),
+          borderRadius: BorderRadius.circular(999),
           border: Border.all(
             color:
                 (isUser
