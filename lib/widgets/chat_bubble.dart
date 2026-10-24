@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
@@ -31,7 +32,7 @@ import 'thinking_detail_sheet.dart';
 import 'thinking_context_widgets.dart';
 import 'themed_notice.dart';
 import 'gradient_background.dart';
-import 'image_card_stack.dart';
+import 'message_image_grid.dart';
 
 /// 聊天氣泡 — 思考鏈 + markdown + 表情包圖片 + 長按菜單
 class ChatBubble extends StatefulWidget {
@@ -374,83 +375,26 @@ class _ChatBubbleState extends State<ChatBubble>
     );
   }
 
-  /// 全屏查看圖片（不壓縮畫質 + 可保存）
-  void _openFullScreenImage(BuildContext ctx, String imagePath) {
+  /// 全屏查看圖片（不壓縮畫質 + 可保存；多圖可左右滑）
+  void _openFullScreenImage(
+    BuildContext ctx,
+    List<String> paths,
+    int initialIndex,
+  ) {
+    if (paths.isEmpty) return;
     Navigator.of(ctx).push(
       PageRouteBuilder(
         opaque: false,
         barrierColor: Colors.black87,
         barrierDismissible: true,
-        pageBuilder: (context, anim, secondAnim) {
-          return FadeTransition(
-            opacity: anim,
-            child: Scaffold(
-              backgroundColor: Colors.transparent,
-              body: Stack(
-                children: [
-                  GestureDetector(
-                    onTap: () => Navigator.pop(context),
-                    child: const SizedBox.expand(),
-                  ),
-                  Center(
-                    child: InteractiveViewer(
-                      minScale: 0.5,
-                      maxScale: 4.0,
-                      child: Image.file(
-                        File(imagePath),
-                        fit: BoxFit.contain,
-                        filterQuality: FilterQuality.high,
-                      ),
-                    ),
-                  ),
-                  Positioned(
-                    top: MediaQuery.of(context).padding.top + 8,
-                    right: 16,
-                    child: Row(
-                      children: [
-                        GestureDetector(
-                          onTap: () {
-                            _saveImage(imagePath);
-                          },
-                          child: Container(
-                            width: 40,
-                            height: 40,
-                            decoration: BoxDecoration(
-                              color: Colors.black54,
-                              shape: BoxShape.circle,
-                            ),
-                            child: const Icon(
-                              Icons.save_alt_rounded,
-                              color: Colors.white70,
-                              size: 20,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        GestureDetector(
-                          onTap: () => Navigator.pop(context),
-                          child: Container(
-                            width: 40,
-                            height: 40,
-                            decoration: BoxDecoration(
-                              color: Colors.black54,
-                              shape: BoxShape.circle,
-                            ),
-                            child: const Icon(
-                              Icons.close_rounded,
-                              color: Colors.white70,
-                              size: 20,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          );
-        },
+        pageBuilder: (context, anim, secondAnim) => FadeTransition(
+          opacity: anim,
+          child: ImageGalleryViewer(
+            paths: paths,
+            initialIndex: initialIndex.clamp(0, paths.length - 1),
+            onSave: _saveImage,
+          ),
+        ),
         transitionDuration: const Duration(milliseconds: 200),
       ),
     );
@@ -535,7 +479,7 @@ class _ChatBubbleState extends State<ChatBubble>
     final items = <PopupMenuEntry<String>>[
       PopupMenuItem(
         value: 'copy',
-        height: 36,
+        height: 44,
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -556,7 +500,7 @@ class _ChatBubbleState extends State<ChatBubble>
       items.add(
         PopupMenuItem(
           value: 'edit',
-          height: 36,
+          height: 44,
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -823,18 +767,20 @@ class _ChatBubbleState extends State<ChatBubble>
                                       CrossAxisAlignment.stretch,
                                   children: [
                                     if (hasImageContent)
-                                      ImageCardStack(
+                                      MessageImageGrid(
                                         paths: imagePaths,
-                                        onTap: (path) => path == 'generating'
-                                            ? null
-                                            : _openFullScreenImage(
-                                                context,
-                                                path,
-                                              ),
+                                        onTap: (path) {
+                                          final viewable = imagePaths
+                                              .where((p) => p != 'generating')
+                                              .toList();
+                                          _openFullScreenImage(
+                                            context,
+                                            viewable,
+                                            viewable.indexOf(path),
+                                          );
+                                        },
                                         onLongPress: (path) =>
-                                            path == 'generating'
-                                            ? null
-                                            : _showImageMenu(context, path),
+                                            _showImageMenu(context, path),
                                       ),
                                     if (hasBubbleContent)
                                       Builder(
@@ -1052,7 +998,8 @@ class _ChatBubbleState extends State<ChatBubble>
                                               if (!widget.isUser &&
                                                   widget.showToolbar) ...[
                                                 const SizedBox(width: 10),
-                                                GestureDetector(
+                                                _buildToolbarTapTarget(
+                                                  label: L.get('chat_copy'),
                                                   onTap: () {
                                                     HapticFeedback.lightImpact();
                                                     Clipboard.setData(
@@ -1070,8 +1017,18 @@ class _ChatBubbleState extends State<ChatBubble>
                                                   },
                                                   child: _buildCopyIcon(),
                                                 ),
-                                                const SizedBox(width: 6),
-                                                GestureDetector(
+                                                _buildToolbarTapTarget(
+                                                  label: _isSaved
+                                                      ? L.pick(
+                                                          en: 'Remove bookmark',
+                                                          zhTW: '取消書籤',
+                                                          zhCN: '取消书签',
+                                                        )
+                                                      : L.pick(
+                                                          en: 'Bookmark',
+                                                          zhTW: '加入書籤',
+                                                          zhCN: '加入书签',
+                                                        ),
                                                   onTap: _toggleSave,
                                                   child: _buildBookmarkIcon(
                                                     color: _isSaved
@@ -1079,25 +1036,31 @@ class _ChatBubbleState extends State<ChatBubble>
                                                         : null,
                                                   ),
                                                 ),
-                                                const SizedBox(width: 6),
-                                                GestureDetector(
+                                                _buildToolbarTapTarget(
+                                                  label: L.pick(
+                                                    en: 'Read aloud',
+                                                    zhTW: '朗讀',
+                                                    zhCN: '朗读',
+                                                  ),
                                                   onTap: () =>
                                                       _speakText(widget.text),
                                                   child: _buildActionIconSlot(
                                                     key: const ValueKey(
                                                       'bubble-action-tts',
                                                     ),
-                                                    child: TtsPlayButton(
-                                                      messageId:
-                                                          widget.messageId,
-                                                      idleColor:
-                                                          _chatBackgroundScope
-                                                              ?.foreground
-                                                              ?.secondary,
-                                                      onTap: () => _speakText(
-                                                        widget.text,
+                                                    child: IgnorePointer(
+                                                      child: TtsPlayButton(
+                                                        messageId:
+                                                            widget.messageId,
+                                                        idleColor:
+                                                            _chatBackgroundScope
+                                                                ?.foreground
+                                                                ?.secondary,
+                                                        onTap: () => _speakText(
+                                                          widget.text,
+                                                        ),
+                                                        size: 15,
                                                       ),
-                                                      size: 15,
                                                     ),
                                                   ),
                                                 ),
@@ -1173,9 +1136,22 @@ class _ChatBubbleState extends State<ChatBubble>
                                                 if (widget.onRetryIncomplete !=
                                                     null) ...[
                                                   const SizedBox(width: 5),
-                                                  GestureDetector(
-                                                    onTap: widget
+                                                  TextButton(
+                                                    onPressed: widget
                                                         .onRetryIncomplete,
+                                                    style: TextButton.styleFrom(
+                                                      minimumSize: const Size(
+                                                        44,
+                                                        44,
+                                                      ),
+                                                      padding:
+                                                          const EdgeInsets.symmetric(
+                                                            horizontal: 6,
+                                                          ),
+                                                      tapTargetSize:
+                                                          MaterialTapTargetSize
+                                                              .shrinkWrap,
+                                                    ),
                                                     child: Text(
                                                       L.pick(
                                                         en: 'Retry',
@@ -2422,6 +2398,25 @@ class _ChatBubbleState extends State<ChatBubble>
     );
   }
 
+  Widget _buildToolbarTapTarget({
+    required String label,
+    required VoidCallback onTap,
+    required Widget child,
+  }) {
+    return Tooltip(
+      message: label,
+      child: Semantics(
+        button: true,
+        label: label,
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: onTap,
+          child: SizedBox.square(dimension: 44, child: Center(child: child)),
+        ),
+      ),
+    );
+  }
+
   Widget _buildAvatar() {
     return ChatAvatar(avatarPath: widget.avatarPath, isUser: widget.isUser);
   }
@@ -2439,6 +2434,13 @@ class _TypingIndicator extends StatefulWidget {
 class _TypingIndicatorState extends State<_TypingIndicator>
     with SingleTickerProviderStateMixin {
   late final AnimationController _controller;
+  bool _reduceMotion = false;
+
+  /// 等待超過 [_showSecondsAfter] 秒才顯示秒數；每秒只更新那行小字。
+  static const int _showSecondsAfter = 5;
+  final Stopwatch _waited = Stopwatch()..start();
+  final ValueNotifier<int> _seconds = ValueNotifier<int>(0);
+  Timer? _ticker;
 
   @override
   void initState() {
@@ -2447,10 +2449,31 @@ class _TypingIndicatorState extends State<_TypingIndicator>
       vsync: this,
       duration: const Duration(milliseconds: 900),
     )..repeat();
+    _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
+      _seconds.value = _waited.elapsed.inSeconds;
+    });
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final reduceMotion = MediaQuery.disableAnimationsOf(context);
+    if (_reduceMotion == reduceMotion) return;
+    _reduceMotion = reduceMotion;
+    if (reduceMotion) {
+      _controller
+        ..stop()
+        ..value = 0;
+    } else if (!_controller.isAnimating) {
+      _controller.repeat();
+    }
   }
 
   @override
   void dispose() {
+    _ticker?.cancel();
+    _waited.stop();
+    _seconds.dispose();
     _controller.dispose();
     super.dispose();
   }
@@ -2462,7 +2485,7 @@ class _TypingIndicatorState extends State<_TypingIndicator>
     final dotSize = (fontSize * 0.27).clamp(3.0, 6.0).toDouble();
     final gap = (fontSize * 0.2).clamp(2.0, 4.0).toDouble();
     final lineHeight = fontSize * (textStyle.height ?? 1.5);
-    return SizedBox(
+    final dots = SizedBox(
       width: dotSize * 3 + gap * 2,
       height: lineHeight,
       child: AnimatedBuilder(
@@ -2473,7 +2496,7 @@ class _TypingIndicatorState extends State<_TypingIndicator>
           crossAxisAlignment: CrossAxisAlignment.center,
           children: List<Widget>.generate(3, (index) {
             final phase = (_controller.value + index * 0.18) % 1.0;
-            final wave = math.sin(phase * math.pi * 2);
+            final wave = _reduceMotion ? 0.0 : math.sin(phase * math.pi * 2);
             return Padding(
               padding: EdgeInsets.only(right: index == 2 ? 0 : 3),
               child: Transform.translate(
@@ -2494,6 +2517,42 @@ class _TypingIndicatorState extends State<_TypingIndicator>
           }),
         ),
       ),
+    );
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        dots,
+        ValueListenableBuilder<int>(
+          valueListenable: _seconds,
+          builder: (context, s, _) {
+            final visible = s >= _showSecondsAfter;
+            final label = s < 60
+                ? '${s}s'
+                : '${s ~/ 60}:${(s % 60).toString().padLeft(2, '0')}';
+            return AnimatedOpacity(
+              opacity: visible ? 1 : 0,
+              duration: _reduceMotion
+                  ? Duration.zero
+                  : const Duration(milliseconds: 300),
+              child: visible
+                  ? Padding(
+                      padding: const EdgeInsets.only(left: 6),
+                      child: Text(
+                        label,
+                        key: const ValueKey('typing-indicator-elapsed'),
+                        style: TextStyle(
+                          fontSize: fontSize * 0.75,
+                          height: 1,
+                          color: YanciTheme.accent.withValues(alpha: 0.55),
+                        ),
+                      ),
+                    )
+                  : const SizedBox.shrink(),
+            );
+          },
+        ),
+      ],
     );
   }
 }

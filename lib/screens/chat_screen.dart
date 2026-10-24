@@ -5,6 +5,7 @@ import 'dart:io';
 import 'dart:math';
 import 'dart:ui' show ImageFilter;
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:share_plus/share_plus.dart';
@@ -19,7 +20,7 @@ import '../widgets/chat_bubble.dart';
 import '../widgets/chat_diagnostic_card.dart';
 import '../widgets/input_bar.dart';
 import '../widgets/scroll_edge_fade.dart';
-import '../widgets/image_card_stack.dart';
+import '../widgets/pending_image_tray.dart';
 import '../widgets/atom_thinking.dart';
 import '../services/api_adapter.dart';
 import '../services/api_error_localizer.dart';
@@ -102,6 +103,7 @@ import '../widgets/new_character_draft_card.dart';
 import '../widgets/chat_cost_mode_guide.dart';
 import '../widgets/chat_window_status.dart';
 import '../widgets/reply_variant_controls.dart';
+import '../widgets/managed_text_controllers.dart';
 import '../widgets/memory_review_tab.dart';
 import '../widgets/web_search_activity_card.dart';
 import '../widgets/web_search_result_card.dart';
@@ -309,6 +311,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   bool _isGenerating = false;
   bool _visibleReplyComplete = false;
   bool _isGeneratingImage = false;
+  int _imageGenerationEpoch = 0;
   bool _streamSurfaceVisible = false;
   bool _isCapturingLongScreenshot = false;
 
@@ -343,6 +346,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   String _characterName = '';
   String _composerHint = '';
   final List<String> _pendingImagePaths = <String>[];
+  final ValueNotifier<bool> _composerDrawerOpen = ValueNotifier<bool>(false);
   StickerInfo? _pendingSticker;
   String? _pendingScratchGiftWho;
   bool _splitReply = false;
@@ -644,7 +648,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   /// dependency from that immutable binding. The globally selected character
   /// is intentionally never consulted here.
 
-
   void _onScroll() {
     if (!_scrollController.hasClients) return;
     final distanceFromBottom =
@@ -660,7 +663,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     // must not be mistaken for a manual upward scroll.
   }
 
-
   /// 上下文窗口錨點（per conversation，prefs）。
   ///
   /// 舊做法「每次開窗載入最新 50 條」在對話超過 50 條後，每次重進對話
@@ -673,13 +675,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   /// 觸頂推進錨點到最新 50 條，那一輪炸一次緩存（預期）。
   static const int _ctxAnchorMaxMessages = 500;
 
-
   /// 錨點之前的歷史往前再掛一頁（純顯示，不進上下文）
-
-
-
-
-
 
   String get _tokensSinceSummaryKey =>
       'conversation:${widget.conversationId}:tokensSinceSummary';
@@ -690,9 +686,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   /// 本地時間線補掃游標：每個對話只查上次成功掃描後的新消息。
   /// 這是 SQLite/SharedPreferences 狀態，不是 prompt cache。
 
-
   @override
   void dispose() {
+    _composerDrawerOpen.dispose();
     WidgetsBinding.instance.removeObserver(this);
     BackgroundPresetService.revision.removeListener(
       _handleBackgroundPresetChanged,
@@ -1086,17 +1082,20 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                     left: 0,
                                     right: 0,
                                     bottom: -_composerViewportUnderlay,
-                                    child: ScrollEdgeFade(
-                                      controller: _scrollController,
-                                      topInset: _chatHeaderHeight - 12,
-                                      topExtent: _chatHeaderHeight + 70,
-                                      bottomExtent: 104,
-                                      blurSigma: 0,
-                                      topBlurSigma: 0,
-                                      bottomBlurSigma: 0,
-                                      alwaysFadeTop: true,
-                                      alwaysFadeBottom: true,
-                                      child: _buildMessageList(),
+                                    child: ComposerDrawerDismissLayer(
+                                      open: _composerDrawerOpen,
+                                      child: ScrollEdgeFade(
+                                        controller: _scrollController,
+                                        topInset: _chatHeaderHeight - 12,
+                                        topExtent: _chatHeaderHeight + 70,
+                                        bottomExtent: 104,
+                                        blurSigma: 0,
+                                        topBlurSigma: 0,
+                                        bottomBlurSigma: 0,
+                                        alwaysFadeTop: true,
+                                        alwaysFadeBottom: true,
+                                        child: _buildMessageList(),
+                                      ),
                                     ),
                                   ),
                             // 一鍵滾底按鈕
@@ -1104,30 +1103,44 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                               Positioned(
                                 right: YanciTheme.spacingMd,
                                 bottom: YanciTheme.spacingSm,
-                                child: GestureDetector(
-                                  onTap: () {
-                                    _userScrolledUp = false;
-                                    _scrollToBottom(force: true);
-                                  },
-                                  child: Container(
-                                    width: 36,
-                                    height: 36,
-                                    decoration: BoxDecoration(
-                                      color: YanciTheme.glassInputBg,
-                                      shape: BoxShape.circle,
-                                      boxShadow: [
-                                        BoxShadow(
-                                          color: Colors.black.withValues(
-                                            alpha: 0.08,
+                                child: Semantics(
+                                  button: true,
+                                  label: L.pick(
+                                    en: 'Jump to latest message',
+                                    zhTW: '跳到最新消息',
+                                    zhCN: '跳到最新消息',
+                                  ),
+                                  child: GestureDetector(
+                                    behavior: HitTestBehavior.opaque,
+                                    onTap: () {
+                                      _userScrolledUp = false;
+                                      _scrollToBottom(force: true);
+                                    },
+                                    child: SizedBox.square(
+                                      dimension: 44,
+                                      child: Center(
+                                        child: Container(
+                                          width: 36,
+                                          height: 36,
+                                          decoration: BoxDecoration(
+                                            color: YanciTheme.glassInputBg,
+                                            shape: BoxShape.circle,
+                                            boxShadow: [
+                                              BoxShadow(
+                                                color: Colors.black.withValues(
+                                                  alpha: 0.08,
+                                                ),
+                                                blurRadius: 8,
+                                              ),
+                                            ],
                                           ),
-                                          blurRadius: 8,
+                                          child: Icon(
+                                            Icons.keyboard_arrow_down_rounded,
+                                            size: 22,
+                                            color: YanciTheme.accent,
+                                          ),
                                         ),
-                                      ],
-                                    ),
-                                    child: Icon(
-                                      Icons.keyboard_arrow_down_rounded,
-                                      size: 22,
-                                      color: YanciTheme.accent,
+                                      ),
                                     ),
                                   ),
                                 ),
@@ -1146,13 +1159,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                       // ═══ 待發圖片預覽 ═══
                       if (_pendingImagePaths.isNotEmpty)
                         Container(
-                          padding: const EdgeInsets.fromLTRB(12, 4, 12, 0),
-                          child: ImageCardStack(
+                          padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+                          child: PendingImageTray(
                             paths: _pendingImagePaths,
-                            height: 124,
-                            removable: true,
                             onTap: _openPendingImagePreview,
-                            onLongPress: _openPendingImagePreview,
+                            onAdd: _pickMorePendingImages,
                             onRemove: (index) {
                               if (index < 0 ||
                                   index >= _pendingImagePaths.length) {
@@ -1217,10 +1228,20 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                   overflow: TextOverflow.ellipsis,
                                 ),
                               ),
-                              GestureDetector(
-                                onTap: () =>
+                              IconButton(
+                                tooltip: L.pick(
+                                  en: 'Remove sticker',
+                                  zhTW: '取消表情',
+                                  zhCN: '取消表情',
+                                ),
+                                onPressed: () =>
                                     setState(() => _pendingSticker = null),
-                                child: Icon(
+                                constraints: const BoxConstraints.tightFor(
+                                  width: 44,
+                                  height: 44,
+                                ),
+                                padding: EdgeInsets.zero,
+                                icon: Icon(
                                   Icons.close_rounded,
                                   size: 18,
                                   color: YanciTheme.textSecondary.withValues(
@@ -1282,10 +1303,20 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                   overflow: TextOverflow.ellipsis,
                                 ),
                               ),
-                              GestureDetector(
-                                onTap: () =>
+                              IconButton(
+                                tooltip: L.pick(
+                                  en: 'Cancel transfer',
+                                  zhTW: '取消轉帳',
+                                  zhCN: '取消转账',
+                                ),
+                                onPressed: () =>
                                     setState(() => _pendingUserTransfer = null),
-                                child: Icon(
+                                constraints: const BoxConstraints.tightFor(
+                                  width: 44,
+                                  height: 44,
+                                ),
+                                padding: EdgeInsets.zero,
+                                icon: Icon(
                                   Icons.close_rounded,
                                   size: 18,
                                   color: YanciTheme.textSecondary.withValues(
@@ -1342,11 +1373,21 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                   overflow: TextOverflow.ellipsis,
                                 ),
                               ),
-                              GestureDetector(
-                                onTap: () => setState(
+                              IconButton(
+                                tooltip: L.pick(
+                                  en: 'Remove scratch card',
+                                  zhTW: '取消刮刮卡',
+                                  zhCN: '取消刮刮卡',
+                                ),
+                                onPressed: () => setState(
                                   () => _pendingScratchGiftWho = null,
                                 ),
-                                child: Icon(
+                                constraints: const BoxConstraints.tightFor(
+                                  width: 44,
+                                  height: 44,
+                                ),
+                                padding: EdgeInsets.zero,
+                                icon: Icon(
                                   Icons.close_rounded,
                                   size: 18,
                                   color: YanciTheme.textSecondary.withValues(
@@ -1414,6 +1455,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                             child: ValueListenableBuilder<ToolFeatureState>(
                               valueListenable: ToolFeatureSettings.state,
                               builder: (context, toolFeatures, _) => InputBar(
+                                sendStyle: sendButtonStyleFromName(
+                                  YanciTheme.sendButtonStyle,
+                                ),
+                                sendCustomPath: YanciTheme.sendButtonCustomPath,
                                 externalController: _inputController,
                                 hintText: _composerHint.isEmpty
                                     ? null
@@ -1435,38 +1480,16 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                     _pendingScratchGiftWho != null ||
                                     _pendingGift != null,
                                 isGeneratingImage: _isGeneratingImage,
+                                drawerOpen: _composerDrawerOpen,
                                 isGeneratingResponse: _isGenerating,
                                 onStopGeneration: () {
                                   if (_isGenerating) {
                                     _stopActiveGeneration();
                                   } else {
-                                    setState(() => _isGeneratingImage = false);
+                                    _cancelActiveImageGeneration();
                                   }
                                 },
-                                onImagesPicked: (paths) {
-                                  var overflowed = false;
-                                  setState(() {
-                                    for (final path in paths) {
-                                      if (_pendingImagePaths.contains(path)) {
-                                        continue;
-                                      }
-                                      if (_pendingImagePaths.length >= 10) {
-                                        overflowed = true;
-                                        break;
-                                      }
-                                      _pendingImagePaths.add(path);
-                                    }
-                                  });
-                                  if (overflowed) {
-                                    _showChatNotice(
-                                      L.pick(
-                                        en: 'You can send up to 10 images at a time.',
-                                        zhTW: '每次最多可發送 10 張圖片',
-                                        zhCN: '每次最多可发送 10 张图片',
-                                      ),
-                                    );
-                                  }
-                                },
+                                onImagesPicked: _addPendingImages,
                                 onStickerTap: _showStickerPicker,
                                 onScratchGift: _onScratchGift,
                                 onShopGift: _openChatShop,
@@ -1524,6 +1547,41 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         ),
       ),
     );
+  }
+
+  void _addPendingImages(List<String> paths) {
+    var overflowed = false;
+    setState(() {
+      for (final path in paths) {
+        if (_pendingImagePaths.contains(path)) continue;
+        if (_pendingImagePaths.length >= PendingImageTray.maxImages) {
+          overflowed = true;
+          break;
+        }
+        _pendingImagePaths.add(path);
+      }
+    });
+    if (overflowed) {
+      _showChatNotice(
+        L.pick(
+          en: 'You can send up to ${PendingImageTray.maxImages} images at a time.',
+          zhTW: '每次最多可發送 ${PendingImageTray.maxImages} 張圖片',
+          zhCN: '每次最多可发送 ${PendingImageTray.maxImages} 张图片',
+        ),
+      );
+    }
+  }
+
+  /// 待發列尾的「＋」：再選幾張（參數與輸入框相簿選圖一致）。
+  Future<void> _pickMorePendingImages() async {
+    if (_pendingImagePaths.length >= PendingImageTray.maxImages) return;
+    final files = await ImagePicker().pickMultiImage(
+      maxWidth: 800,
+      maxHeight: 800,
+      imageQuality: 70,
+    );
+    if (!mounted || files.isEmpty) return;
+    _addPendingImages(files.map((file) => file.path).toSet().toList());
   }
 
   void _openPendingImagePreview(String imagePath) {
@@ -1850,18 +1908,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     ),
   );
 
-
-
-
-
   // ═══════════════ 通話 ═══════════════
-
 
   /// 模型短名
 
   /// 模型全名（不截斷，供 picker / marquee 使用）
-
-
 
   /// 流式文字拆分（用於拆分回覆時的即時渲染）
   List<String> _streamingSplitParts() {
@@ -1989,7 +2040,21 @@ class _WindowSummaryEditorSheetState extends State<_WindowSummaryEditorSheet> {
 
   void _save() {
     final content = _controller.text.trim();
-    if (content.isEmpty) return;
+    if (content.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            L.pick(
+              en: 'Summary content is required.',
+              zhTW: '請填寫摘要內容。',
+              zhCN: '请填写摘要内容。',
+            ),
+          ),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
     Navigator.pop(context, content);
   }
 

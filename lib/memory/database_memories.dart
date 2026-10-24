@@ -90,6 +90,43 @@ class _MemoryStore {
     return maps.map((m) => Memory.fromMap(m)).toList();
   }
 
+  static Future<List<Memory>> getPinnedMemories(
+    String mode, {
+    String characterId = 'default',
+    ContextMode contextMode = ContextMode.daily,
+    String continuityId = 'main',
+  }) async {
+    final db = await DatabaseHelper.database;
+    final maps = await db.query(
+      'memories',
+      where:
+          'mode = ? AND is_pinned = 1 AND status = ? AND character_id = ? '
+          'AND context_mode = ? AND continuity_id = ?',
+      whereArgs: [
+        mode,
+        'active',
+        characterId,
+        contextMode.storageValue,
+        continuityId,
+      ],
+      orderBy: 'updated_at DESC, created_at DESC',
+    );
+    return maps.map(Memory.fromMap).toList();
+  }
+
+  static Future<void> setMemoryPinned(int memoryId, bool pinned) async {
+    final db = await DatabaseHelper.database;
+    await db.update(
+      'memories',
+      {
+        'is_pinned': pinned ? 1 : 0,
+        'updated_at': DateTime.now().toIso8601String(),
+      },
+      where: 'id = ? AND status = ?',
+      whereArgs: [memoryId, 'active'],
+    );
+  }
+
   static Future<List<Memory>> searchMemories(
     String mode,
     String keyword, {

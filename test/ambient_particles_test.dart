@@ -28,6 +28,7 @@ void main() {
     final expectedTypes = <String, Type>{
       'neural': NeuralFieldWidget,
       'stars': StarfieldWidget,
+      'fog': FogParticleWidget,
       'rain': RainWidget,
       'ripple': RippleParticleWidget,
       'ember': EmberParticleWidget,
@@ -84,8 +85,8 @@ void main() {
     final neuralCenter = tester.getCenter(
       find.byKey(const ValueKey('particle-effect-neural')),
     );
-    final starsCenter = tester.getCenter(
-      find.byKey(const ValueKey('particle-effect-stars')),
+    final fogCenter = tester.getCenter(
+      find.byKey(const ValueKey('particle-effect-fog')),
     );
     final rippleCenter = tester.getCenter(
       find.byKey(const ValueKey('particle-effect-ripple')),
@@ -93,7 +94,7 @@ void main() {
     final dandelionCenter = tester.getCenter(
       find.byKey(const ValueKey('particle-effect-dandelion')),
     );
-    expect(starsCenter.dy, neuralCenter.dy);
+    expect(fogCenter.dy, neuralCenter.dy);
     expect(dandelionCenter.dy, rippleCenter.dy);
     expect(rippleCenter.dy, greaterThan(neuralCenter.dy));
 

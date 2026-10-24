@@ -989,43 +989,46 @@ void main() {
     },
   );
 
-  test('RP recall index stays lightweight until candidates are selected', () async {
-    for (var index = 1; index <= 3; index++) {
-      await DatabaseHelper.insertContextSummary(
-        characterId: 'char-a',
-        content: '完整事件段落 $index',
-        tokenCount: 12,
+  test(
+    'RP recall index stays lightweight until candidates are selected',
+    () async {
+      for (var index = 1; index <= 3; index++) {
+        await DatabaseHelper.insertContextSummary(
+          characterId: 'char-a',
+          content: '完整事件段落 $index',
+          tokenCount: 12,
+          contextMode: ContextMode.rp,
+          continuityId: 'story-a',
+          recallSegments: <ContextSummarySegmentDraft>[
+            ContextSummarySegmentDraft(
+              order: 1,
+              content: '完整事件段落 $index',
+              keywords: <String>['事件索引$index'],
+              tokenCount: 6,
+            ),
+          ],
+        );
+      }
+
+      final indexRows = await DatabaseHelper.getRecallIndexRows(
+        'char-a',
         contextMode: ContextMode.rp,
         continuityId: 'story-a',
-        recallSegments: <ContextSummarySegmentDraft>[
-          ContextSummarySegmentDraft(
-            order: 1,
-            content: '完整事件段落 $index',
-            keywords: <String>['事件索引$index'],
-            tokenCount: 6,
-          ),
-        ],
       );
-    }
+      expect(indexRows, hasLength(3));
+      expect(indexRows.every((row) => !row.containsKey('content')), isTrue);
+      expect(
+        indexRows.every((row) => !row.containsKey('source_summary_content')),
+        isTrue,
+      );
 
-    final indexRows = await DatabaseHelper.getRecallIndexRows(
-      'char-a',
-      contextMode: ContextMode.rp,
-      continuityId: 'story-a',
-    );
-    expect(indexRows, hasLength(3));
-    expect(indexRows.every((row) => !row.containsKey('content')), isTrue);
-    expect(
-      indexRows.every((row) => !row.containsKey('source_summary_content')),
-      isTrue,
-    );
-
-    final hydrated = await DatabaseHelper.fillRecallContents(<Map<String, dynamic>>[
-      indexRows.last,
-    ]);
-    expect(hydrated, hasLength(1));
-    expect(hydrated.single['source_summary_content'], '完整事件段落 3');
-  });
+      final hydrated = await DatabaseHelper.fillRecallContents(
+        <Map<String, dynamic>>[indexRows.last],
+      );
+      expect(hydrated, hasLength(1));
+      expect(hydrated.single['source_summary_content'], '完整事件段落 3');
+    },
+  );
 
   test(
     'RP recall skips a segment already present in another summary lane',
@@ -1093,7 +1096,7 @@ void main() {
     },
   );
 
-  test('RP hard limit keeps every event title represented', () {
+  test('RP hard limit keeps prose instead of title-only event shells', () {
     final summary = <String>[
       '### ——主線——',
       for (var index = 1; index <= 6; index++) ...<String>[
@@ -1109,9 +1112,44 @@ void main() {
     );
 
     expect(compacted.length, lessThanOrEqualTo(800));
-    for (var index = 1; index <= 6; index++) {
-      expect(compacted, contains('事件$index'));
+    final retainedHeaders = RegExp(
+      r'^\*\*\[事件\].+\*\*$',
+      multiLine: true,
+    ).allMatches(compacted).toList(growable: false);
+    expect(retainedHeaders, isNotEmpty);
+    expect(retainedHeaders.length, lessThan(6));
+    for (final header in retainedHeaders) {
+      final afterHeader = compacted.substring(header.end).trimLeft();
+      expect(afterHeader, isNotEmpty);
+      expect(afterHeader, isNot(startsWith('**[')));
     }
+  });
+
+  test('RP reference parts share one character budget', () {
+    final fitted =
+        ContextCompressor.fitRpReferencePartsToCharacterBudget(<String>[
+          '【劇情人物參考】\n${List<String>.filled(30, '角色設定一').join('\n')}',
+          '【劇情現況】\n${List<String>.filled(30, '當前狀態二').join('\n')}',
+          '【故事線世界書】\n${List<String>.filled(30, '世界設定三').join('\n')}',
+        ], 240);
+
+    expect(fitted.length, lessThanOrEqualTo(240));
+    expect(fitted, contains('【劇情人物參考】'));
+    expect(fitted, contains('【劇情現況】'));
+    expect(fitted, contains('【故事線世界書】'));
+  });
+
+  test('RP reference budget keeps a truncated first content sentence', () {
+    final fitted = ContextCompressor.fitRpReferencePartsToCharacterBudget(
+      <String>[
+        '【劇情現況】\n${List<String>.filled(40, '這是一條很長但仍應保留開頭內容的劇情狀態。').join()}',
+      ],
+      90,
+    );
+
+    expect(fitted.length, lessThanOrEqualTo(90));
+    expect(fitted, startsWith('【劇情現況】\n'));
+    expect(fitted, contains('劇情狀態'));
   });
 
   test('summary cadence ignores hidden continuation and incomplete rows', () {

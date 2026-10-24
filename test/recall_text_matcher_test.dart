@@ -28,13 +28,23 @@ void main() {
     expect(RecallTextMatcher.bestKeywordMatch('today is nice', 'is'), isNull);
   });
 
+  test('RP relevance terms drop common CJK chatter but keep story nouns', () {
+    final terms = RecallTextMatcher.relevanceTerms(
+      '我們現在沒有覺得王城信物有問題',
+      dropCommonCjkTerms: true,
+    );
+
+    expect(terms, isNot(contains('我們')));
+    expect(terms, isNot(contains('現在')));
+    expect(terms, isNot(contains('沒有')));
+    expect(terms, isNot(contains('覺得')));
+    expect(terms, contains('王城'));
+    expect(terms, contains('信物'));
+  });
+
   test('batch matching preserves single-row scoring and order', () {
     const query = '想起渡口交換青鸞印信，之後去書院會合';
-    const rows = <String>[
-      '渡口交換信物, 青鸞印信交付',
-      '翌日書院會合',
-      '完全無關事件',
-    ];
+    const rows = <String>['渡口交換信物, 青鸞印信交付', '翌日書院會合', '完全無關事件'];
 
     final batch = RecallTextMatcher.bestKeywordMatches(query, rows);
 

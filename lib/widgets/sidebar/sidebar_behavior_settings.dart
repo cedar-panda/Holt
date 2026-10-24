@@ -26,6 +26,16 @@ class _SidebarBehaviorSettingsState extends State<SidebarBehaviorSettings> {
       TextEditingController(text: '4');
   bool? _worldbookEnabled;
   bool? _webSearchEnabled;
+  bool? _contextLimitEnabled;
+  int _contextMessageLimit = 20;
+  bool _contextSummaryEnabled = false;
+  int _contextSummaryTrigger = 18;
+  bool? _cacheEnabled;
+  bool _cacheSummaryEnabled = false;
+  int _cacheSummaryTrigger = MemorySettings.defaultCacheSummaryTriggerMessages;
+  bool _hasSummaryModel = false;
+  KeepAliveGuard? _keepAliveGuard;
+  int _keepAliveHours = 2;
 
   @override
   void initState() {
@@ -34,15 +44,43 @@ class _SidebarBehaviorSettingsState extends State<SidebarBehaviorSettings> {
   }
 
   Future<void> _load() async {
-    final enabled = await MemorySettings.getRpWorldbookAutoWriteEnabled();
-    final interval = await MemorySettings.getRpWorldbookSummaryInterval();
-    final webSearchEnabled = await WebSearchSettings.getEnabled();
+    final results = await Future.wait<Object>([
+      MemorySettings.getRpWorldbookAutoWriteEnabled(),
+      MemorySettings.getRpWorldbookSummaryInterval(),
+      WebSearchSettings.getEnabled(),
+      MemorySettings.getContextLimitEnabled(),
+      MemorySettings.getContextMessageLimit(),
+      MemorySettings.getContextWindowSummaryEnabled(),
+      MemorySettings.getContextSummaryTriggerMessages(),
+      MemorySettings.getEnablePromptCaching(),
+      MemorySettings.getCacheWindowSummaryEnabled(),
+      MemorySettings.getCacheSummaryTriggerMessages(),
+      MemorySettings.getSummaryModel(),
+      _loadKeepAliveGuard(),
+      MemorySettings.getKeepAliveDurationHours(),
+    ]);
     if (!mounted) return;
     setState(() {
-      _worldbookEnabled = enabled;
-      _webSearchEnabled = webSearchEnabled;
-      _worldbookIntervalController.text = '$interval';
+      _worldbookEnabled = results[0] as bool;
+      _worldbookIntervalController.text = '${results[1] as int}';
+      _webSearchEnabled = results[2] as bool;
+      _contextLimitEnabled = results[3] as bool;
+      _contextMessageLimit = results[4] as int;
+      _contextSummaryEnabled = results[5] as bool;
+      _contextSummaryTrigger = results[6] as int;
+      _cacheEnabled = results[7] as bool;
+      _cacheSummaryEnabled = results[8] as bool;
+      _cacheSummaryTrigger = results[9] as int;
+      _hasSummaryModel = (results[10] as String).trim().isNotEmpty;
+      _keepAliveGuard = results[11] as KeepAliveGuard;
+      _keepAliveHours = results[12] as int;
     });
+  }
+
+  Future<void> _refreshKeepAliveGuard() async {
+    final guard = await _loadKeepAliveGuard();
+    if (!mounted) return;
+    setState(() => _keepAliveGuard = guard);
   }
 
   @override
@@ -82,7 +120,7 @@ class _SidebarBehaviorSettingsState extends State<SidebarBehaviorSettings> {
     return IconButton(
       tooltip: L.pick(en: 'About $title', zhTW: '關於$title', zhCN: '关于$title'),
       visualDensity: VisualDensity.compact,
-      constraints: const BoxConstraints.tightFor(width: 36, height: 36),
+      constraints: const BoxConstraints.tightFor(width: 44, height: 44),
       onPressed: () => unawaited(_showHelp(title: title, body: body)),
       icon: Icon(
         Icons.help_outline_rounded,
@@ -155,24 +193,19 @@ class _SidebarBehaviorSettingsState extends State<SidebarBehaviorSettings> {
       childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
       children: [
         if (_worldbookEnabled ?? true)
-          TextField(
-            controller: _worldbookIntervalController,
-            keyboardType: TextInputType.number,
-            textInputAction: TextInputAction.done,
-            onTapOutside: (_) => FocusManager.instance.primaryFocus?.unfocus(),
-            onSubmitted: (_) => FocusManager.instance.primaryFocus?.unfocus(),
-            decoration: InputDecoration(
-              labelText: L.pick(
-                en: 'Process every N RP summaries',
-                zhTW: '每累積幾個 RP 摘要整理一次',
-                zhCN: '每累积几个 RP 摘要整理一次',
-              ),
-              border: InputBorder.none,
+          _CommittedCountField(
+            value: int.tryParse(_worldbookIntervalController.text) ?? 4,
+            suffix: '',
+            width: double.infinity,
+            labelText: L.pick(
+              en: 'Process every N RP summaries',
+              zhTW: '每累積幾個 RP 摘要整理一次',
+              zhCN: '每累积几个 RP 摘要整理一次',
             ),
-            onChanged: (value) {
-              final parsed = int.tryParse(value);
-              if (parsed == null) return;
-              unawaited(MemorySettings.saveRpWorldbookSummaryInterval(parsed));
+            onCommit: (value) async {
+              await MemorySettings.saveRpWorldbookSummaryInterval(value);
+              if (!mounted) return;
+              setState(() => _worldbookIntervalController.text = '$value');
             },
           ),
       ],
@@ -313,293 +346,271 @@ class _SidebarBehaviorSettingsState extends State<SidebarBehaviorSettings> {
     return _CommittedCountField(
       value: value,
       suffix: suffix,
-      onCommit: (next) async {
-        await onChanged(next);
-        if (mounted) setState(() {});
-      },
+      onCommit: onChanged,
     );
   }
 
   Widget _buildContextLimit() {
     // UI_SLOT: sidebar_context_limit
-    return FutureBuilder<List<Object>>(
-      future: Future.wait<Object>([
-        MemorySettings.getContextLimitEnabled(),
-        MemorySettings.getContextMessageLimit(),
-        MemorySettings.getContextWindowSummaryEnabled(),
-        MemorySettings.getContextSummaryTriggerMessages(),
-        MemorySettings.getSummaryModel(),
-      ]),
-      builder: (context, snapshot) {
-        final enabled = (snapshot.data?[0] as bool?) ?? false;
-        final messageLimit = (snapshot.data?[1] as int?) ?? 20;
-        final summaryEnabled = (snapshot.data?[2] as bool?) ?? false;
-        final summaryTrigger = (snapshot.data?[3] as int?) ?? 18;
-        final hasSummaryModel = ((snapshot.data?[4] as String?) ?? '')
-            .trim()
-            .isNotEmpty;
-        final title = L.pick(
-          en: 'Context send limit',
-          zhTW: '上下文發送限制',
-          zhCN: '上下文发送限制',
-        );
-        return SidebarAccordionSection(
-          id: 'context_limit',
-          relationGroup: 'cost_behavior',
-          exclusiveWithinGroup: true,
-          title: Text(title),
-          initiallyExpanded: enabled,
-          showChevron: false,
-          trailing: _headerActions(
-            title: title,
-            help: L.pick(
-              en: 'Only the latest configured number of messages is sent. It is mutually exclusive with prompt caching.',
-              zhTW: '只發送最近指定條數的消息，並與緩存命中互斥。',
-              zhCN: '只发送最近指定条数的消息，并与缓存命中互斥。',
-            ),
-            value: enabled,
-            onChanged: (value) async {
-              await ModelCostPolicy.setContextLimitEnabled(value);
-              if (mounted) setState(() {});
-            },
-          ),
-          children: [
-            if (enabled) ...[
-              Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      L.pick(
-                        en: 'Messages sent',
-                        zhTW: '上下文發送條數',
-                        zhCN: '上下文发送条数',
-                      ),
-                    ),
-                  ),
-                  _countField(
-                    value: messageLimit,
-                    suffix: L.pick(en: '', zhTW: '條', zhCN: '条'),
-                    onChanged: MemorySettings.saveContextMessageLimit,
-                  ),
-                ],
-              ),
-              _inlineSwitchRow(
-                title: L.pick(
-                  en: 'Context summary',
-                  zhTW: '上下文專用摘要',
-                  zhCN: '上下文专用摘要',
+    final enabled = _contextLimitEnabled ?? false;
+    final title = L.pick(
+      en: 'Context send limit',
+      zhTW: '上下文發送限制',
+      zhCN: '上下文发送限制',
+    );
+    return SidebarAccordionSection(
+      id: 'context_limit',
+      relationGroup: 'cost_behavior',
+      exclusiveWithinGroup: true,
+      title: Text(title),
+      initiallyExpanded: enabled,
+      showChevron: false,
+      trailing: _headerActions(
+        title: title,
+        help: L.pick(
+          en: 'Only the latest configured number of messages is sent. It is mutually exclusive with prompt caching.',
+          zhTW: '只發送最近指定條數的消息，並與緩存命中互斥。',
+          zhCN: '只发送最近指定条数的消息，并与缓存命中互斥。',
+        ),
+        value: enabled,
+        onChanged: _contextLimitEnabled == null
+            ? null
+            : (value) async {
+                setState(() {
+                  _contextLimitEnabled = value;
+                  _contextSummaryEnabled = value && _hasSummaryModel;
+                  if (value) {
+                    _cacheEnabled = false;
+                    _cacheSummaryEnabled = false;
+                  }
+                });
+                await ModelCostPolicy.setContextLimitEnabled(value);
+                await _refreshKeepAliveGuard();
+              },
+      ),
+      children: [
+        if (enabled) ...[
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  L.pick(en: 'Messages sent', zhTW: '上下文發送條數', zhCN: '上下文发送条数'),
                 ),
-                value: hasSummaryModel && summaryEnabled,
-                onChanged: !hasSummaryModel
-                    ? null
-                    : (value) async {
-                        await MemorySettings.saveContextWindowSummaryEnabled(
-                          value,
-                        );
-                        if (mounted) setState(() {});
-                      },
               ),
-              if (!hasSummaryModel)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 6),
+              _countField(
+                value: _contextMessageLimit,
+                suffix: L.pick(en: '', zhTW: '條', zhCN: '条'),
+                onChanged: (value) async {
+                  await MemorySettings.saveContextMessageLimit(value);
+                  if (mounted) {
+                    setState(() => _contextMessageLimit = value);
+                  }
+                },
+              ),
+            ],
+          ),
+          _inlineSwitchRow(
+            title: L.pick(
+              en: 'Context summary',
+              zhTW: '上下文專用摘要',
+              zhCN: '上下文专用摘要',
+            ),
+            value: _hasSummaryModel && _contextSummaryEnabled,
+            onChanged: !_hasSummaryModel
+                ? null
+                : (value) async {
+                    setState(() => _contextSummaryEnabled = value);
+                    await MemorySettings.saveContextWindowSummaryEnabled(value);
+                  },
+          ),
+          if (!_hasSummaryModel)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: Text(
+                L.pick(
+                  en: 'Choose a summary model first.',
+                  zhTW: '請先選擇摘要模型。',
+                  zhCN: '请先选择摘要模型。',
+                ),
+              ),
+            ),
+          if (_hasSummaryModel && _contextSummaryEnabled) ...[
+            Row(
+              children: [
+                Expanded(
                   child: Text(
                     L.pick(
-                      en: 'Choose a summary model first.',
-                      zhTW: '請先選擇摘要模型。',
-                      zhCN: '请先选择摘要模型。',
+                      en: 'Summary trigger',
+                      zhTW: '摘要觸發上限',
+                      zhCN: '摘要触发上限',
                     ),
                   ),
                 ),
-              if (hasSummaryModel && summaryEnabled) ...[
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        L.pick(
-                          en: 'Summary trigger',
-                          zhTW: '摘要觸發上限',
-                          zhCN: '摘要触发上限',
-                        ),
-                      ),
-                    ),
-                    _countField(
-                      value: summaryTrigger,
-                      suffix: L.pick(en: '', zhTW: '條', zhCN: '条'),
-                      onChanged:
-                          MemorySettings.saveContextSummaryTriggerMessages,
-                    ),
-                  ],
-                ),
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: TextButton(
-                    onPressed: _showCustomSummaryRules,
-                    child: Text(
-                      L.pick(
-                        en: 'Custom summary preferences',
-                        zhTW: '自定義摘要偏好',
-                        zhCN: '自定义摘要偏好',
-                      ),
-                    ),
-                  ),
+                _countField(
+                  value: _contextSummaryTrigger,
+                  suffix: L.pick(en: '', zhTW: '條', zhCN: '条'),
+                  onChanged: (value) async {
+                    await MemorySettings.saveContextSummaryTriggerMessages(
+                      value,
+                    );
+                    if (mounted) {
+                      setState(() => _contextSummaryTrigger = value);
+                    }
+                  },
                 ),
               ],
-            ],
+            ),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton(
+                onPressed: _showCustomSummaryRules,
+                child: Text(
+                  L.pick(
+                    en: 'Custom summary preferences',
+                    zhTW: '自定義摘要偏好',
+                    zhCN: '自定义摘要偏好',
+                  ),
+                ),
+              ),
+            ),
           ],
-        );
-      },
+        ],
+      ],
     );
   }
 
   Widget _buildCacheSettings() {
     // UI_SLOT: sidebar_cache_settings
-    return FutureBuilder<List<Object>>(
-      future: Future.wait<Object>([
-        MemorySettings.getEnablePromptCaching(),
-        MemorySettings.getCacheWindowSummaryEnabled(),
-        MemorySettings.getCacheSummaryTriggerMessages(),
-        MemorySettings.getSummaryModel(),
-        _loadKeepAliveGuard(),
-        MemorySettings.getKeepAliveDurationHours(),
-      ]),
-      builder: (context, snapshot) {
-        final enabled = (snapshot.data?[0] as bool?) ?? false;
-        final summaryEnabled = (snapshot.data?[1] as bool?) ?? false;
-        final summaryTrigger =
-            (snapshot.data?[2] as int?) ??
-            MemorySettings.defaultCacheSummaryTriggerMessages;
-        final hasSummaryModel = ((snapshot.data?[3] as String?) ?? '')
-            .trim()
-            .isNotEmpty;
-        final keepAlive = snapshot.data?[4] as KeepAliveGuard?;
-        final keepAliveHours = (snapshot.data?[5] as int?) ?? 2;
-        final title = L.pick(en: 'Cache hit', zhTW: '緩存命中', zhCN: '缓存命中');
-        return SidebarAccordionSection(
-          id: 'cache_settings',
-          relationGroup: 'cost_behavior',
-          exclusiveWithinGroup: true,
-          title: Text(title),
-          initiallyExpanded: enabled,
-          showChevron: false,
-          trailing: _headerActions(
-            title: title,
-            help: L.pick(
-              en: 'Keeps a stable prompt prefix for supported models. It is mutually exclusive with the context send limit.',
-              zhTW: '為支援的模型維持穩定提示詞前綴，並與上下文發送限制互斥。',
-              zhCN: '为支持的模型维持稳定提示词前缀，并与上下文发送限制互斥。',
-            ),
-            value: enabled,
-            onChanged: (value) async {
-              await ModelCostPolicy.setPromptCachingEnabled(value);
-              if (mounted) setState(() {});
-            },
+    final enabled = _cacheEnabled ?? false;
+    final keepAlive = _keepAliveGuard;
+    final title = L.pick(en: 'Cache hit', zhTW: '緩存命中', zhCN: '缓存命中');
+    return SidebarAccordionSection(
+      id: 'cache_settings',
+      relationGroup: 'cost_behavior',
+      exclusiveWithinGroup: true,
+      title: Text(title),
+      initiallyExpanded: enabled,
+      showChevron: false,
+      trailing: _headerActions(
+        title: title,
+        help: L.pick(
+          en: 'Keeps a stable prompt prefix for supported models. It is mutually exclusive with the context send limit.',
+          zhTW: '為支援的模型維持穩定提示詞前綴，並與上下文發送限制互斥。',
+          zhCN: '为支持的模型维持稳定提示词前缀，并与上下文发送限制互斥。',
+        ),
+        value: enabled,
+        onChanged: _cacheEnabled == null
+            ? null
+            : (value) async {
+                setState(() {
+                  _cacheEnabled = value;
+                  _cacheSummaryEnabled = value && _hasSummaryModel;
+                  if (value) {
+                    _contextLimitEnabled = false;
+                    _contextSummaryEnabled = false;
+                  }
+                });
+                await ModelCostPolicy.setPromptCachingEnabled(value);
+                await _refreshKeepAliveGuard();
+              },
+      ),
+      children: [
+        if (enabled) ...[
+          _inlineSwitchRow(
+            title: L.pick(en: 'Dedicated summary', zhTW: '專用摘要', zhCN: '专用摘要'),
+            value: _hasSummaryModel && _cacheSummaryEnabled,
+            onChanged: !_hasSummaryModel
+                ? null
+                : (value) async {
+                    setState(() => _cacheSummaryEnabled = value);
+                    await MemorySettings.saveCacheWindowSummaryEnabled(value);
+                  },
           ),
-          children: [
-            if (enabled) ...[
-              _inlineSwitchRow(
-                title: L.pick(
-                  en: 'Dedicated summary',
-                  zhTW: '專用摘要',
-                  zhCN: '专用摘要',
+          if (!_hasSummaryModel)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: Text(
+                L.pick(
+                  en: 'Choose a summary model first.',
+                  zhTW: '請先選擇摘要模型。',
+                  zhCN: '请先选择摘要模型。',
                 ),
-                value: hasSummaryModel && summaryEnabled,
-                onChanged: !hasSummaryModel
-                    ? null
-                    : (value) async {
-                        await MemorySettings.saveCacheWindowSummaryEnabled(
-                          value,
-                        );
-                        if (mounted) setState(() {});
-                      },
               ),
-              if (!hasSummaryModel)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 6),
+            ),
+          if (_hasSummaryModel && _cacheSummaryEnabled) ...[
+            Row(
+              children: [
+                Expanded(
                   child: Text(
                     L.pick(
-                      en: 'Choose a summary model first.',
-                      zhTW: '請先選擇摘要模型。',
-                      zhCN: '请先选择摘要模型。',
+                      en: 'Summary trigger',
+                      zhTW: '摘要觸發上限',
+                      zhCN: '摘要触发上限',
                     ),
                   ),
                 ),
-              if (hasSummaryModel && summaryEnabled) ...[
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        L.pick(
-                          en: 'Summary trigger',
-                          zhTW: '摘要觸發上限',
-                          zhCN: '摘要触发上限',
-                        ),
-                      ),
-                    ),
-                    _countField(
-                      value: summaryTrigger,
-                      suffix: L.pick(en: '', zhTW: '條', zhCN: '条'),
-                      onChanged: MemorySettings.saveCacheSummaryTriggerMessages,
-                    ),
-                  ],
-                ),
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: TextButton(
-                    onPressed: _showCustomSummaryRules,
-                    child: Text(
-                      L.pick(
-                        en: 'Custom summary preferences',
-                        zhTW: '自定義摘要偏好',
-                        zhCN: '自定义摘要偏好',
-                      ),
-                    ),
-                  ),
+                _countField(
+                  value: _cacheSummaryTrigger,
+                  suffix: L.pick(en: '', zhTW: '條', zhCN: '条'),
+                  onChanged: (value) async {
+                    await MemorySettings.saveCacheSummaryTriggerMessages(value);
+                    if (mounted) {
+                      setState(() => _cacheSummaryTrigger = value);
+                    }
+                  },
                 ),
               ],
-              _inlineSwitchRow(
-                title: L.pick(
-                  en: 'Automatic renewal',
-                  zhTW: '自動延續',
-                  zhCN: '自动延续',
+            ),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton(
+                onPressed: _showCustomSummaryRules,
+                child: Text(
+                  L.pick(
+                    en: 'Custom summary preferences',
+                    zhTW: '自定義摘要偏好',
+                    zhCN: '自定义摘要偏好',
+                  ),
                 ),
-                value: keepAlive?.enabled ?? false,
-                onChanged: (keepAlive?.canEnable ?? false)
-                    ? (value) async {
-                        await MemorySettings.saveKeepAliveEnabled(value);
-                        if (mounted) setState(() {});
-                      }
-                    : null,
-                trailing: (keepAlive?.enabled ?? false)
-                    ? DropdownButton<int>(
-                        value: keepAliveHours.clamp(1, 12),
-                        underline: const SizedBox.shrink(),
-                        items: const [1, 2, 4, 6, 8, 12]
-                            .map(
-                              (hours) => DropdownMenuItem<int>(
-                                value: hours,
-                                child: Text('${hours}h'),
-                              ),
-                            )
-                            .toList(growable: false),
-                        onChanged: (hours) async {
-                          if (hours == null) return;
-                          await MemorySettings.saveKeepAliveDurationHours(
-                            hours,
-                          );
-                          if (mounted) setState(() {});
-                        },
-                      )
-                    : null,
               ),
-              if (!(keepAlive?.canEnable ?? false) && keepAlive != null)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 6),
-                  child: Text(keepAlive.hintText()),
-                ),
-            ],
+            ),
           ],
-        );
-      },
+          _inlineSwitchRow(
+            title: L.pick(en: 'Automatic renewal', zhTW: '自動延續', zhCN: '自动延续'),
+            value: keepAlive?.enabled ?? false,
+            onChanged: (keepAlive?.canEnable ?? false)
+                ? (value) async {
+                    await MemorySettings.saveKeepAliveEnabled(value);
+                    await _refreshKeepAliveGuard();
+                  }
+                : null,
+            trailing: (keepAlive?.enabled ?? false)
+                ? DropdownButton<int>(
+                    value: _keepAliveHours.clamp(1, 12),
+                    underline: const SizedBox.shrink(),
+                    items: const [1, 2, 4, 6, 8, 12]
+                        .map(
+                          (hours) => DropdownMenuItem<int>(
+                            value: hours,
+                            child: Text('${hours}h'),
+                          ),
+                        )
+                        .toList(growable: false),
+                    onChanged: (hours) async {
+                      if (hours == null) return;
+                      setState(() => _keepAliveHours = hours);
+                      await MemorySettings.saveKeepAliveDurationHours(hours);
+                    },
+                  )
+                : null,
+          ),
+          if (!(keepAlive?.canEnable ?? false) && keepAlive != null)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: Text(keepAlive.hintText()),
+            ),
+        ],
+      ],
     );
   }
 
@@ -651,11 +662,15 @@ class _CommittedCountField extends StatefulWidget {
     required this.value,
     required this.suffix,
     required this.onCommit,
+    this.width = 88,
+    this.labelText,
   });
 
   final int value;
   final String suffix;
   final Future<void> Function(int value) onCommit;
+  final double width;
+  final String? labelText;
 
   @override
   State<_CommittedCountField> createState() => _CommittedCountFieldState();
@@ -663,12 +678,20 @@ class _CommittedCountField extends StatefulWidget {
 
 class _CommittedCountFieldState extends State<_CommittedCountField> {
   late final TextEditingController _controller;
+  late final FocusNode _focusNode;
   bool _saving = false;
+  int? _lastCommitted;
 
   @override
   void initState() {
     super.initState();
     _controller = TextEditingController(text: '${widget.value}');
+    _lastCommitted = widget.value;
+    _focusNode = FocusNode()..addListener(_handleFocusChange);
+  }
+
+  void _handleFocusChange() {
+    if (!_focusNode.hasFocus) unawaited(_commit());
   }
 
   @override
@@ -676,6 +699,7 @@ class _CommittedCountFieldState extends State<_CommittedCountField> {
     super.didUpdateWidget(oldWidget);
     if (!_saving && oldWidget.value != widget.value) {
       _controller.text = '${widget.value}';
+      _lastCommitted = widget.value;
     }
   }
 
@@ -686,9 +710,11 @@ class _CommittedCountFieldState extends State<_CommittedCountField> {
       _controller.text = '${widget.value}';
       return;
     }
+    if (value == _lastCommitted) return;
     _saving = true;
     try {
       await widget.onCommit(value);
+      _lastCommitted = value;
     } finally {
       if (mounted) _saving = false;
     }
@@ -696,6 +722,9 @@ class _CommittedCountFieldState extends State<_CommittedCountField> {
 
   @override
   void dispose() {
+    _focusNode
+      ..removeListener(_handleFocusChange)
+      ..dispose();
     _controller.dispose();
     super.dispose();
   }
@@ -703,9 +732,10 @@ class _CommittedCountFieldState extends State<_CommittedCountField> {
   @override
   Widget build(BuildContext context) {
     return SizedBox(
-      width: 88,
+      width: widget.width,
       child: TextFormField(
         controller: _controller,
+        focusNode: _focusNode,
         keyboardType: TextInputType.number,
         textInputAction: TextInputAction.done,
         textAlign: TextAlign.center,
@@ -719,6 +749,7 @@ class _CommittedCountFieldState extends State<_CommittedCountField> {
         },
         decoration: InputDecoration(
           suffixText: widget.suffix,
+          labelText: widget.labelText,
           border: InputBorder.none,
         ),
       ),

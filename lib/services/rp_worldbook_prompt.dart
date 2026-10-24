@@ -24,6 +24,8 @@ class RpWorldbookPrompt {
 - 世界書記錄世界規則、地理、組織、制度、歷史、文化、物種、技術、魔法、經濟、語言、宗教等穩定設定。
 - 目前場景、人物即時狀態、人物關係、承諾、單次事件與純氛圍留在劇情摘要或劇情狀態，不寫入世界書。
 - scope 表示設定在哪個地區、組織或情境生效；visibility 表示哪些人物或群體知道這項設定。
+- binding_scope 表示資料綁定範圍：storyline 僅屬目前故事線；character_global 可供同一角色的其他故事線使用。除非摘要明確表明是跨故事線共用的角色世界設定，使用 storyline。
+- activation_mode 表示召回方式：triggered 需命中 triggers；scene 需目前場景符合 scope；always 每輪常駐，只用於極少數缺少它就無法理解世界的基礎規則。預設 triggered。
 - source_summary_ids 只用於溯源。來源摘要之後被合併或失效，不會自動刪除已建立的世界設定。
 - create 建立新條目；update 更新同一條目；merge 合併重複條目；archive 表示設定在目前故事時間已不再成立，保留原內容並填 ended_reason。
 - 遇到無法可靠判定的重複或衝突，放入 possible_duplicates 或 conflicts，交由 user 審核，不自行覆蓋。
@@ -42,6 +44,8 @@ class RpWorldbookPrompt {
     "category":"geography|organization|law|custom|history|technology|magic|species|economy|language|religion|other",
     "content":"具體且可驗證的世界設定",
     "scope":"設定生效範圍",
+    "binding_scope":"storyline|character_global",
+    "activation_mode":"always|triggered|scene",
     "visibility":"知道此設定的人物或群體",
     "triggers":["適合召回此條目的具體詞"],
     "ended_reason":"archive 時必填，其餘留空",
@@ -77,6 +81,8 @@ class RpWorldbookPrompt {
 - 世界书记录世界规则、地理、组织、制度、历史、文化、物种、技术、魔法、经济、语言、宗教等稳定设定。
 - 目前场景、人物即时状态、人物关系、承诺、单次事件与纯氛围留在剧情摘要或剧情状态，不写入世界书。
 - scope 表示设定在哪个地区、组织或情境生效；visibility 表示哪些人物或群体知道这项设定。
+- binding_scope 表示数据绑定范围：storyline 仅属于当前故事线；character_global 可供同一角色的其他故事线使用。除非摘要明确表明是跨故事线共用的角色世界设定，使用 storyline。
+- activation_mode 表示召回方式：triggered 需命中 triggers；scene 需当前场景符合 scope；always 每轮常驻，只用于极少数缺少它就无法理解世界的基础规则。默认 triggered。
 - source_summary_ids 只用于溯源。来源摘要之后被合并或失效，不会自动删除已建立的世界设定。
 - create 建立新条目；update 更新同一条目；merge 合并重复条目；archive 表示设定在目前故事时间已不再成立，保留原内容并填 ended_reason。
 - 遇到无法可靠判定的重复或冲突，放入 possible_duplicates 或 conflicts，交由 user 审核，不自行覆盖。
@@ -95,6 +101,8 @@ class RpWorldbookPrompt {
     "category":"geography|organization|law|custom|history|technology|magic|species|economy|language|religion|other",
     "content":"具体且可验证的世界设定",
     "scope":"设定生效范围",
+    "binding_scope":"storyline|character_global",
+    "activation_mode":"always|triggered|scene",
     "visibility":"知道此设定的人物或群体",
     "triggers":["适合召回此条目的具体词"],
     "ended_reason":"archive 时必填，其余留空",
@@ -129,6 +137,8 @@ Boundaries:
 - Store stable geography, organizations, laws, customs, history, cultures, species, technology, magic, economy, languages, religions, and other world rules.
 - Keep current scenes, temporary character state, relationships, promises, one-off events, and atmosphere in story summaries or story state.
 - scope says where a rule applies. visibility says who knows it.
+- binding_scope controls data ownership: storyline belongs only to the current storyline; character_global may be reused by this character's other storylines. Use storyline unless the summaries explicitly support cross-storyline reuse.
+- activation_mode controls recall: triggered requires a trigger hit; scene requires the current scene to match scope; always is injected every turn and is reserved for a very small set of indispensable world rules. Default to triggered.
 - source_summary_ids are provenance only. Later summary merging or invalidation does not automatically invalidate a worldbook entry.
 - create adds an entry; update changes the same entry; merge combines duplicates; archive preserves an entry that is no longer current and records ended_reason.
 - Put uncertain overlaps and conflicts in possible_duplicates or conflicts for user review. Do not resolve them silently.
@@ -147,6 +157,8 @@ Return exactly one valid JSON object, without Markdown or commentary:
     "category":"geography|organization|law|custom|history|technology|magic|species|economy|language|religion|other",
     "content":"specific supported world fact",
     "scope":"where the fact applies",
+    "binding_scope":"storyline|character_global",
+    "activation_mode":"always|triggered|scene",
     "visibility":"who knows the fact",
     "triggers":["specific recall term"],
     "ended_reason":"required for archive; otherwise empty",

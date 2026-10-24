@@ -32,6 +32,27 @@ void main() {
     expect(tapped, isTrue);
   });
 
+  testWidgets('window status button does not require a Material ancestor', (
+    tester,
+  ) async {
+    var tapped = false;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Center(
+          child: ChatWindowStatusButton(
+            color: Colors.white,
+            accentColor: Colors.green,
+            onPressed: () => tapped = true,
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.byType(ChatWindowStatusButton));
+    expect(tapped, isTrue);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('window status attention uses three slow pulses', (tester) async {
     var completed = false;
     await tester.pumpWidget(

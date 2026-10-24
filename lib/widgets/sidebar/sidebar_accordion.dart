@@ -99,6 +99,7 @@ class _SidebarAccordionSectionState extends State<SidebarAccordionSection>
 
   // ── state ──
   bool _expanded = false;
+  bool _reduceMotion = false;
   SidebarAccordionCoordinator? _coordinator;
 
   // ── lifecycle ──
@@ -132,6 +133,7 @@ class _SidebarAccordionSectionState extends State<SidebarAccordionSection>
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    _reduceMotion = MediaQuery.disableAnimationsOf(context);
     final newCoordinator = SidebarAccordionScope.of(context);
     if (_coordinator != newCoordinator) {
       _coordinator?.removeListener(_syncGroup);
@@ -169,11 +171,18 @@ class _SidebarAccordionSectionState extends State<SidebarAccordionSection>
     if (oldWidget.initiallyExpanded == widget.initiallyExpanded) {
       return;
     }
-    if (widget.initiallyExpanded) {
-      _expand();
-    } else {
-      _collapse();
-    }
+    final shouldExpand = widget.initiallyExpanded;
+    // didUpdateWidget runs inside the parent's build. Expanding synchronously
+    // notifies SidebarAccordionScope while that inherited widget is still
+    // building, which trips "markNeedsBuild called during build" in Debug.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || widget.initiallyExpanded != shouldExpand) return;
+      if (shouldExpand && !_expanded) {
+        _expand();
+      } else if (!shouldExpand && _expanded) {
+        _collapse();
+      }
+    });
   }
 
   // ── expand / collapse ──
@@ -188,7 +197,11 @@ class _SidebarAccordionSectionState extends State<SidebarAccordionSection>
 
   void _expand() {
     setState(() => _expanded = true);
-    _animCtrl.forward();
+    if (_reduceMotion) {
+      _animCtrl.value = 1;
+    } else {
+      _animCtrl.forward();
+    }
     _coordinator?.activate(
       widget.relationGroup,
       id: widget.id,
@@ -202,7 +215,11 @@ class _SidebarAccordionSectionState extends State<SidebarAccordionSection>
     // and global viewInsets alive after another section is opened.
     FocusManager.instance.primaryFocus?.unfocus();
     setState(() => _expanded = false);
-    _animCtrl.reverse();
+    if (_reduceMotion) {
+      _animCtrl.value = 0;
+    } else {
+      _animCtrl.reverse();
+    }
   }
 
   // ── build ──

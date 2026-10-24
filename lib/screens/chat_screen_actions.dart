@@ -1026,184 +1026,187 @@ extension _ChatActionMethods on _ChatScreenState {
       }
     }
     if (msg == null) return;
-    final branchFromId = msg.id!;
-    final ctrl = TextEditingController(
-      text: MarriageService.stripHiddenCertMetadata(msg.text),
-    );
-
+    final branchMessage = msg;
+    final branchFromId = branchMessage.id!;
     showDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(YanciTheme.radiusMd),
-        ),
-        title: Text(
-          L.pick(en: 'Edit & branch', zhTW: '編輯並開分支'),
-          style: YanciTheme.headingMedium,
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            TextField(
-              controller: ctrl,
-              maxLines: null,
-              minLines: 2,
-              autofocus: true,
-              style: YanciTheme.bodyText.copyWith(fontSize: 14),
-              decoration: InputDecoration(
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(YanciTheme.radiusSm),
+      builder: (ctx) => ManagedTextControllers(
+        initialValues: <String>[
+          MarriageService.stripHiddenCertMetadata(branchMessage.text),
+        ],
+        builder: (ctx, controllers) => AlertDialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(YanciTheme.radiusMd),
+          ),
+          title: Text(
+            L.pick(en: 'Edit & branch', zhTW: '編輯並開分支'),
+            style: YanciTheme.headingMedium,
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              TextField(
+                controller: controllers.single,
+                maxLines: null,
+                minLines: 2,
+                autofocus: true,
+                style: YanciTheme.bodyText.copyWith(fontSize: 14),
+                decoration: InputDecoration(
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(YanciTheme.radiusSm),
+                  ),
                 ),
               ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              L.pick(
-                en: 'A new branch conversation will start from here. The original stays untouched.',
-                zhTW: '將以這裡為起點開一個新的分支對話，原對話原封不動。',
+              const SizedBox(height: 8),
+              Text(
+                L.pick(
+                  en: 'A new branch conversation will start from here. The original stays untouched.',
+                  zhTW: '將以這裡為起點開一個新的分支對話，原對話原封不動。',
+                ),
+                style: YanciTheme.bodySmall.copyWith(
+                  fontSize: 12,
+                  color: YanciTheme.textSecondary.withValues(alpha: 0.7),
+                ),
               ),
-              style: YanciTheme.bodySmall.copyWith(
-                fontSize: 12,
-                color: YanciTheme.textSecondary.withValues(alpha: 0.7),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: Text(
+                L.get('chat_cancel'),
+                style: TextStyle(color: YanciTheme.textSecondary),
+              ),
+            ),
+            TextButton(
+              onPressed: () async {
+                Navigator.pop(ctx);
+                final newText = controllers.single.text.trim();
+                if (newText.isEmpty) return;
+                final branchId = await DatabaseHelper.branchConversation(
+                  sourceConversationId: widget.conversationId,
+                  beforeMessageId: branchFromId,
+                  title:
+                      '⑂ ${_conversationTitle.isNotEmpty ? _conversationTitle : _characterName}',
+                );
+                if (!mounted) return;
+                await Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => ChatScreen(
+                      conversationId: branchId,
+                      initialAutoSendText: newText,
+                    ),
+                  ),
+                );
+                // 回到原窗：緩存會話歸屬還原（分支窗接管過 CacheSession）
+                if (mounted) {
+                  CacheSession.bind(_requiredSessionIdentity);
+                }
+              },
+              child: Text(
+                L.pick(en: 'Branch', zhTW: '開分支'),
+                style: TextStyle(color: YanciTheme.accent),
               ),
             ),
           ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: Text(
-              L.get('chat_cancel'),
-              style: TextStyle(color: YanciTheme.textSecondary),
-            ),
-          ),
-          TextButton(
-            onPressed: () async {
-              Navigator.pop(ctx);
-              final newText = ctrl.text.trim();
-              if (newText.isEmpty) return;
-              final branchId = await DatabaseHelper.branchConversation(
-                sourceConversationId: widget.conversationId,
-                beforeMessageId: branchFromId,
-                title:
-                    '⑂ ${_conversationTitle.isNotEmpty ? _conversationTitle : _characterName}',
-              );
-              if (!mounted) return;
-              await Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => ChatScreen(
-                    conversationId: branchId,
-                    initialAutoSendText: newText,
-                  ),
-                ),
-              );
-              // 回到原窗：緩存會話歸屬還原（分支窗接管過 CacheSession）
-              if (mounted) {
-                CacheSession.bind(_requiredSessionIdentity);
-              }
-            },
-            child: Text(
-              L.pick(en: 'Branch', zhTW: '開分支'),
-              style: TextStyle(color: YanciTheme.accent),
-            ),
-          ),
-        ],
       ),
     );
   }
 
   void _editMessage(int index) {
     final msg = _messages[index];
-    final ctrl = TextEditingController(
-      text: MarriageService.stripHiddenCertMetadata(msg.text),
-    );
-
     showDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(YanciTheme.radiusMd),
-        ),
-        title: Text(L.get('chat_edit'), style: YanciTheme.headingMedium),
-        content: TextField(
-          controller: ctrl,
-          maxLines: null,
-          minLines: 2,
-          autofocus: true,
-          style: YanciTheme.bodyText.copyWith(fontSize: 14),
-          decoration: InputDecoration(
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(YanciTheme.radiusSm),
-            ),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: Text(
-              L.get('chat_cancel'),
-              style: TextStyle(color: YanciTheme.textSecondary),
-            ),
-          ),
-          // 覆蓋保存：保留這條 user 消息，但清掉它後面的舊回覆/錯誤。
-          TextButton(
-            onPressed: () async {
-              Navigator.pop(ctx);
-              final newText = ctrl.text.trim();
-              if (newText.isEmpty || msg.id == null) return;
-              await DatabaseHelper.updateMessageText(msg.id!, newText);
-              await _deleteMessagesFrom(index, includeIndex: false);
-              if (!mounted) return;
-              _refreshChatState(() {
-                _messages[index] = Message(
-                  id: msg.id,
-                  conversationId: msg.conversationId,
-                  characterId: msg.characterId,
-                  text: newText,
-                  isUser: msg.isUser,
-                  imagePath: msg.imagePath,
-                  imagePaths: msg.imagePaths,
-                  splitMode: msg.splitMode,
-                  cacheHit: msg.cacheHit,
-                  status: msg.status,
-                  revision: msg.revision + 1,
-                  memoryLog: msg.memoryLog,
-                  webSearchTrace: msg.webSearchTrace,
-                  createdAt: msg.createdAt,
-                );
-              });
-            },
-            child: Text(
-              L.get('chat_save'),
-              style: TextStyle(color: YanciTheme.accent),
-            ),
-          ),
-          // 重新發送（刪後續 + 重新送 AI）
-          TextButton(
-            onPressed: () async {
-              Navigator.pop(ctx);
-              final newText = ctrl.text.trim();
-              if (newText.isEmpty) return;
-
-              // A user edit/resend keeps the same turn identity. Its prompt
-              // and reply are archived together, even when the text changed.
-              if (msg.isUser && msg.id != null) {
-                await _resendEditedUserMessage(index, newText);
-                return;
-              }
-
-              await _deleteMessagesFrom(index, includeIndex: true);
-              if (!mounted) return;
-              _onSendMessage(newText);
-            },
-            child: Text(
-              L.get('chat_resend'),
-              style: TextStyle(color: YanciTheme.accent),
-            ),
-          ),
+      builder: (ctx) => ManagedTextControllers(
+        initialValues: <String>[
+          MarriageService.stripHiddenCertMetadata(msg.text),
         ],
+        builder: (ctx, controllers) => AlertDialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(YanciTheme.radiusMd),
+          ),
+          title: Text(L.get('chat_edit'), style: YanciTheme.headingMedium),
+          content: TextField(
+            controller: controllers.single,
+            maxLines: null,
+            minLines: 2,
+            autofocus: true,
+            style: YanciTheme.bodyText.copyWith(fontSize: 14),
+            decoration: InputDecoration(
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(YanciTheme.radiusSm),
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: Text(
+                L.get('chat_cancel'),
+                style: TextStyle(color: YanciTheme.textSecondary),
+              ),
+            ),
+            // 覆蓋保存：保留這條 user 消息，但清掉它後面的舊回覆/錯誤。
+            TextButton(
+              onPressed: () async {
+                Navigator.pop(ctx);
+                final newText = controllers.single.text.trim();
+                if (newText.isEmpty || msg.id == null) return;
+                await DatabaseHelper.updateMessageText(msg.id!, newText);
+                await _deleteMessagesFrom(index, includeIndex: false);
+                if (!mounted) return;
+                _refreshChatState(() {
+                  _messages[index] = Message(
+                    id: msg.id,
+                    conversationId: msg.conversationId,
+                    characterId: msg.characterId,
+                    text: newText,
+                    isUser: msg.isUser,
+                    imagePath: msg.imagePath,
+                    imagePaths: msg.imagePaths,
+                    splitMode: msg.splitMode,
+                    cacheHit: msg.cacheHit,
+                    status: msg.status,
+                    revision: msg.revision + 1,
+                    memoryLog: msg.memoryLog,
+                    webSearchTrace: msg.webSearchTrace,
+                    createdAt: msg.createdAt,
+                  );
+                });
+              },
+              child: Text(
+                L.get('chat_save'),
+                style: TextStyle(color: YanciTheme.accent),
+              ),
+            ),
+            // 重新發送（刪後續 + 重新送 AI）
+            TextButton(
+              onPressed: () async {
+                Navigator.pop(ctx);
+                final newText = controllers.single.text.trim();
+                if (newText.isEmpty) return;
+
+                // A user edit/resend keeps the same turn identity. Its prompt
+                // and reply are archived together, even when the text changed.
+                if (msg.isUser && msg.id != null) {
+                  await _resendEditedUserMessage(index, newText);
+                  return;
+                }
+
+                await _deleteMessagesFrom(index, includeIndex: true);
+                if (!mounted) return;
+                _onSendMessage(newText);
+              },
+              child: Text(
+                L.get('chat_resend'),
+                style: TextStyle(color: YanciTheme.accent),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

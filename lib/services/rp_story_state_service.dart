@@ -6,6 +6,7 @@ import 'package:uuid/uuid.dart';
 import '../memory/database.dart';
 import '../models/message.dart';
 import 'locale_strings.dart';
+import 'memory_actions.dart';
 import 'token_estimator.dart';
 
 /// Stores mutable RP facts for one storyline without modifying the reusable
@@ -366,9 +367,11 @@ abstract final class RpStoryStateService {
       'identity' =>
         status == 'active' || status == 'suspended' || status == 'unknown',
       'plot' => status == 'active' || status == 'stalled',
-      // Knowledge and item rows describe the current known/possession state,
-      // including terminal-looking values such as confirmed or destroyed.
-      'knowledge' || 'item' => true,
+      'knowledge' => true,
+      // Lost, destroyed and transferred items remain in the dossier/timeline
+      // as history, but are not current possessions and must not be injected
+      // unconditionally on every later turn.
+      'item' => status == 'held' || status == 'unknown',
       _ => false,
     };
   }
@@ -402,9 +405,13 @@ abstract final class RpStoryStateService {
       final recallOwner = type == 'knowledge' && object.isNotEmpty
           ? '$owner|$object'
           : owner;
-      final dedupeKey = isOffstagePerson
-          ? '$type|$recallOwner'
-          : (isMutableSnapshot ? '$type|$stateKey' : null);
+      final dedupeKey = isMutableSnapshot
+          // Body and identity are current snapshots for a person. A model may
+          // rename the slug while describing the same evolving condition;
+          // injecting every historical key recreates stale stages. Keep only
+          // the newest row for that person and type, whether onstage or not.
+          ? '$type|$owner'
+          : (isOffstagePerson ? '$type|$recallOwner' : null);
       if (dedupeKey != null && !seen.add(dedupeKey)) continue;
       result.add(row);
     }
@@ -447,7 +454,7 @@ abstract final class RpStoryStateService {
   static Future<String> recallPrompt(
     String characterId, {
     String continuityId = 'main',
-    int tokenBudget = 1200,
+    int tokenBudget = 800,
     List<Message> recentMessages = const <Message>[],
   }) async {
     final db = await DatabaseHelper.database;
@@ -493,7 +500,7 @@ abstract final class RpStoryStateService {
         .where((message) => !message.isIncomplete)
         .map((message) => message.promptVisibleText.trim())
         .where((text) => text.isNotEmpty)
-        .take(8)
+        .take(3)
         .join('\n')
         .toLowerCase();
     final appearingEntityKeys = <String>{};
@@ -516,6 +523,23 @@ abstract final class RpStoryStateService {
     // always suppressed even when that person is present.
     if (!includeCorrectionKeys) {
       states = _compactCurrentSnapshots(states, appearingEntityKeys);
+      states = states
+          .where((state) {
+            if (state['state_type'] != 'knowledge') return true;
+            final subject = state['subject_entity_key']?.toString() ?? '';
+            final object = state['object_entity_key']?.toString() ?? '';
+            final status = state['status']?.toString() ?? '';
+            final involvesAppearing =
+                appearingEntityKeys.contains(subject) ||
+                appearingEntityKeys.contains(object);
+            // Offstage knowledge is only live while it represents an unresolved
+            // discovery process. Settled belief/confirmation stays in storage and
+            // can return when either participant is present again.
+            return involvesAppearing ||
+                status == 'suspicious' ||
+                status == 'investigating';
+          })
+          .toList(growable: true);
     }
     int priority(Map<String, dynamic> row) => switch (row['state_type']) {
       'scene' => 0,
@@ -530,12 +554,43 @@ abstract final class RpStoryStateService {
         a['updated_at']?.toString() ?? '',
       );
     });
+    if (!includeCorrectionKeys) {
+      const typeLimits = <String, int>{
+        'scene': 1,
+        'identity': 3,
+        'knowledge': 6,
+        'body': 3,
+        'promise': 4,
+        'item': 4,
+        'plot': 4,
+      };
+      final typeCounts = <String, int>{};
+      final ownerTypeCounts = <String, int>{};
+      states = states
+          .where((state) {
+            final type = state['state_type']?.toString() ?? '';
+            final typeLimit = typeLimits[type] ?? 2;
+            if ((typeCounts[type] ?? 0) >= typeLimit) return false;
+            final subject =
+                state['subject_entity_key']?.toString().trim() ?? '';
+            final object = state['object_entity_key']?.toString().trim() ?? '';
+            final owner = '$type|$subject|$object';
+            if (subject.isNotEmpty && (ownerTypeCounts[owner] ?? 0) >= 2) {
+              return false;
+            }
+            typeCounts[type] = (typeCounts[type] ?? 0) + 1;
+            ownerTypeCounts[owner] = (ownerTypeCounts[owner] ?? 0) + 1;
+            return true;
+          })
+          .toList(growable: false);
+    }
+    if (states.isEmpty) return '';
     final out = StringBuffer()
       ..writeln(
         L.pick(
-          en: '【Story State】This is not a live scene. Use only to fill gaps in the latest effective narrative. Never let an old snapshot override newer text or replay a completed action. Claims, dreams and hypotheticals are not mainline facts.',
-          zhTW: '【劇情現況】僅補最近有效正文未交代的資訊。舊快照不得覆蓋新進展，已完成行動不得重演；角色說法、夢境與假設不視為主線事實。',
-          zhCN: '【剧情现况】仅补最近有效正文未交代的信息。旧快照不得覆盖新进展，已完成行动不得重演；角色说法、梦境与假设不视为主线事实。',
+          en: '【Story State】Fill only gaps in the latest narrative. New text wins; do not replay completed actions. Claims, dreams and hypotheticals are not mainline facts.',
+          zhTW: '【劇情現況】僅補最新正文空白；新正文優先，不重演已完成行動，角色說法、夢境與假設不是主線事實。',
+          zhCN: '【剧情现况】仅补最新正文空白；新正文优先，不重演已完成行动，角色说法、梦境与假设不是主线事实。',
         ),
       );
     for (final state in states) {
@@ -591,12 +646,7 @@ abstract final class RpStoryStateService {
         .map((message) => message.promptVisibleText.trim())
         .firstWhere((text) => text.isNotEmpty, orElse: () => '');
     if (latestUserText.isEmpty) return false;
-    return RegExp(
-      r'(修正|更正|糾正|纠正|改成|應該是|应该是|不是.+而是|其實是|其实是|'
-      r'資料錯|资料错|記錯|记错|correction|correct\s+that|should\s+be|'
-      r'not\s+.+but)',
-      caseSensitive: false,
-    ).hasMatch(latestUserText);
+    return MemoryActions.isRpCorrectionIntent(latestUserText);
   }
 
   static Future<void> updateState(

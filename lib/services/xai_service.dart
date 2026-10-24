@@ -227,6 +227,7 @@ class XaiService implements ApiAdapter {
           model: plan.model,
           cacheChannel: plan.cacheChannel,
           turnAnchor: plan.turnAnchor,
+          lineageScope: '${plan.diagnostics['grok_ledger_scope'] ?? ''}',
           payload: <String, dynamic>{'reasoning_content': reasoning.toString()},
         );
       }
@@ -312,6 +313,7 @@ class XaiService implements ApiAdapter {
       'reasoning_payload_preserved': (prepared?.reasoningPayloadCount ?? 0) > 0,
       'reasoning_payload_count': prepared?.reasoningPayloadCount ?? 0,
       'grok_turn_anchor': prepared?.currentTurnAnchor ?? '',
+      'grok_ledger_scope': prepared?.ledgerScope ?? '',
       'grok_provider_route': providerRoute,
       'static_tokens': TokenEstimator.estimate(stableContext),
       'dynamic_tokens': TokenEstimator.estimate(liveState),
@@ -362,6 +364,7 @@ class XaiService implements ApiAdapter {
       model: plan.model,
       cacheChannel: plan.cacheChannel,
       turnAnchor: plan.turnAnchor,
+      lineageScope: '${plan.diagnostics['grok_ledger_scope'] ?? ''}',
       payload: <String, dynamic>{'reasoning_content': content},
     );
   }

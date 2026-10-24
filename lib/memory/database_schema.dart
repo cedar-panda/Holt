@@ -578,6 +578,10 @@ class _DatabaseSchema {
         category TEXT NOT NULL DEFAULT 'other',
         content TEXT NOT NULL,
         scope TEXT NOT NULL DEFAULT 'global',
+        binding_scope TEXT NOT NULL DEFAULT 'storyline'
+          CHECK(binding_scope IN ('storyline', 'character_global')),
+        activation_mode TEXT NOT NULL DEFAULT 'triggered'
+          CHECK(activation_mode IN ('always', 'triggered', 'scene')),
         visibility TEXT NOT NULL DEFAULT 'public',
         status TEXT NOT NULL DEFAULT 'active'
           CHECK(status IN ('active', 'archived')),
@@ -590,9 +594,28 @@ class _DatabaseSchema {
         UNIQUE(character_id, continuity_id, entry_key)
       )
     ''');
+    // CREATE TABLE IF NOT EXISTS does not add columns to an existing database.
+    // Keep runtime repair safe for same-version restores before creating the
+    // index that depends on these fields.
+    await _safeAddColumn(
+      db,
+      'rp_worldbook_entries',
+      'binding_scope',
+      "TEXT NOT NULL DEFAULT 'storyline'",
+    );
+    await _safeAddColumn(
+      db,
+      'rp_worldbook_entries',
+      'activation_mode',
+      "TEXT NOT NULL DEFAULT 'triggered'",
+    );
     await db.execute(
       'CREATE INDEX IF NOT EXISTS idx_rp_worldbook_scope '
       'ON rp_worldbook_entries(character_id, continuity_id, status, updated_at DESC)',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_rp_worldbook_binding '
+      'ON rp_worldbook_entries(character_id, binding_scope, continuity_id, status, updated_at DESC)',
     );
     await db.execute('''
       CREATE TABLE IF NOT EXISTS rp_worldbook_sync_state (
@@ -1384,6 +1407,7 @@ class _DatabaseSchema {
         confidence TEXT,
         narrative_weight TEXT,
         is_permanent INTEGER DEFAULT 0,
+        is_pinned INTEGER NOT NULL DEFAULT 0 CHECK(is_pinned IN (0, 1)),
         source_conversation_id TEXT,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
@@ -1399,6 +1423,12 @@ class _DatabaseSchema {
         last_accessed TEXT DEFAULT ''
       )
     ''');
+    await _safeAddColumn(
+      db,
+      'memories',
+      'is_pinned',
+      'INTEGER NOT NULL DEFAULT 0 CHECK(is_pinned IN (0, 1))',
+    );
 
     // 蜘蛛網記憶系統：連線圖譜
     await db.execute('''
@@ -2111,6 +2141,38 @@ class _DatabaseSchema {
     }
     if (oldVersion < 82) {
       await _migrateToV82SharedPersonaBindings(db);
+    }
+    if (oldVersion < 83 && await _tableExists(db, 'rp_worldbook_entries')) {
+      await _safeAddColumn(
+        db,
+        'rp_worldbook_entries',
+        'binding_scope',
+        "TEXT NOT NULL DEFAULT 'storyline'",
+      );
+      await _safeAddColumn(
+        db,
+        'rp_worldbook_entries',
+        'activation_mode',
+        "TEXT NOT NULL DEFAULT 'triggered'",
+      );
+      await db.execute('''
+        UPDATE rp_worldbook_entries
+        SET activation_mode = CASE
+          WHEN trim(COALESCE(triggers_json, '')) IN ('', '[]') THEN 'always'
+          ELSE 'triggered'
+        END
+      ''');
+    }
+    if (oldVersion < 84 && await _tableExists(db, 'memories')) {
+      // Permanent means protected from automatic retirement. Pinned means the
+      // user explicitly wants the item available every turn. Legacy permanent
+      // rows stay unpinned so upgrading cannot silently expand every prompt.
+      await _safeAddColumn(
+        db,
+        'memories',
+        'is_pinned',
+        'INTEGER NOT NULL DEFAULT 0 CHECK(is_pinned IN (0, 1))',
+      );
     }
     // Rebuild shared indexes only after every versioned column migration has
     // completed. _migrateToV36 used to call this helper early; once v38 added

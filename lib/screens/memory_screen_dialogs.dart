@@ -4,138 +4,142 @@ part of 'memory_screen.dart';
 
 extension _MemoryDialogMethods on _MemoryScreenState {
   void _showAddMemoryDialog() {
-    final categoryCtrl = TextEditingController(
-      text: L.pick(en: 'Important Event', zhTW: '重要事件'),
-    );
-    final contentCtrl = TextEditingController();
-    final triggersCtrl = TextEditingController();
     showDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: YanciTheme.surfacePanel,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: Text(
-          L.pick(en: 'Write a memory', zhTW: '寫入記憶'),
-          style: YanciTheme.headingMedium,
-        ),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: categoryCtrl,
-                style: YanciTheme.bodyText,
-                decoration: InputDecoration(
-                  labelText: L.pick(
-                    en: 'Category',
-                    zhTW: '類別（關係/偏好/約定/習慣/重要事件）',
-                  ),
-                  labelStyle: YanciTheme.bodySmall,
-                ),
-              ),
-              TextField(
-                controller: contentCtrl,
-                maxLines: 3,
-                style: YanciTheme.bodyText,
-                decoration: InputDecoration(
-                  labelText: L.pick(
-                    en: 'Content ("I" = char, "you" = user)',
-                    zhTW: '內容（「我」= 角色，「你」= 用戶）',
-                  ),
-                  labelStyle: YanciTheme.bodySmall,
-                ),
-              ),
-              TextField(
-                controller: triggersCtrl,
-                style: YanciTheme.bodyText,
-                decoration: InputDecoration(
-                  labelText: L.pick(
-                    en: 'Triggers (comma separated, optional)',
-                    zhTW: '觸發詞（逗號分隔，可空）',
-                  ),
-                  labelStyle: YanciTheme.bodySmall,
-                ),
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: Text(
-              L.pick(en: 'Cancel', zhTW: '取消'),
-              style: TextStyle(color: YanciTheme.textSecondary),
-            ),
-          ),
-          TextButton(
-            onPressed: () async {
-              final content = contentCtrl.text.trim();
-              if (content.isEmpty) return;
-              final result = await MemoryGuardService.guardNewMemory(
-                candidate: Memory(
-                  characterId: _characterId,
-                  contextMode:
-                      widget.contextMode ??
-                      await ContextModeSettings.effectiveMode(_characterId),
-                  continuityId: _rpStorylineScope
-                      ? widget.continuityId
-                      : 'main',
-                  mode: await _bucket(),
-                  category: categoryCtrl.text.trim().isEmpty
-                      ? (L.pick(en: 'Important Event', zhTW: '重要事件'))
-                      : categoryCtrl.text.trim(),
-                  content: content,
-                  confidence: 'high',
-                  triggers: triggersCtrl.text.trim(),
-                ),
-                source: 'memory_ui',
-              );
-              debugPrint(
-                '[MemoryAddDebug] character=$_characterId '
-                'result=${result.disposition.name}',
-              );
-              if (!ctx.mounted || !mounted) return;
-              Navigator.pop(ctx);
-              if (result.disposition ==
-                  GuardedMemoryWriteDisposition.proposalCreated) {
-                setState(() {
-                  _tabIndex = 1;
-                  _isGraphView = false;
-                });
-              }
-              await _loadMemories();
-              await _refreshReviewCounts();
-              if (!mounted) return;
-              final message = switch (result.disposition) {
-                GuardedMemoryWriteDisposition.inserted => L.pick(
-                  en: 'Memory saved',
-                  zhTW: '記憶已保存',
-                  zhCN: '记忆已保存',
-                ),
-                GuardedMemoryWriteDisposition.skippedDuplicate => L.pick(
-                  en: 'An equivalent memory already exists, so no duplicate was added',
-                  zhTW: '已有等價記憶，未新增重複條目',
-                  zhCN: '已有等价记忆，未新增重复条目',
-                ),
-                GuardedMemoryWriteDisposition.proposalCreated => L.pick(
-                  en: 'Possible duplicate found. Review it before saving.',
-                  zhTW: '發現疑似重複，已送到待確認提案',
-                  zhCN: '发现疑似重复，已送到待确认提案',
-                ),
-              };
-              ScaffoldMessenger.of(
-                context,
-              ).showSnackBar(SnackBar(content: Text(message)));
-            },
-            child: Text(
-              L.pick(en: 'Save', zhTW: '保存'),
-              style: TextStyle(
-                color: YanciTheme.accent,
-                fontWeight: FontWeight.w500,
-              ),
-            ),
-          ),
+      builder: (ctx) => ManagedTextControllers(
+        initialValues: <String>[
+          L.pick(en: 'Important Event', zhTW: '重要事件'),
+          '',
+          '',
         ],
+        builder: (ctx, controllers) => AlertDialog(
+          backgroundColor: YanciTheme.surfacePanel,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+          title: Text(
+            L.pick(en: 'Write a memory', zhTW: '寫入記憶'),
+            style: YanciTheme.headingMedium,
+          ),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: controllers[0],
+                  style: YanciTheme.bodyText,
+                  decoration: InputDecoration(
+                    labelText: L.pick(
+                      en: 'Category',
+                      zhTW: '類別（關係/偏好/約定/習慣/重要事件）',
+                    ),
+                    labelStyle: YanciTheme.bodySmall,
+                  ),
+                ),
+                TextField(
+                  controller: controllers[1],
+                  maxLines: 3,
+                  style: YanciTheme.bodyText,
+                  decoration: InputDecoration(
+                    labelText: L.pick(
+                      en: 'Content ("I" = char, "you" = user)',
+                      zhTW: '內容（「我」= 角色，「你」= 用戶）',
+                    ),
+                    labelStyle: YanciTheme.bodySmall,
+                  ),
+                ),
+                TextField(
+                  controller: controllers[2],
+                  style: YanciTheme.bodyText,
+                  decoration: InputDecoration(
+                    labelText: L.pick(
+                      en: 'Triggers (comma separated, optional)',
+                      zhTW: '觸發詞（逗號分隔，可空）',
+                    ),
+                    labelStyle: YanciTheme.bodySmall,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: Text(
+                L.pick(en: 'Cancel', zhTW: '取消'),
+                style: TextStyle(color: YanciTheme.textSecondary),
+              ),
+            ),
+            TextButton(
+              onPressed: () async {
+                final content = controllers[1].text.trim();
+                if (content.isEmpty) return;
+                final result = await MemoryGuardService.guardNewMemory(
+                  candidate: Memory(
+                    characterId: _characterId,
+                    contextMode:
+                        widget.contextMode ??
+                        await ContextModeSettings.effectiveMode(_characterId),
+                    continuityId: _rpStorylineScope
+                        ? widget.continuityId
+                        : 'main',
+                    mode: await _bucket(),
+                    category: controllers[0].text.trim().isEmpty
+                        ? (L.pick(en: 'Important Event', zhTW: '重要事件'))
+                        : controllers[0].text.trim(),
+                    content: content,
+                    confidence: 'high',
+                    triggers: controllers[2].text.trim(),
+                  ),
+                  source: 'memory_ui',
+                );
+                debugPrint(
+                  '[MemoryAddDebug] character=$_characterId '
+                  'result=${result.disposition.name}',
+                );
+                if (!ctx.mounted || !mounted) return;
+                Navigator.pop(ctx);
+                if (result.disposition ==
+                    GuardedMemoryWriteDisposition.proposalCreated) {
+                  setState(() {
+                    _tabIndex = 1;
+                    _isGraphView = false;
+                  });
+                }
+                await _loadMemories();
+                await _refreshReviewCounts();
+                if (!mounted) return;
+                final message = switch (result.disposition) {
+                  GuardedMemoryWriteDisposition.inserted => L.pick(
+                    en: 'Memory saved',
+                    zhTW: '記憶已保存',
+                    zhCN: '记忆已保存',
+                  ),
+                  GuardedMemoryWriteDisposition.skippedDuplicate => L.pick(
+                    en: 'An equivalent memory already exists, so no duplicate was added',
+                    zhTW: '已有等價記憶，未新增重複條目',
+                    zhCN: '已有等价记忆，未新增重复条目',
+                  ),
+                  GuardedMemoryWriteDisposition.proposalCreated => L.pick(
+                    en: 'Possible duplicate found. Review it before saving.',
+                    zhTW: '發現疑似重複，已送到待確認提案',
+                    zhCN: '发现疑似重复，已送到待确认提案',
+                  ),
+                };
+                ScaffoldMessenger.of(
+                  context,
+                ).showSnackBar(SnackBar(content: Text(message)));
+              },
+              child: Text(
+                L.pick(en: 'Save', zhTW: '保存'),
+                style: TextStyle(
+                  color: YanciTheme.accent,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

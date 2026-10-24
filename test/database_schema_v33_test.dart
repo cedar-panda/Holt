@@ -33,7 +33,12 @@ void main() {
     () async {
       await DatabaseHelper.createSchemaForTesting(db);
 
-      expect(DatabaseHelper.schemaVersionForTesting, 82);
+      expect(DatabaseHelper.schemaVersionForTesting, 84);
+      expect(await _columnNames(db, 'memories'), contains('is_pinned'));
+      expect(
+        await _columnNames(db, 'rp_worldbook_entries'),
+        containsAll(<String>['binding_scope', 'activation_mode']),
+      );
       expect(
         await _columnNames(db, 'character_diaries'),
         containsAll(<String>[
@@ -1821,7 +1826,11 @@ void main() {
       expect(await _relationCount(db, 'emotion_points', 'char-a'), 0);
       expect(await _relationCount(db, 'grudge_seals', 'char-a'), 0);
       expect(
-        await db.query('emotion_points', where: 'memory_id = ?', whereArgs: [a1]),
+        await db.query(
+          'emotion_points',
+          where: 'memory_id = ?',
+          whereArgs: [a1],
+        ),
         isEmpty,
       );
       expect(

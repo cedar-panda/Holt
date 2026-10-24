@@ -558,6 +558,30 @@ class L {
       'en': 'Pick a color',
     },
     'theme_bubble': {'zh_TW': '氣泡', 'zh_CN': '气泡', 'en': 'Bubble'},
+    'theme_send_button': {'zh_TW': '發送鍵', 'zh_CN': '发送键', 'en': 'Send button'},
+    'theme_send_button_leaf': {'zh_TW': '葉子', 'zh_CN': '叶子', 'en': 'Leaf'},
+    'theme_send_button_paw': {'zh_TW': '爪印', 'zh_CN': '爪印', 'en': 'Paw'},
+    'theme_send_button_shell': {'zh_TW': '貝殼', 'zh_CN': '贝壳', 'en': 'Shell'},
+    'theme_send_button_custom': {
+      'zh_TW': '自訂圖片',
+      'zh_CN': '自定义图片',
+      'en': 'Custom image',
+    },
+    'theme_send_button_square_error': {
+      'zh_TW': '請使用 1:1 正方形圖片',
+      'zh_CN': '请使用 1:1 正方形图片',
+      'en': 'Please use a square 1:1 image',
+    },
+    'theme_send_button_png_error': {
+      'zh_TW': '請使用 PNG 圖片',
+      'zh_CN': '请使用 PNG 图片',
+      'en': 'Please use a PNG image',
+    },
+    'theme_send_button_import_error': {
+      'zh_TW': '圖片匯入失敗，請再試一次',
+      'zh_CN': '图片导入失败，请再试一次',
+      'en': 'Could not import the image. Please try again.',
+    },
     'theme_starlight': {'zh_TW': '背景特效', 'zh_CN': '背景特效', 'en': 'Effects'},
     'theme_star_particle': {
       'zh_TW': '粒子特效',

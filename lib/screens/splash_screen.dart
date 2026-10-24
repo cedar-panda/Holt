@@ -131,7 +131,21 @@ class _SplashScreenState extends State<SplashScreen>
     if (_navigationStarted) return;
     final shouldChooseLanguage =
         widget.showLanguagePicker ||
-        await UserSettings.shouldShowFirstLaunchLanguage();
+        await UserSettings.shouldShowFirstLaunchLanguage()
+            .timeout(
+              const Duration(seconds: 3),
+              onTimeout: () {
+                debugPrint(
+                  'First-launch language check timed out; continuing with '
+                  'the current locale.',
+                );
+                return false;
+              },
+            )
+            .catchError((Object error, StackTrace stackTrace) {
+              debugPrint('First-launch language check failed: $error');
+              return false;
+            });
     if (!mounted) return;
     _reduceMotion = MediaQuery.disableAnimationsOf(context);
 

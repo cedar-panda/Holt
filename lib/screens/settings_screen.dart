@@ -537,11 +537,51 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         ),
                         onTap: () async {
                           final navigator = Navigator.of(context);
-                          await UserSettings.restartInitialSetup();
-                          if (!mounted) return;
-                          await navigator.pushReplacementNamed(
-                            '/initial_setup',
+                          final confirmed = await showDialog<bool>(
+                            context: context,
+                            builder: (dialogContext) => AlertDialog(
+                              backgroundColor: YanciTheme.surfacePanel,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(
+                                  YanciTheme.radiusLg,
+                                ),
+                              ),
+                              title: Text(
+                                L.pick(
+                                  en: 'Choose relationship mode again?',
+                                  zhTW: '重新選擇相處模式？',
+                                  zhCN: '重新选择相处模式？',
+                                ),
+                              ),
+                              content: Text(
+                                L.pick(
+                                  en: 'Your characters and conversations stay unchanged. New choices are applied only after you confirm them in the guide.',
+                                  zhTW: '角色與對話不會被刪除；只有在引導內正式確認後，新的相處設定才會套用。',
+                                  zhCN: '角色与对话不会被删除；只有在引导内正式确认后，新的相处设置才会应用。',
+                                ),
+                              ),
+                              actions: <Widget>[
+                                TextButton(
+                                  onPressed: () =>
+                                      Navigator.pop(dialogContext, false),
+                                  child: Text(L.get('cancel')),
+                                ),
+                                TextButton(
+                                  onPressed: () =>
+                                      Navigator.pop(dialogContext, true),
+                                  child: Text(
+                                    L.pick(
+                                      en: 'Continue',
+                                      zhTW: '繼續',
+                                      zhCN: '继续',
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
                           );
+                          if (confirmed != true || !mounted) return;
+                          await navigator.pushNamed('/initial_setup');
                         },
                       ),
                     ),

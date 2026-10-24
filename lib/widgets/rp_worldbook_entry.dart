@@ -1,3 +1,4 @@
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
 import '../screens/rp_worldbook_screen.dart';
@@ -32,7 +33,7 @@ class RpWorldbookEntry extends StatelessWidget {
                 : continuityId;
             if (!context.mounted || selected == null) return;
             await Navigator.of(context).push(
-              MaterialPageRoute<void>(
+              CupertinoPageRoute<void>(
                 builder: (_) => RpWorldbookScreen(
                   characterId: characterId,
                   continuityId: selected,

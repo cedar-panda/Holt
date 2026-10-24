@@ -140,6 +140,10 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
   final _oaiCompatBaseUrlCtrl = TextEditingController();
   final _oaiCompatKeyCtrl = TextEditingController();
   final _oaiCompatModelCtrl = TextEditingController();
+  bool _oaiCompatDeveloperRole = false;
+  bool _oaiCompatMidSystem = true;
+  bool _oaiCompatCacheControl = true;
+  bool _oaiCompatTools = false;
 
   final _thinkingMachinesKeyCtrl = TextEditingController();
   final _thinkingMachinesModelCtrl = TextEditingController();
@@ -202,6 +206,7 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
     final oaiBase = await ApiSettings.getOaiCompatBaseUrl();
     final oaiKey = await ApiSettings.getOaiCompatApiKey();
     final oaiMod = await ApiSettings.getOaiCompatModel();
+    final oaiCapabilities = await ApiSettings.getOaiCompatCapabilities();
 
     final thinkingMachinesKey = await ApiSettings.getThinkingMachinesApiKey();
     final thinkingMachinesModel = await ApiSettings.getThinkingMachinesModel();
@@ -278,6 +283,10 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
         _oaiCompatBaseUrlCtrl.text = oaiBase;
         _oaiCompatKeyCtrl.text = oaiKey;
         _oaiCompatModelCtrl.text = oaiMod;
+        _oaiCompatDeveloperRole = oaiCapabilities.supportsDeveloperRole;
+        _oaiCompatMidSystem = oaiCapabilities.supportsMidConversationSystem;
+        _oaiCompatCacheControl = oaiCapabilities.supportsCacheControl;
+        _oaiCompatTools = oaiCapabilities.supportsTools;
 
         _thinkingMachinesKeyCtrl.text = thinkingMachinesKey;
         _thinkingMachinesModelCtrl.text = thinkingMachinesModel;
@@ -895,6 +904,14 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
     await ApiSettings.saveOaiCompatBaseUrl(oaiBaseUrl);
     await ApiSettings.saveOaiCompatApiKey(oaiKey);
     await ApiSettings.saveOaiCompatModel(oaiModel);
+    await ApiSettings.saveOaiCompatCapabilities(
+      OpenAICompatibleCapabilities(
+        supportsDeveloperRole: _oaiCompatDeveloperRole,
+        supportsMidConversationSystem: _oaiCompatMidSystem,
+        supportsCacheControl: _oaiCompatCacheControl,
+        supportsTools: _oaiCompatTools,
+      ),
+    );
     await ApiSettings.saveThinkingMachinesApiKey(thinkingMachinesKey);
     await ApiSettings.saveThinkingMachinesModel(thinkingMachinesModel);
     await ApiSettings.saveThinkingMachinesEffort(thinkingMachinesEffort);
@@ -2135,6 +2152,32 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
                                     _oaiCompatKeyCtrl.text,
                                   ),
                                   onFetchModels: _fetchModels,
+                                  supportsDeveloperRole:
+                                      _oaiCompatDeveloperRole,
+                                  supportsMidConversationSystem:
+                                      _oaiCompatMidSystem,
+                                  supportsCacheControl: _oaiCompatCacheControl,
+                                  supportsTools: _oaiCompatTools,
+                                  onDeveloperRoleChanged: (value) {
+                                    setState(
+                                      () => _oaiCompatDeveloperRole = value,
+                                    );
+                                    _debouncedSave();
+                                  },
+                                  onMidConversationSystemChanged: (value) {
+                                    setState(() => _oaiCompatMidSystem = value);
+                                    _debouncedSave();
+                                  },
+                                  onCacheControlChanged: (value) {
+                                    setState(
+                                      () => _oaiCompatCacheControl = value,
+                                    );
+                                    _debouncedSave();
+                                  },
+                                  onToolsChanged: (value) {
+                                    setState(() => _oaiCompatTools = value);
+                                    _debouncedSave();
+                                  },
                                 ),
                               ],
                               if (_provider == 'local_api' ||

@@ -646,7 +646,21 @@ class _AnniversaryEditorDialogState extends State<_AnniversaryEditorDialog> {
 
   void _save() {
     final title = _titleController.text.trim();
-    if (title.isEmpty) return;
+    if (title.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            L.pick(
+              en: 'Anniversary name is required.',
+              zhTW: '請填寫紀念日名稱。',
+              zhCN: '请填写纪念日名称。',
+            ),
+          ),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
     Navigator.pop(context, _AnniversaryDraft(title: title, startDate: _date));
   }
 

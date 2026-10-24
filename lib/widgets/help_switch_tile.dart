@@ -63,9 +63,15 @@ class _HelpSwitchTileState extends State<HelpSwitchTile> {
                     ),
                   ),
                   const SizedBox(width: 8),
-                  GestureDetector(
-                    onTap: _toggleExpand,
-                    child: Container(
+                  IconButton(
+                    tooltip: widget.description,
+                    onPressed: _toggleExpand,
+                    constraints: const BoxConstraints.tightFor(
+                      width: 40,
+                      height: 40,
+                    ),
+                    padding: EdgeInsets.zero,
+                    icon: Container(
                       padding: const EdgeInsets.all(2),
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
@@ -115,7 +121,9 @@ class _HelpSwitchTileState extends State<HelpSwitchTile> {
                 crossFadeState: _isExpanded
                     ? CrossFadeState.showSecond
                     : CrossFadeState.showFirst,
-                duration: const Duration(milliseconds: 200),
+                duration: MediaQuery.disableAnimationsOf(context)
+                    ? Duration.zero
+                    : const Duration(milliseconds: 200),
                 alignment: Alignment.topLeft,
               ),
             ],

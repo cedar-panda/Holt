@@ -597,6 +597,13 @@ class ApiSettings {
   static const String _keyOaiCompatBaseUrl = 'oai_compat_base_url';
   static const String _keyOaiCompatApiKey = 'oai_compat_api_key';
   static const String _keyOaiCompatModel = 'oai_compat_model';
+  static const String _keyOaiCompatDeveloperRole =
+      'oai_compat_capability_developer_role';
+  static const String _keyOaiCompatMidSystem =
+      'oai_compat_capability_mid_system';
+  static const String _keyOaiCompatCacheControl =
+      'oai_compat_capability_cache_control';
+  static const String _keyOaiCompatTools = 'oai_compat_capability_tools';
 
   static Future<void> saveOaiCompatBaseUrl(String v) async {
     final p = await SharedPreferences.getInstance();
@@ -624,6 +631,28 @@ class ApiSettings {
   static Future<String> getOaiCompatModel() async {
     final p = await SharedPreferences.getInstance();
     return p.getString(_keyOaiCompatModel) ?? '';
+  }
+
+  static Future<void> saveOaiCompatCapabilities(
+    OpenAICompatibleCapabilities value,
+  ) async {
+    final p = await SharedPreferences.getInstance();
+    await Future.wait(<Future<bool>>[
+      p.setBool(_keyOaiCompatDeveloperRole, value.supportsDeveloperRole),
+      p.setBool(_keyOaiCompatMidSystem, value.supportsMidConversationSystem),
+      p.setBool(_keyOaiCompatCacheControl, value.supportsCacheControl),
+      p.setBool(_keyOaiCompatTools, value.supportsTools),
+    ]);
+  }
+
+  static Future<OpenAICompatibleCapabilities> getOaiCompatCapabilities() async {
+    final p = await SharedPreferences.getInstance();
+    return OpenAICompatibleCapabilities(
+      supportsDeveloperRole: p.getBool(_keyOaiCompatDeveloperRole) ?? false,
+      supportsMidConversationSystem: p.getBool(_keyOaiCompatMidSystem) ?? true,
+      supportsCacheControl: p.getBool(_keyOaiCompatCacheControl) ?? true,
+      supportsTools: p.getBool(_keyOaiCompatTools) ?? false,
+    );
   }
 
   // ═══ Local API（電腦 / 局域網 OpenAI-compatible 端點）═══
@@ -1266,6 +1295,7 @@ class ApiSettings {
         apiKey: key,
         baseUrl: baseUrl,
         thinkingEnabled: thinkingEnabled,
+        capabilities: await getOaiCompatCapabilities(),
       );
     }
 

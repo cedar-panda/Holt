@@ -95,80 +95,85 @@ extension _ChatAppBarMethods on _ChatScreenState {
                                 key: _modelPickerAnchorKey,
                                 behavior: HitTestBehavior.opaque,
                                 onTap: _showModelPicker,
-                                child: Padding(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 9,
-                                    vertical: 3,
-                                  ),
-                                  child: Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: <Widget>[
-                                      if (_localModelLoading) ...<Widget>[
-                                        SizedBox(
-                                          width: 10,
-                                          height: 10,
-                                          child: CircularProgressIndicator(
-                                            strokeWidth: 1.5,
-                                            color: headerSecondary.withValues(
-                                              alpha: 0.62,
-                                            ),
-                                          ),
-                                        ),
-                                        const SizedBox(width: 4),
-                                      ],
-                                      Flexible(
-                                        child: Text(
-                                          _localModelLoading
-                                              ? L.pick(
-                                                  en: 'Loading…',
-                                                  zhTW: '加載中…',
-                                                  zhCN: '加载中…',
-                                                )
-                                              : _shortModelName(_currentModel),
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                          style: TextStyle(
-                                            fontSize: 11,
-                                            color: headerSecondary.withValues(
-                                              alpha: 0.62,
-                                            ),
-                                            fontFamily: YanciTheme.fontFamily,
-                                            decoration: TextDecoration.none,
-                                          ),
-                                        ),
+                                child: SizedBox(
+                                  height: 44,
+                                  child: Align(
+                                    alignment: Alignment.bottomCenter,
+                                    child: Padding(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 9,
+                                        vertical: 3,
                                       ),
-                                      if (_tokenTracker.totalTokens >
-                                          0) ...<Widget>[
-                                        Text(
-                                          ' · ',
-                                          style: TextStyle(
-                                            fontSize: 11,
-                                            color: headerSecondary.withValues(
-                                              alpha: 0.32,
+                                      child: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: <Widget>[
+                                          if (_localModelLoading) ...<Widget>[
+                                            SizedBox(
+                                              width: 10,
+                                              height: 10,
+                                              child: CircularProgressIndicator(
+                                                strokeWidth: 1.5,
+                                                color: headerSecondary
+                                                    .withValues(alpha: 0.62),
+                                              ),
                                             ),
-                                            decoration: TextDecoration.none,
-                                          ),
-                                        ),
-                                        Text(
-                                          '${_tokenTracker.formatTokens()} tokens',
-                                          style: TextStyle(
-                                            fontSize: 11,
-                                            color: headerSecondary.withValues(
-                                              alpha: 0.48,
+                                            const SizedBox(width: 4),
+                                          ],
+                                          Flexible(
+                                            child: Text(
+                                              _localModelLoading
+                                                  ? L.pick(
+                                                      en: 'Loading…',
+                                                      zhTW: '加載中…',
+                                                      zhCN: '加载中…',
+                                                    )
+                                                  : _shortModelName(
+                                                      _currentModel,
+                                                    ),
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: TextStyle(
+                                                fontSize: 11,
+                                                color: headerSecondary
+                                                    .withValues(alpha: 0.72),
+                                                fontFamily:
+                                                    YanciTheme.fontFamily,
+                                                decoration: TextDecoration.none,
+                                              ),
                                             ),
-                                            decoration: TextDecoration.none,
                                           ),
-                                        ),
-                                      ],
-                                      const SizedBox(width: 3),
-                                      Icon(
-                                        Icons.unfold_more_rounded,
-                                        size: 10,
-                                        color: headerSecondary.withValues(
-                                          alpha: 0.38,
-                                        ),
+                                          if (_tokenTracker.totalTokens >
+                                              0) ...<Widget>[
+                                            Text(
+                                              ' · ',
+                                              style: TextStyle(
+                                                fontSize: 11,
+                                                color: headerSecondary
+                                                    .withValues(alpha: 0.32),
+                                                decoration: TextDecoration.none,
+                                              ),
+                                            ),
+                                            Text(
+                                              '${_tokenTracker.formatTokens()} tokens',
+                                              style: TextStyle(
+                                                fontSize: 11,
+                                                color: headerSecondary
+                                                    .withValues(alpha: 0.58),
+                                                decoration: TextDecoration.none,
+                                              ),
+                                            ),
+                                          ],
+                                          const SizedBox(width: 3),
+                                          Icon(
+                                            Icons.unfold_more_rounded,
+                                            size: 10,
+                                            color: headerSecondary.withValues(
+                                              alpha: 0.52,
+                                            ),
+                                          ),
+                                        ],
                                       ),
-                                    ],
+                                    ),
                                   ),
                                 ),
                               ),
@@ -187,6 +192,7 @@ extension _ChatAppBarMethods on _ChatScreenState {
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               IconButton(
+                tooltip: L.pick(en: 'Back', zhTW: '返回', zhCN: '返回'),
                 icon: Icon(
                   Icons.arrow_back_ios_rounded,
                   size: 20,

@@ -43,57 +43,29 @@ extension _ChatGenerationMethods on _ChatScreenState {
   /// 生成態統一入口：熄屏/退後台會凍結流式回覆，
   /// 生成期間掛前台服務保護（GenerationForegroundGuard），結束即撤
 
-
-
-
-
-
-
   /// Closes only the visible reply surface. Memory, timeline, worldbook and
   /// other private actions may continue afterwards without leaving the bubble
   /// in a typing state or moving its avatar a second time.
-
-
-
 
   /// The submission lock only protects the short interval before a turn has
   /// been accepted and `_isGenerating` takes over. Keeping it for the whole
   /// request makes the send affordance look ready after visible streaming has
   /// ended while taps are still silently discarded by background post-work.
 
-
-
-
-
-
   /// 提取 `<x_post>` 內容並剝離，再走通用殘尾清理。
   /// 必須在 _stripInternalToolCalls 之前提取——_ChatScreenState._openTagRe 已含 x_post，
   /// 先 strip 會把標籤連同後文一起截掉。text/image 雙路徑共用。
 
-
   /// 發推流程：限額/連接檢查 → 確認卡（承諾過「先過目」）→ 發送。
-
-
-
-
-
-
-
-
-
 
   /// 消費本輪 `<buy>` 結果：送 user 成功 → 系統訊息落庫並即時上屏；
   /// 失敗 → SnackBar 提示（模型側回饋走 pendingBuyFailureNote 動態注入）。
   /// text / image 雙路徑共用此消費點。
 
-
   /// 每個窗口第一輪的狀態快照（背包星標、日常角色狀態）。
   /// 文字與圖片路徑共用，避免用圖片開窗時漏注入。
 
   /// 蛛網記憶串聯提示（本輪 runtime context，不追加到用戶原文）。
-
-
-
 
   /// 情緒座標範圍：RP 每條故事線各一份（平行時空），日常一份。
   String get _emotionScopeId {
@@ -106,11 +78,9 @@ extension _ChatGenerationMethods on _ChatScreenState {
     );
   }
 
-
   /// Language changes are an explicit one-time static-prefix invalidation.
   /// Refresh only language-bearing snapshots; keep data baselines intact so
   /// deltas, summary pins, and append-only history semantics do not change.
-
 
   /// 上下文限制與側邊欄一致，以完整消息氣泡數計算。
   /// Cache 與上下文限制互斥，因此這裡不再為舊 Token 滯後邏輯保留
@@ -120,33 +90,9 @@ extension _ChatGenerationMethods on _ChatScreenState {
 
   /// 窗口摘要壓縮
 
-
-
-
   /// 靜態摘要 pin：綁對話 ID、出生釘一塊（最新滾動摘要原文）、存庫永凍。
   /// 之後不管壓縮 rotate、重開對話、摘要增刪，都讀這份釘死的複本——
   /// 前綴恆定，緩存不炸。詳見 cache_fix_定案清單.md。
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
   Future<void> _onSendMessage(
     String text, {
@@ -200,22 +146,6 @@ extension _ChatGenerationMethods on _ChatScreenState {
       }
     }
   }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
   Widget _rpContinuationSummaryPreview(String summary, int index) => Padding(
     padding: const EdgeInsets.only(bottom: 12),
@@ -541,7 +471,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
               promptVisibleOutboundText,
             );
     });
-    final rpStoryContextF = sessionIdentity.contextMode == ContextMode.rp
+    final rpStoryContextPartsF = sessionIdentity.contextMode == ContextMode.rp
         ? Future.wait<String>(<Future<String>>[
             RpStoryService.recallPrompt(
               charId,
@@ -559,10 +489,8 @@ extension _ChatGenerationMethods on _ChatScreenState {
               continuityId: sessionIdentity.continuityId,
               query: promptVisibleOutboundText,
             ),
-          ]).then(
-            (parts) => parts.where((part) => part.isNotEmpty).join('\n\n'),
-          )
-        : Future<String>.value('');
+          ])
+        : Future<List<String>>.value(const <String>[]);
     final fatiguePromptF = bioclockEnabledF.then(
       (enabled) async =>
           enabled ? await BioClockService.fatiguePrompt(charId) : '',
@@ -597,6 +525,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
       sessionIdentity.contextMode,
     );
 
+    final staticWindowSummary = await staticWindowSummaryF;
     final staticBundle = await _buildCommonStaticParts(
       characterId: charId,
       systemPrompt: systemPrompt,
@@ -614,7 +543,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
       whisperModelOverrideEnabled:
           (charData?['whisper_model_override'] as int? ?? 1) == 1,
       providerName: providerName,
-      staticWindowSummary: await staticWindowSummaryF,
+      staticWindowSummary: staticWindowSummary,
       contextMode: sessionIdentity.contextMode,
       toolFeatures: toolFeatures,
     );
@@ -626,6 +555,20 @@ extension _ChatGenerationMethods on _ChatScreenState {
     }
     final turnEffects = DeferredPromptBatch()..add(memoryPrompt);
     final now = DateTime.now();
+    final isRpContext = sessionIdentity.contextMode == ContextMode.rp;
+    if (isRpContext &&
+        memoryWriteEnabled &&
+        toolFeatures.toolPromptsEnabled &&
+        MemoryActions.isRpCorrectionIntent(promptVisibleOutboundText)) {
+      dynamicParts.add(
+        SystemContextMarkdown.section(
+          enTitle: 'RP Correction',
+          zhTWTitle: 'RP 修正',
+          zhCNTitle: 'RP 修正',
+          content: MemoryActions.rpCorrectionRuntimeInstruction(),
+        ),
+      );
+    }
     final diaryPrompt = await CharacterDiaryService.buildNightPrompt(
       characterId: charId,
       conversationId: widget.conversationId,
@@ -647,7 +590,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
       );
       turnEffects.add(diaryPrompt);
     }
-    if (memoryPrompt.isNotEmpty) {
+    if (!isRpContext && memoryPrompt.isNotEmpty) {
       dynamicParts.add(
         SystemContextMarkdown.section(
           enTitle: 'Memory',
@@ -658,6 +601,50 @@ extension _ChatGenerationMethods on _ChatScreenState {
       );
     }
     final contextSummary = await dynamicWindowSummaryF;
+    final recallPrompt = await recallPromptF;
+    final continuationBudget = max(
+      0,
+      ContextCompressor.rpLiveContinuityMaxChars -
+          ContextCompressor.rpStoryReferenceReserveChars -
+          staticWindowSummary.length -
+          contextSummary.length,
+    );
+    final continuationSummary = isRpContext
+        ? ContextCompressor.fitRpSummaryToCharacterBudget(
+            _rpContinuationSummaryPrompt,
+            continuationBudget,
+            preferLatest: true,
+          )
+        : _rpContinuationSummaryPrompt;
+    final storyBudget = min(
+      ContextCompressor.rpStoryContextMaxChars,
+      max(
+        0,
+        ContextCompressor.rpLiveContinuityMaxChars -
+            staticWindowSummary.length -
+            contextSummary.length -
+            continuationSummary.length,
+      ),
+    );
+    final rpStoryContext = isRpContext
+        ? ContextCompressor.fitRpReferencePartsToCharacterBudget(<String>[
+            if (memoryPrompt.isNotEmpty)
+              SystemContextMarkdown.section(
+                enTitle: 'Memory',
+                zhTWTitle: '記憶',
+                zhCNTitle: '记忆',
+                content: memoryPrompt.text,
+              ),
+            ...await rpStoryContextPartsF,
+            if (recallPrompt.isNotEmpty)
+              SystemContextMarkdown.section(
+                enTitle: 'Timeline Recall',
+                zhTWTitle: '時間線召回',
+                zhCNTitle: '时间线召回',
+                content: recallPrompt,
+              ),
+          ], storyBudget)
+        : '';
     if (contextSummary.isNotEmpty) {
       dynamicParts.add(
         SystemContextMarkdown.section(
@@ -668,8 +655,8 @@ extension _ChatGenerationMethods on _ChatScreenState {
         ),
       );
     }
-    if (_rpContinuationSummaryPrompt.isNotEmpty) {
-      final isRpContinuation = sessionIdentity.contextMode == ContextMode.rp;
+    if (continuationSummary.isNotEmpty) {
+      final isRpContinuation = isRpContext;
       dynamicParts.add(
         SystemContextMarkdown.section(
           enTitle: isRpContinuation
@@ -677,11 +664,10 @@ extension _ChatGenerationMethods on _ChatScreenState {
               : 'Selected Window Summaries',
           zhTWTitle: isRpContinuation ? '所選篇章摘要' : '所選窗口摘要',
           zhCNTitle: isRpContinuation ? '所选篇章摘要' : '所选窗口摘要',
-          content: _rpContinuationSummaryPrompt,
+          content: continuationSummary,
         ),
       );
     }
-    final rpStoryContext = await rpStoryContextF;
     if (rpStoryContext.isNotEmpty) {
       dynamicParts.add(
         SystemContextMarkdown.section(
@@ -833,8 +819,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
     );
 
     // 回憶觸發（已提前發射）
-    final recallPrompt = await recallPromptF;
-    if (recallPrompt.isNotEmpty) {
+    if (!isRpContext && recallPrompt.isNotEmpty) {
       dynamicParts.add(
         SystemContextMarkdown.section(
           enTitle: 'Recall',
@@ -859,14 +844,16 @@ extension _ChatGenerationMethods on _ChatScreenState {
     }
 
     // 時間變動最頻繁，放在動態區塊後段。
-    dynamicParts.add(
-      SystemContextMarkdown.section(
-        enTitle: 'Current Time',
-        zhTWTitle: '當前時間',
-        zhCNTitle: '当前时间',
-        content: _timePrompt(now),
-      ),
-    );
+    if (!isRpContext || toolFeatures.rpDailyLifeToolsEnabled) {
+      dynamicParts.add(
+        SystemContextMarkdown.section(
+          enTitle: 'Current Time',
+          zhTWTitle: '當前時間',
+          zhCNTitle: '当前时间',
+          content: _timePrompt(now),
+        ),
+      );
+    }
 
     // Thinking 是本輪展示策略，不得進入可快取 control prefix。Thinking
     // Machines 使用原生 request 參數，其餘 provider 走 request-only sidecar。
@@ -1038,17 +1025,11 @@ extension _ChatGenerationMethods on _ChatScreenState {
       }
       _activeRequestThinkingEnabled = thinkingEnabled;
       _activeRequestThinkingGeneration = generationSerial;
-      final cacheMode = await Future.wait<bool>(<Future<bool>>[
-        MemorySettings.getEnablePromptCaching(),
-        MemorySettings.getContextLimitEnabled(),
-      ]);
-      if (cacheMode[0] &&
-          !cacheMode[1] &&
-          TokenEstimator.cacheThresholdInfoForModel(
-                provider: providerName,
-                model: model,
-              ).kind !=
-              CacheThresholdKind.unavailable) {
+      final costStrategy = await ModelCostPolicy.resolveEffectiveStrategy(
+        provider: providerName,
+        model: model,
+      );
+      if (costStrategy.promptCacheEnabled) {
         await ApiSettings.recordSentThinkingState(
           conversationId: widget.conversationId,
           provider: providerName,
@@ -2093,24 +2074,27 @@ extension _ChatGenerationMethods on _ChatScreenState {
     final imageMemoryMessage = outboundCaption.isNotEmpty
         ? outboundCaption
         : '（用戶發送了一張圖片）';
+    // 顯示文案不是圖片的語義。無配文時不用「用戶／發送／圖片」
+    // 這些假關鍵詞撞記憶、時間線、人物與世界書。
+    final imageRecallQuery = outboundCaption.trim();
     final imgTimelineEnabled = await MemorySettings.getTimelineEnabled();
     final imgRecallPrompt = imgTimelineEnabled
         ? sessionIdentity.contextMode == ContextMode.rp
               ? await RpCharacterTimelineService.recallPrompt(
                   _activeCharacterId,
-                  imageMemoryMessage,
+                  imageRecallQuery,
                   continuityId: sessionIdentity.continuityId,
                 )
               : await CharacterTimelineService.recallPrompt(
                   _activeCharacterId,
-                  imageMemoryMessage,
+                  imageRecallQuery,
                 )
         : '';
-    final imgRpStoryContext = sessionIdentity.contextMode == ContextMode.rp
-        ? (await Future.wait<String>(<Future<String>>[
+    final imgRpStoryContextParts = sessionIdentity.contextMode == ContextMode.rp
+        ? await Future.wait<String>(<Future<String>>[
             RpStoryService.recallPrompt(
               _activeCharacterId,
-              imageMemoryMessage,
+              imageRecallQuery,
               continuityId: sessionIdentity.continuityId,
               recentMessages: _messages,
             ),
@@ -2122,14 +2106,14 @@ extension _ChatGenerationMethods on _ChatScreenState {
             RpWorldbookService.recallPrompt(
               characterId: _activeCharacterId,
               continuityId: sessionIdentity.continuityId,
-              query: imageMemoryMessage,
+              query: imageRecallQuery,
             ),
-          ])).where((part) => part.isNotEmpty).join('\n\n')
-        : '';
+          ])
+        : const <String>[];
     final memoryPrompt = sessionIdentity.contextMode == ContextMode.rp
         ? await RpMemoryService.buildPrompt(
             mode: await _memoryBucket(),
-            currentMessage: imageMemoryMessage,
+            currentMessage: imageRecallQuery,
             characterId: _activeCharacterId,
             windowId: widget.conversationId,
             continuityId: sessionIdentity.continuityId,
@@ -2137,7 +2121,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
           )
         : await Retriever.buildMemoryPrompt(
             mode: await _memoryBucket(),
-            currentMessage: imageMemoryMessage,
+            currentMessage: imageRecallQuery,
             characterId: _activeCharacterId,
             windowId: widget.conversationId,
             emotionEnabled: emotionEnabled,
@@ -2176,6 +2160,9 @@ extension _ChatGenerationMethods on _ChatScreenState {
     // The image request itself still does not execute web.search here; this
     // flag only keeps the cacheable capability contract from drifting.
     final imgWebSearchEnabled = await WebSearchSettings.getEnabled();
+    final imgStaticWindowSummary = await _buildStaticWindowSummaryPrompt(
+      _activeCharacterId,
+    );
     final staticBundle = await _buildCommonStaticParts(
       characterId: _activeCharacterId,
       systemPrompt: systemPrompt,
@@ -2193,9 +2180,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
       whisperModelOverrideEnabled:
           (charDataImg?['whisper_model_override'] as int? ?? 1) == 1,
       providerName: imgProviderName,
-      staticWindowSummary: await _buildStaticWindowSummaryPrompt(
-        _activeCharacterId,
-      ),
+      staticWindowSummary: imgStaticWindowSummary,
       contextMode: sessionIdentity.contextMode,
       toolFeatures: imgToolFeatures,
     );
@@ -2213,6 +2198,20 @@ extension _ChatGenerationMethods on _ChatScreenState {
     }
     final controlParts = <String>[];
     final turnEffects = DeferredPromptBatch()..add(memoryPrompt);
+    final isImgRpContext = sessionIdentity.contextMode == ContextMode.rp;
+    if (isImgRpContext &&
+        imgMemoryWriteEnabled &&
+        imgToolFeatures.toolPromptsEnabled &&
+        MemoryActions.isRpCorrectionIntent(outboundCaption)) {
+      dynamicParts.add(
+        SystemContextMarkdown.section(
+          enTitle: 'RP Correction',
+          zhTWTitle: 'RP 修正',
+          zhCNTitle: 'RP 修正',
+          content: MemoryActions.rpCorrectionRuntimeInstruction(),
+        ),
+      );
+    }
     final imgDiaryPrompt = await CharacterDiaryService.buildNightPrompt(
       characterId: _activeCharacterId,
       conversationId: widget.conversationId,
@@ -2235,7 +2234,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
       );
       turnEffects.add(imgDiaryPrompt);
     }
-    if (memoryPrompt.isNotEmpty) {
+    if (!isImgRpContext && memoryPrompt.isNotEmpty) {
       dynamicParts.add(
         SystemContextMarkdown.section(
           enTitle: 'Memory',
@@ -2247,10 +2246,51 @@ extension _ChatGenerationMethods on _ChatScreenState {
     }
     final imgContextSummary = await _buildDynamicWindowSummaryPrompt(
       _activeCharacterId,
-      currentMessage: outboundCaption.isNotEmpty
-          ? outboundCaption
-          : L.pick(en: 'The user sent an image.', zhTW: '用戶發送了一張圖片'),
+      currentMessage: imageRecallQuery,
     );
+    final imgContinuationBudget = max(
+      0,
+      ContextCompressor.rpLiveContinuityMaxChars -
+          ContextCompressor.rpStoryReferenceReserveChars -
+          imgStaticWindowSummary.length -
+          imgContextSummary.length,
+    );
+    final imgContinuationSummary = isImgRpContext
+        ? ContextCompressor.fitRpSummaryToCharacterBudget(
+            _rpContinuationSummaryPrompt,
+            imgContinuationBudget,
+            preferLatest: true,
+          )
+        : _rpContinuationSummaryPrompt;
+    final imgStoryBudget = min(
+      ContextCompressor.rpStoryContextMaxChars,
+      max(
+        0,
+        ContextCompressor.rpLiveContinuityMaxChars -
+            imgStaticWindowSummary.length -
+            imgContextSummary.length -
+            imgContinuationSummary.length,
+      ),
+    );
+    final imgRpStoryContext = isImgRpContext
+        ? ContextCompressor.fitRpReferencePartsToCharacterBudget(<String>[
+            if (memoryPrompt.isNotEmpty)
+              SystemContextMarkdown.section(
+                enTitle: 'Memory',
+                zhTWTitle: '記憶',
+                zhCNTitle: '记忆',
+                content: memoryPrompt.text,
+              ),
+            ...imgRpStoryContextParts,
+            if (imgRecallPrompt.isNotEmpty)
+              SystemContextMarkdown.section(
+                enTitle: 'Timeline Recall',
+                zhTWTitle: '時間線召回',
+                zhCNTitle: '时间线召回',
+                content: imgRecallPrompt,
+              ),
+          ], imgStoryBudget)
+        : '';
     if (imgContextSummary.isNotEmpty) {
       dynamicParts.add(
         SystemContextMarkdown.section(
@@ -2258,6 +2298,19 @@ extension _ChatGenerationMethods on _ChatScreenState {
           zhTWTitle: '對話摘要',
           zhCNTitle: '对话摘要',
           content: imgContextSummary,
+        ),
+      );
+    }
+    if (imgContinuationSummary.isNotEmpty) {
+      final isRpContinuation = isImgRpContext;
+      dynamicParts.add(
+        SystemContextMarkdown.section(
+          enTitle: isRpContinuation
+              ? 'Selected Chapter Summary'
+              : 'Selected Window Summaries',
+          zhTWTitle: isRpContinuation ? '所選篇章摘要' : '所選窗口摘要',
+          zhCNTitle: isRpContinuation ? '所选篇章摘要' : '所选窗口摘要',
+          content: imgContinuationSummary,
         ),
       );
     }
@@ -2271,20 +2324,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
         ),
       );
     }
-    if (_rpContinuationSummaryPrompt.isNotEmpty) {
-      final isRpContinuation = sessionIdentity.contextMode == ContextMode.rp;
-      dynamicParts.add(
-        SystemContextMarkdown.section(
-          enTitle: isRpContinuation
-              ? 'Selected Chapter Summary'
-              : 'Selected Window Summaries',
-          zhTWTitle: isRpContinuation ? '所選篇章摘要' : '所選窗口摘要',
-          zhCNTitle: isRpContinuation ? '所选篇章摘要' : '所选窗口摘要',
-          content: _rpContinuationSummaryPrompt,
-        ),
-      );
-    }
-    if (imgRecallPrompt.isNotEmpty) {
+    if (!isImgRpContext && imgRecallPrompt.isNotEmpty) {
       dynamicParts.add(
         SystemContextMarkdown.section(
           enTitle: 'Recall',
@@ -2436,14 +2476,16 @@ extension _ChatGenerationMethods on _ChatScreenState {
     );
 
     // 時間變動最頻繁，與文字路徑一致放在動態區塊後段。
-    dynamicParts.add(
-      SystemContextMarkdown.section(
-        enTitle: 'Current Time',
-        zhTWTitle: '當前時間',
-        zhCNTitle: '当前时间',
-        content: _timePrompt(now),
-      ),
-    );
+    if (!isImgRpContext || imgToolFeatures.rpDailyLifeToolsEnabled) {
+      dynamicParts.add(
+        SystemContextMarkdown.section(
+          enTitle: 'Current Time',
+          zhTWTitle: '當前時間',
+          zhCNTitle: '当前时间',
+          content: _timePrompt(now),
+        ),
+      );
+    }
 
     // Thinking 是 request-only 動態策略，切換時不改可快取前綴。
     final thinkingOn = await ApiSettings.getThinkingChain();
@@ -2621,17 +2663,11 @@ extension _ChatGenerationMethods on _ChatScreenState {
       }
       _activeRequestThinkingEnabled = thinkingOn;
       _activeRequestThinkingGeneration = generationSerial;
-      final imgCacheMode = await Future.wait<bool>(<Future<bool>>[
-        MemorySettings.getEnablePromptCaching(),
-        MemorySettings.getContextLimitEnabled(),
-      ]);
-      if (imgCacheMode[0] &&
-          !imgCacheMode[1] &&
-          TokenEstimator.cacheThresholdInfoForModel(
-                provider: imgProviderName,
-                model: model,
-              ).kind !=
-              CacheThresholdKind.unavailable) {
+      final imgCostStrategy = await ModelCostPolicy.resolveEffectiveStrategy(
+        provider: imgProviderName,
+        model: model,
+      );
+      if (imgCostStrategy.promptCacheEnabled) {
         await ApiSettings.recordSentThinkingState(
           conversationId: widget.conversationId,
           provider: imgProviderName,

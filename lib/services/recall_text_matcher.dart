@@ -14,13 +14,100 @@ class RecallKeywordMatch {
 /// compressed-summary keyword recall.
 class RecallTextMatcher {
   static const int _keywordCacheLimit = 12000;
+  static const Set<String> _commonCjkRecallTerms = <String>{
+    '我們',
+    '我们',
+    '你們',
+    '你们',
+    '他們',
+    '他们',
+    '她們',
+    '她们',
+    '自己',
+    '大家',
+    '人家',
+    '這個',
+    '这个',
+    '那個',
+    '那个',
+    '一個',
+    '一个',
+    '現在',
+    '现在',
+    '剛才',
+    '刚才',
+    '已經',
+    '已经',
+    '還是',
+    '还是',
+    '沒有',
+    '没有',
+    '不是',
+    '就是',
+    '只是',
+    '但是',
+    '可是',
+    '因為',
+    '因为',
+    '所以',
+    '如果',
+    '然後',
+    '然后',
+    '而且',
+    '或者',
+    '可能',
+    '應該',
+    '应该',
+    '可以',
+    '需要',
+    '覺得',
+    '觉得',
+    '知道',
+    '明白',
+    '看看',
+    '想想',
+    '什麼',
+    '什么',
+    '怎麼',
+    '怎么',
+    '為什麼',
+    '为什么',
+    '哪個',
+    '哪个',
+    '這樣',
+    '这样',
+    '那樣',
+    '那样',
+    '這裡',
+    '这里',
+    '那裡',
+    '那里',
+    '有點',
+    '有点',
+    '一下',
+    '一些',
+    '一直',
+    '真的',
+    '其實',
+    '其实',
+    '好像',
+    '比如',
+    '例如',
+    '關於',
+    '关于',
+    '目前',
+  };
   static final LinkedHashMap<String, List<String>> _keywordCache =
       LinkedHashMap<String, List<String>>();
 
   /// Bounded terms for relevance ranking. CJK does not have whitespace word
   /// boundaries, so include short 2-4 character windows; longer windows score
   /// higher at the caller and reduce dependence on model-authored triggers.
-  static List<String> relevanceTerms(String query, {int maxTerms = 48}) {
+  static List<String> relevanceTerms(
+    String query, {
+    int maxTerms = 48,
+    bool dropCommonCjkTerms = false,
+  }) {
     if (maxTerms <= 0) return const <String>[];
     final normalized = _normalize(query);
     final seen = <String>{};
@@ -28,7 +115,10 @@ class RecallTextMatcher {
 
     void add(String value) {
       final term = value.trim();
-      if (term.length < 2 || !seen.add(term) || terms.length >= maxTerms) {
+      if (term.length < 2 ||
+          (dropCommonCjkTerms && _commonCjkRecallTerms.contains(term)) ||
+          !seen.add(term) ||
+          terms.length >= maxTerms) {
         return;
       }
       terms.add(term);

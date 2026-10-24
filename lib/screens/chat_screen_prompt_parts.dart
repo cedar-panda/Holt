@@ -315,10 +315,14 @@ extension _ChatPromptPartMethods on _ChatScreenState {
           : pinned.split('\n').toSet();
     }
 
-    if (toolPromptsEnabled) {
+    final stickersAllowed =
+        contextMode != ContextMode.rp || toolFeatures.rpDailyLifeToolsEnabled;
+    if (toolPromptsEnabled && stickersAllowed) {
       _stickerPromptSnapshot ??= await StickerService.buildStickerPrompt(
         characterId: characterId,
         userPersonaId: _userPersona?.id,
+        maxEntries: contextMode == ContextMode.rp ? 24 : null,
+        maxCharacters: contextMode == ContextMode.rp ? 1600 : null,
       );
     }
     // 背包窗內快照（delta 基準），與其他快照同點初始化
@@ -446,7 +450,9 @@ extension _ChatPromptPartMethods on _ChatScreenState {
         await XPostSettings.isEnabled(characterId)) {
       toolSections.add(ToolPrompts.xPost());
     }
-    if (toolPromptsEnabled && _stickerPromptSnapshot?.isNotEmpty == true) {
+    if (toolPromptsEnabled &&
+        stickersAllowed &&
+        _stickerPromptSnapshot?.isNotEmpty == true) {
       windowParts.add(_stickerPromptSnapshot!);
     }
 
@@ -580,9 +586,21 @@ extension _ChatPromptPartMethods on _ChatScreenState {
   }
 
   Future<int> _hysteresisKeepFrom(List<String> contents) async {
-    final enabled = await MemorySettings.getContextLimitEnabled();
+    // Cache 模式依賴 append-only 歷史來維持前綴；即使備份還原或
+    // 舊版本留下了「Cache／上下文限制同時開啟」的非法組合，
+    // 請求端也必須優先保住完整歷史，不能裁掉前文又因 Cache
+    // 模式關閉截斷摘要。
+    final costStrategy = await ModelCostPolicy.resolveCurrentStrategy();
+    if (costStrategy.promptCacheEnabled) {
+      _contextKeepFrom = 0;
+      return 0;
+    }
     final limit = await MemorySettings.getContextMessageLimit();
-    if (!enabled || limit <= 0 || contents.length <= 1) return 0;
+    if (!costStrategy.contextLimitEnabled ||
+        limit <= 0 ||
+        contents.length <= 1) {
+      return 0;
+    }
     final keep = max(0, contents.length - limit);
     _contextKeepFrom = keep;
     return keep;

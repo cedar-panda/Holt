@@ -995,6 +995,7 @@ class _CharacterTimelinePanelState extends State<CharacterTimelinePanel> {
             // 日期
             Text(
               dateStr,
+              textScaler: const TextScaler.linear(1),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
@@ -1008,6 +1009,7 @@ class _CharacterTimelinePanelState extends State<CharacterTimelinePanel> {
             // 內容文字
             Text(
               displayText,
+              textScaler: const TextScaler.linear(1),
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
               textAlign: TextAlign.center,

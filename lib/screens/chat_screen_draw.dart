@@ -9,6 +9,7 @@ extension _ChatDrawMethods on _ChatScreenState {
     String baseLog,
     String characterId,
   ) async {
+    final generationEpoch = ++_imageGenerationEpoch;
     if (mounted) {
       _refreshChatState(() {
         _isGeneratingImage = true;
@@ -60,6 +61,19 @@ extension _ChatDrawMethods on _ChatScreenState {
       final msg = e.toString();
       note = '🎨 畫圖失敗：${msg.length > 140 ? msg.substring(0, 140) : msg}';
     }
+    if (generationEpoch != _imageGenerationEpoch) {
+      if (path != null) {
+        final generatedFile = File(path);
+        if (await generatedFile.exists()) {
+          await generatedFile.delete().catchError((_) => generatedFile);
+        }
+      }
+      final cancelledLog = baseLog.contains('🎨 生成中…')
+          ? baseLog.replaceFirst('🎨 生成中…', '🎨 已取消')
+          : baseLog;
+      await DatabaseHelper.updateMessageDraw(messageId, null, cancelledLog);
+      return;
+    }
     final newLog = baseLog.contains('🎨 生成中…')
         ? baseLog.replaceFirst('🎨 生成中…', note)
         : baseLog;
@@ -89,5 +103,53 @@ extension _ChatDrawMethods on _ChatScreenState {
         );
       }
     });
+  }
+
+  Future<void> _cancelActiveImageGeneration() async {
+    _imageGenerationEpoch++;
+    final pending = _messages
+        .where((message) => message.imagePath == 'generating')
+        .toList(growable: false);
+    if (mounted) {
+      _refreshChatState(() {
+        _isGeneratingImage = false;
+        for (final pendingMessage in pending) {
+          final index = _messages.indexWhere(
+            (message) => message.id == pendingMessage.id,
+          );
+          if (index < 0) continue;
+          final memoryLog = pendingMessage.memoryLog.replaceFirst(
+            '🎨 生成中…',
+            '🎨 已取消',
+          );
+          _messages[index] = Message(
+            id: pendingMessage.id,
+            conversationId: pendingMessage.conversationId,
+            characterId: pendingMessage.characterId,
+            text: pendingMessage.text,
+            isUser: pendingMessage.isUser,
+            imagePath: null,
+            imagePaths: pendingMessage.imagePaths,
+            splitMode: pendingMessage.splitMode,
+            cacheHit: pendingMessage.cacheHit,
+            status: pendingMessage.status,
+            memoryLog: memoryLog,
+            webSearchTrace: pendingMessage.webSearchTrace,
+            emailDraft: pendingMessage.emailDraft,
+            personaCard: pendingMessage.personaCard,
+            createdAt: pendingMessage.createdAt,
+          );
+        }
+      });
+    }
+    for (final pendingMessage in pending) {
+      final id = pendingMessage.id;
+      if (id == null) continue;
+      await DatabaseHelper.updateMessageDraw(
+        id,
+        null,
+        pendingMessage.memoryLog.replaceFirst('🎨 生成中…', '🎨 已取消'),
+      );
+    }
   }
 }

@@ -1,3 +1,4 @@
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
 import '../memory/database.dart';
@@ -16,34 +17,7 @@ class RpStorylineEntry extends StatelessWidget {
   final String characterId;
 
   Route<void> _softRoute(BuildContext context, Widget page) {
-    final reduceMotion = MediaQuery.disableAnimationsOf(context);
-    return PageRouteBuilder<void>(
-      transitionDuration: reduceMotion
-          ? Duration.zero
-          : const Duration(milliseconds: 240),
-      reverseTransitionDuration: reduceMotion
-          ? Duration.zero
-          : const Duration(milliseconds: 180),
-      pageBuilder: (_, _, _) => page,
-      transitionsBuilder: (_, animation, _, child) {
-        if (reduceMotion) return child;
-        final curved = CurvedAnimation(
-          parent: animation,
-          curve: Curves.easeOutCubic,
-          reverseCurve: Curves.easeInCubic,
-        );
-        return FadeTransition(
-          opacity: curved,
-          child: SlideTransition(
-            position: Tween<Offset>(
-              begin: const Offset(0.018, 0),
-              end: Offset.zero,
-            ).animate(curved),
-            child: child,
-          ),
-        );
-      },
-    );
+    return CupertinoPageRoute<void>(builder: (_) => page);
   }
 
   Future<void> _openArchive(BuildContext context) async {

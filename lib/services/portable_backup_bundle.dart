@@ -57,6 +57,19 @@ class PortableBackupBundle {
 
   static const Set<String> _emptyStringPathTables = {'shop_items', 'stickers'};
 
+  static final RegExp _legacyIosDocumentsPath = RegExp(
+    r'^/(?:private/)?var/mobile/Containers/Data/Application/'
+    r'[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-'
+    r'[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/Documents/(.+)$',
+  );
+  static final RegExp _backgroundPresetPreferenceKey = RegExp(
+    r'^background_preset_slot_\d+_v1$',
+  );
+  static const Set<String> _backgroundPresetPathFields = <String>{
+    'home_path',
+    'chat_path',
+  };
+
   static Future<File> create({
     required Map<String, Object?> backupData,
     required File databaseSnapshot,
@@ -343,15 +356,41 @@ class PortableBackupBundle {
       if (rawPath is! String || rawPath.trim().isEmpty) return null;
       final normalized = p.normalize(rawPath);
       final safeRoot = p.normalize(ownedRoot.path);
-      if (!p.isAbsolute(normalized) ||
-          (!p.equals(normalized, safeRoot) &&
-              !p.isWithin(safeRoot, normalized))) {
+      String? ownedPath;
+      if (p.isAbsolute(normalized) &&
+          (p.equals(normalized, safeRoot) ||
+              p.isWithin(safeRoot, normalized))) {
+        ownedPath = normalized;
+      } else if (!p.isAbsolute(normalized) && normalized != '.') {
+        // App-owned backgrounds are intentionally persisted relative to
+        // Documents so an iOS container UUID change does not break them.
+        // Resolve only a traversal-safe relative path under the current root.
+        final rebased = p.normalize(p.join(safeRoot, normalized));
+        if (p.isWithin(safeRoot, rebased)) ownedPath = rebased;
+      } else {
+        // An in-place iOS upgrade changes the app-container UUID. Older rows
+        // can therefore retain a now-stale absolute Documents path even though
+        // the same app-owned file survived under the current Documents root.
+        // Rebase only that exact container shape; never read from the stale or
+        // any other external absolute path.
+        final legacyMatch = _legacyIosDocumentsPath.firstMatch(normalized);
+        if (legacyMatch != null) {
+          final relativePath = p.normalize(legacyMatch.group(1)!);
+          final rebased = p.normalize(p.join(safeRoot, relativePath));
+          if (relativePath != '.' &&
+              !p.isAbsolute(relativePath) &&
+              p.isWithin(safeRoot, rebased)) {
+            ownedPath = rebased;
+          }
+        }
+      }
+      if (ownedPath == null) {
         if (requiredForBackup) {
           throw StateError('備份媒體不在 App 儲存範圍：$owner');
         }
         return null;
       }
-      final source = File(normalized);
+      final source = File(ownedPath);
       if (!await source.exists()) {
         if (requiredForBackup) throw StateError('備份媒體遺失：$owner');
         return null;
@@ -374,7 +413,7 @@ class PortableBackupBundle {
       final size = await temporary.length();
       if (size > _maxMediaFileBytes) {
         await temporary.delete();
-        throw StateError('媒體檔案超過備份上限：${p.basename(normalized)}');
+        throw StateError('媒體檔案超過備份上限：${p.basename(ownedPath)}');
       }
       final digest = (await sha256.bind(temporary.openRead()).first).toString();
       final duplicate = digestToPortable[digest];
@@ -389,7 +428,7 @@ class PortableBackupBundle {
         throw StateError('備份媒體總大小超過安全上限');
       }
 
-      final extension = _safeExtension(normalized);
+      final extension = _safeExtension(ownedPath);
       final portablePath = 'media/$digest$extension';
       final staged = File(p.join(stage.path, portablePath));
       await temporary.rename(staged.path);
@@ -473,14 +512,30 @@ class PortableBackupBundle {
     final preferences = data['preferences'];
     if (preferences is Map) {
       for (final key in preferences.keys.toList()) {
-        if (!key.toString().toLowerCase().contains('path')) continue;
-        preferences[key] =
-            await stagePath(
-              preferences[key],
-              owner: 'preferences.$key',
-              requiredForBackup: true,
-            ) ??
-            '';
+        final keyText = key.toString();
+        if (keyText.toLowerCase().contains('path')) {
+          preferences[key] =
+              await stagePath(
+                preferences[key],
+                owner: 'preferences.$keyText',
+                requiredForBackup: true,
+              ) ??
+              '';
+          continue;
+        }
+        if (!_backgroundPresetPreferenceKey.hasMatch(keyText)) continue;
+        final preset = _decodeBackgroundPresetPreference(preferences[key]);
+        if (preset == null) continue;
+        for (final field in _backgroundPresetPathFields) {
+          preset[field] =
+              await stagePath(
+                preset[field],
+                owner: 'preferences.$keyText.$field',
+                requiredForBackup: true,
+              ) ??
+              '';
+        }
+        preferences[key] = jsonEncode(preset);
       }
     }
     manifest.sort(
@@ -541,8 +596,16 @@ class PortableBackupBundle {
     final preferences = data['preferences'];
     if (preferences is Map) {
       for (final entry in preferences.entries) {
-        if (entry.key.toString().toLowerCase().contains('path')) {
-          count('preferences.${entry.key}', entry.value);
+        final key = entry.key.toString();
+        if (key.toLowerCase().contains('path')) {
+          count('preferences.$key', entry.value);
+          continue;
+        }
+        if (!_backgroundPresetPreferenceKey.hasMatch(key)) continue;
+        final preset = _decodeBackgroundPresetPreference(entry.value);
+        if (preset == null) continue;
+        for (final field in _backgroundPresetPathFields) {
+          count('preferences.$key.$field', preset[field]);
         }
       }
     }
@@ -620,8 +683,18 @@ class PortableBackupBundle {
     final preferences = data['preferences'];
     if (preferences is Map) {
       for (final key in preferences.keys.toList()) {
-        if (!key.toString().toLowerCase().contains('path')) continue;
-        preferences[key] = resolve(preferences[key], emptyString: true) ?? '';
+        final keyText = key.toString();
+        if (keyText.toLowerCase().contains('path')) {
+          preferences[key] = resolve(preferences[key], emptyString: true) ?? '';
+          continue;
+        }
+        if (!_backgroundPresetPreferenceKey.hasMatch(keyText)) continue;
+        final preset = _decodeBackgroundPresetPreference(preferences[key]);
+        if (preset == null) continue;
+        for (final field in _backgroundPresetPathFields) {
+          preset[field] = resolve(preset[field], emptyString: true) ?? '';
+        }
+        preferences[key] = jsonEncode(preset);
       }
     }
   }
@@ -645,6 +718,21 @@ class PortableBackupBundle {
   static Map<String, dynamic> _deepCopy(Map<String, Object?> source) {
     final decoded = jsonDecode(jsonEncode(source));
     return Map<String, dynamic>.from(decoded as Map);
+  }
+
+  static Map<String, dynamic>? _decodeBackgroundPresetPreference(Object? raw) {
+    if (raw is! String || raw.trim().isEmpty) return null;
+    try {
+      final decoded = jsonDecode(raw);
+      return decoded is Map
+          ? <String, dynamic>{
+              for (final entry in decoded.entries)
+                entry.key.toString(): entry.value,
+            }
+          : null;
+    } catch (_) {
+      return null;
+    }
   }
 
   static List<String> _decodeImagePaths(Object? raw) {

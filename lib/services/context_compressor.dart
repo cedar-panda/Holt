@@ -37,6 +37,10 @@ class ContextCompressor {
   static const int triggerTokens = 6000;
   static const int minCompressTokens = 500;
   static const int summaryCapTokens = 3600;
+  static const int rpLiveContinuityMaxChars = 4000;
+  static const int rpStoryReferenceReserveChars = 1200;
+  static const int rpStoryContextMaxChars = 1800;
+  static const int rpContinuationRecallReserveChars = 400;
 
   /// Legacy diagnostic value kept for old debug consumers. Recall labels are
   /// no longer evicted by a token cap; only matched event segments are sent to
@@ -652,9 +656,9 @@ Rules:
     );
     userContent.write(rawText);
 
-    // 調用小模型。RP 的既有事件保留由下方的本地合併器兜底，不能因
-    // 模型漏掉一個標題就重叫一次模型並把整批結果丟棄；那會令摘要
-    // 游標永遠不前進，連帶讓人物／關係投影永遠無法落庫。
+    // 調用小模型。既有卷宗是連續性參考，不是永久標題清單；
+    // 已結束且不再影響後續的事件可從新卷宗離開，原始摘要與
+    // recall_segments 仍留在本地。不再依標題差異把舊事件強制灌回。
     final response = await _callModel(
       characterId: characterId,
       conversationId: conversationId,
@@ -688,21 +692,6 @@ Rules:
       return 0;
     }
     if (contextMode == ContextMode.rp) {
-      final missingTitles = _missingRpCarryoverTitles(
-        rollingSummaryAnchors,
-        summaryText,
-      );
-      if (missingTitles.isNotEmpty) {
-        summaryText = _restoreMissingRpCarryoverEvents(
-          rollingSummaryAnchors,
-          summaryText,
-        );
-        developer.log(
-          'Restored omitted RP carryover events locally: '
-          '${missingTitles.join(' | ')}',
-          name: 'ContextCompressor',
-        );
-      }
       final rpSummaryMaxChars = await effectiveRpSummaryMaxChars(
         characterId: characterId,
         continuityId: continuityId,
@@ -1718,10 +1707,11 @@ Rules:
     nextSummary,
   );
 
-  /// Enforces the stored RP dossier ceiling after the provider response and
-  /// local carry-over repair. Every event header remains represented; prose is
-  /// shortened evenly rather than letting one long recent scene erase older
-  /// events from the rolling dossier.
+  /// Enforces the stored RP dossier ceiling after the provider response.
+  /// A retained event always keeps prose: when the dossier is too dense, low
+  /// priority closed blocks leave the current rolling map instead of surviving
+  /// as title-only shells. Their older stored summaries/recall segments remain
+  /// available for explicit retrieval.
   @visibleForTesting
   static String compactRpSummaryToHardLimit(String source, int maxCharacters) {
     final normalized = normalizeRpSummaryFormat(source).trim();
@@ -1767,47 +1757,76 @@ Rules:
       return fitRpSummaryToCharacterBudget(normalized, maxCharacters);
     }
 
-    final sectionHeadings = <String>[];
-    for (final block in blocks) {
-      if (sectionHeadings.isEmpty || sectionHeadings.last != block.section) {
-        sectionHeadings.add(block.section);
-      }
-    }
-    final fixedLength =
-        sectionHeadings.fold<int>(0, (sum, value) => sum + value.length + 1) +
-        blocks.fold<int>(0, (sum, block) => sum + block.header.length) +
-        blocks.length * 2 +
-        (blocks.length > 1 ? (blocks.length - 1) * 2 : 0);
-    var proseBudget = maxCharacters - fixedLength;
-    final rendered = <String>[];
-    String? renderedSection;
-    for (var index = 0; index < blocks.length; index++) {
+    int priority(int index) {
       final block = blocks[index];
-      if (renderedSection != block.section) {
-        rendered.add(block.section);
-        renderedSection = block.section;
+      final haystack = '${block.header}\n${block.body}'.toLowerCase();
+      var score = index; // 同等重要時優先近期進展。
+      if (block.section.contains('主線') ||
+          block.section.toLowerCase().contains('main')) {
+        score += 80;
+      } else if (block.section.contains('觀察') ||
+          block.section.toLowerCase().contains('observation')) {
+        score += 55;
+      } else if (block.section.contains('支線') ||
+          block.section.toLowerCase().contains('side')) {
+        score += 35;
       }
-      final remainingBlocks = blocks.length - index;
-      final quota = proseBudget <= 0
-          ? 0
-          : (proseBudget / remainingBlocks).floor();
-      final compactBody = _compactRpBodyToBudget(block.body, quota);
-      rendered.add(
-        compactBody.isEmpty ? block.header : '${block.header}\n$compactBody',
-      );
-      proseBudget -= compactBody.length;
+      if (RegExp(
+        r'\[(?:懸念|伏筆|衝突|關係|身份|不可逆|死亡／損失|unresolved|clue|conflict|relationship|identity|irreversible)',
+        caseSensitive: false,
+      ).hasMatch(block.header)) {
+        score += 55;
+      }
+      if (RegExp(
+        r'(未解|未完|待兌現|尚未|仍在|持續|當前|pending|unresolved|ongoing|still active)',
+        caseSensitive: false,
+      ).hasMatch(haystack)) {
+        score += 45;
+      }
+      if (RegExp(
+        r'(已結束|已收束|已兌現|已痊癒|不再影響|resolved|fulfilled|closed)',
+        caseSensitive: false,
+      ).hasMatch(haystack)) {
+        score -= 35;
+      }
+      if (block.section.contains('氛圍') ||
+          block.section.toLowerCase().contains('atmosphere')) {
+        score -= 45;
+      }
+      return score;
     }
-    var result = rendered.join('\n\n').trim();
-    if (result.length <= maxCharacters) return result;
 
-    // Extremely dense title sets can consume almost the whole allowance.
-    // Remove section headings before touching any stable event title.
-    result = rendered
-        .where((line) => !line.startsWith('### '))
-        .join('\n\n')
-        .trim();
-    if (result.length <= maxCharacters) return result;
-    return result.substring(0, maxCharacters).trimRight();
+    String render(Set<int> selected) {
+      final output = <String>[];
+      String? renderedSection;
+      for (var index = 0; index < blocks.length; index++) {
+        if (!selected.contains(index)) continue;
+        final block = blocks[index];
+        final compactBody = _compactRpBodyToBudget(block.body, 180);
+        if (compactBody.isEmpty) continue;
+        if (renderedSection != block.section) {
+          output.add(block.section);
+          renderedSection = block.section;
+        }
+        output.add('${block.header}\n$compactBody');
+      }
+      return output.join('\n\n').trim();
+    }
+
+    final ranked = List<int>.generate(blocks.length, (index) => index)
+      ..sort((left, right) {
+        final byPriority = priority(right).compareTo(priority(left));
+        return byPriority != 0 ? byPriority : right.compareTo(left);
+      });
+    final selected = <int>{};
+    for (final index in ranked) {
+      if (blocks[index].body.trim().isEmpty) continue;
+      final candidate = <int>{...selected, index};
+      if (render(candidate).length <= maxCharacters) selected.add(index);
+    }
+    final result = render(selected);
+    if (result.isNotEmpty) return result;
+    return fitRpSummaryToCharacterBudget(normalized, maxCharacters);
   }
 
   static String _compactRpBodyToBudget(String raw, int budget) {
@@ -1973,6 +1992,83 @@ Rules:
       used += fitted.length + (selected.length == 1 ? 0 : 7);
     }
     return selected.reversed.join('\n\n---\n\n');
+  }
+
+  /// Fits independently generated RP character/state/worldbook references
+  /// into one request budget. Each non-empty source keeps its heading and as
+  /// many complete lines as fit, preventing one subsystem from consuming the
+  /// entire live-continuity allowance.
+  static String fitRpReferencePartsToCharacterBudget(
+    Iterable<String> parts,
+    int maxCharacters,
+  ) {
+    final pending = parts
+        .map((part) => part.trim())
+        .where((part) => part.isNotEmpty)
+        .toList(growable: false);
+    if (pending.isEmpty || maxCharacters <= 0) return '';
+    if (pending.join('\n\n').length <= maxCharacters) {
+      return pending.join('\n\n');
+    }
+
+    final selected = <String>[];
+    var remaining = maxCharacters;
+    for (var index = 0; index < pending.length; index++) {
+      final remainingParts = pending.length - index;
+      final separator = selected.isEmpty ? 0 : 2;
+      final share = ((remaining - separator) / remainingParts).floor();
+      if (share <= 0) break;
+      final fitted = _fitCompleteLines(pending[index], share);
+      if (fitted.isEmpty) continue;
+      selected.add(fitted);
+      remaining -= fitted.length + separator;
+    }
+    return selected.join('\n\n').trim();
+  }
+
+  static String _fitCompleteLines(String source, int maxCharacters) {
+    final lines = source
+        .split('\n')
+        .map((line) => line.trimRight())
+        .where((line) => line.trim().isNotEmpty)
+        .toList(growable: false);
+    if (lines.isEmpty || maxCharacters <= 0) return '';
+    final kept = <String>[];
+    var used = 0;
+    for (final line in lines) {
+      final addition = line.length + (kept.isEmpty ? 0 : 1);
+      if (used + addition > maxCharacters) break;
+      kept.add(line);
+      used += addition;
+    }
+    // Keep a useful sentence even when a generated subsystem emits one very
+    // long content line after its heading. Dropping the whole subsystem here
+    // makes continuity disappear exactly when the reference is most dense.
+    if (kept.length == 1 && lines.length > 1) {
+      final remaining = maxCharacters - kept.first.length - 1;
+      if (remaining <= 0) return '';
+      final firstContent = _truncateAtSentenceBoundary(lines[1], remaining);
+      if (firstContent.isEmpty) return '';
+      kept.add(firstContent);
+    }
+    return kept.join('\n').trim();
+  }
+
+  static String _truncateAtSentenceBoundary(String source, int maxCharacters) {
+    final text = source.trim();
+    if (text.isEmpty || maxCharacters <= 0) return '';
+    if (text.length <= maxCharacters) return text;
+    final prefix = text.substring(0, maxCharacters);
+    final matches = RegExp(r'[。！？.!?；;]').allMatches(prefix);
+    if (matches.isNotEmpty) {
+      final end = matches.last.end;
+      final usefulBoundary = maxCharacters ~/ 2 < 24 ? maxCharacters ~/ 2 : 24;
+      if (end >= usefulBoundary) {
+        return prefix.substring(0, end).trim();
+      }
+    }
+    if (maxCharacters <= 1) return '';
+    return '${prefix.substring(0, maxCharacters - 1).trimRight()}…';
   }
 
   static _SummarySegment? _fitSegmentToCharacterBudget(
@@ -2867,10 +2963,17 @@ Output valid JSON only: {"summary":"","timeline":[{"type":"state","subject":"cha
       });
     }
 
-    // All known characters that are either name-matched in source text or
-    // still marked active — used as the full "existing characters" reference.
+    Map<String, Object?> select(Map<String, Object?> row, List<String> keys) =>
+        <String, Object?>{
+          for (final key in keys)
+            if (row[key] != null) key: row[key],
+        };
+
+    // Archive requests receive only people who actually occur in this source
+    // batch. Active/offstage cast remains stored in the dossier but must not
+    // inflate every background summarization request.
     final involved = allCharacters
-        .where((row) => mentioned(row) || row['tier'] == 'active')
+        .where(mentioned)
         .take(24)
         .toList(growable: false);
     // Subset: only those whose name/alias actually appears in this batch's
@@ -2895,6 +2998,23 @@ Output valid JSON only: {"summary":"","timeline":[{"type":"state","subject":"cha
               involvedKeys.contains(row['to_entity_key']),
         )
         .take(16)
+        .map(
+          (row) => select(row, const <String>[
+            'from_entity_key',
+            'to_entity_key',
+            'from_name',
+            'to_name',
+            'direction',
+            'current_relation',
+            'origin',
+            'closeness_catalyst',
+            'forms_of_address',
+            'shared_secrets',
+            'conflicts',
+            'knowledge_scope',
+            'visibility',
+          ]),
+        )
         .toList(growable: false);
     final allStates = await RpStoryStateService.listStates(
       characterId,
@@ -2906,12 +3026,6 @@ Output valid JSON only: {"summary":"","timeline":[{"type":"state","subject":"cha
       continuityId: continuityId,
       query: sourceText,
     );
-
-    Map<String, Object?> select(Map<String, Object?> row, List<String> keys) =>
-        <String, Object?>{
-          for (final key in keys)
-            if (row[key] != null) key: row[key],
-        };
 
     bool relatedState(Map<String, dynamic> state) {
       final type = state['state_type']?.toString() ?? '';
@@ -3008,9 +3122,6 @@ Output valid JSON only: {"summary":"","timeline":[{"type":"state","subject":"cha
       ..writeln('【當前故事線】')
       ..writeln(jsonEncode(select(storyline, const ['id', 'name', 'status'])))
       ..writeln()
-      ..writeln('【當前 User 身份】')
-      ..writeln(jsonEncode(currentPersona))
-      ..writeln()
       ..writeln('【本輪參與劇情的具體人設】')
       ..writeln(jsonEncode(participatingProfiles))
       ..writeln()
@@ -3019,9 +3130,6 @@ Output valid JSON only: {"summary":"","timeline":[{"type":"state","subject":"cha
       ..writeln()
       ..writeln('【現有劇情狀態】')
       ..writeln(jsonEncode(statesForModel))
-      ..writeln()
-      ..writeln('【現有劇情人物】')
-      ..writeln(jsonEncode(involved))
       ..writeln()
       ..writeln('【現有人物關係】')
       ..writeln(jsonEncode(relationships))
@@ -3034,14 +3142,8 @@ Output valid JSON only: {"summary":"","timeline":[{"type":"state","subject":"cha
         jsonEncode(
           matched
               .map(
-                (row) => select(row, const [
-                  'entity_key',
-                  'name',
-                  'aliases_json',
-                  'identities_json',
-                  'identity',
-                  'relation_to_leads',
-                ]),
+                (row) =>
+                    select(row, const ['entity_key', 'name', 'aliases_json']),
               )
               .toList(growable: false),
         ),

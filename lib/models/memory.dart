@@ -12,6 +12,7 @@ class Memory {
   final String? confidence;
   final String? narrativeWeight;
   final bool isPermanent;
+  final bool isPinned;
   final String? sourceConversationId;
   final DateTime createdAt;
   final DateTime updatedAt;
@@ -38,6 +39,7 @@ class Memory {
     this.confidence,
     this.narrativeWeight,
     this.isPermanent = false,
+    this.isPinned = false,
     this.sourceConversationId,
     DateTime? createdAt,
     DateTime? updatedAt,
@@ -65,6 +67,7 @@ class Memory {
       'confidence': confidence,
       'narrative_weight': narrativeWeight,
       'is_permanent': isPermanent ? 1 : 0,
+      'is_pinned': isPinned ? 1 : 0,
       'source_conversation_id': sourceConversationId,
       'created_at': createdAt.toIso8601String(),
       'updated_at': updatedAt.toIso8601String(),
@@ -91,6 +94,7 @@ class Memory {
       confidence: map['confidence'] as String?,
       narrativeWeight: map['narrative_weight'] as String?,
       isPermanent: (map['is_permanent'] as int) == 1,
+      isPinned: (map['is_pinned'] as num?)?.toInt() == 1,
       sourceConversationId: map['source_conversation_id'] as String?,
       createdAt: DateTime.parse(map['created_at'] as String),
       updatedAt: DateTime.parse(map['updated_at'] as String),

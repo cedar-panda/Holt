@@ -20,6 +20,8 @@ class RpStorylineTimelineScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final titleFontSize =
+        18.0 * YanciTheme.fontScale.clamp(0.8, 1.2).toDouble();
     return Scaffold(
       body: GradientBackground(
         child: SafeArea(
@@ -48,10 +50,14 @@ class RpStorylineTimelineScreen extends StatelessWidget {
                       children: [
                         Text(
                           L.pick(en: 'Timeline', zhTW: '時間線', zhCN: '时间线'),
-                          style: YanciTheme.headingMedium,
+                          textScaler: const TextScaler.linear(1),
+                          style: YanciTheme.headingMedium.copyWith(
+                            fontSize: titleFontSize,
+                          ),
                         ),
                         Text(
                           storylineLabel,
+                          textScaler: const TextScaler.linear(1),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: YanciTheme.bodySmall.copyWith(

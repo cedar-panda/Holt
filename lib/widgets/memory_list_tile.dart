@@ -12,6 +12,7 @@ class MemoryListTile extends StatelessWidget {
   final bool selectionMode;
   final VoidCallback onToggleSelection;
   final Future<void> Function()? onDeletePressed;
+  final Future<void> Function()? onTogglePinned;
 
   const MemoryListTile({
     super.key,
@@ -21,6 +22,7 @@ class MemoryListTile extends StatelessWidget {
     required this.selectionMode,
     required this.onToggleSelection,
     required this.onDeletePressed,
+    this.onTogglePinned,
   });
 
   @override
@@ -76,12 +78,46 @@ class MemoryListTile extends StatelessWidget {
                       if (memory.isPermanent) ...[
                         const SizedBox(width: 4),
                         Icon(
-                          Icons.push_pin_rounded,
-                          size: 10,
+                          Icons.lock_outline_rounded,
+                          size: 11,
                           color: YanciTheme.accent.withValues(alpha: 0.4),
                         ),
                       ],
                       const Spacer(),
+                      if (!selectionMode && memory.id != null)
+                        Tooltip(
+                          message: memory.isPinned
+                              ? L.pick(
+                                  en: 'Stop including every turn',
+                                  zhTW: '取消每輪注入',
+                                  zhCN: '取消每轮注入',
+                                )
+                              : L.pick(
+                                  en: 'Include every turn',
+                                  zhTW: '每輪注入',
+                                  zhCN: '每轮注入',
+                                ),
+                          child: IconButton(
+                            visualDensity: VisualDensity.compact,
+                            constraints: const BoxConstraints.tightFor(
+                              width: 32,
+                              height: 32,
+                            ),
+                            padding: EdgeInsets.zero,
+                            onPressed: onTogglePinned,
+                            icon: Icon(
+                              memory.isPinned
+                                  ? Icons.push_pin_rounded
+                                  : Icons.push_pin_outlined,
+                              size: 15,
+                              color: memory.isPinned
+                                  ? YanciTheme.accent
+                                  : YanciTheme.textSecondary.withValues(
+                                      alpha: 0.45,
+                                    ),
+                            ),
+                          ),
+                        ),
                       if (selectionMode)
                         Icon(
                           selected

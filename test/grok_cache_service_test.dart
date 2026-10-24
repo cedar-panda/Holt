@@ -143,6 +143,40 @@ void main() {
   );
 
   test(
+    'changed retained-history root opens a new Grok cache lineage',
+    () async {
+      final service = XaiService(apiKey: 'test');
+      final first = await service.debugBuildBodyForTesting(
+        messages: const <Map<String, String>>[
+          <String, String>{'role': 'user', 'content': 'old checkpoint'},
+          <String, String>{'role': 'assistant', 'content': 'old reply'},
+          <String, String>{'role': 'user', 'content': 'continue'},
+        ],
+        model: 'grok-4.5',
+        structuredPrompt: prompt('CURRENT TIME=10:10'),
+      );
+      final firstAffinity = first['messages'];
+      final firstSession = XaiService.lastDiagnostics['x_grok_conv_id'];
+
+      final reanchored = await service.debugBuildBodyForTesting(
+        messages: const <Map<String, String>>[
+          <String, String>{'role': 'user', 'content': 'new summary checkpoint'},
+          <String, String>{'role': 'user', 'content': 'continue'},
+        ],
+        model: 'grok-4.5',
+        structuredPrompt: prompt('CURRENT TIME=10:11'),
+      );
+
+      expect(XaiService.lastDiagnostics['x_grok_conv_id'], isNot(firstSession));
+      expect(reanchored['messages'], isNot(firstAffinity));
+      expect(
+        (reanchored['messages'] as List).toString(),
+        isNot(contains('old checkpoint')),
+      );
+    },
+  );
+
+  test(
     'OpenRouter Grok uses sticky automatic cache without Claude controls',
     () async {
       final service = OpenRouterService(apiKey: 'test');

@@ -59,6 +59,9 @@ class _CharacterCardScreenState extends State<CharacterCardScreen> {
   bool _showExtras = false;
   bool _isEditing = false;
   bool _isSaving = false;
+  bool _dirty = false;
+  bool _suppressDirtyTracking = true;
+  bool _allowPop = false;
   bool _whisperModelOverride = true;
   bool _whisperResetRequested = false;
   CharacterWhisperState? _loadedWhisperState;
@@ -68,6 +71,9 @@ class _CharacterCardScreenState extends State<CharacterCardScreen> {
   @override
   void initState() {
     super.initState();
+    for (final controller in _editableControllers) {
+      controller.addListener(_markDirty);
+    }
     _descController.addListener(_recalcTokens);
     _initTokenCounter();
     _loadExisting();
@@ -86,6 +92,7 @@ class _CharacterCardScreenState extends State<CharacterCardScreen> {
       return;
     }
 
+    _suppressDirtyTracking = true;
     _isEditing = characterId != null;
     _resetEditableFields();
     if (char != null) {
@@ -108,7 +115,33 @@ class _CharacterCardScreenState extends State<CharacterCardScreen> {
       // 已保存的更多屬性仍完整載入，但編輯頁初始保持收合。
       _showExtras = false;
     }
-    setState(() => _isLoading = false);
+    _suppressDirtyTracking = false;
+    setState(() {
+      _dirty = false;
+      _allowPop = false;
+      _isLoading = false;
+    });
+  }
+
+  Iterable<TextEditingController> get _editableControllers =>
+      <TextEditingController>[
+        _nameController,
+        _descController,
+        _raceController,
+        _skillController,
+        _ageController,
+        _heightController,
+        _genderController,
+        _relationController,
+        _drawAnchorUserCtrl,
+        _drawAnchorCharCtrl,
+        _drawStyleCtrl,
+        _whisperController,
+      ];
+
+  void _markDirty() {
+    if (_suppressDirtyTracking || _dirty || !mounted) return;
+    setState(() => _dirty = true);
   }
 
   void _resetEditableFields() {
@@ -221,6 +254,9 @@ class _CharacterCardScreenState extends State<CharacterCardScreen> {
     _loadGate.invalidate();
     _tokenGate.invalidate();
     _descController.removeListener(_recalcTokens);
+    for (final controller in _editableControllers) {
+      controller.removeListener(_markDirty);
+    }
     _nameController.dispose();
     _descController.dispose();
     _raceController.dispose();
@@ -242,456 +278,531 @@ class _CharacterCardScreenState extends State<CharacterCardScreen> {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
 
-    return Scaffold(
-      resizeToAvoidBottomInset: true,
-      body: GestureDetector(
-        onTap: () => FocusScope.of(context).unfocus(),
-        child: GradientBackground(
-          child: Stack(
-            children: [
-              Positioned.fill(
-                child: YanciTheme.starEnabled
-                    ? const AmbientParticleField(neuralCount: 16, starCount: 12)
-                    : const SizedBox.shrink(),
-              ),
-              SafeArea(
-                child: Column(
-                  children: [
-                    Padding(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: YanciTheme.spacingSm,
-                        vertical: YanciTheme.spacingXs,
-                      ),
-                      child: Row(
-                        children: [
-                          IconButton(
-                            icon: Icon(
-                              Icons.arrow_back_ios_rounded,
-                              size: 20,
-                              color: YanciTheme.textPrimary,
-                            ),
-                            onPressed: () => Navigator.pop(context),
-                          ),
-                          Expanded(
-                            child: _isEditing
-                                ? const SizedBox.shrink()
-                                : Text(
-                                    L.get('char_new_title'),
-                                    textAlign: TextAlign.center,
-                                    style: YanciTheme.headingMedium,
-                                  ),
-                          ),
-                          // 已建立角色才有角色專屬的 X 綁定、分享與刪除操作。
-                          if (widget.characterId != null) ...[
-                            IconButton(
-                              tooltip: L.pick(
-                                en: 'Signature history',
-                                zhTW: '個性簽名歷史',
-                                zhCN: '个性签名历史',
-                              ),
-                              onPressed: () => showCharacterSignatureHistory(
-                                context,
-                                widget.characterId!,
-                              ),
-                              icon: Icon(
-                                Icons.history_rounded,
-                                size: 19,
-                                color: YanciTheme.textSecondary.withValues(
-                                  alpha: 0.65,
-                                ),
-                              ),
-                            ),
-                            IconButton(
-                              key: const ValueKey(
-                                'character-card-x-settings-button',
-                              ),
-                              tooltip: L.pick(
-                                en: 'X account settings',
-                                zhTW: 'X 帳號設定',
-                                zhCN: 'X 账号设置',
-                              ),
-                              onPressed: () =>
-                                  showXPostPanel(context, widget.characterId!),
-                              icon: Text(
-                                '𝕏',
-                                style: TextStyle(
-                                  color: YanciTheme.textSecondary.withValues(
-                                    alpha: 0.72,
-                                  ),
-                                  fontSize: 19,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            ),
-                            IconButton(
-                              icon: Icon(
-                                Icons.share_outlined,
-                                size: 19,
-                                color: YanciTheme.textSecondary.withValues(
-                                  alpha: 0.6,
-                                ),
-                              ),
-                              tooltip: L.get('char_share_code'),
-                              onPressed: _shareCard,
-                            ),
-                            IconButton(
-                              icon: Icon(
-                                Icons.delete_outline,
-                                size: 19,
-                                color: YanciTheme.textSecondary.withValues(
-                                  alpha: 0.5,
-                                ),
-                              ),
-                              tooltip: L.get('delete'),
-                              onPressed: _confirmDeleteCard,
-                            ),
-                          ] else
-                            const SizedBox(width: 48),
-                        ],
-                      ),
-                    ),
-                    Expanded(
-                      child: SingleChildScrollView(
-                        keyboardDismissBehavior:
-                            ScrollViewKeyboardDismissBehavior.onDrag,
-                        padding: EdgeInsets.fromLTRB(
-                          YanciTheme.spacingMd,
-                          0,
-                          YanciTheme.spacingMd,
-                          MediaQuery.viewInsetsOf(context).bottom +
-                              YanciTheme.spacingXl,
+    return PopScope(
+      canPop: _allowPop || !_dirty,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) _requestExit();
+      },
+      child: Scaffold(
+        resizeToAvoidBottomInset: true,
+        body: GestureDetector(
+          onTap: () => FocusScope.of(context).unfocus(),
+          child: GradientBackground(
+            child: Stack(
+              children: [
+                Positioned.fill(
+                  child: YanciTheme.starEnabled
+                      ? const AmbientParticleField(
+                          neuralCount: 16,
+                          starCount: 12,
+                        )
+                      : const SizedBox.shrink(),
+                ),
+                SafeArea(
+                  child: Column(
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: YanciTheme.spacingSm,
+                          vertical: YanciTheme.spacingXs,
                         ),
-                        child: Column(
+                        child: Row(
                           children: [
-                            // ═══ 頂部：圖片（左）+ 基本資訊（右）═══
-                            SizedBox(
-                              height: 220,
-                              child: Padding(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: YanciTheme.spacingMd,
+                            IconButton(
+                              icon: Icon(
+                                Icons.arrow_back_ios_rounded,
+                                size: 20,
+                                color: YanciTheme.textPrimary,
+                              ),
+                              onPressed: _requestExit,
+                            ),
+                            Expanded(
+                              child: _isEditing
+                                  ? const SizedBox.shrink()
+                                  : Text(
+                                      L.get('char_new_title'),
+                                      textAlign: TextAlign.center,
+                                      style: YanciTheme.headingMedium,
+                                    ),
+                            ),
+                            // 已建立角色才有角色專屬的 X 綁定、分享與刪除操作。
+                            if (widget.characterId != null) ...[
+                              IconButton(
+                                tooltip: L.pick(
+                                  en: 'Signature history',
+                                  zhTW: '個性簽名歷史',
+                                  zhCN: '个性签名历史',
                                 ),
-                                child: Row(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    // ── 2:3 人設圖片（帶模糊邊緣）──
-                                    Padding(
-                                      padding: const EdgeInsets.only(top: 24),
-                                      child: GestureDetector(
-                                        onTap: _pickAvatar,
-                                        child: SizedBox(
-                                          width: 130,
-                                          height: 195,
-                                          child:
-                                              _avatarPath != null &&
-                                                  File(
-                                                    _avatarPath!,
-                                                  ).existsSync()
-                                              ? ClipRRect(
-                                                  borderRadius:
-                                                      BorderRadius.circular(16),
-                                                  child: Image.file(
-                                                    File(_avatarPath!),
-                                                    fit: BoxFit.cover,
-                                                    width: 130,
-                                                    height: 195,
-                                                  ),
-                                                )
-                                              : Container(
-                                                  decoration: BoxDecoration(
-                                                    color: Colors.white
-                                                        .withValues(
-                                                          alpha: 0.08,
-                                                        ),
+                                onPressed: () => showCharacterSignatureHistory(
+                                  context,
+                                  widget.characterId!,
+                                ),
+                                icon: Icon(
+                                  Icons.history_rounded,
+                                  size: 19,
+                                  color: YanciTheme.textSecondary.withValues(
+                                    alpha: 0.65,
+                                  ),
+                                ),
+                              ),
+                              IconButton(
+                                key: const ValueKey(
+                                  'character-card-x-settings-button',
+                                ),
+                                tooltip: L.pick(
+                                  en: 'X account settings',
+                                  zhTW: 'X 帳號設定',
+                                  zhCN: 'X 账号设置',
+                                ),
+                                onPressed: () => showXPostPanel(
+                                  context,
+                                  widget.characterId!,
+                                ),
+                                icon: Text(
+                                  '𝕏',
+                                  style: TextStyle(
+                                    color: YanciTheme.textSecondary.withValues(
+                                      alpha: 0.72,
+                                    ),
+                                    fontSize: 19,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ),
+                              IconButton(
+                                icon: Icon(
+                                  Icons.share_outlined,
+                                  size: 19,
+                                  color: YanciTheme.textSecondary.withValues(
+                                    alpha: 0.6,
+                                  ),
+                                ),
+                                tooltip: L.get('char_share_code'),
+                                onPressed: _shareCard,
+                              ),
+                              IconButton(
+                                icon: Icon(
+                                  Icons.delete_outline,
+                                  size: 19,
+                                  color: YanciTheme.textSecondary.withValues(
+                                    alpha: 0.5,
+                                  ),
+                                ),
+                                tooltip: L.get('delete'),
+                                onPressed: _confirmDeleteCard,
+                              ),
+                            ] else
+                              const SizedBox(width: 48),
+                          ],
+                        ),
+                      ),
+                      Expanded(
+                        child: SingleChildScrollView(
+                          keyboardDismissBehavior:
+                              ScrollViewKeyboardDismissBehavior.onDrag,
+                          padding: EdgeInsets.fromLTRB(
+                            YanciTheme.spacingMd,
+                            0,
+                            YanciTheme.spacingMd,
+                            MediaQuery.viewInsetsOf(context).bottom +
+                                YanciTheme.spacingXl,
+                          ),
+                          child: Column(
+                            children: [
+                              // ═══ 頂部：圖片（左）+ 基本資訊（右）═══
+                              SizedBox(
+                                height: 220,
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: YanciTheme.spacingMd,
+                                  ),
+                                  child: Row(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      // ── 2:3 人設圖片（帶模糊邊緣）──
+                                      Padding(
+                                        padding: const EdgeInsets.only(top: 24),
+                                        child: GestureDetector(
+                                          onTap: _pickAvatar,
+                                          child: SizedBox(
+                                            width: 130,
+                                            height: 195,
+                                            child:
+                                                _avatarPath != null &&
+                                                    File(
+                                                      _avatarPath!,
+                                                    ).existsSync()
+                                                ? ClipRRect(
                                                     borderRadius:
                                                         BorderRadius.circular(
                                                           16,
                                                         ),
-                                                    border: Border.all(
+                                                    child: Image.file(
+                                                      File(_avatarPath!),
+                                                      fit: BoxFit.cover,
+                                                      width: 130,
+                                                      height: 195,
+                                                    ),
+                                                  )
+                                                : Container(
+                                                    decoration: BoxDecoration(
                                                       color: Colors.white
                                                           .withValues(
-                                                            alpha: 0.1,
+                                                            alpha: 0.08,
                                                           ),
-                                                    ),
-                                                  ),
-                                                  child: Column(
-                                                    mainAxisAlignment:
-                                                        MainAxisAlignment
-                                                            .center,
-                                                    children: [
-                                                      Icon(
-                                                        Icons
-                                                            .add_photo_alternate_outlined,
-                                                        size: 36,
-                                                        color: YanciTheme
-                                                            .textSecondary
+                                                      borderRadius:
+                                                          BorderRadius.circular(
+                                                            16,
+                                                          ),
+                                                      border: Border.all(
+                                                        color: Colors.white
                                                             .withValues(
-                                                              alpha: 0.3,
+                                                              alpha: 0.1,
                                                             ),
                                                       ),
-                                                      const SizedBox(height: 6),
-                                                      Text(
-                                                        L.get(
-                                                          'char_upload_hint',
-                                                        ),
-                                                        style: TextStyle(
-                                                          fontSize: 11,
+                                                    ),
+                                                    child: Column(
+                                                      mainAxisAlignment:
+                                                          MainAxisAlignment
+                                                              .center,
+                                                      children: [
+                                                        Icon(
+                                                          Icons
+                                                              .add_photo_alternate_outlined,
+                                                          size: 36,
                                                           color: YanciTheme
                                                               .textSecondary
                                                               .withValues(
                                                                 alpha: 0.3,
                                                               ),
                                                         ),
-                                                      ),
-                                                    ],
+                                                        const SizedBox(
+                                                          height: 6,
+                                                        ),
+                                                        Text(
+                                                          L.get(
+                                                            'char_upload_hint',
+                                                          ),
+                                                          style: TextStyle(
+                                                            fontSize: 11,
+                                                            color: YanciTheme
+                                                                .textSecondary
+                                                                .withValues(
+                                                                  alpha: 0.3,
+                                                                ),
+                                                          ),
+                                                        ),
+                                                      ],
+                                                    ),
                                                   ),
+                                          ),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 12),
+
+                                      // ── 右側：姓名 / 性別 / 關係 ──
+                                      Expanded(
+                                        child: Padding(
+                                          padding: const EdgeInsets.only(
+                                            top: 24,
+                                          ),
+                                          child: Container(
+                                            padding: const EdgeInsets.symmetric(
+                                              horizontal: 16,
+                                              vertical: 20,
+                                            ),
+                                            child: Column(
+                                              mainAxisAlignment:
+                                                  MainAxisAlignment.spaceEvenly,
+                                              crossAxisAlignment:
+                                                  CrossAxisAlignment.start,
+                                              children: [
+                                                _buildCompactField(
+                                                  L.get('char_name_label'),
+                                                  _nameController,
+                                                  L.get('char_name'),
                                                 ),
+                                                _buildCompactField(
+                                                  L.get('char_gender_label'),
+                                                  _genderController,
+                                                  L.get('char_gender_hint'),
+                                                ),
+                                                _buildCompactField(
+                                                  L.get('char_relation_label'),
+                                                  _relationController,
+                                                  L.get('char_relation_hint'),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(height: YanciTheme.spacingMd),
+
+                              // ═══ Token 計數（緩存門檻提示）═══
+                              _tokenBadge(),
+
+                              // ═══ 角色設定（透明氣泡圓角框）═══
+                              Stack(
+                                children: [
+                                  ConstrainedBox(
+                                    constraints: const BoxConstraints(
+                                      maxHeight: 260,
+                                    ),
+                                    child: Container(
+                                      decoration: BoxDecoration(
+                                        color: Colors.white.withValues(
+                                          alpha: 0.06,
+                                        ),
+                                        borderRadius: BorderRadius.circular(16),
+                                        border: Border.all(
+                                          color: Colors.white.withValues(
+                                            alpha: 0.1,
+                                          ),
+                                          width: 0.5,
+                                        ),
+                                      ),
+                                      child: TextField(
+                                        key: const ValueKey(
+                                          'character-description-collapsed',
+                                        ),
+                                        controller: _descController,
+                                        maxLines: null,
+                                        minLines: 6,
+                                        style: YanciTheme.bodyText.copyWith(
+                                          fontSize: 13,
+                                        ),
+                                        decoration: InputDecoration(
+                                          hintText: L.get('char_desc_hint'),
+                                          hintStyle: YanciTheme.bodySmall
+                                              .copyWith(
+                                                color: YanciTheme.textSecondary
+                                                    .withValues(alpha: 0.3),
+                                              ),
+                                          border: InputBorder.none,
+                                          contentPadding: const EdgeInsets.all(
+                                            14,
+                                          ),
                                         ),
                                       ),
                                     ),
-                                    const SizedBox(width: 12),
-
-                                    // ── 右側：姓名 / 性別 / 關係 ──
-                                    Expanded(
-                                      child: Padding(
-                                        padding: const EdgeInsets.only(top: 24),
-                                        child: Container(
-                                          padding: const EdgeInsets.symmetric(
-                                            horizontal: 16,
-                                            vertical: 20,
+                                  ),
+                                  Positioned(
+                                    top: 6,
+                                    right: 6,
+                                    child: GestureDetector(
+                                      onTap: () => _showExpandedEditor(),
+                                      child: Container(
+                                        padding: const EdgeInsets.all(4),
+                                        decoration: BoxDecoration(
+                                          color: YanciTheme.accent.withValues(
+                                            alpha: 0.1,
                                           ),
-                                          child: Column(
-                                            mainAxisAlignment:
-                                                MainAxisAlignment.spaceEvenly,
-                                            crossAxisAlignment:
-                                                CrossAxisAlignment.start,
-                                            children: [
-                                              _buildCompactField(
-                                                L.get('char_name_label'),
-                                                _nameController,
-                                                L.get('char_name'),
-                                              ),
-                                              _buildCompactField(
-                                                L.get('char_gender_label'),
-                                                _genderController,
-                                                L.get('char_gender_hint'),
-                                              ),
-                                              _buildCompactField(
-                                                L.get('char_relation_label'),
-                                                _relationController,
-                                                L.get('char_relation_hint'),
-                                              ),
-                                            ],
+                                          borderRadius: BorderRadius.circular(
+                                            6,
                                           ),
                                         ),
+                                        child: Icon(
+                                          Icons.open_in_full_rounded,
+                                          size: 14,
+                                          color: YanciTheme.accent.withValues(
+                                            alpha: 0.5,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: YanciTheme.spacingMd),
+
+                              // 擴展欄位
+                              GestureDetector(
+                                onTap: () =>
+                                    setState(() => _showExtras = !_showExtras),
+                                child: Row(
+                                  children: [
+                                    Icon(
+                                      _showExtras
+                                          ? Icons.check_box
+                                          : Icons.check_box_outline_blank,
+                                      size: 18,
+                                      color: YanciTheme.accent,
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Text(
+                                      L.get('char_more_attr'),
+                                      style: YanciTheme.bodySmall.copyWith(
+                                        color: YanciTheme.textSecondary,
                                       ),
                                     ),
                                   ],
                                 ),
                               ),
-                            ),
-                            const SizedBox(height: YanciTheme.spacingMd),
-
-                            // ═══ Token 計數（緩存門檻提示）═══
-                            _tokenBadge(),
-
-                            // ═══ 角色設定（透明氣泡圓角框）═══
-                            Stack(
-                              children: [
-                                ConstrainedBox(
-                                  constraints: const BoxConstraints(
-                                    maxHeight: 260,
-                                  ),
-                                  child: Container(
-                                    decoration: BoxDecoration(
-                                      color: Colors.white.withValues(
-                                        alpha: 0.06,
-                                      ),
-                                      borderRadius: BorderRadius.circular(16),
-                                      border: Border.all(
-                                        color: Colors.white.withValues(
-                                          alpha: 0.1,
-                                        ),
-                                        width: 0.5,
-                                      ),
-                                    ),
-                                    child: TextField(
-                                      key: const ValueKey(
-                                        'character-description-collapsed',
-                                      ),
-                                      controller: _descController,
-                                      maxLines: null,
-                                      minLines: 6,
-                                      style: YanciTheme.bodyText.copyWith(
-                                        fontSize: 13,
-                                      ),
-                                      decoration: InputDecoration(
-                                        hintText: L.get('char_desc_hint'),
-                                        hintStyle: YanciTheme.bodySmall
-                                            .copyWith(
-                                              color: YanciTheme.textSecondary
-                                                  .withValues(alpha: 0.3),
-                                            ),
-                                        border: InputBorder.none,
-                                        contentPadding: const EdgeInsets.all(
-                                          14,
-                                        ),
-                                      ),
-                                    ),
-                                  ),
+                              if (_showExtras) ...[
+                                const SizedBox(height: YanciTheme.spacingMd),
+                                _buildField(
+                                  L.get('char_race'),
+                                  _raceController,
+                                  L.get('char_race_hint'),
                                 ),
-                                Positioned(
-                                  top: 6,
-                                  right: 6,
-                                  child: GestureDetector(
-                                    onTap: () => _showExpandedEditor(),
-                                    child: Container(
-                                      padding: const EdgeInsets.all(4),
-                                      decoration: BoxDecoration(
-                                        color: YanciTheme.accent.withValues(
-                                          alpha: 0.1,
-                                        ),
-                                        borderRadius: BorderRadius.circular(6),
-                                      ),
-                                      child: Icon(
-                                        Icons.open_in_full_rounded,
-                                        size: 14,
-                                        color: YanciTheme.accent.withValues(
-                                          alpha: 0.5,
-                                        ),
-                                      ),
-                                    ),
+                                const SizedBox(height: YanciTheme.spacingSm),
+                                _buildField(
+                                  L.get('char_skill_label'),
+                                  _skillController,
+                                  L.get('char_skill_hint'),
+                                ),
+                                const SizedBox(height: YanciTheme.spacingSm),
+                                _buildField(
+                                  L.get('char_age'),
+                                  _ageController,
+                                  '',
+                                ),
+                                const SizedBox(height: YanciTheme.spacingSm),
+                                _buildField(
+                                  L.get('char_height_label'),
+                                  _heightController,
+                                  '',
+                                ),
+                                const SizedBox(height: YanciTheme.spacingSm),
+                                _buildVoiceIdField(),
+                              ],
+                              const SizedBox(height: YanciTheme.spacingMd),
+
+                              // ═══ 畫畫設定：次要入口，錨點在底部面板編輯 ═══
+                              _buildDrawAnchorEntry(),
+                              const SizedBox(height: YanciTheme.spacingMd),
+
+                              // ═══ 相處細節：輸入框悄悄話 ═══
+                              _buildWhisperSection(),
+
+                              if (widget.characterId != null &&
+                                  EmotionPanel.kVisible) ...[
+                                const SizedBox(height: YanciTheme.spacingLg),
+                                EmotionPanel(
+                                  key: ValueKey(
+                                    'emotion-inside-character-card-${widget.characterId}',
                                   ),
+                                  characterId: widget.characterId!,
+                                  initiallyCollapsed: true,
                                 ),
                               ],
-                            ),
-                            const SizedBox(height: YanciTheme.spacingMd),
 
-                            // 擴展欄位
-                            GestureDetector(
-                              onTap: () =>
-                                  setState(() => _showExtras = !_showExtras),
-                              child: Row(
-                                children: [
-                                  Icon(
-                                    _showExtras
-                                        ? Icons.check_box
-                                        : Icons.check_box_outline_blank,
-                                    size: 18,
-                                    color: YanciTheme.accent,
-                                  ),
-                                  const SizedBox(width: 8),
-                                  Text(
-                                    L.get('char_more_attr'),
-                                    style: YanciTheme.bodySmall.copyWith(
-                                      color: YanciTheme.textSecondary,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            if (_showExtras) ...[
-                              const SizedBox(height: YanciTheme.spacingMd),
-                              _buildField(
-                                L.get('char_race'),
-                                _raceController,
-                                L.get('char_race_hint'),
-                              ),
-                              const SizedBox(height: YanciTheme.spacingSm),
-                              _buildField(
-                                L.get('char_skill_label'),
-                                _skillController,
-                                L.get('char_skill_hint'),
-                              ),
-                              const SizedBox(height: YanciTheme.spacingSm),
-                              _buildField(
-                                L.get('char_age'),
-                                _ageController,
-                                '',
-                              ),
-                              const SizedBox(height: YanciTheme.spacingSm),
-                              _buildField(
-                                L.get('char_height_label'),
-                                _heightController,
-                                '',
-                              ),
-                              const SizedBox(height: YanciTheme.spacingSm),
-                              _buildVoiceIdField(),
-                            ],
-                            const SizedBox(height: YanciTheme.spacingMd),
-
-                            // ═══ 畫畫設定：次要入口，錨點在底部面板編輯 ═══
-                            _buildDrawAnchorEntry(),
-                            const SizedBox(height: YanciTheme.spacingMd),
-
-                            // 儲存按鈕
-                            SizedBox(
-                              width: double.infinity,
-                              child: TextButton(
-                                onPressed: _isSaving ? null : _save,
-                                style: TextButton.styleFrom(
-                                  backgroundColor: YanciTheme.accent.withValues(
-                                    alpha: 0.15,
-                                  ),
-                                  padding: const EdgeInsets.symmetric(
-                                    vertical: 14,
-                                  ),
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(
-                                      YanciTheme.radiusLg,
-                                    ),
-                                  ),
-                                ),
-                                child: _isSaving
-                                    ? SizedBox(
-                                        width: 18,
-                                        height: 18,
-                                        child: CircularProgressIndicator(
-                                          strokeWidth: 2,
-                                          color: YanciTheme.accent,
-                                        ),
-                                      )
-                                    : Text(
-                                        _nameController.text.isNotEmpty
-                                            ? L.fmt('char_ready_named', [
-                                                _nameController.text,
-                                              ])
-                                            : L.get('char_ready'),
-                                        style: YanciTheme.bodyText.copyWith(
-                                          color: YanciTheme.accent,
-                                        ),
-                                      ),
-                              ),
-                            ),
-                            const SizedBox(height: YanciTheme.spacingMd),
-
-                            // ═══ 相處細節：輸入框悄悄話 ═══
-                            _buildWhisperSection(),
-
-                            if (widget.characterId != null &&
-                                EmotionPanel.kVisible) ...[
                               const SizedBox(height: YanciTheme.spacingLg),
-                              EmotionPanel(
-                                key: ValueKey(
-                                  'emotion-inside-character-card-${widget.characterId}',
-                                ),
-                                characterId: widget.characterId!,
-                                initiallyCollapsed: true,
-                              ),
-                            ],
+                              _buildSaveButton(),
 
-                            const SizedBox(height: YanciTheme.spacingXl),
-                          ],
+                              const SizedBox(height: YanciTheme.spacingXl),
+                            ],
+                          ),
                         ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
     );
+  }
+
+  Widget _buildSaveButton() {
+    return SizedBox(
+      width: double.infinity,
+      child: TextButton(
+        onPressed: _isSaving ? null : () => _save(),
+        style: TextButton.styleFrom(
+          backgroundColor: YanciTheme.accent.withValues(alpha: 0.15),
+          minimumSize: const Size.fromHeight(48),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(YanciTheme.radiusLg),
+          ),
+        ),
+        child: _isSaving
+            ? SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: YanciTheme.accent,
+                ),
+              )
+            : Text(
+                _nameController.text.isNotEmpty
+                    ? L.fmt('char_ready_named', [_nameController.text])
+                    : L.get('char_ready'),
+                style: YanciTheme.bodyText.copyWith(color: YanciTheme.accent),
+              ),
+      ),
+    );
+  }
+
+  Future<void> _requestExit() async {
+    if (!_dirty) {
+      _allowAndPop();
+      return;
+    }
+    final action = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: YanciTheme.surfacePanel,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(YanciTheme.radiusLg),
+        ),
+        title: Text(
+          L.pick(en: 'Unsaved changes', zhTW: '尚未儲存修改', zhCN: '尚未保存修改'),
+        ),
+        content: Text(
+          L.pick(
+            en: 'Save this character card before leaving?',
+            zhTW: '離開前要儲存這張人設卡嗎？',
+            zhCN: '离开前要保存这张人设卡吗？',
+          ),
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, 'cancel'),
+            child: Text(L.get('cancel')),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, 'discard'),
+            child: Text(
+              L.pick(en: 'Discard', zhTW: '捨棄修改', zhCN: '放弃修改'),
+              style: TextStyle(color: Colors.red.withValues(alpha: 0.78)),
+            ),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, 'save'),
+            child: Text(
+              L.pick(en: 'Save and leave', zhTW: '儲存並離開', zhCN: '保存并离开'),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (!mounted || action == null || action == 'cancel') return;
+    if (action == 'save') {
+      await _save(closeAfterSave: true);
+    } else {
+      _allowAndPop();
+    }
+  }
+
+  void _allowAndPop([Object? result]) {
+    if (!mounted) return;
+    setState(() {
+      _allowPop = true;
+      _dirty = false;
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) Navigator.of(context).pop(result);
+    });
   }
 
   Widget _buildField(
@@ -920,7 +1031,10 @@ class _CharacterCardScreenState extends State<CharacterCardScreen> {
 
     if (croppedPath != null) {
       if (!mounted) return;
-      setState(() => _avatarPath = croppedPath);
+      setState(() {
+        _avatarPath = croppedPath;
+        _dirty = true;
+      });
     }
   }
 
@@ -1112,7 +1226,11 @@ class _CharacterCardScreenState extends State<CharacterCardScreen> {
                         ),
                       ),
                       child: Text(
-                        L.pick(en: 'Done', zhTW: '完成', zhCN: '完成'),
+                        L.pick(
+                          en: 'Apply to card',
+                          zhTW: '套用到人設卡',
+                          zhCN: '应用到人设卡',
+                        ),
                         style: YanciTheme.bodyText.copyWith(
                           color: YanciTheme.accent,
                         ),
@@ -1246,7 +1364,10 @@ class _CharacterCardScreenState extends State<CharacterCardScreen> {
                     ),
                   ),
                 ],
-                onChanged: (v) => setState(() => _ttsVoiceId = v ?? ''),
+                onChanged: (v) => setState(() {
+                  _ttsVoiceId = v ?? '';
+                  _dirty = true;
+                }),
               ),
             ),
           ],
@@ -1372,7 +1493,10 @@ class _CharacterCardScreenState extends State<CharacterCardScreen> {
                 value: _whisperModelOverride,
                 activeTrackColor: YanciTheme.accent.withValues(alpha: 0.55),
                 onChanged: (value) {
-                  setState(() => _whisperModelOverride = value);
+                  setState(() {
+                    _whisperModelOverride = value;
+                    _dirty = true;
+                  });
                 },
               ),
             ],
@@ -1384,6 +1508,7 @@ class _CharacterCardScreenState extends State<CharacterCardScreen> {
                 setState(() {
                   _whisperController.clear();
                   _whisperResetRequested = true;
+                  _dirty = true;
                 });
               },
               child: Text(
@@ -1399,8 +1524,8 @@ class _CharacterCardScreenState extends State<CharacterCardScreen> {
     );
   }
 
-  Future<void> _save() async {
-    if (_isSaving) return;
+  Future<bool> _save({bool closeAfterSave = true}) async {
+    if (_isSaving) return false;
     final name = _nameController.text.trim();
     if (name.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -1410,7 +1535,7 @@ class _CharacterCardScreenState extends State<CharacterCardScreen> {
           content: Text(L.get('char_name_required')),
         ),
       );
-      return;
+      return false;
     }
     setState(() => _isSaving = true);
 
@@ -1465,10 +1590,17 @@ class _CharacterCardScreenState extends State<CharacterCardScreen> {
           'updated_at': now,
         });
       }
-      await UserSettings.saveCharacterName(name);
-      await UserSettings.saveActiveCharacterId(id);
+      final activeCharacterId = await UserSettings.getActiveCharacterId();
+      if (!_isEditing || activeCharacterId == id) {
+        await UserSettings.saveCharacterName(name);
+        await UserSettings.saveActiveCharacterId(id);
+      }
 
       if (mounted) {
+        setState(() {
+          _dirty = false;
+          _allowPop = closeAfterSave;
+        });
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(L.pick(en: 'Saved ✓', zhTW: '已保存 ✓')),
@@ -1477,8 +1609,13 @@ class _CharacterCardScreenState extends State<CharacterCardScreen> {
             margin: const EdgeInsets.only(bottom: 80, left: 16, right: 16),
           ),
         );
-        Navigator.pop(context, id);
+        if (closeAfterSave) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) Navigator.of(context).pop(id);
+          });
+        }
       }
+      return true;
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -1489,6 +1626,7 @@ class _CharacterCardScreenState extends State<CharacterCardScreen> {
           ),
         );
       }
+      return false;
     } finally {
       if (mounted) setState(() => _isSaving = false);
     }
@@ -1501,6 +1639,7 @@ class _CharacterCardScreenState extends State<CharacterCardScreen> {
   Future<void> _shareCard() async {
     final id = widget.characterId;
     if (id == null) return;
+    if (_dirty && !await _save(closeAfterSave: false)) return;
     final c = await DatabaseHelper.getCharacter(id);
     if (c == null || !mounted) return;
     try {

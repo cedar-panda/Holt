@@ -227,4 +227,78 @@ void main() {
     expect(result.changed, isFalse);
     expect(await MemorySettings.getKeepAliveEnabled(), isTrue);
   });
+
+  test(
+    'effective strategy prefers supported cache without rewriting flags',
+    () async {
+      await MemorySettings.saveEnablePromptCaching(true);
+      await MemorySettings.saveContextLimitEnabled(true);
+      await MemorySettings.saveCacheWindowSummaryEnabled(true);
+
+      final strategy = await ModelCostPolicy.resolveEffectiveStrategy(
+        provider: 'openrouter',
+        model: 'anthropic/claude-sonnet-4.5',
+      );
+
+      expect(strategy.mode, EffectiveCostMode.promptCache);
+      expect(strategy.cacheSummaryEnabled, isTrue);
+      expect(await MemorySettings.getContextLimitEnabled(), isTrue);
+    },
+  );
+
+  test(
+    'effective strategy falls back to requested context when cache is unsupported',
+    () async {
+      await MemorySettings.saveEnablePromptCaching(true);
+      await MemorySettings.saveContextLimitEnabled(true);
+      await MemorySettings.saveContextWindowSummaryEnabled(true);
+
+      final strategy = await ModelCostPolicy.resolveEffectiveStrategy(
+        provider: 'thinking_machines',
+        model: 'tinker/inkling-high',
+      );
+
+      expect(strategy.mode, EffectiveCostMode.contextLimit);
+      expect(strategy.contextSummaryEnabled, isTrue);
+      expect(await MemorySettings.getEnablePromptCaching(), isTrue);
+    },
+  );
+
+  test('startup normalization keeps supported cache and disables context', () async {
+    await MemorySettings.saveEnablePromptCaching(true);
+    await MemorySettings.saveCacheWindowSummaryEnabled(true);
+    await MemorySettings.saveContextLimitEnabled(true);
+    await MemorySettings.saveContextWindowSummaryEnabled(true);
+
+    final changed = await ModelCostPolicy.normalizePersistedStrategy(
+      provider: 'openrouter',
+      model: 'anthropic/claude-sonnet-4.5',
+    );
+
+    expect(changed, isTrue);
+    expect(await MemorySettings.getEnablePromptCaching(), isTrue);
+    expect(await MemorySettings.getCacheWindowSummaryEnabled(), isTrue);
+    expect(await MemorySettings.getContextLimitEnabled(), isFalse);
+    expect(await MemorySettings.getContextWindowSummaryEnabled(), isFalse);
+  });
+
+  test('startup normalization keeps context when cache is unsupported', () async {
+    await MemorySettings.saveEnablePromptCaching(true);
+    await MemorySettings.saveCacheWindowSummaryEnabled(true);
+    await MemorySettings.saveKeepAliveEnabled(true);
+    await MemorySettings.saveContextLimitEnabled(true);
+    await MemorySettings.saveContextWindowSummaryEnabled(true);
+
+    final changed = await ModelCostPolicy.normalizePersistedStrategy(
+      provider: 'thinking_machines',
+      model: 'tinker/inkling-high',
+    );
+
+    expect(changed, isTrue);
+    expect(await MemorySettings.getEnablePromptCaching(), isFalse);
+    expect(await MemorySettings.getCacheWindowSummaryEnabled(), isFalse);
+    expect(await MemorySettings.getKeepAliveEnabled(), isFalse);
+    expect(await MemorySettings.getContextLimitEnabled(), isTrue);
+    expect(await MemorySettings.getContextWindowSummaryEnabled(), isTrue);
+  });
 }

@@ -274,6 +274,7 @@ class _CharacterSelfNotesPanelState extends State<CharacterSelfNotesPanel> {
       isScrollControlled: true,
       builder: (context) => StatefulBuilder(
         builder: (context, setSheetState) => DraggableScrollableSheet(
+          expand: false,
           initialChildSize: 0.52,
           minChildSize: 0.32,
           maxChildSize: 0.82,

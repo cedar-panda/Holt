@@ -131,11 +131,15 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
   Future<void> _initTokenCounter() async {
     final charId = await UserSettings.getActiveCharacterId();
     final guide = await UserPersonaService.profileGuide(_personaId, _mode);
+    final character = await DatabaseHelper.getCharacter(charId);
+    final characterDescription =
+        character?['description']?.toString().trim() ?? '';
     String sticker = '';
     try {
       sticker = await StickerService.buildStickerPrompt(characterId: charId);
     } catch (_) {}
     _fixedStaticText = [
+      characterDescription,
       guide,
       sticker,
     ].where((text) => text.isNotEmpty).join('\n\n');

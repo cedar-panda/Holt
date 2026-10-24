@@ -25,6 +25,7 @@ import '../widgets/memory_search_field.dart';
 import '../widgets/memory_review_tab.dart';
 import '../widgets/memory_summary_tab.dart';
 import '../widgets/themed_notice.dart';
+import '../widgets/managed_text_controllers.dart';
 import '../services/memory_guard_service.dart';
 import '../services/spider_web_state_service.dart';
 
@@ -55,8 +56,6 @@ class MemoryScreen extends StatefulWidget {
   @override
   State<MemoryScreen> createState() => _MemoryScreenState();
 }
-
-
 
 class _MemoryScreenState extends State<MemoryScreen>
     with SingleTickerProviderStateMixin {
@@ -92,6 +91,7 @@ class _MemoryScreenState extends State<MemoryScreen>
   int _reviewTotal = 0;
   int _reviewUnread = 0;
   bool _summaryModified = false;
+  bool _allowResultPop = false;
 
   bool get _rpStorylineScope => widget.contextMode == ContextMode.rp;
   bool get _spiderWebAvailable => _isSpiderWebEnabled && !_rpStorylineScope;
@@ -293,7 +293,6 @@ class _MemoryScreenState extends State<MemoryScreen>
   // 手動寫入記憶
   // ═══════════════════════════════════
 
-
   // ═══════════════════════════════════
   // 整理
   // ═══════════════════════════════════
@@ -301,33 +300,6 @@ class _MemoryScreenState extends State<MemoryScreen>
   // ═══════════════════════════════════
   // Token 預算設定（單一 slider）
   // ═══════════════════════════════════
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
   // ═══════════════════════════════════
   // 記憶方案設定
@@ -337,11 +309,9 @@ class _MemoryScreenState extends State<MemoryScreen>
   // 回收站
   // ═══════════════════════════════════
 
-
   // ═══════════════════════════════════
   // 確認彈窗
   // ═══════════════════════════════════
-
 
   // ═══════════════════════════════════
   // Build
@@ -351,124 +321,138 @@ class _MemoryScreenState extends State<MemoryScreen>
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      body: GradientBackground(
-        child: Stack(
-          children: [
-            SafeArea(
-              child: Column(
-                children: [
-                  MemoryScreenHeader(
-                    isSpiderWebEnabled: _spiderWebAvailable,
-                    isGraphView: _isGraphView,
-                    memoryCount: _spiderWebAvailable
-                        ? _graphMemories.length
-                        : _memories.length,
-                    totalTokens: _totalTokens,
-                    activeLayerIndex: _activeLayerIndex,
-                    layerCount: _layers.length,
-                    memorySendLimit: _memorySendLimit,
-                    onBack: () => Navigator.of(context).pop(_summaryModified),
-                    onToggleGraph: () {
-                      setState(() {
-                        _isGraphView = !_isGraphView;
-                      });
-                    },
-                    onSendLimitPressed: _showSendLimitSettings,
-                    onBudgetPressed: _showBudgetSettings,
-                    onAddMemory: _showAddMemoryDialog,
-                    onManualAddBlocked: () {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text(
-                            L.pick(
-                              en: 'Manual additions are disabled while Spider Web Memory is on. Let AI nodes expand it.',
-                              zhTW: '開啟蛛網記憶時禁止手動新增，請交由 AI 節點自行擴展',
+    return PopScope(
+      canPop: _allowResultPop,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) _popWithSummaryResult();
+      },
+      child: Scaffold(
+        body: GradientBackground(
+          child: Stack(
+            children: [
+              SafeArea(
+                child: Column(
+                  children: [
+                    MemoryScreenHeader(
+                      isSpiderWebEnabled: _spiderWebAvailable,
+                      isGraphView: _isGraphView,
+                      memoryCount: _spiderWebAvailable
+                          ? _graphMemories.length
+                          : _memories.length,
+                      totalTokens: _totalTokens,
+                      activeLayerIndex: _activeLayerIndex,
+                      layerCount: _layers.length,
+                      memorySendLimit: _memorySendLimit,
+                      onBack: _popWithSummaryResult,
+                      onToggleGraph: () {
+                        setState(() {
+                          _isGraphView = !_isGraphView;
+                        });
+                      },
+                      onSendLimitPressed: _showSendLimitSettings,
+                      onBudgetPressed: _showBudgetSettings,
+                      onAddMemory: _showAddMemoryDialog,
+                      onManualAddBlocked: () {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text(
+                              L.pick(
+                                en: 'Manual additions are disabled while Spider Web Memory is on. Let AI nodes expand it.',
+                                zhTW: '開啟蛛網記憶時禁止手動新增，請交由 AI 節點自行擴展',
+                              ),
                             ),
+                            backgroundColor: Colors.red.shade400,
                           ),
-                          backgroundColor: Colors.red.shade400,
-                        ),
-                      );
-                    },
-                  ),
-
-                  // 膠囊 TabBar
-                  Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 4,
+                        );
+                      },
                     ),
-                    child: MemoryCapsuleTabBar(
-                      selectedIndex: _tabIndex,
-                      reviewTotal: _reviewTotal,
-                      reviewUnread: _reviewUnread,
-                      onTabSelected: _selectTab,
-                    ),
-                  ),
 
-                  if (_rpStorylineScope)
+                    // 膠囊 TabBar
                     Padding(
-                      padding: const EdgeInsets.only(top: 1, bottom: 3),
-                      child: Text(
-                        widget.scopeLabel?.trim().isNotEmpty == true
-                            ? 'RP · ${widget.scopeLabel!.trim()}'
-                            : 'RP',
-                        style: YanciTheme.bodySmall.copyWith(
-                          fontSize: 11,
-                          color: YanciTheme.accent.withValues(alpha: 0.72),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 4,
+                      ),
+                      child: MemoryCapsuleTabBar(
+                        selectedIndex: _tabIndex,
+                        reviewTotal: _reviewTotal,
+                        reviewUnread: _reviewUnread,
+                        onTabSelected: _selectTab,
+                      ),
+                    ),
+
+                    if (_rpStorylineScope)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 1, bottom: 3),
+                        child: Text(
+                          widget.scopeLabel?.trim().isNotEmpty == true
+                              ? 'RP · ${widget.scopeLabel!.trim()}'
+                              : 'RP',
+                          style: YanciTheme.bodySmall.copyWith(
+                            fontSize: 11,
+                            color: YanciTheme.accent.withValues(alpha: 0.72),
+                          ),
                         ),
                       ),
-                    ),
 
-                  if (_tabIndex == 0)
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 4, 16, 6),
-                      child: _buildMemorySearch(),
-                    ),
-
-                  if (_tabIndex == 0 && !_selectionMode)
-                    _buildMemoryActionRow(),
-
-                  // 記憶、待確認提案或摘要
-                  Expanded(
-                    child: switch (_tabIndex) {
-                      0 => _buildMemoryBody(),
-                      1 => MemoryReviewTab(
-                        characterId: _characterId,
-                        sourceMessageId: _reviewSourceMessageId,
-                        contextMode: widget.contextMode,
-                        continuityId: widget.continuityId,
-                        // The review tab owns proposal state, but the memory
-                        // list is cached by this parent. Reload both after a
-                        // proposal is accepted so archived merge targets do
-                        // not remain visible until the screen is reopened.
-                        onChanged: () => unawaited(_loadMemories()),
+                    if (_tabIndex == 0)
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 4, 16, 6),
+                        child: _buildMemorySearch(),
                       ),
-                      _ => MemorySummaryTab(
-                        characterId: _characterId,
-                        contextMode: widget.contextMode,
-                        continuityId: widget.continuityId,
-                        onSummaryModified: () {
-                          _summaryModified = true;
-                        },
-                      ),
-                    },
-                  ),
-                  if (_tabIndex == 0 && _selectionMode) _buildSelectionBar(),
-                ],
-              ),
-            ),
 
-            if (_tabIndex == 0 && !_selectionMode)
-              MemoryArchiveFab(
-                archivedCount: _archivedCount,
-                animationController: _archiveAnimCtrl,
-                onOpen: _showArchive,
+                    if (_tabIndex == 0 && !_selectionMode)
+                      _buildMemoryActionRow(),
+
+                    // 記憶、待確認提案或摘要
+                    Expanded(
+                      child: switch (_tabIndex) {
+                        0 => _buildMemoryBody(),
+                        1 => MemoryReviewTab(
+                          characterId: _characterId,
+                          sourceMessageId: _reviewSourceMessageId,
+                          contextMode: widget.contextMode,
+                          continuityId: widget.continuityId,
+                          // The review tab owns proposal state, but the memory
+                          // list is cached by this parent. Reload both after a
+                          // proposal is accepted so archived merge targets do
+                          // not remain visible until the screen is reopened.
+                          onChanged: () => unawaited(_loadMemories()),
+                        ),
+                        _ => MemorySummaryTab(
+                          characterId: _characterId,
+                          contextMode: widget.contextMode,
+                          continuityId: widget.continuityId,
+                          onSummaryModified: () {
+                            _summaryModified = true;
+                          },
+                        ),
+                      },
+                    ),
+                    if (_tabIndex == 0 && _selectionMode) _buildSelectionBar(),
+                  ],
+                ),
               ),
-          ],
+
+              if (_tabIndex == 0 && !_selectionMode)
+                MemoryArchiveFab(
+                  archivedCount: _archivedCount,
+                  animationController: _archiveAnimCtrl,
+                  onOpen: _showArchive,
+                ),
+            ],
+          ),
         ),
       ),
     );
+  }
+
+  void _popWithSummaryResult() {
+    if (!mounted || _allowResultPop) return;
+    setState(() => _allowResultPop = true);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) Navigator.of(context).pop(_summaryModified);
+    });
   }
 
   Widget _buildMemorySearch() {
@@ -541,6 +525,15 @@ class _MemoryScreenState extends State<MemoryScreen>
           onDeletePressed: memory.id == null
               ? null
               : () => _deleteMemories({memory.id!}),
+          onTogglePinned: memory.id == null
+              ? null
+              : () async {
+                  await DatabaseHelper.setMemoryPinned(
+                    memory.id!,
+                    !memory.isPinned,
+                  );
+                  await _loadMemories();
+                },
         );
       },
     );

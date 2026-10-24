@@ -84,8 +84,8 @@ void main() {
         recentMessages: recent,
       );
       expect(prompt, isNot(contains('準備前往客棧抄查')));
-      expect(prompt, contains('印信已遺失'));
-      expect(prompt, contains('not a live scene'));
+      expect(prompt, isNot(contains('印信已遺失')));
+      expect(prompt, isEmpty);
       expect(await db.query('rp_story_states'), hasLength(2));
       final checkpointPrompt = await RpStoryStateService.recallPrompt(
         'char-a',
@@ -1013,7 +1013,7 @@ void main() {
       continuityId: 'story-a',
     );
     expect(prompt, contains('仍要在城門赴約'));
-    expect(prompt, contains('青鸞印已被焚毀'));
+    expect(prompt, isNot(contains('青鸞印已被焚毀')));
     expect(prompt, isNot(contains('舊誓言已兌現')));
     expect(prompt, isNot(contains('肩傷已痊癒')));
   });
@@ -1166,7 +1166,7 @@ void main() {
   );
 
   test(
-    'ordinary recall keeps distinct active states for an appearing person',
+    'ordinary recall keeps only the newest body snapshot per person',
     () async {
       const base = '2026-10-02T00:00:00.000Z';
       await db.insert('rp_story_characters', <String, Object?>{
@@ -1182,9 +1182,9 @@ void main() {
         'created_at': base,
         'updated_at': base,
       });
-      for (final entry in <(String, String)>[
-        ('body.P-0014.shoulder', '左肩箭傷恢復中'),
-        ('body.P-0014.fever', '低熱尚未退淨'),
+      for (final entry in <(String, String, String)>[
+        ('body.P-0014.fever', '低熱尚未退淨', base),
+        ('body.P-0014.shoulder', '左肩箭傷恢復中', '2026-10-02T01:00:00.000Z'),
       ]) {
         await db.insert('rp_story_states', <String, Object?>{
           'id': entry.$1,
@@ -1198,7 +1198,7 @@ void main() {
           'status': 'recovering',
           'source_message_ids': '[]',
           'created_at': base,
-          'updated_at': base,
+          'updated_at': entry.$3,
         });
       }
 
@@ -1216,7 +1216,7 @@ void main() {
       );
 
       expect(prompt, contains('左肩箭傷恢復中'));
-      expect(prompt, contains('低熱尚未退淨'));
+      expect(prompt, isNot(contains('低熱尚未退淨')));
     },
   );
 

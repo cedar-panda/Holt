@@ -7,6 +7,7 @@ import '../services/rp_story_state_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/context_mode_pill.dart';
 import '../widgets/gradient_background.dart';
+import '../widgets/managed_text_controllers.dart';
 
 class RpStoryRelationshipScreen extends StatefulWidget {
   const RpStoryRelationshipScreen({
@@ -112,178 +113,19 @@ class _RpStoryRelationshipScreenState extends State<RpStoryRelationshipScreen> {
   }
 
   Future<void> _editCharacter(Map<String, dynamic> row) async {
-    final identity = TextEditingController(text: '${row['identity'] ?? ''}');
-    final relation = TextEditingController(
-      text: '${row['relation_to_leads'] ?? ''}',
-    );
-    final personality = TextEditingController(
-      text: '${row['personality'] ?? ''}',
-    );
-    final appearance = TextEditingController(
-      text: '${row['appearance'] ?? ''}',
-    );
-    final faction = TextEditingController(text: '${row['faction'] ?? ''}');
-    final saved = await showModalBottomSheet<bool>(
+    final saved = await showModalBottomSheet<List<String>>(
       context: context,
       isScrollControlled: true,
       backgroundColor: YanciTheme.surfacePanel,
-      builder: (context) => Padding(
-        padding: EdgeInsets.fromLTRB(
-          24,
-          20,
-          24,
-          MediaQuery.viewInsetsOf(context).bottom + 24,
-        ),
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text('${row['name']}', style: YanciTheme.headingMedium),
-              const SizedBox(height: 16),
-              _field(identity, L.pick(en: 'Identity', zhTW: '身份', zhCN: '身份')),
-              _field(
-                relation,
-                L.pick(en: 'Relation to leads', zhTW: '與主角團關係', zhCN: '与主角团关系'),
-              ),
-              _field(
-                personality,
-                L.pick(en: 'Personality', zhTW: '性格', zhCN: '性格'),
-              ),
-              _field(
-                appearance,
-                L.pick(en: 'Appearance', zhTW: '外貌', zhCN: '外貌'),
-              ),
-              _field(faction, L.pick(en: 'Faction', zhTW: '陣營', zhCN: '阵营')),
-              const SizedBox(height: 8),
-              TextButton(
-                onPressed: () => Navigator.pop(context, true),
-                child: Text(L.pick(en: 'Save', zhTW: '儲存', zhCN: '保存')),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-    if (saved == true) {
-      await RpStoryService.updateCharacter(
-        row['id'].toString(),
-        identity: identity.text,
-        relationToLeads: relation.text,
-        personality: personality.text,
-        appearance: appearance.text,
-        faction: faction.text,
-      );
-      await _load();
-    }
-    identity.dispose();
-    relation.dispose();
-    personality.dispose();
-    appearance.dispose();
-    faction.dispose();
-  }
-
-  Future<void> _editRelationship(Map<String, dynamic> row) async {
-    final relation = TextEditingController(
-      text: '${row['current_relation'] ?? ''}',
-    );
-    final origin = TextEditingController(text: '${row['origin'] ?? ''}');
-    final visibility = TextEditingController(
-      text: '${row['visibility'] ?? ''}',
-    );
-    final events = await RpStoryService.relationshipEvents(
-      row['id'].toString(),
-    );
-    if (!mounted) return;
-    final saved = await showModalBottomSheet<bool>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: YanciTheme.surfacePanel,
-      builder: (context) => Padding(
-        padding: EdgeInsets.fromLTRB(
-          24,
-          20,
-          24,
-          MediaQuery.viewInsetsOf(context).bottom + 24,
-        ),
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text(
-                '${row['from_name']} → ${row['to_name']}',
-                style: YanciTheme.headingMedium,
-              ),
-              const SizedBox(height: 16),
-              _field(
-                relation,
-                L.pick(en: 'Current relation', zhTW: '目前關係', zhCN: '目前关系'),
-              ),
-              _field(
-                origin,
-                L.pick(en: 'How it formed', zhTW: '形成經過', zhCN: '形成经过'),
-              ),
-              _field(
-                visibility,
-                L.pick(en: 'Visibility', zhTW: '公開狀態', zhCN: '公开状态'),
-              ),
-              if (events.isNotEmpty) ...[
-                const SizedBox(height: 12),
-                Text(
-                  L.pick(en: 'History', zhTW: '關係變化', zhCN: '关系变化'),
-                  style: YanciTheme.bodySmall.copyWith(
-                    color: YanciTheme.textSecondary,
-                  ),
-                ),
-                ...events.map(
-                  (event) => Padding(
-                    padding: const EdgeInsets.only(top: 6),
-                    child: Text(
-                      '${event['story_time'] ?? ''}  ${event['change_text'] ?? ''}',
-                      style: YanciTheme.bodySmall,
-                    ),
-                  ),
-                ),
-              ],
-              const SizedBox(height: 8),
-              TextButton(
-                onPressed: () => Navigator.pop(context, true),
-                child: Text(L.pick(en: 'Save', zhTW: '儲存', zhCN: '保存')),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-    if (saved == true) {
-      await RpStoryService.updateRelationship(
-        row['id'].toString(),
-        currentRelation: relation.text,
-        origin: origin.text,
-        visibility: visibility.text,
-      );
-      await _load();
-    }
-    relation.dispose();
-    origin.dispose();
-    visibility.dispose();
-  }
-
-  Future<void> _editState(Map<String, dynamic> row) async {
-    final value = TextEditingController(text: '${row['value'] ?? ''}');
-    final type = row['state_type']?.toString() ?? '';
-    final statuses = RpStoryStateService.validStatuses(type);
-    var status = row['status']?.toString() ?? '';
-    if (!statuses.contains(status)) {
-      status = statuses.isEmpty ? '' : statuses.first;
-    }
-    final saved = await showModalBottomSheet<bool>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: YanciTheme.surfacePanel,
-      builder: (sheetContext) => StatefulBuilder(
-        builder: (context, setSheetState) => Padding(
+      builder: (context) => ManagedTextControllers(
+        initialValues: <String>[
+          '${row['identity'] ?? ''}',
+          '${row['relation_to_leads'] ?? ''}',
+          '${row['personality'] ?? ''}',
+          '${row['appearance'] ?? ''}',
+          '${row['faction'] ?? ''}',
+        ],
+        builder: (context, controllers) => Padding(
           padding: EdgeInsets.fromLTRB(
             24,
             20,
@@ -295,48 +137,38 @@ class _RpStoryRelationshipScreenState extends State<RpStoryRelationshipScreen> {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Text(_stateTypeLabel(type), style: YanciTheme.headingMedium),
+                Text('${row['name']}', style: YanciTheme.headingMedium),
                 const SizedBox(height: 16),
                 _field(
-                  value,
-                  L.pick(en: 'Current state', zhTW: '目前狀態', zhCN: '当前状态'),
+                  controllers[0],
+                  L.pick(en: 'Identity', zhTW: '身份', zhCN: '身份'),
                 ),
-                if (statuses.isNotEmpty && type != 'scene')
-                  DropdownButtonFormField<String>(
-                    initialValue: status,
-                    decoration: InputDecoration(
-                      labelText: L.pick(en: 'Progress', zhTW: '進度', zhCN: '进度'),
-                    ),
-                    items: statuses
-                        .map(
-                          (item) => DropdownMenuItem<String>(
-                            value: item,
-                            child: Text(_statusLabel(item)),
-                          ),
-                        )
-                        .toList(growable: false),
-                    onChanged: (value) {
-                      if (value != null) setSheetState(() => status = value);
-                    },
-                  ),
-                const SizedBox(height: 10),
-                Text(
+                _field(
+                  controllers[1],
                   L.pick(
-                    en: 'A manual correction stays fixed and will not be overwritten by automatic extraction.',
-                    zhTW: '手動修正後會固定保留，不再被自動擷取覆蓋。',
-                    zhCN: '手动修正后会固定保留，不再被自动提取覆盖。',
+                    en: 'Relation to leads',
+                    zhTW: '與主角團關係',
+                    zhCN: '与主角团关系',
                   ),
-                  style: YanciTheme.bodySmall.copyWith(
-                    color: YanciTheme.textSecondary.withValues(alpha: 0.7),
-                  ),
+                ),
+                _field(
+                  controllers[2],
+                  L.pick(en: 'Personality', zhTW: '性格', zhCN: '性格'),
+                ),
+                _field(
+                  controllers[3],
+                  L.pick(en: 'Appearance', zhTW: '外貌', zhCN: '外貌'),
+                ),
+                _field(
+                  controllers[4],
+                  L.pick(en: 'Faction', zhTW: '陣營', zhCN: '阵营'),
                 ),
                 const SizedBox(height: 8),
                 TextButton(
-                  onPressed: () {
-                    if (value.text.trim().isNotEmpty) {
-                      Navigator.pop(sheetContext, true);
-                    }
-                  },
+                  onPressed: () => Navigator.pop(
+                    context,
+                    controllers.map((controller) => controller.text).toList(),
+                  ),
                   child: Text(L.pick(en: 'Save', zhTW: '儲存', zhCN: '保存')),
                 ),
               ],
@@ -345,16 +177,249 @@ class _RpStoryRelationshipScreenState extends State<RpStoryRelationshipScreen> {
         ),
       ),
     );
-    if (saved == true) {
-      await RpStoryStateService.updateState(
+    if (saved != null) {
+      await RpStoryService.updateCharacter(
         row['id'].toString(),
-        value: value.text,
-        status: type == 'scene' ? '' : status,
+        identity: saved[0],
+        relationToLeads: saved[1],
+        personality: saved[2],
+        appearance: saved[3],
+        faction: saved[4],
       );
       await _load();
     }
-    value.dispose();
   }
+
+  Future<void> _editRelationship(Map<String, dynamic> row) async {
+    final events = await RpStoryService.relationshipEvents(
+      row['id'].toString(),
+    );
+    if (!mounted) return;
+    final initialVisibility =
+        const <String>{
+          'public',
+          'hidden',
+          'one_sided',
+          'unknown',
+        }.contains('${row['visibility'] ?? ''}')
+        ? '${row['visibility']}'
+        : 'unknown';
+    final saved = await showModalBottomSheet<Map<String, String>>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: YanciTheme.surfacePanel,
+      builder: (context) => ManagedTextControllers(
+        initialValues: <String>[
+          '${row['current_relation'] ?? ''}',
+          '${row['origin'] ?? ''}',
+          initialVisibility,
+        ],
+        builder: (context, controllers) => Padding(
+          padding: EdgeInsets.fromLTRB(
+            24,
+            20,
+            24,
+            MediaQuery.viewInsetsOf(context).bottom + 24,
+          ),
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(
+                  '${row['from_name']} → ${row['to_name']}',
+                  style: YanciTheme.headingMedium,
+                ),
+                const SizedBox(height: 16),
+                _field(
+                  controllers[0],
+                  L.pick(en: 'Current relation', zhTW: '目前關係', zhCN: '目前关系'),
+                ),
+                _field(
+                  controllers[1],
+                  L.pick(en: 'How it formed', zhTW: '形成經過', zhCN: '形成经过'),
+                ),
+                DropdownButtonFormField<String>(
+                  initialValue: controllers[2].text,
+                  decoration: InputDecoration(
+                    labelText: L.pick(
+                      en: 'Visibility',
+                      zhTW: '公開狀態',
+                      zhCN: '公开状态',
+                    ),
+                  ),
+                  items:
+                      const <String>['public', 'hidden', 'one_sided', 'unknown']
+                          .map(
+                            (value) => DropdownMenuItem<String>(
+                              value: value,
+                              child: Text(_visibilityLabel(value)),
+                            ),
+                          )
+                          .toList(growable: false),
+                  onChanged: (value) {
+                    if (value != null) {
+                      controllers[2].text = value;
+                    }
+                  },
+                ),
+                if (events.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  Text(
+                    L.pick(en: 'History', zhTW: '關係變化', zhCN: '关系变化'),
+                    style: YanciTheme.bodySmall.copyWith(
+                      color: YanciTheme.textSecondary,
+                    ),
+                  ),
+                  ...events.map(
+                    (event) => Padding(
+                      padding: const EdgeInsets.only(top: 6),
+                      child: Text(
+                        '${event['story_time'] ?? ''}  ${event['change_text'] ?? ''}',
+                        style: YanciTheme.bodySmall,
+                      ),
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 8),
+                TextButton(
+                  onPressed: () => Navigator.pop(context, <String, String>{
+                    'relation': controllers[0].text,
+                    'origin': controllers[1].text,
+                    'visibility': controllers[2].text,
+                  }),
+                  child: Text(L.pick(en: 'Save', zhTW: '儲存', zhCN: '保存')),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    if (saved != null) {
+      await RpStoryService.updateRelationship(
+        row['id'].toString(),
+        currentRelation: saved['relation'] ?? '',
+        origin: saved['origin'] ?? '',
+        visibility: saved['visibility'] ?? 'unknown',
+      );
+      await _load();
+    }
+  }
+
+  Future<void> _editState(Map<String, dynamic> row) async {
+    final type = row['state_type']?.toString() ?? '';
+    final statuses = RpStoryStateService.validStatuses(type);
+    var status = row['status']?.toString() ?? '';
+    if (!statuses.contains(status)) {
+      status = statuses.isEmpty ? '' : statuses.first;
+    }
+    final saved = await showModalBottomSheet<Map<String, String>>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: YanciTheme.surfacePanel,
+      builder: (sheetContext) => ManagedTextControllers(
+        initialValues: <String>['${row['value'] ?? ''}'],
+        builder: (sheetContext, controllers) => StatefulBuilder(
+          builder: (context, setSheetState) => Padding(
+            padding: EdgeInsets.fromLTRB(
+              24,
+              20,
+              24,
+              MediaQuery.viewInsetsOf(context).bottom + 24,
+            ),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(_stateTypeLabel(type), style: YanciTheme.headingMedium),
+                  const SizedBox(height: 16),
+                  _field(
+                    controllers.single,
+                    L.pick(en: 'Current state', zhTW: '目前狀態', zhCN: '当前状态'),
+                  ),
+                  if (statuses.isNotEmpty && type != 'scene')
+                    DropdownButtonFormField<String>(
+                      initialValue: status,
+                      decoration: InputDecoration(
+                        labelText: L.pick(
+                          en: 'Progress',
+                          zhTW: '進度',
+                          zhCN: '进度',
+                        ),
+                      ),
+                      items: statuses
+                          .map(
+                            (item) => DropdownMenuItem<String>(
+                              value: item,
+                              child: Text(_statusLabel(item)),
+                            ),
+                          )
+                          .toList(growable: false),
+                      onChanged: (value) {
+                        if (value != null) setSheetState(() => status = value);
+                      },
+                    ),
+                  const SizedBox(height: 10),
+                  Text(
+                    L.pick(
+                      en: 'A manual correction stays fixed and will not be overwritten by automatic extraction.',
+                      zhTW: '手動修正後會固定保留，不再被自動擷取覆蓋。',
+                      zhCN: '手动修正后会固定保留，不再被自动提取覆盖。',
+                    ),
+                    style: YanciTheme.bodySmall.copyWith(
+                      color: YanciTheme.textSecondary.withValues(alpha: 0.7),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  TextButton(
+                    onPressed: () {
+                      if (controllers.single.text.trim().isNotEmpty) {
+                        Navigator.pop(sheetContext, <String, String>{
+                          'value': controllers.single.text,
+                          'status': status,
+                        });
+                      } else {
+                        ScaffoldMessenger.of(sheetContext).showSnackBar(
+                          SnackBar(
+                            content: Text(
+                              L.pick(
+                                en: 'State content is required.',
+                                zhTW: '請填寫狀態內容。',
+                                zhCN: '请填写状态内容。',
+                              ),
+                            ),
+                            behavior: SnackBarBehavior.floating,
+                          ),
+                        );
+                      }
+                    },
+                    child: Text(L.pick(en: 'Save', zhTW: '儲存', zhCN: '保存')),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    if (saved != null) {
+      await RpStoryStateService.updateState(
+        row['id'].toString(),
+        value: saved['value'] ?? '',
+        status: type == 'scene' ? '' : saved['status'] ?? '',
+      );
+      await _load();
+    }
+  }
+
+  String _visibilityLabel(String value) => switch (value) {
+    'public' => L.pick(en: 'Public', zhTW: '公開', zhCN: '公开'),
+    'hidden' => L.pick(en: 'Hidden', zhTW: '隱藏', zhCN: '隐藏'),
+    'one_sided' => L.pick(en: 'One-sided', zhTW: '單方知情', zhCN: '单方知情'),
+    _ => L.pick(en: 'Unknown', zhTW: '未知', zhCN: '未知'),
+  };
 
   Widget _field(TextEditingController controller, String label) => Padding(
     padding: const EdgeInsets.only(bottom: 10),
@@ -605,7 +670,7 @@ class _RpStoryRelationshipScreenState extends State<RpStoryRelationshipScreen> {
                   ),
                 ] else
                   const Spacer(),
-                if (layer != 'main')
+                if (layer != 'main' && layer != 'mainline')
                   Text(
                     _layerLabel(layer),
                     style: YanciTheme.bodySmall.copyWith(
@@ -692,10 +757,11 @@ class _RpStoryRelationshipScreenState extends State<RpStoryRelationshipScreen> {
   };
 
   String _layerLabel(String layer) => switch (layer) {
-    'memory' => L.pick(en: 'Flashback', zhTW: '回憶', zhCN: '回忆'),
+    'main' || 'mainline' => L.pick(en: 'Main', zhTW: '主線', zhCN: '主线'),
+    'memory' || 'flashback' => L.pick(en: 'Flashback', zhTW: '回憶', zhCN: '回忆'),
     'dream' => L.pick(en: 'Dream', zhTW: '夢境', zhCN: '梦境'),
     'hypothetical' => L.pick(en: 'Hypothetical', zhTW: '假設', zhCN: '假设'),
-    'au' => 'AU',
+    'au' || 'side_story' => L.pick(en: 'Side story', zhTW: '番外', zhCN: '番外'),
     'ooc' => 'OOC',
     _ => layer,
   };
@@ -728,7 +794,7 @@ class _RpStoryRelationshipScreenState extends State<RpStoryRelationshipScreen> {
 
   Widget _markdown(String value, {TextStyle? style}) => MarkdownBody(
     data: value,
-    selectable: true,
+    selectable: false,
     styleSheet: MarkdownStyleSheet(
       p: style ?? YanciTheme.bodySmall,
       listBullet: style ?? YanciTheme.bodySmall,

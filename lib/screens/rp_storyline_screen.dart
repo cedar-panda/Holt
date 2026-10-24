@@ -1,3 +1,4 @@
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
 import '../memory/database.dart';
@@ -372,17 +373,23 @@ class _RpStorylineScreenState extends State<RpStorylineScreen> {
     final duration = reduceMotion
         ? Duration.zero
         : const Duration(milliseconds: 180);
+    final resourceFontSize =
+        15.0 * YanciTheme.fontScale.clamp(0.8, 1.2).toDouble();
+    final resourceTextStyle = YanciTheme.bodyText.copyWith(
+      fontSize: resourceFontSize,
+      height: 1.2,
+    );
     final archiveLinkStyle = TextButton.styleFrom(
       minimumSize: const Size(0, 44),
       padding: const EdgeInsets.symmetric(horizontal: 4),
       tapTargetSize: MaterialTapTargetSize.shrinkWrap,
       alignment: Alignment.center,
-      textStyle: YanciTheme.bodyText.copyWith(height: 1.2),
+      textStyle: resourceTextStyle,
     );
     final archiveSeparator = Text(
       '｜',
-      style: YanciTheme.bodyText.copyWith(
-        height: 1.2,
+      textScaler: const TextScaler.linear(1),
+      style: resourceTextStyle.copyWith(
         color: YanciTheme.textSecondary.withValues(alpha: 0.52),
       ),
     );
@@ -478,16 +485,21 @@ class _RpStorylineScreenState extends State<RpStorylineScreen> {
                     child: TextButton(
                       style: archiveLinkStyle,
                       onPressed: () => Navigator.of(context).push(
-                        MaterialPageRoute<void>(
+                        CupertinoPageRoute<void>(
                           builder: (_) => RpWorldbookScreen(
                             characterId: widget.characterId,
                             continuityId: id,
                           ),
                         ),
                       ),
-                      child: Text(
-                        L.pick(en: 'Worldbook', zhTW: '世界書', zhCN: '世界书'),
-                        textAlign: TextAlign.center,
+                      child: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: Text(
+                          L.pick(en: 'Worldbook', zhTW: '世界書', zhCN: '世界书'),
+                          textAlign: TextAlign.center,
+                          textScaler: const TextScaler.linear(1),
+                          maxLines: 1,
+                        ),
                       ),
                     ),
                   ),
@@ -496,16 +508,25 @@ class _RpStorylineScreenState extends State<RpStorylineScreen> {
                     child: TextButton(
                       style: archiveLinkStyle,
                       onPressed: () => Navigator.of(context).push(
-                        MaterialPageRoute<void>(
+                        CupertinoPageRoute<void>(
                           builder: (_) => RpStoryRelationshipScreen(
                             characterId: widget.characterId,
                             continuityId: id,
                           ),
                         ),
                       ),
-                      child: Text(
-                        L.pick(en: 'Relationships', zhTW: '人物關係', zhCN: '人物关系'),
-                        textAlign: TextAlign.center,
+                      child: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: Text(
+                          L.pick(
+                            en: 'Relationships',
+                            zhTW: '人物關係',
+                            zhCN: '人物关系',
+                          ),
+                          textAlign: TextAlign.center,
+                          textScaler: const TextScaler.linear(1),
+                          maxLines: 1,
+                        ),
                       ),
                     ),
                   ),
@@ -514,7 +535,7 @@ class _RpStorylineScreenState extends State<RpStorylineScreen> {
                     child: TextButton(
                       style: archiveLinkStyle,
                       onPressed: () => Navigator.of(context).push(
-                        MaterialPageRoute<void>(
+                        CupertinoPageRoute<void>(
                           builder: (_) => RpStorylineTimelineScreen(
                             characterId: widget.characterId,
                             continuityId: id,
@@ -525,9 +546,14 @@ class _RpStorylineScreenState extends State<RpStorylineScreen> {
                           ),
                         ),
                       ),
-                      child: Text(
-                        L.pick(en: 'Timeline', zhTW: '時間線', zhCN: '时间线'),
-                        textAlign: TextAlign.center,
+                      child: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: Text(
+                          L.pick(en: 'Timeline', zhTW: '時間線', zhCN: '时间线'),
+                          textAlign: TextAlign.center,
+                          textScaler: const TextScaler.linear(1),
+                          maxLines: 1,
+                        ),
                       ),
                     ),
                   ),

@@ -80,3 +80,6 @@ backups/
 Claude outputs/
 *.bak
 recovery/
+
+# 晏辭寫給昭昭的（不上傳）
+docs/map/給昭昭的.md

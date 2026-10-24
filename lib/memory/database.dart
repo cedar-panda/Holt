@@ -80,7 +80,7 @@ class DatabaseHelper {
   static Future<Database>? _dbInitFuture;
   static Future<Database> Function() _databaseInitializer = _initDatabase;
   static const String _dbName = 'yanci.db';
-  static const int _dbVersion = 82;
+  static const int _dbVersion = 84;
 
   /// The label index stores retrieval phrases, not every archived paragraph.
   /// Keep this shared with ContextCompressor so invalidation recovery and the
@@ -227,7 +227,13 @@ class DatabaseHelper {
     required String leaseToken,
     required DateTime now,
     Duration claimFor = const Duration(minutes: 10),
-  }) => _KeepAliveGuardStore.tryClaimKeepAlivePing(conversationId: conversationId, characterId: characterId, leaseToken: leaseToken, now: now, claimFor: claimFor);
+  }) => _KeepAliveGuardStore.tryClaimKeepAlivePing(
+    conversationId: conversationId,
+    characterId: characterId,
+    leaseToken: leaseToken,
+    now: now,
+    claimFor: claimFor,
+  );
 
   /// 將成功的保活請求寫成跨 isolate 可見的下一次允許時間。
   static Future<bool> completeKeepAlivePing({
@@ -236,7 +242,13 @@ class DatabaseHelper {
     required String leaseToken,
     required DateTime completedAt,
     Duration cooldown = const Duration(minutes: 50),
-  }) => _KeepAliveGuardStore.completeKeepAlivePing(conversationId: conversationId, characterId: characterId, leaseToken: leaseToken, completedAt: completedAt, cooldown: cooldown);
+  }) => _KeepAliveGuardStore.completeKeepAlivePing(
+    conversationId: conversationId,
+    characterId: characterId,
+    leaseToken: leaseToken,
+    completedAt: completedAt,
+    cooldown: cooldown,
+  );
 
   /// 請求失敗或租約失效時釋放 in-flight claim，讓下一個合法執行者可重試。
   static Future<void> releaseKeepAlivePing({
@@ -244,7 +256,12 @@ class DatabaseHelper {
     required String characterId,
     required String leaseToken,
     required DateTime releasedAt,
-  }) => _KeepAliveGuardStore.releaseKeepAlivePing(conversationId: conversationId, characterId: characterId, leaseToken: leaseToken, releasedAt: releasedAt);
+  }) => _KeepAliveGuardStore.releaseKeepAlivePing(
+    conversationId: conversationId,
+    characterId: characterId,
+    leaseToken: leaseToken,
+    releasedAt: releasedAt,
+  );
 
   /// 新租約落地後清掉前一窗口的瞬時 guard。
   static Future<void> resetKeepAlivePingGuard({
@@ -252,7 +269,12 @@ class DatabaseHelper {
     required String characterId,
     required String leaseToken,
     required DateTime now,
-  }) => _KeepAliveGuardStore.resetKeepAlivePingGuard(conversationId: conversationId, characterId: characterId, leaseToken: leaseToken, now: now);
+  }) => _KeepAliveGuardStore.resetKeepAlivePingGuard(
+    conversationId: conversationId,
+    characterId: characterId,
+    leaseToken: leaseToken,
+    now: now,
+  );
 
   @visibleForTesting
   static double bm25FromFts4MatchInfoForTesting(Uint8List matchInfo) =>
@@ -436,10 +458,20 @@ class DatabaseHelper {
     String characterId = 'default',
     int durationMs = 0,
     int fileSize = 0,
-  }) => _VoiceStore.saveVoice(filePath: filePath, name: name, messageId: messageId, sourceConversationId: sourceConversationId, sourceConversationTitle: sourceConversationTitle, characterId: characterId, durationMs: durationMs, fileSize: fileSize);
+  }) => _VoiceStore.saveVoice(
+    filePath: filePath,
+    name: name,
+    messageId: messageId,
+    sourceConversationId: sourceConversationId,
+    sourceConversationTitle: sourceConversationTitle,
+    characterId: characterId,
+    durationMs: durationMs,
+    fileSize: fileSize,
+  );
 
   /// 根據 messageId 查找已緩存的語音
-  static Future<String?> getVoicePathByMessageId(String messageId) => _VoiceStore.getVoicePathByMessageId(messageId);
+  static Future<String?> getVoicePathByMessageId(String messageId) =>
+      _VoiceStore.getVoicePathByMessageId(messageId);
 
   /// 獲取所有已保存語音
   static Future<List<Map<String, dynamic>>> getSavedVoices({
@@ -447,13 +479,15 @@ class DatabaseHelper {
   }) => _VoiceStore.getSavedVoices(characterId: characterId);
 
   /// 更新語音名稱
-  static Future<void> updateVoiceName(int id, String newName) => _VoiceStore.updateVoiceName(id, newName);
+  static Future<void> updateVoiceName(int id, String newName) =>
+      _VoiceStore.updateVoiceName(id, newName);
 
   /// 刪除單條語音
   static Future<void> deleteVoice(int id) => _VoiceStore.deleteVoice(id);
 
   /// 清除指定角色的語音緩存
-  static Future<void> clearAllVoices({required String characterId}) => _VoiceStore.clearAllVoices(characterId: characterId);
+  static Future<void> clearAllVoices({required String characterId}) =>
+      _VoiceStore.clearAllVoices(characterId: characterId);
 
   /// 語音總數
   static Future<int> getVoiceCount() => _VoiceStore.getVoiceCount();
@@ -477,10 +511,17 @@ class DatabaseHelper {
     String scope = 'current',
     ContextMode currentMode = ContextMode.daily,
     int limit = 5,
-  }) => _MessageStore.searchMessages(keyword: keyword, characterId: characterId, scope: scope, currentMode: currentMode, limit: limit);
+  }) => _MessageStore.searchMessages(
+    keyword: keyword,
+    characterId: characterId,
+    scope: scope,
+    currentMode: currentMode,
+    limit: limit,
+  );
 
   /// 該角色最後一條消息的時間（安全感閒置衰減的錨點）
-  static Future<DateTime?> getLastMessageTime(String characterId) => _MessageStore.getLastMessageTime(characterId);
+  static Future<DateTime?> getLastMessageTime(String characterId) =>
+      _MessageStore.getLastMessageTime(characterId);
 
   /// Returns the distinct local dates on which the user spoke to this
   /// character in the requested lane. One or many messages on the same date
@@ -489,14 +530,18 @@ class DatabaseHelper {
   static Future<Set<String>> getCharacterActiveDateKeys(
     String characterId, {
     ContextMode contextMode = ContextMode.daily,
-  }) => _MessageStore.getCharacterActiveDateKeys(characterId, contextMode: contextMode);
+  }) => _MessageStore.getCharacterActiveDateKeys(
+    characterId,
+    contextMode: contextMode,
+  );
 
   /// 追加角色自我註記（最多保留 12 條，先進先出）。
   ///
   /// 完全相同或正規化後相似度 >= 90% 的條目只保留資訊較完整的一條。
   /// 返回 false 表示 incoming 沒有為註記集合增加任何資訊；即使如此，
   /// transaction 仍會順手清理舊資料中已經存在的重複條目。
-  static Future<bool> appendSelfNote(String characterId, String note) => _SelfNoteStore.appendSelfNote(characterId, note);
+  static Future<bool> appendSelfNote(String characterId, String note) =>
+      _SelfNoteStore.appendSelfNote(characterId, note);
 
   static Future<({bool accepted, int? recordId})> appendSelfNoteDetailed(
     String characterId,
@@ -507,43 +552,32 @@ class DatabaseHelper {
     String modelVersion = '',
     String sourceConversationId = '',
     List<int> sourceMessageIds = const <int>[],
-  }) => _SelfNoteStore.appendSelfNoteDetailed(characterId, note, retainLongTerm: retainLongTerm, provider: provider, modelId: modelId, modelVersion: modelVersion, sourceConversationId: sourceConversationId, sourceMessageIds: sourceMessageIds);
+  }) => _SelfNoteStore.appendSelfNoteDetailed(
+    characterId,
+    note,
+    retainLongTerm: retainLongTerm,
+    provider: provider,
+    modelId: modelId,
+    modelVersion: modelVersion,
+    sourceConversationId: sourceConversationId,
+    sourceMessageIds: sourceMessageIds,
+  );
 
   /// 刪除一條角色自我註記；不改動任何 conversation 的靜態註記快照。
-  static Future<bool> deleteSelfNote(String characterId, String note) => _SelfNoteStore.deleteSelfNote(characterId, note);
+  static Future<bool> deleteSelfNote(String characterId, String note) =>
+      _SelfNoteStore.deleteSelfNote(characterId, note);
 
   @visibleForTesting
-  static String mergeSelfNotes(String existing, String incoming) => _SelfNoteStore.mergeSelfNotes(existing, incoming);
-
-
-
-
-
-
+  static String mergeSelfNotes(String existing, String incoming) =>
+      _SelfNoteStore.mergeSelfNotes(existing, incoming);
 
   /// Removes duplicates already present in storage while preserving the first
   /// position of each group. A later, more informative variant replaces the
   /// shorter wording in place, so cleanup never shuffles the character's
   /// self-note chronology.
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-  static Future<String> getSelfNotes(String characterId) => _SelfNoteStore.getSelfNotes(characterId);
+  static Future<String> getSelfNotes(String characterId) =>
+      _SelfNoteStore.getSelfNotes(characterId);
 
   static Future<String> getSelfNotesForPrompt(
     String characterId, {
@@ -554,7 +588,8 @@ class DatabaseHelper {
     String characterId,
   ) => _SelfNoteStore.getSelfNoteRecords(characterId);
 
-  static Future<bool> setSelfNoteLocked(int id, bool locked) => _SelfNoteStore.setSelfNoteLocked(id, locked);
+  static Future<bool> setSelfNoteLocked(int id, bool locked) =>
+      _SelfNoteStore.setSelfNoteLocked(id, locked);
 
   static Future<void> bindSelfNotesToMessage(
     Iterable<int> ids,
@@ -564,16 +599,20 @@ class DatabaseHelper {
   static Future<void> _backfillCharacterSelfNotes(
     DatabaseExecutor db, {
     String? characterId,
-  }) => _SelfNoteStore._backfillCharacterSelfNotes(db, characterId: characterId);
+  }) =>
+      _SelfNoteStore._backfillCharacterSelfNotes(db, characterId: characterId);
 
   /// One-time/lifecycle cleanup for existing characters. This deliberately
   /// touches only the authoritative character record; conversation-pinned
   /// snapshots remain immutable so an old cache prefix is never rewritten.
-  static Future<void> _deduplicateAllStoredSelfNotes(Database db) => _SelfNoteStore._deduplicateAllStoredSelfNotes(db);
+  static Future<void> _deduplicateAllStoredSelfNotes(Database db) =>
+      _SelfNoteStore._deduplicateAllStoredSelfNotes(db);
 
-  static Future<void> clearSelfNotes(String characterId) => _SelfNoteStore.clearSelfNotes(characterId);
+  static Future<void> clearSelfNotes(String characterId) =>
+      _SelfNoteStore.clearSelfNotes(characterId);
 
-  static Future<void> insertCharacter(Map<String, dynamic> char) => _CharacterStore.insertCharacter(char);
+  static Future<void> insertCharacter(Map<String, dynamic> char) =>
+      _CharacterStore.insertCharacter(char);
 
   static Future<void> updateCharacter(
     String id,
@@ -588,13 +627,17 @@ class DatabaseHelper {
     String? modelText,
     String? source,
     bool? modelOverrideEnabled,
-  }) => _CharacterStore.updateCharacterWhisper(id, userText: userText, modelText: modelText, source: source, modelOverrideEnabled: modelOverrideEnabled);
+  }) => _CharacterStore.updateCharacterWhisper(
+    id,
+    userText: userText,
+    modelText: modelText,
+    source: source,
+    modelOverrideEnabled: modelOverrideEnabled,
+  );
 
   /// Runtime-generated signatures must not reorder the character carousel.
-  static Future<void> updateCharacterSignature(
-    String id,
-    String signature,
-  ) => _CharacterStore.updateCharacterSignature(id, signature);
+  static Future<void> updateCharacterSignature(String id, String signature) =>
+      _CharacterStore.updateCharacterSignature(id, signature);
 
   /// Builds a partial character update without allowing identity/creation
   /// metadata to be rewritten. Because this map contains only supplied fields,
@@ -605,9 +648,11 @@ class DatabaseHelper {
     String? updatedAt,
   }) => _CharacterStore.sanitizeCharacterUpdates(updates, updatedAt: updatedAt);
 
-  static Future<List<Map<String, dynamic>>> getCharacters() => _CharacterStore.getCharacters();
+  static Future<List<Map<String, dynamic>>> getCharacters() =>
+      _CharacterStore.getCharacters();
 
-  static Future<Map<String, dynamic>?> getCharacter(String id) => _CharacterStore.getCharacter(id);
+  static Future<Map<String, dynamic>?> getCharacter(String id) =>
+      _CharacterStore.getCharacter(id);
 
   /// 取得角色的畫畫錨點（user + char + style）
   static Future<({String user, String char, String style})> getDrawAnchors(
@@ -621,49 +666,70 @@ class DatabaseHelper {
     );
   }
 
-  static Future<void> deleteCharacter(String id) => _CharacterStore.deleteCharacter(id);
+  static Future<void> deleteCharacter(String id) =>
+      _CharacterStore.deleteCharacter(id);
 
   // ═══════════════════════════════════
   // 對話操作（帶角色過濾）
   // ═══════════════════════════════════
 
-  static Future<void> createConversation(Conversation conv) => _ConversationStore.createConversation(conv);
-
-
+  static Future<void> createConversation(Conversation conv) =>
+      _ConversationStore.createConversation(conv);
 
   static Future<List<Map<String, Object?>>> getRpStorylines(
     String characterId, {
     bool includeArchived = false,
-  }) => _ConversationStore.getRpStorylines(characterId, includeArchived: includeArchived);
+  }) => _ConversationStore.getRpStorylines(
+    characterId,
+    includeArchived: includeArchived,
+  );
 
-  static Future<void> ensureDefaultRpStoryline(String characterId) => _ConversationStore.ensureDefaultRpStoryline(characterId);
+  static Future<void> ensureDefaultRpStoryline(String characterId) =>
+      _ConversationStore.ensureDefaultRpStoryline(characterId);
 
   static Future<String> createRpStoryline({
     required String characterId,
     required String name,
-  }) => _ConversationStore.createRpStoryline(characterId: characterId, name: name);
+  }) => _ConversationStore.createRpStoryline(
+    characterId: characterId,
+    name: name,
+  );
 
   static Future<void> renameRpStoryline({
     required String characterId,
     required String storylineId,
     required String name,
-  }) => _ConversationStore.renameRpStoryline(characterId: characterId, storylineId: storylineId, name: name);
+  }) => _ConversationStore.renameRpStoryline(
+    characterId: characterId,
+    storylineId: storylineId,
+    name: name,
+  );
 
   static Future<void> setRpStorylineArchived({
     required String characterId,
     required String storylineId,
     required bool archived,
-  }) => _ConversationStore.setRpStorylineArchived(characterId: characterId, storylineId: storylineId, archived: archived);
+  }) => _ConversationStore.setRpStorylineArchived(
+    characterId: characterId,
+    storylineId: storylineId,
+    archived: archived,
+  );
 
   static Future<void> setDefaultRpStoryline({
     required String characterId,
     required String storylineId,
-  }) => _ConversationStore.setDefaultRpStoryline(characterId: characterId, storylineId: storylineId);
+  }) => _ConversationStore.setDefaultRpStoryline(
+    characterId: characterId,
+    storylineId: storylineId,
+  );
 
   static Future<bool> hasConversationHistoryForCharacter({
     required String characterId,
     required ContextMode contextMode,
-  }) => _ConversationStore.hasConversationHistoryForCharacter(characterId: characterId, contextMode: contextMode);
+  }) => _ConversationStore.hasConversationHistoryForCharacter(
+    characterId: characterId,
+    contextMode: contextMode,
+  );
 
   /// Rebinds a newly-created, still-empty RP window to another storyline.
   /// Once any message exists, the immutable window identity is left untouched.
@@ -673,22 +739,32 @@ class DatabaseHelper {
     required String storylineId,
     required String userPersonaId,
     required String userPersonaSnapshot,
-  }) => _ConversationStore.rebindEmptyRpConversation(conversationId: conversationId, characterId: characterId, storylineId: storylineId, userPersonaId: userPersonaId, userPersonaSnapshot: userPersonaSnapshot);
+  }) => _ConversationStore.rebindEmptyRpConversation(
+    conversationId: conversationId,
+    characterId: characterId,
+    storylineId: storylineId,
+    userPersonaId: userPersonaId,
+    userPersonaSnapshot: userPersonaSnapshot,
+  );
 
-  static Future<void> updateConversation(String id, {String? title}) => _ConversationStore.updateConversation(id, title: title);
+  static Future<void> updateConversation(String id, {String? title}) =>
+      _ConversationStore.updateConversation(id, title: title);
 
   /// 修正對話的角色綁定（角色 ID 失效時的恢復路徑）
   static Future<void> updateConversationCharacter(
     String conversationId,
     String characterId,
-  ) => _ConversationStore.updateConversationCharacter(conversationId, characterId);
+  ) => _ConversationStore.updateConversationCharacter(
+    conversationId,
+    characterId,
+  );
 
   /// 星標 / 取消星標
-  static Future<void> toggleStarConversation(String id, bool starred) => _ConversationStore.toggleStarConversation(id, starred);
+  static Future<void> toggleStarConversation(String id, bool starred) =>
+      _ConversationStore.toggleStarConversation(id, starred);
 
-  static Future<List<Conversation>> getConversations({
-    String? characterId,
-  }) => _ConversationStore.getConversations(characterId: characterId);
+  static Future<List<Conversation>> getConversations({String? characterId}) =>
+      _ConversationStore.getConversations(characterId: characterId);
 
   /// Returns the last two complete user/assistant turns from the immediately
   /// preceding non-empty window in the same character, mode and story line.
@@ -700,11 +776,16 @@ class DatabaseHelper {
     required ContextMode contextMode,
     required String continuityId,
     int turnCount = 2,
-  }) => _ConversationStore.getPreviousConversationTurns(currentConversationId: currentConversationId, characterId: characterId, contextMode: contextMode, continuityId: continuityId, turnCount: turnCount);
+  }) => _ConversationStore.getPreviousConversationTurns(
+    currentConversationId: currentConversationId,
+    characterId: characterId,
+    contextMode: contextMode,
+    continuityId: continuityId,
+    turnCount: turnCount,
+  );
 
   /// 從按時間正序的消息中取得最後 N 組完整 user→assistant 回合。
   /// 續接內容不從半個回合或連續同角色消息開始，避免模型誤判接棒點。
-
 
   /// 新窗口可續接的同模式來源窗口。候選依最後一條消息時間排序；
   /// 每個候選只攜帶最後一個完整回合（兩條正文）與該時間點最新一份
@@ -716,7 +797,13 @@ class DatabaseHelper {
     required String continuityId,
     ContextMode contextMode = ContextMode.rp,
     int limit = 20,
-  }) => _ConversationStore.getRpChapterContinuationSources(currentConversationId: currentConversationId, characterId: characterId, continuityId: continuityId, contextMode: contextMode, limit: limit);
+  }) => _ConversationStore.getRpChapterContinuationSources(
+    currentConversationId: currentConversationId,
+    characterId: characterId,
+    continuityId: continuityId,
+    contextMode: contextMode,
+    limit: limit,
+  );
 
   /// Resolves the exact source persisted by a continuation action. Unlike the
   /// picker query this is not limited to the most recent windows, so reopening
@@ -729,13 +816,19 @@ class DatabaseHelper {
     ContextMode contextMode = ContextMode.rp,
     int? throughMessageId,
     DateTime? summariesThrough,
-  }) => _ConversationStore.getRpChapterContinuationSource(sourceConversationId: sourceConversationId, currentConversationId: currentConversationId, characterId: characterId, continuityId: continuityId, contextMode: contextMode, throughMessageId: throughMessageId, summariesThrough: summariesThrough);
+  }) => _ConversationStore.getRpChapterContinuationSource(
+    sourceConversationId: sourceConversationId,
+    currentConversationId: currentConversationId,
+    characterId: characterId,
+    continuityId: continuityId,
+    contextMode: contextMode,
+    throughMessageId: throughMessageId,
+    summariesThrough: summariesThrough,
+  );
 
   static Future<Message?> getLatestRpChapterContinuationAction(
     String conversationId,
   ) => _ConversationStore.getLatestRpChapterContinuationAction(conversationId);
-
-
 
   /// 搜索對話（窗口標題或窗口內任一消息模糊匹配）。
   ///
@@ -746,20 +839,26 @@ class DatabaseHelper {
     String? characterId,
   }) => _ConversationStore.searchConversations(query, characterId: characterId);
 
-  static Future<Conversation?> getConversation(String id) => _ConversationStore.getConversation(id);
+  static Future<Conversation?> getConversation(String id) =>
+      _ConversationStore.getConversation(id);
 
-  static Future<String> ensureConversationWindowSummaryId(String id) => _ConversationStore.ensureConversationWindowSummaryId(id);
+  static Future<String> ensureConversationWindowSummaryId(String id) =>
+      _ConversationStore.ensureConversationWindowSummaryId(id);
 
   /// 產生並強制更新一個新的 window_summary_id 給指定對話
-  static Future<String> rotateConversationWindowSummaryId(String id) => _ConversationStore.rotateConversationWindowSummaryId(id);
+  static Future<String> rotateConversationWindowSummaryId(String id) =>
+      _ConversationStore.rotateConversationWindowSummaryId(id);
 
-  static Future<String?> getConversationWindowSummaryId(String id) => _ConversationStore.getConversationWindowSummaryId(id);
+  static Future<String?> getConversationWindowSummaryId(String id) =>
+      _ConversationStore.getConversationWindowSummaryId(id);
 
-  static Future<int> getConversationSummaryCursor(String id) => _ConversationStore.getConversationSummaryCursor(id);
+  static Future<int> getConversationSummaryCursor(String id) =>
+      _ConversationStore.getConversationSummaryCursor(id);
 
   /// 讀取對話的靜態摘要 pin。null = 從未釘過（含遷移前的既有對話）；
   /// 空字串 = 出生時無前情、已釘為空。兩者要分開，別用 DEFAULT ''。
-  static Future<String?> getConversationPinnedSummary(String id) => _ConversationStore.getConversationPinnedSummary(id);
+  static Future<String?> getConversationPinnedSummary(String id) =>
+      _ConversationStore.getConversationPinnedSummary(id);
 
   /// 原子釘死對話的靜態摘要文本。
   ///
@@ -771,7 +870,8 @@ class DatabaseHelper {
     String text,
   ) => _ConversationStore.setConversationPinnedSummaryIfAbsent(id, text);
 
-  static Future<String?> getConversationPinnedSelfNotes(String id) => _ConversationStore.getConversationPinnedSelfNotes(id);
+  static Future<String?> getConversationPinnedSelfNotes(String id) =>
+      _ConversationStore.getConversationPinnedSelfNotes(id);
 
   /// conversation 出生時只釘一次自我註記全量；之後新註記只走 dynamic。
   static Future<String> setConversationPinnedSelfNotesIfAbsent(
@@ -792,7 +892,11 @@ class DatabaseHelper {
     String id, {
     required int characterCoins,
     required int userCoins,
-  }) => _ConversationStore.setConversationPinnedCoinSnapshotIfAbsent(id, characterCoins: characterCoins, userCoins: userCoins);
+  }) => _ConversationStore.setConversationPinnedCoinSnapshotIfAbsent(
+    id,
+    characterCoins: characterCoins,
+    userCoins: userCoins,
+  );
 
   static Future<String> _generateWindowSummaryId(DatabaseExecutor db) async {
     const letters = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
@@ -822,13 +926,15 @@ class DatabaseHelper {
     return 'A${fallback.substring(fallback.length - 2)}';
   }
 
-  static Future<void> deleteConversation(String id) => _ConversationStore.deleteConversation(id);
+  static Future<void> deleteConversation(String id) =>
+      _ConversationStore.deleteConversation(id);
 
   // ═══════════════════════════════════
   // 訊息操作
   // ═══════════════════════════════════
 
-  static Future<int> insertMessage(Message msg) => _MessageStore.insertMessage(msg);
+  static Future<int> insertMessage(Message msg) =>
+      _MessageStore.insertMessage(msg);
 
   /// 從指定 message id（含）起載入對話全部消息——上下文窗口錨點用。
   /// 錨點指向的消息被刪時，自然從下一條 id 開始，不會返回空窗。
@@ -845,15 +951,15 @@ class DatabaseHelper {
     int afterId,
   ) => _MessageStore.getMessagesAfterId(conversationId, afterId);
 
-  static Future<int?> getLatestMessageId(String conversationId) => _MessageStore.getLatestMessageId(conversationId);
+  static Future<int?> getLatestMessageId(String conversationId) =>
+      _MessageStore.getLatestMessageId(conversationId);
 
   /// Message anchors whose automatic rolling summary has been persisted.
   ///
   /// This UI-only metadata stays on a visible message so it follows backup,
   /// restore, branching, and deletion without ever entering prompt history.
-  static Future<Set<int>> getSummaryRecordedMessageIds(
-    String conversationId,
-  ) => _MessageStore.getSummaryRecordedMessageIds(conversationId);
+  static Future<Set<int>> getSummaryRecordedMessageIds(String conversationId) =>
+      _MessageStore.getSummaryRecordedMessageIds(conversationId);
 
   /// UI anchors mapped to the exact automatic summary they open.
   ///
@@ -871,20 +977,23 @@ class DatabaseHelper {
     required String sourceConversationId,
     required int beforeMessageId,
     String? title,
-  }) => _MessageStore.branchConversation(sourceConversationId: sourceConversationId, beforeMessageId: beforeMessageId, title: title);
+  }) => _MessageStore.branchConversation(
+    sourceConversationId: sourceConversationId,
+    beforeMessageId: beforeMessageId,
+    title: title,
+  );
 
   /// 取指定 id 之前的最後 [limit] 條（升序返回）——錨點前純顯示分頁用
   static Future<List<Message>> getMessagesBeforeId(
     String conversationId,
     int beforeId, {
     int limit = 50,
-  }) => _MessageStore.getMessagesBeforeId(conversationId, beforeId, limit: limit);
+  }) =>
+      _MessageStore.getMessagesBeforeId(conversationId, beforeId, limit: limit);
 
   /// 指定 id 之前是否還有消息（「查看更早」按鈕顯示條件）
-  static Future<bool> hasMessagesBefore(
-    String conversationId,
-    int beforeId,
-  ) => _MessageStore.hasMessagesBefore(conversationId, beforeId);
+  static Future<bool> hasMessagesBefore(String conversationId, int beforeId) =>
+      _MessageStore.hasMessagesBefore(conversationId, beforeId);
 
   static Future<List<Message>> getMessages(
     String conversationId, {
@@ -897,9 +1006,14 @@ class DatabaseHelper {
     String conversationId,
     int throughMessageId, {
     int limit = 50,
-  }) => _MessageStore.getMessagesUpToId(conversationId, throughMessageId, limit: limit);
+  }) => _MessageStore.getMessagesUpToId(
+    conversationId,
+    throughMessageId,
+    limit: limit,
+  );
 
-  static Future<int> getMessageCount(String conversationId) => _MessageStore.getMessageCount(conversationId);
+  static Future<int> getMessageCount(String conversationId) =>
+      _MessageStore.getMessageCount(conversationId);
 
   /// Approximate source volume for one RP storyline without loading its full
   /// dialogue into Dart. Character count is sufficient for choosing a soft
@@ -907,14 +1021,16 @@ class DatabaseHelper {
   static Future<int> getRpStorylineSourceCharacterCount({
     required String characterId,
     required String continuityId,
-  }) => _MessageStore.getRpStorylineSourceCharacterCount(characterId: characterId, continuityId: continuityId);
+  }) => _MessageStore.getRpStorylineSourceCharacterCount(
+    characterId: characterId,
+    continuityId: continuityId,
+  );
 
-  static Future<Message?> getLastMessage(String conversationId) => _MessageStore.getLastMessage(conversationId);
+  static Future<Message?> getLastMessage(String conversationId) =>
+      _MessageStore.getLastMessage(conversationId);
 
-  static Future<void> deleteMessageById(
-    int id, {
-    String reason = 'delete',
-  }) => _MessageStore.deleteMessageById(id, reason: reason);
+  static Future<void> deleteMessageById(int id, {String reason = 'delete'}) =>
+      _MessageStore.deleteMessageById(id, reason: reason);
 
   static Future<void> deleteMessageByFingerprint(
     Message msg, {
@@ -945,7 +1061,8 @@ class DatabaseHelper {
     yield* paths;
   }
 
-  static Future<Message?> getMessageById(int id) => _MessageStore.getMessageById(id);
+  static Future<Message?> getMessageById(int id) =>
+      _MessageStore.getMessageById(id);
 
   /// Confirms that every source message still exists at the same revision.
   /// Summary/model calls run outside SQLite transactions; this check prevents
@@ -963,14 +1080,16 @@ class DatabaseHelper {
     ChatDiagnosticEvent event,
   ) => _MessageStore.upsertChatDiagnostic(event);
 
-  static Future<void> deleteChatDiagnostic(int id) => _MessageStore.deleteChatDiagnostic(id);
+  static Future<void> deleteChatDiagnostic(int id) =>
+      _MessageStore.deleteChatDiagnostic(id);
 
   static Future<void> deleteChatDiagnosticsForMessages(
     Iterable<int> messageIds,
   ) => _MessageStore.deleteChatDiagnosticsForMessages(messageIds);
 
   /// 覆蓋消息文本（不刪除原記錄）
-  static Future<void> updateMessageText(int id, String newText) => _MessageStore.updateMessageText(id, newText);
+  static Future<void> updateMessageText(int id, String newText) =>
+      _MessageStore.updateMessageText(id, newText);
 
   static Future<bool> updateMessagePersonaCard(
     int messageId,
@@ -984,7 +1103,11 @@ class DatabaseHelper {
     required int messageId,
     required Map<String, Object?> character,
     required PersonaCardState cardState,
-  }) => _MessageStore.addCharacterFromPersonaCard(messageId: messageId, character: character, cardState: cardState);
+  }) => _MessageStore.addCharacterFromPersonaCard(
+    messageId: messageId,
+    character: character,
+    cardState: cardState,
+  );
 
   static Future<void> _archiveMessageRevision(
     DatabaseExecutor db,
@@ -1000,11 +1123,12 @@ class DatabaseHelper {
     required String conversationId,
     required int messageId,
     required String reason,
-  }) => _MessageInvalidation._invalidateSummaryChainForMessage(db, conversationId: conversationId, messageId: messageId, reason: reason);
-
-
-
-
+  }) => _MessageInvalidation._invalidateSummaryChainForMessage(
+    db,
+    conversationId: conversationId,
+    messageId: messageId,
+    reason: reason,
+  );
 
   /// Removes RP timeline rows sourced from an invalidated summary chain.
   ///
@@ -1013,8 +1137,8 @@ class DatabaseHelper {
   /// replacement summary will recreate valid events, while stale events must
   /// not remain available for recall between edit/re-roll and regeneration.
 
-
-  static Future<void> updateMessageStatus(int id, String status) => _MessageInvalidation.updateMessageStatus(id, status);
+  static Future<void> updateMessageStatus(int id, String status) =>
+      _MessageInvalidation.updateMessageStatus(id, status);
 
   /// Rebuilds the derived full-text memory index after restore or repair.
   static Future<void> rebuildMemoryFts() => _MemorySearch.rebuildIndex();
@@ -1045,14 +1169,20 @@ class DatabaseHelper {
 
   static Future<int> insertMemory(Memory mem) => _MemoryStore.insertMemory(mem);
 
-  static Future<void> insertMemories(List<Memory> memories) => _MemoryStore.insertMemories(memories);
+  static Future<void> insertMemories(List<Memory> memories) =>
+      _MemoryStore.insertMemories(memories);
 
   static Future<List<Memory>> getActiveMemories(
     String mode, {
     String characterId = 'default',
     ContextMode contextMode = ContextMode.daily,
     String continuityId = 'main',
-  }) => _MemoryStore.getActiveMemories(mode, characterId: characterId, contextMode: contextMode, continuityId: continuityId);
+  }) => _MemoryStore.getActiveMemories(
+    mode,
+    characterId: characterId,
+    contextMode: contextMode,
+    continuityId: continuityId,
+  );
 
   /// 取得角色所有模式下的 active 記憶。蛛網分層必須從完整集合規劃，否則
   /// 舊連線的另一端若在不同模式，畫面會誤以為邊不存在。
@@ -1060,21 +1190,50 @@ class DatabaseHelper {
     String characterId = 'default',
     ContextMode? contextMode,
     String continuityId = 'main',
-  }) => _MemoryStore.getAllActiveMemories(characterId: characterId, contextMode: contextMode, continuityId: continuityId);
+  }) => _MemoryStore.getAllActiveMemories(
+    characterId: characterId,
+    contextMode: contextMode,
+    continuityId: continuityId,
+  );
 
   static Future<List<Memory>> getPermanentMemories(
     String mode, {
     String characterId = 'default',
     ContextMode contextMode = ContextMode.daily,
     String continuityId = 'main',
-  }) => _MemoryStore.getPermanentMemories(mode, characterId: characterId, contextMode: contextMode, continuityId: continuityId);
+  }) => _MemoryStore.getPermanentMemories(
+    mode,
+    characterId: characterId,
+    contextMode: contextMode,
+    continuityId: continuityId,
+  );
+
+  static Future<List<Memory>> getPinnedMemories(
+    String mode, {
+    String characterId = 'default',
+    ContextMode contextMode = ContextMode.daily,
+    String continuityId = 'main',
+  }) => _MemoryStore.getPinnedMemories(
+    mode,
+    characterId: characterId,
+    contextMode: contextMode,
+    continuityId: continuityId,
+  );
+
+  static Future<void> setMemoryPinned(int memoryId, bool pinned) =>
+      _MemoryStore.setMemoryPinned(memoryId, pinned);
 
   static Future<List<Memory>> searchMemories(
     String mode,
     String keyword, {
     String characterId = 'default',
     int limit = 10,
-  }) => _MemoryStore.searchMemories(mode, keyword, characterId: characterId, limit: limit);
+  }) => _MemoryStore.searchMemories(
+    mode,
+    keyword,
+    characterId: characterId,
+    limit: limit,
+  );
 
   /// 跨模式搜尋內容、觸發詞與類別。
   /// [limit] 為 null 時回傳全部結果；記憶整理搜尋不與對話召回上限綁定。
@@ -1084,19 +1243,30 @@ class DatabaseHelper {
     int? limit = 10,
     ContextMode? contextMode,
     String continuityId = 'main',
-  }) => _MemoryStore.searchMemoriesForCharacter(keyword, characterId: characterId, limit: limit, contextMode: contextMode, continuityId: continuityId);
+  }) => _MemoryStore.searchMemoriesForCharacter(
+    keyword,
+    characterId: characterId,
+    limit: limit,
+    contextMode: contextMode,
+    continuityId: continuityId,
+  );
 
   /// 獲取低置信度待審記憶
   static Future<List<Memory>> getLowConfidenceForReview({
     String characterId = 'default',
     int minCount = 3,
-  }) => _MemoryStore.getLowConfidenceForReview(characterId: characterId, minCount: minCount);
+  }) => _MemoryStore.getLowConfidenceForReview(
+    characterId: characterId,
+    minCount: minCount,
+  );
 
   /// 記憶被關鍵詞命中注入時 +1（衰減校準的原始數據）
-  static Future<void> incrementMention(int memoryId) => _MemoryStore.incrementMention(memoryId);
+  static Future<void> incrementMention(int memoryId) =>
+      _MemoryStore.incrementMention(memoryId);
 
   /// 低置信度累計 +1
-  static Future<void> incrementReviewCount(int memoryId) => _MemoryStore.incrementReviewCount(memoryId);
+  static Future<void> incrementReviewCount(int memoryId) =>
+      _MemoryStore.incrementReviewCount(memoryId);
 
   static Future<bool> archiveMemory(
     int memoryId,
@@ -1111,12 +1281,12 @@ class DatabaseHelper {
     Iterable<int> memoryIds,
     String reason, {
     required String characterId,
-  }) => _MemoryStore.archiveMemories(memoryIds, reason, characterId: characterId);
-
-
+  }) =>
+      _MemoryStore.archiveMemories(memoryIds, reason, characterId: characterId);
 
   /// 升級低置信度記憶為中置信度
-  static Future<void> promoteMemory(int memoryId) => _MemoryStore.promoteMemory(memoryId);
+  static Future<void> promoteMemory(int memoryId) =>
+      _MemoryStore.promoteMemory(memoryId);
 
   static Future<int> getMemoryCount(
     String mode, {
@@ -1127,15 +1297,18 @@ class DatabaseHelper {
   // 表情包操作
   // ═══════════════════════════════════
 
-  static Future<int> insertSticker(Map<String, dynamic> sticker) => _NoteStickerStore.insertSticker(sticker);
+  static Future<int> insertSticker(Map<String, dynamic> sticker) =>
+      _NoteStickerStore.insertSticker(sticker);
 
   static Future<List<Map<String, dynamic>>> getStickers({
     String characterId = 'user',
   }) => _NoteStickerStore.getStickers(characterId: characterId);
 
-  static Future<void> deleteSticker(int id) => _NoteStickerStore.deleteSticker(id);
+  static Future<void> deleteSticker(int id) =>
+      _NoteStickerStore.deleteSticker(id);
 
-  static Future<void> updateStickerFilePath(int id, String filePath) => _NoteStickerStore.updateStickerFilePath(id, filePath);
+  static Future<void> updateStickerFilePath(int id, String filePath) =>
+      _NoteStickerStore.updateStickerFilePath(id, filePath);
 
   // ═══════════════════════════════════
   // 歸檔操作（積灰小盒子）
@@ -1146,14 +1319,22 @@ class DatabaseHelper {
     required String characterId,
     ContextMode? contextMode,
     String continuityId = 'main',
-  }) => _MemoryStore.getArchivedMemories(characterId: characterId, contextMode: contextMode, continuityId: continuityId);
+  }) => _MemoryStore.getArchivedMemories(
+    characterId: characterId,
+    contextMode: contextMode,
+    continuityId: continuityId,
+  );
 
   /// 歸檔記憶計數
   static Future<int> getArchivedCount({
     required String characterId,
     ContextMode? contextMode,
     String continuityId = 'main',
-  }) => _MemoryStore.getArchivedCount(characterId: characterId, contextMode: contextMode, continuityId: continuityId);
+  }) => _MemoryStore.getArchivedCount(
+    characterId: characterId,
+    contextMode: contextMode,
+    continuityId: continuityId,
+  );
 
   /// 刪除單條歸檔及其原始記憶。保留舊方法名供既有呼叫者使用，
   /// 但不再留下 status=deleted 且無法恢復的孤兒列。
@@ -1163,14 +1344,19 @@ class DatabaseHelper {
   }) => _MemoryStore.deleteArchivedMemory(archiveId, characterId: characterId);
 
   /// 一鍵清空歸檔
-  static Future<void> clearAllArchived({required String characterId}) => _MemoryStore.clearAllArchived(characterId: characterId);
+  static Future<void> clearAllArchived({required String characterId}) =>
+      _MemoryStore.clearAllArchived(characterId: characterId);
 
   /// 刪除活躍記憶（歸檔到小盒子 — 軟刪除，保留原始記錄可恢復）
   static Future<bool> deleteMemory(
     int memoryId, {
     bool archive = true,
     required String characterId,
-  }) => _MemoryStore.deleteMemory(memoryId, archive: archive, characterId: characterId);
+  }) => _MemoryStore.deleteMemory(
+    memoryId,
+    archive: archive,
+    characterId: characterId,
+  );
 
   /// 從積灰小盒子恢復記憶到活躍狀態
   static Future<bool> restoreFromArchive(
@@ -1183,20 +1369,19 @@ class DatabaseHelper {
     required String characterId,
   }) => _MemoryStore.restoreFromArchives(archiveIds, characterId: characterId);
 
-
-
   static Future<int> permanentlyDeleteArchives(
     Iterable<int> archiveIds, {
     required String characterId,
-  }) => _MemoryStore.permanentlyDeleteArchives(archiveIds, characterId: characterId);
+  }) => _MemoryStore.permanentlyDeleteArchives(
+    archiveIds,
+    characterId: characterId,
+  );
 
   /// 永久刪除（從 archive 和 memories 都移除）
   static Future<bool> permanentlyDelete(
     int archiveId, {
     required String characterId,
   }) => _MemoryStore.permanentlyDelete(archiveId, characterId: characterId);
-
-
 
   // ═══════════════════════════════════
   // 便利貼
@@ -1212,9 +1397,8 @@ class DatabaseHelper {
     String? characterId,
   }) => _NoteStickerStore.getNotes(limit: limit, characterId: characterId);
 
-  static Future<Map<String, dynamic>?> getLatestNote({
-    String? characterId,
-  }) => _NoteStickerStore.getLatestNote(characterId: characterId);
+  static Future<Map<String, dynamic>?> getLatestNote({String? characterId}) =>
+      _NoteStickerStore.getLatestNote(characterId: characterId);
 
   /// 隨機取 N 條歷史便箋（排除最新一條）
   static Future<List<Map<String, dynamic>>> getRandomNotes(
@@ -1226,7 +1410,6 @@ class DatabaseHelper {
 
   /// 舊資料庫的防禦性檢查；fresh/v33 schema 已正式包含此欄位。
   static bool _noteColumnEnsured = false;
-
 
   // ═══════════════════════════════════
   // 用量記錄
@@ -1250,7 +1433,19 @@ class DatabaseHelper {
     required int dailyProviderLaunchCap,
     required String reservedAt,
     required String expiresAt,
-  }) => _UsageStore.reserveWebSearchProviderLaunches(reservationId: reservationId, conversationId: conversationId, characterId: characterId, turnId: turnId, generationSerial: generationSerial, planStrategy: planStrategy, routes: routes, budgetDay: budgetDay, dailyProviderLaunchCap: dailyProviderLaunchCap, reservedAt: reservedAt, expiresAt: expiresAt);
+  }) => _UsageStore.reserveWebSearchProviderLaunches(
+    reservationId: reservationId,
+    conversationId: conversationId,
+    characterId: characterId,
+    turnId: turnId,
+    generationSerial: generationSerial,
+    planStrategy: planStrategy,
+    routes: routes,
+    budgetDay: budgetDay,
+    dailyProviderLaunchCap: dailyProviderLaunchCap,
+    reservedAt: reservedAt,
+    expiresAt: expiresAt,
+  );
 
   /// Consumes the durable half of a permission grant by binding it to exactly
   /// one ToolCall id. The handler still has to claim the bound reservation.
@@ -1258,7 +1453,11 @@ class DatabaseHelper {
     required String reservationId,
     required String callId,
     required String now,
-  }) => _UsageStore.bindWebSearchReservationToCall(reservationId: reservationId, callId: callId, now: now);
+  }) => _UsageStore.bindWebSearchReservationToCall(
+    reservationId: reservationId,
+    callId: callId,
+    now: now,
+  );
 
   /// Handler-only transition. It extends the short permission expiry into an
   /// execution lease so another reservation cannot reap an active request.
@@ -1268,7 +1467,13 @@ class DatabaseHelper {
     required String budgetDay,
     required String claimedAt,
     required String executionExpiresAt,
-  }) => _UsageStore.claimWebSearchReservation(reservationId: reservationId, callId: callId, budgetDay: budgetDay, claimedAt: claimedAt, executionExpiresAt: executionExpiresAt);
+  }) => _UsageStore.claimWebSearchReservation(
+    reservationId: reservationId,
+    callId: callId,
+    budgetDay: budgetDay,
+    claimedAt: claimedAt,
+    executionExpiresAt: executionExpiresAt,
+  );
 
   /// Must be called immediately before dispatching a provider request.
   static Future<bool> markWebSearchProviderLaunched({
@@ -1278,7 +1483,14 @@ class DatabaseHelper {
     required String providerModel,
     required String providerRoute,
     required String launchedAt,
-  }) => _UsageStore.markWebSearchProviderLaunched(reservationId: reservationId, callId: callId, provider: provider, providerModel: providerModel, providerRoute: providerRoute, launchedAt: launchedAt);
+  }) => _UsageStore.markWebSearchProviderLaunched(
+    reservationId: reservationId,
+    callId: callId,
+    provider: provider,
+    providerModel: providerModel,
+    providerRoute: providerRoute,
+    launchedAt: launchedAt,
+  );
 
   static Future<bool> settleWebSearchProviderLaunch({
     required String reservationId,
@@ -1293,17 +1505,35 @@ class DatabaseHelper {
     required int completionTokens,
     required double? actualCostUsd,
     required String costCertainty,
-  }) => _UsageStore.settleWebSearchProviderLaunch(reservationId: reservationId, callId: callId, provider: provider, providerModel: providerModel, providerRoute: providerRoute, outcome: outcome, settledAt: settledAt, searchRequests: searchRequests, promptTokens: promptTokens, completionTokens: completionTokens, actualCostUsd: actualCostUsd, costCertainty: costCertainty);
+  }) => _UsageStore.settleWebSearchProviderLaunch(
+    reservationId: reservationId,
+    callId: callId,
+    provider: provider,
+    providerModel: providerModel,
+    providerRoute: providerRoute,
+    outcome: outcome,
+    settledAt: settledAt,
+    searchRequests: searchRequests,
+    promptTokens: promptTokens,
+    completionTokens: completionTokens,
+    actualCostUsd: actualCostUsd,
+    costCertainty: costCertainty,
+  );
 
   /// Releases only routes for which no provider dispatch was recorded.
   static Future<int> releaseUnlaunchedWebSearchReservation({
     required String reservationId,
     String? callId,
     required String settledAt,
-  }) => _UsageStore.releaseUnlaunchedWebSearchReservation(reservationId: reservationId, callId: callId, settledAt: settledAt);
+  }) => _UsageStore.releaseUnlaunchedWebSearchReservation(
+    reservationId: reservationId,
+    callId: callId,
+    settledAt: settledAt,
+  );
 
   /// Counts provider dispatches, not logical calls and not unused reservations.
-  static Future<int> getWebSearchProviderLaunchCount(String budgetDay) => _UsageStore.getWebSearchProviderLaunchCount(budgetDay);
+  static Future<int> getWebSearchProviderLaunchCount(String budgetDay) =>
+      _UsageStore.getWebSearchProviderLaunchCount(budgetDay);
 
   static Future<void> logUsage({
     required String provider,
@@ -1317,7 +1547,19 @@ class DatabaseHelper {
     double estimatedCost = 0.0,
     String requestKind = 'unknown',
     bool costKnown = false,
-  }) => _UsageStore.logUsage(provider: provider, model: model, characterId: characterId, conversationId: conversationId, promptTokens: promptTokens, completionTokens: completionTokens, cacheHitTokens: cacheHitTokens, cacheCreationTokens: cacheCreationTokens, estimatedCost: estimatedCost, requestKind: requestKind, costKnown: costKnown);
+  }) => _UsageStore.logUsage(
+    provider: provider,
+    model: model,
+    characterId: characterId,
+    conversationId: conversationId,
+    promptTokens: promptTokens,
+    completionTokens: completionTokens,
+    cacheHitTokens: cacheHitTokens,
+    cacheCreationTokens: cacheCreationTokens,
+    estimatedCost: estimatedCost,
+    requestKind: requestKind,
+    costKnown: costKnown,
+  );
 
   /// 獲取某段時間的用量彙總
   static Future<Map<String, dynamic>> getUsageSummary(
@@ -1379,19 +1621,29 @@ class DatabaseHelper {
     required String content,
     String characterId = 'default',
     String? conversationId,
-  }) => _SavedMessageStore.saveMessage(messageId: messageId, content: content, characterId: characterId, conversationId: conversationId);
+  }) => _SavedMessageStore.saveMessage(
+    messageId: messageId,
+    content: content,
+    characterId: characterId,
+    conversationId: conversationId,
+  );
 
   /// 取消收藏
-  static Future<void> unsaveMessage(String messageId) => _SavedMessageStore.unsaveMessage(messageId);
+  static Future<void> unsaveMessage(String messageId) =>
+      _SavedMessageStore.unsaveMessage(messageId);
 
   /// 查詢是否已收藏
-  static Future<bool> isMessageSaved(String messageId) => _SavedMessageStore.isMessageSaved(messageId);
+  static Future<bool> isMessageSaved(String messageId) =>
+      _SavedMessageStore.isMessageSaved(messageId);
 
   /// 獲取角色的收藏消息
   static Future<List<Map<String, dynamic>>> getSavedMessages({
     String characterId = 'default',
     int limit = 50,
-  }) => _SavedMessageStore.getSavedMessages(characterId: characterId, limit: limit);
+  }) => _SavedMessageStore.getSavedMessages(
+    characterId: characterId,
+    limit: limit,
+  );
 
   /// 搜索收藏（關鍵詞匹配內容 + 日期格式如 7/3 匹配 created_at）
   static Future<List<Map<String, dynamic>>> searchSavedMessages(
@@ -1400,7 +1652,8 @@ class DatabaseHelper {
   }) => _SavedMessageStore.searchSavedMessages(query, characterId: characterId);
 
   /// 刪除收藏
-  static Future<void> deleteSavedMessage(int id) => _SavedMessageStore.deleteSavedMessage(id);
+  static Future<void> deleteSavedMessage(int id) =>
+      _SavedMessageStore.deleteSavedMessage(id);
 
   static String _likeContains(String value) {
     final escaped = value
@@ -1436,7 +1689,24 @@ class DatabaseHelper {
     String continuityId = 'main',
     List<ContextSummarySegmentDraft> recallSegments =
         const <ContextSummarySegmentDraft>[],
-  }) => _ContextSummaryStore.insertContextSummary(characterId: characterId, content: content, tokenCount: tokenCount, sourceWindowId: sourceWindowId, sourceConversationId: sourceConversationId, displayAnchorMessageId: displayAnchorMessageId, sourceMessageStartId: sourceMessageStartId, sourceMessageEndId: sourceMessageEndId, replaceSummaryId: replaceSummaryId, replaceInvalidatedSummary: replaceInvalidatedSummary, storyTimeText: storyTimeText, expectedSourceMessages: expectedSourceMessages, allowPendingRepairs: allowPendingRepairs, contextMode: contextMode, continuityId: continuityId, recallSegments: recallSegments);
+  }) => _ContextSummaryStore.insertContextSummary(
+    characterId: characterId,
+    content: content,
+    tokenCount: tokenCount,
+    sourceWindowId: sourceWindowId,
+    sourceConversationId: sourceConversationId,
+    displayAnchorMessageId: displayAnchorMessageId,
+    sourceMessageStartId: sourceMessageStartId,
+    sourceMessageEndId: sourceMessageEndId,
+    replaceSummaryId: replaceSummaryId,
+    replaceInvalidatedSummary: replaceInvalidatedSummary,
+    storyTimeText: storyTimeText,
+    expectedSourceMessages: expectedSourceMessages,
+    allowPendingRepairs: allowPendingRepairs,
+    contextMode: contextMode,
+    continuityId: continuityId,
+    recallSegments: recallSegments,
+  );
 
   /// Persist one automatic summary and its covered-message cursor atomically.
   /// A crash can therefore neither save a summary without advancing the
@@ -1457,18 +1727,34 @@ class DatabaseHelper {
     String continuityId = 'main',
     List<ContextSummarySegmentDraft> recallSegments =
         const <ContextSummarySegmentDraft>[],
-  }) => _ContextSummaryStore.insertContextSummaryAndAdvanceCursor(characterId: characterId, content: content, tokenCount: tokenCount, conversationId: conversationId, cursorMessageId: cursorMessageId, displayAnchorMessageId: displayAnchorMessageId, sourceMessageStartId: sourceMessageStartId, storyTimeText: storyTimeText, sourceWindowId: sourceWindowId, expectedSourceMessages: expectedSourceMessages, allowPendingRepairs: allowPendingRepairs, contextMode: contextMode, continuityId: continuityId, recallSegments: recallSegments);
-
-
-
-
+  }) => _ContextSummaryStore.insertContextSummaryAndAdvanceCursor(
+    characterId: characterId,
+    content: content,
+    tokenCount: tokenCount,
+    conversationId: conversationId,
+    cursorMessageId: cursorMessageId,
+    displayAnchorMessageId: displayAnchorMessageId,
+    sourceMessageStartId: sourceMessageStartId,
+    storyTimeText: storyTimeText,
+    sourceWindowId: sourceWindowId,
+    expectedSourceMessages: expectedSourceMessages,
+    allowPendingRepairs: allowPendingRepairs,
+    contextMode: contextMode,
+    continuityId: continuityId,
+    recallSegments: recallSegments,
+  );
 
   static Future<List<Map<String, dynamic>>> getContextSummarySegments(
     String characterId, {
     required ContextMode contextMode,
     required String continuityId,
     bool archivedOnly = false,
-  }) => _ContextSummaryStore.getContextSummarySegments(characterId, contextMode: contextMode, continuityId: continuityId, archivedOnly: archivedOnly);
+  }) => _ContextSummaryStore.getContextSummarySegments(
+    characterId,
+    contextMode: contextMode,
+    continuityId: continuityId,
+    archivedOnly: archivedOnly,
+  );
 
   /// 已在本次 App 生命週期內跑過標籤自修復的 RP 範圍（角色|故事線）。
   /// 修復本身是寫入路徑，不該每輪聊天都跑；歸檔與手動摘要會另外主動呼叫。
@@ -1481,18 +1767,16 @@ class DatabaseHelper {
     String characterId, {
     required ContextMode contextMode,
     required String continuityId,
-  }) => _ContextSummaryStore.getRecallIndexRows(characterId, contextMode: contextMode, continuityId: continuityId);
+  }) => _ContextSummaryStore.getRecallIndexRows(
+    characterId,
+    contextMode: contextMode,
+    continuityId: continuityId,
+  );
 
   /// 只替召回候選補上全文（`source_summary_content`），保持傳入順序。
   static Future<List<Map<String, dynamic>>> fillRecallContents(
     List<Map<String, dynamic>> candidates,
   ) => _ContextSummaryStore.fillRecallContents(candidates);
-
-
-
-
-
-
 
   /// 取得角色的全部摘要塊（舊→新）
   static Future<List<Map<String, dynamic>>> getContextSummaries(
@@ -1500,7 +1784,12 @@ class DatabaseHelper {
     ContextMode contextMode = ContextMode.daily,
     String continuityId = 'main',
     bool includeArchived = false,
-  }) => _ContextSummaryStore.getContextSummaries(characterId, contextMode: contextMode, continuityId: continuityId, includeArchived: includeArchived);
+  }) => _ContextSummaryStore.getContextSummaries(
+    characterId,
+    contextMode: contextMode,
+    continuityId: continuityId,
+    includeArchived: includeArchived,
+  );
 
   /// Finds the active summary that covers exactly the same source span as a
   /// selected message range. Unknown legacy spans are never treated as a
@@ -1512,7 +1801,14 @@ class DatabaseHelper {
     required String conversationId,
     required int sourceMessageStartId,
     required int sourceMessageEndId,
-  }) => _ContextSummaryStore.getContextSummaryByExactSourceSpan(characterId: characterId, contextMode: contextMode, continuityId: continuityId, conversationId: conversationId, sourceMessageStartId: sourceMessageStartId, sourceMessageEndId: sourceMessageEndId);
+  }) => _ContextSummaryStore.getContextSummaryByExactSourceSpan(
+    characterId: characterId,
+    contextMode: contextMode,
+    continuityId: continuityId,
+    conversationId: conversationId,
+    sourceMessageStartId: sourceMessageStartId,
+    sourceMessageEndId: sourceMessageEndId,
+  );
 
   /// 取得角色最新摘要塊（新→舊），可排除目前窗口
   static Future<List<Map<String, dynamic>>> getLatestContextSummaries(
@@ -1521,7 +1817,13 @@ class DatabaseHelper {
     int limit = 2,
     ContextMode contextMode = ContextMode.daily,
     String continuityId = 'main',
-  }) => _ContextSummaryStore.getLatestContextSummaries(characterId, excludeWindowId: excludeWindowId, limit: limit, contextMode: contextMode, continuityId: continuityId);
+  }) => _ContextSummaryStore.getLatestContextSummaries(
+    characterId,
+    excludeWindowId: excludeWindowId,
+    limit: limit,
+    contextMode: contextMode,
+    continuityId: continuityId,
+  );
 
   static Future<List<Map<String, dynamic>>> getRelevantContextSummaries(
     String characterId, {
@@ -1529,34 +1831,57 @@ class DatabaseHelper {
     required String continuityId,
     Iterable<String> sourceConversationIds = const <String>[],
     int limit = 3,
-  }) => _ContextSummaryStore.getRelevantContextSummaries(characterId, contextMode: contextMode, continuityId: continuityId, sourceConversationIds: sourceConversationIds, limit: limit);
+  }) => _ContextSummaryStore.getRelevantContextSummaries(
+    characterId,
+    contextMode: contextMode,
+    continuityId: continuityId,
+    sourceConversationIds: sourceConversationIds,
+    limit: limit,
+  );
 
   static Future<Map<String, dynamic>?> getLatestConversationContextSummary({
     required String conversationId,
     required ContextMode contextMode,
     required String continuityId,
-  }) => _ContextSummaryStore.getLatestConversationContextSummary(conversationId: conversationId, contextMode: contextMode, continuityId: continuityId);
+  }) => _ContextSummaryStore.getLatestConversationContextSummary(
+    conversationId: conversationId,
+    contextMode: contextMode,
+    continuityId: continuityId,
+  );
 
   static Future<Map<String, dynamic>?> getConversationContextSummaryById({
     required int summaryId,
     required String conversationId,
     required ContextMode contextMode,
     required String continuityId,
-  }) => _ContextSummaryStore.getConversationContextSummaryById(summaryId: summaryId, conversationId: conversationId, contextMode: contextMode, continuityId: continuityId);
+  }) => _ContextSummaryStore.getConversationContextSummaryById(
+    summaryId: summaryId,
+    conversationId: conversationId,
+    contextMode: contextMode,
+    continuityId: continuityId,
+  );
 
   /// 取得摘要總 token 數
   static Future<int> getContextSummaryTokenTotal(
     String characterId, {
     ContextMode contextMode = ContextMode.daily,
     String continuityId = 'main',
-  }) => _ContextSummaryStore.getContextSummaryTokenTotal(characterId, contextMode: contextMode, continuityId: continuityId);
+  }) => _ContextSummaryStore.getContextSummaryTokenTotal(
+    characterId,
+    contextMode: contextMode,
+    continuityId: continuityId,
+  );
 
   /// 覆蓋摘要塊
   static Future<void> updateContextSummary({
     required int id,
     required String content,
     required int tokenCount,
-  }) => _ContextSummaryStore.updateContextSummary(id: id, content: content, tokenCount: tokenCount);
+  }) => _ContextSummaryStore.updateContextSummary(
+    id: id,
+    content: content,
+    tokenCount: tokenCount,
+  );
 
   /// Retire one superseded snapshot without losing its chat history anchor.
   /// The label and archive marker move together, so a failed write leaves the
@@ -1568,7 +1893,14 @@ class DatabaseHelper {
     required String continuityId,
     required String keywords,
     required int keywordTokenCount,
-  }) => _ContextSummaryStore.archiveContextSummaryWithKeywords(summaryId: summaryId, characterId: characterId, contextMode: contextMode, continuityId: continuityId, keywords: keywords, keywordTokenCount: keywordTokenCount);
+  }) => _ContextSummaryStore.archiveContextSummaryWithKeywords(
+    summaryId: summaryId,
+    characterId: characterId,
+    contextMode: contextMode,
+    continuityId: continuityId,
+    keywords: keywords,
+    keywordTokenCount: keywordTokenCount,
+  );
 
   /// Archives one RP summary using the segment labels emitted alongside that
   /// summary. No follow-up model call is allowed in this path.
@@ -1577,7 +1909,12 @@ class DatabaseHelper {
     required String characterId,
     required ContextMode contextMode,
     required String continuityId,
-  }) => _ContextSummaryStore.archiveContextSummaryWithStoredSegments(summaryId: summaryId, characterId: characterId, contextMode: contextMode, continuityId: continuityId);
+  }) => _ContextSummaryStore.archiveContextSummaryWithStoredSegments(
+    summaryId: summaryId,
+    characterId: characterId,
+    contextMode: contextMode,
+    continuityId: continuityId,
+  );
 
   /// Marks stale repair jobs covered by a successful user-requested summary.
   /// Only exact source spans fully contained by the new summary are closed.
@@ -1589,7 +1926,15 @@ class DatabaseHelper {
     required int sourceMessageStartId,
     required int sourceMessageEndId,
     required int replacementSummaryId,
-  }) => _ContextSummaryStore.completeCoveredSummaryRepairs(characterId: characterId, contextMode: contextMode, continuityId: continuityId, conversationId: conversationId, sourceMessageStartId: sourceMessageStartId, sourceMessageEndId: sourceMessageEndId, replacementSummaryId: replacementSummaryId);
+  }) => _ContextSummaryStore.completeCoveredSummaryRepairs(
+    characterId: characterId,
+    contextMode: contextMode,
+    continuityId: continuityId,
+    conversationId: conversationId,
+    sourceMessageStartId: sourceMessageStartId,
+    sourceMessageEndId: sourceMessageEndId,
+    replacementSummaryId: replacementSummaryId,
+  );
 
   /// Rebuilds missing active labels from immutable segments of valid archived
   /// summaries. This performs no model call and never revives invalid content.
@@ -1597,11 +1942,11 @@ class DatabaseHelper {
     required String characterId,
     required ContextMode contextMode,
     required String continuityId,
-  }) => _ContextSummaryStore.restoreArchivedSummaryKeywords(characterId: characterId, contextMode: contextMode, continuityId: continuityId);
-
-
-
-
+  }) => _ContextSummaryStore.restoreArchivedSummaryKeywords(
+    characterId: characterId,
+    contextMode: contextMode,
+    continuityId: continuityId,
+  );
 
   /// 更新摘要鎖定狀態
   static Future<void> updateSummaryLockState({
@@ -1610,14 +1955,19 @@ class DatabaseHelper {
   }) => _ContextSummaryStore.updateSummaryLockState(id: id, locked: locked);
 
   /// 刪除指定摘要塊
-  static Future<void> deleteContextSummary(int id) => _ContextSummaryStore.deleteContextSummary(id);
+  static Future<void> deleteContextSummary(int id) =>
+      _ContextSummaryStore.deleteContextSummary(id);
 
   /// 刪除最舊的摘要塊，返回被刪的記錄
   static Future<Map<String, dynamic>?> deleteOldestContextSummary(
     String characterId, {
     ContextMode contextMode = ContextMode.daily,
     String continuityId = 'main',
-  }) => _ContextSummaryStore.deleteOldestContextSummary(characterId, contextMode: contextMode, continuityId: continuityId);
+  }) => _ContextSummaryStore.deleteOldestContextSummary(
+    characterId,
+    contextMode: contextMode,
+    continuityId: continuityId,
+  );
 
   /// 插入關鍵詞塊
   static Future<int> insertContextKeywords({
@@ -1630,21 +1980,39 @@ class DatabaseHelper {
     String sourceConversationId = '',
     ContextMode contextMode = ContextMode.daily,
     String continuityId = 'main',
-  }) => _ContextKeywordStore.insertContextKeywords(characterId: characterId, keywords: keywords, tokenCount: tokenCount, sourceSummaryId: sourceSummaryId, sourceSummaryContent: sourceSummaryContent, sourceWindowId: sourceWindowId, sourceConversationId: sourceConversationId, contextMode: contextMode, continuityId: continuityId);
+  }) => _ContextKeywordStore.insertContextKeywords(
+    characterId: characterId,
+    keywords: keywords,
+    tokenCount: tokenCount,
+    sourceSummaryId: sourceSummaryId,
+    sourceSummaryContent: sourceSummaryContent,
+    sourceWindowId: sourceWindowId,
+    sourceConversationId: sourceConversationId,
+    contextMode: contextMode,
+    continuityId: continuityId,
+  );
 
   /// 取得關鍵詞層
   static Future<List<Map<String, dynamic>>> getContextKeywords(
     String characterId, {
     ContextMode contextMode = ContextMode.daily,
     String continuityId = 'main',
-  }) => _ContextKeywordStore.getContextKeywords(characterId, contextMode: contextMode, continuityId: continuityId);
+  }) => _ContextKeywordStore.getContextKeywords(
+    characterId,
+    contextMode: contextMode,
+    continuityId: continuityId,
+  );
 
   /// 取得關鍵詞總 token 數
   static Future<int> getContextKeywordTokenTotal(
     String characterId, {
     ContextMode contextMode = ContextMode.daily,
     String continuityId = 'main',
-  }) => _ContextKeywordStore.getContextKeywordTokenTotal(characterId, contextMode: contextMode, continuityId: continuityId);
+  }) => _ContextKeywordStore.getContextKeywordTokenTotal(
+    characterId,
+    contextMode: contextMode,
+    continuityId: continuityId,
+  );
 
   /// 覆蓋關鍵詞塊與其來源摘要快照
   static Future<void> updateContextKeywordBlock({
@@ -1652,29 +2020,46 @@ class DatabaseHelper {
     required String keywords,
     required int tokenCount,
     required String sourceSummaryContent,
-  }) => _ContextKeywordStore.updateContextKeywordBlock(id: id, keywords: keywords, tokenCount: tokenCount, sourceSummaryContent: sourceSummaryContent);
+  }) => _ContextKeywordStore.updateContextKeywordBlock(
+    id: id,
+    keywords: keywords,
+    tokenCount: tokenCount,
+    sourceSummaryContent: sourceSummaryContent,
+  );
 
   /// 刪除最舊的關鍵詞塊
   static Future<void> deleteOldestContextKeyword(
     String characterId, {
     ContextMode contextMode = ContextMode.daily,
     String continuityId = 'main',
-  }) => _ContextKeywordStore.deleteOldestContextKeyword(characterId, contextMode: contextMode, continuityId: continuityId);
+  }) => _ContextKeywordStore.deleteOldestContextKeyword(
+    characterId,
+    contextMode: contextMode,
+    continuityId: continuityId,
+  );
 
   /// 清空角色的全部摘要和關鍵詞（角色刪除時用）
-  static Future<void> clearContextData(String characterId) => _ContextKeywordStore.clearContextData(characterId);
+  static Future<void> clearContextData(String characterId) =>
+      _ContextKeywordStore.clearContextData(characterId);
 
   static Future<List<Map<String, dynamic>>> getSpiderWebLinks(
     String characterId, {
     bool includeRejected = false,
-  }) => _SpiderWebStore.getSpiderWebLinks(characterId, includeRejected: includeRejected);
+  }) => _SpiderWebStore.getSpiderWebLinks(
+    characterId,
+    includeRejected: includeRejected,
+  );
 
   /// 建立一條經角色、active 狀態與自環檢查的蛛網連線。
   static Future<bool> insertSpiderWebLink(
     String characterId,
     int firstMemoryId,
     int secondMemoryId,
-  ) => _SpiderWebStore.insertSpiderWebLink(characterId, firstMemoryId, secondMemoryId);
+  ) => _SpiderWebStore.insertSpiderWebLink(
+    characterId,
+    firstMemoryId,
+    secondMemoryId,
+  );
 
   /// Inserts or updates one explainable relation without allowing a scanner
   /// to overwrite a user's confirmed or rejected decision.
@@ -1687,7 +2072,16 @@ class DatabaseHelper {
     required String status,
     required String source,
     required String reason,
-  }) => _SpiderWebStore.upsertSpiderWebRelation(characterId, firstMemoryId, secondMemoryId, relationType: relationType, strength: strength, status: status, source: source, reason: reason);
+  }) => _SpiderWebStore.upsertSpiderWebRelation(
+    characterId,
+    firstMemoryId,
+    secondMemoryId,
+    relationType: relationType,
+    strength: strength,
+    status: status,
+    source: source,
+    reason: reason,
+  );
 
   static Future<SpiderWebRelationWriteResult> upsertSpiderWebRelationDetailed(
     String characterId,
@@ -1698,13 +2092,26 @@ class DatabaseHelper {
     required String status,
     required String source,
     required String reason,
-  }) => _SpiderWebStore.upsertSpiderWebRelationDetailed(characterId, firstMemoryId, secondMemoryId, relationType: relationType, strength: strength, status: status, source: source, reason: reason);
+  }) => _SpiderWebStore.upsertSpiderWebRelationDetailed(
+    characterId,
+    firstMemoryId,
+    secondMemoryId,
+    relationType: relationType,
+    strength: strength,
+    status: status,
+    source: source,
+    reason: reason,
+  );
 
   static Future<bool> resolveSpiderWebRelation(
     String characterId,
     int relationId, {
     required bool confirmed,
-  }) => _SpiderWebStore.resolveSpiderWebRelation(characterId, relationId, confirmed: confirmed);
+  }) => _SpiderWebStore.resolveSpiderWebRelation(
+    characterId,
+    relationId,
+    confirmed: confirmed,
+  );
 
   /// Removes one graph edge without touching either memory. Both endpoints
   /// are normalized exactly like insertion, and character scope is mandatory.
@@ -1712,5 +2119,9 @@ class DatabaseHelper {
     String characterId,
     int firstMemoryId,
     int secondMemoryId,
-  ) => _SpiderWebStore.deleteSpiderWebLink(characterId, firstMemoryId, secondMemoryId);
+  ) => _SpiderWebStore.deleteSpiderWebLink(
+    characterId,
+    firstMemoryId,
+    secondMemoryId,
+  );
 }

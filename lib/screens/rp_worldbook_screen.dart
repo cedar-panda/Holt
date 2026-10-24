@@ -7,6 +7,7 @@ import '../services/locale_strings.dart';
 import '../services/rp_worldbook_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/gradient_background.dart';
+import '../widgets/managed_text_controllers.dart';
 
 class RpWorldbookScreen extends StatefulWidget {
   const RpWorldbookScreen({
@@ -23,6 +24,20 @@ class RpWorldbookScreen extends StatefulWidget {
 }
 
 class _RpWorldbookScreenState extends State<RpWorldbookScreen> {
+  static const List<String> _worldbookCategories = <String>[
+    'geography',
+    'organization',
+    'law',
+    'custom',
+    'history',
+    'technology',
+    'magic',
+    'species',
+    'economy',
+    'language',
+    'religion',
+    'other',
+  ];
   final TextEditingController _searchController = TextEditingController();
   List<Map<String, dynamic>> _entries = const <Map<String, dynamic>>[];
   List<Map<String, dynamic>> _reviews = const <Map<String, dynamic>>[];
@@ -68,96 +83,145 @@ class _RpWorldbookScreenState extends State<RpWorldbookScreen> {
   }
 
   Future<void> _edit([Map<String, dynamic>? row]) async {
-    final name = TextEditingController(text: row?['name']?.toString() ?? '');
-    final content = TextEditingController(
-      text: row?['content']?.toString() ?? '',
-    );
-    final category = TextEditingController(
-      text: row?['category']?.toString() ?? 'other',
-    );
-    final scope = TextEditingController(
-      text: row?['scope']?.toString() ?? 'global',
-    );
-    final visibility = TextEditingController(
-      text: row?['visibility']?.toString() ?? 'public',
-    );
-    final triggers = TextEditingController(
-      text: _stringList(row?['triggers_json']).join('、'),
-    );
-    final saved = await showModalBottomSheet<bool>(
+    final saved = await showModalBottomSheet<List<String>>(
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
       backgroundColor: YanciTheme.surfacePanel,
-      builder: (context) {
-        final media = MediaQuery.of(context);
-        return ConstrainedBox(
-          constraints: BoxConstraints(maxHeight: media.size.height * 0.9),
-          child: SingleChildScrollView(
-            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-            padding: EdgeInsets.fromLTRB(
-              24,
-              20,
-              24,
-              media.viewInsets.bottom + 32,
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Text(
-                  row == null
-                      ? L.pick(
-                          en: 'New worldbook entry',
-                          zhTW: '新增世界書條目',
-                          zhCN: '新增世界书条目',
-                        )
-                      : row['name']?.toString() ?? '',
-                  style: YanciTheme.headingMedium,
-                ),
-                const SizedBox(height: 16),
-                _field(name, L.pick(en: 'Name', zhTW: '名稱', zhCN: '名称')),
-                _field(
-                  content,
-                  L.pick(en: 'World setting', zhTW: '世界設定', zhCN: '世界设定'),
-                  maxLines: 7,
-                ),
-                _field(
-                  category,
-                  L.pick(en: 'Category', zhTW: '分類', zhCN: '分类'),
-                ),
-                _field(scope, L.pick(en: 'Scope', zhTW: '生效範圍', zhCN: '生效范围')),
-                _field(
-                  visibility,
-                  L.pick(en: 'Visibility', zhTW: '知情範圍', zhCN: '知情范围'),
-                ),
-                _field(
-                  triggers,
-                  L.pick(
-                    en: 'Recall terms',
-                    zhTW: '召回詞（以逗號分隔）',
-                    zhCN: '召回词（以逗号分隔）',
+      builder: (context) => ManagedTextControllers(
+        initialValues: <String>[
+          row?['name']?.toString() ?? '',
+          row?['content']?.toString() ?? '',
+          row?['category']?.toString() ?? 'other',
+          row?['scope']?.toString() ?? 'global',
+          row?['binding_scope']?.toString() ?? 'storyline',
+          row?['activation_mode']?.toString() ?? 'triggered',
+          row?['visibility']?.toString() ?? 'public',
+          _stringList(row?['triggers_json']).join('、'),
+        ],
+        builder: (context, controllers) {
+          final media = MediaQuery.of(context);
+          return ConstrainedBox(
+            constraints: BoxConstraints(maxHeight: media.size.height * 0.9),
+            child: SingleChildScrollView(
+              keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+              padding: EdgeInsets.fromLTRB(
+                24,
+                20,
+                24,
+                media.viewInsets.bottom + 32,
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(
+                    row == null
+                        ? L.pick(
+                            en: 'New worldbook entry',
+                            zhTW: '新增世界書條目',
+                            zhCN: '新增世界书条目',
+                          )
+                        : row['name']?.toString() ?? '',
+                    style: YanciTheme.headingMedium,
                   ),
-                ),
-                const SizedBox(height: 8),
-                TextButton(
-                  onPressed: () {
-                    if (name.text.trim().isEmpty ||
-                        content.text.trim().isEmpty) {
-                      return;
-                    }
-                    Navigator.pop(context, true);
-                  },
-                  child: Text(L.pick(en: 'Save', zhTW: '儲存', zhCN: '保存')),
-                ),
-              ],
+                  const SizedBox(height: 16),
+                  _field(
+                    controllers[0],
+                    L.pick(en: 'Name', zhTW: '名稱', zhCN: '名称'),
+                  ),
+                  _field(
+                    controllers[1],
+                    L.pick(en: 'World setting', zhTW: '世界設定', zhCN: '世界设定'),
+                    maxLines: 7,
+                  ),
+                  _enumField(
+                    value: controllers[2].text,
+                    label: L.pick(en: 'Category', zhTW: '分類', zhCN: '分类'),
+                    values: _worldbookCategories,
+                    labelFor: _categoryLabel,
+                    onChanged: (value) => controllers[2].text = value,
+                  ),
+                  _field(
+                    controllers[3],
+                    L.pick(en: 'Scope', zhTW: '生效範圍', zhCN: '生效范围'),
+                  ),
+                  _enumField(
+                    value: controllers[4].text,
+                    label: L.pick(
+                      en: 'Available in',
+                      zhTW: '資料綁定範圍',
+                      zhCN: '数据绑定范围',
+                    ),
+                    values: const <String>['storyline', 'character_global'],
+                    labelFor: _bindingScopeLabel,
+                    onChanged: (value) => controllers[4].text = value,
+                  ),
+                  _enumField(
+                    value: controllers[5].text,
+                    label: L.pick(
+                      en: 'Recall mode',
+                      zhTW: '召回方式',
+                      zhCN: '召回方式',
+                    ),
+                    values: const <String>['triggered', 'scene', 'always'],
+                    labelFor: _activationModeLabel,
+                    onChanged: (value) => controllers[5].text = value,
+                  ),
+                  _field(
+                    controllers[6],
+                    L.pick(en: 'Visibility', zhTW: '知情範圍', zhCN: '知情范围'),
+                  ),
+                  _field(
+                    controllers[7],
+                    L.pick(
+                      en: 'Recall terms',
+                      zhTW: '召回詞（以逗號分隔）',
+                      zhCN: '召回词（以逗号分隔）',
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  TextButton(
+                    onPressed: () {
+                      if (controllers[0].text.trim().isEmpty ||
+                          controllers[1].text.trim().isEmpty) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text(
+                              L.pick(
+                                en: 'Name and world setting are required.',
+                                zhTW: '請填寫名稱與世界設定。',
+                                zhCN: '请填写名称与世界设定。',
+                              ),
+                            ),
+                            behavior: SnackBarBehavior.floating,
+                          ),
+                        );
+                        return;
+                      }
+                      Navigator.pop(
+                        context,
+                        controllers
+                            .map((controller) => controller.text)
+                            .toList(),
+                      );
+                    },
+                    child: Text(L.pick(en: 'Save', zhTW: '儲存', zhCN: '保存')),
+                  ),
+                ],
+              ),
             ),
-          ),
-        );
-      },
+          );
+        },
+      ),
     );
-    if (saved == true) {
-      final parsedTriggers = triggers.text
+    if (saved != null) {
+      final targetContinuityId = row?['continuity_id']?.toString().trim();
+      final entryContinuityId =
+          targetContinuityId == null || targetContinuityId.isEmpty
+          ? widget.continuityId
+          : targetContinuityId;
+      final parsedTriggers = saved[7]
           .split(RegExp(r'[,，、]'))
           .map((item) => item.trim())
           .where((item) => item.isNotEmpty)
@@ -165,35 +229,33 @@ class _RpWorldbookScreenState extends State<RpWorldbookScreen> {
       if (row == null) {
         await RpWorldbookService.createManualEntry(
           characterId: widget.characterId,
-          continuityId: widget.continuityId,
-          name: name.text,
-          content: content.text,
-          category: category.text,
-          scope: scope.text,
-          visibility: visibility.text,
+          continuityId: entryContinuityId,
+          name: saved[0],
+          content: saved[1],
+          category: saved[2],
+          scope: saved[3],
+          bindingScope: saved[4],
+          activationMode: saved[5],
+          visibility: saved[6],
           triggers: parsedTriggers,
         );
       } else {
         await RpWorldbookService.updateManualEntry(
           id: row['id'].toString(),
           characterId: widget.characterId,
-          continuityId: widget.continuityId,
-          name: name.text,
-          content: content.text,
-          category: category.text,
-          scope: scope.text,
-          visibility: visibility.text,
+          continuityId: entryContinuityId,
+          name: saved[0],
+          content: saved[1],
+          category: saved[2],
+          scope: saved[3],
+          bindingScope: saved[4],
+          activationMode: saved[5],
+          visibility: saved[6],
           triggers: parsedTriggers,
         );
       }
       await _load();
     }
-    name.dispose();
-    content.dispose();
-    category.dispose();
-    scope.dispose();
-    visibility.dispose();
-    triggers.dispose();
   }
 
   Future<void> _toggleArchive(Map<String, dynamic> row) async {
@@ -201,7 +263,7 @@ class _RpWorldbookScreenState extends State<RpWorldbookScreen> {
     await RpWorldbookService.setArchived(
       id: row['id'].toString(),
       characterId: widget.characterId,
-      continuityId: widget.continuityId,
+      continuityId: row['continuity_id']?.toString() ?? widget.continuityId,
       archived: archived,
       endedReason: archived
           ? L.pick(en: 'Archived by user', zhTW: '由使用者封存', zhCN: '由用户封存')
@@ -211,53 +273,56 @@ class _RpWorldbookScreenState extends State<RpWorldbookScreen> {
   }
 
   Future<void> _delete(Map<String, dynamic> row) async {
-    final controller = TextEditingController();
     final requiredText = L.pick(en: 'DELETE', zhTW: '刪除', zhCN: '删除');
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: YanciTheme.surfacePanel,
-        title: Text(
-          L.pick(
-            en: 'Delete worldbook entry',
-            zhTW: '刪除世界書條目',
-            zhCN: '删除世界书条目',
-          ),
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              L.pick(
-                en: 'Type $requiredText to confirm.',
-                zhTW: '輸入「$requiredText」以確認。',
-                zhCN: '输入“$requiredText”以确认。',
-              ),
+      builder: (context) => ManagedTextControllers(
+        initialValues: const <String>[''],
+        builder: (context, controllers) => AlertDialog(
+          backgroundColor: YanciTheme.surfacePanel,
+          title: Text(
+            L.pick(
+              en: 'Delete worldbook entry',
+              zhTW: '刪除世界書條目',
+              zhCN: '删除世界书条目',
             ),
-            const SizedBox(height: 12),
-            TextField(controller: controller, autofocus: true),
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                L.pick(
+                  en: 'Type $requiredText to confirm.',
+                  zhTW: '輸入「$requiredText」以確認。',
+                  zhCN: '输入“$requiredText”以确认。',
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(controller: controllers.single, autofocus: true),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: Text(L.pick(en: 'Cancel', zhTW: '取消', zhCN: '取消')),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(
+                context,
+                controllers.single.text.trim() == requiredText,
+              ),
+              child: Text(L.pick(en: 'Delete', zhTW: '刪除', zhCN: '删除')),
+            ),
           ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: Text(L.pick(en: 'Cancel', zhTW: '取消', zhCN: '取消')),
-          ),
-          TextButton(
-            onPressed: () =>
-                Navigator.pop(context, controller.text.trim() == requiredText),
-            child: Text(L.pick(en: 'Delete', zhTW: '刪除', zhCN: '删除')),
-          ),
-        ],
       ),
     );
-    controller.dispose();
     if (confirmed != true) return;
     await RpWorldbookService.deleteManualEntry(
       id: row['id'].toString(),
       characterId: widget.characterId,
-      continuityId: widget.continuityId,
+      continuityId: row['continuity_id']?.toString() ?? widget.continuityId,
     );
     await _load();
   }
@@ -275,6 +340,64 @@ class _RpWorldbookScreenState extends State<RpWorldbookScreen> {
       decoration: InputDecoration(labelText: label),
     ),
   );
+
+  Widget _enumField({
+    required String value,
+    required String label,
+    required List<String> values,
+    required String Function(String value) labelFor,
+    required ValueChanged<String> onChanged,
+  }) {
+    final initialValue = values.contains(value) ? value : values.last;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: DropdownButtonFormField<String>(
+        initialValue: initialValue,
+        isExpanded: true,
+        decoration: InputDecoration(labelText: label),
+        items: values
+            .map(
+              (item) => DropdownMenuItem<String>(
+                value: item,
+                child: Text(labelFor(item)),
+              ),
+            )
+            .toList(growable: false),
+        onChanged: (next) {
+          if (next != null) onChanged(next);
+        },
+      ),
+    );
+  }
+
+  String _categoryLabel(String value) => switch (value) {
+    'geography' => L.pick(en: 'Geography', zhTW: '地理', zhCN: '地理'),
+    'organization' => L.pick(en: 'Organization', zhTW: '組織', zhCN: '组织'),
+    'law' => L.pick(en: 'Law', zhTW: '制度／法律', zhCN: '制度／法律'),
+    'custom' => L.pick(en: 'Custom', zhTW: '文化／習俗', zhCN: '文化／习俗'),
+    'history' => L.pick(en: 'History', zhTW: '歷史', zhCN: '历史'),
+    'technology' => L.pick(en: 'Technology', zhTW: '技術', zhCN: '技术'),
+    'magic' => L.pick(en: 'Magic', zhTW: '魔法', zhCN: '魔法'),
+    'species' => L.pick(en: 'Species', zhTW: '物種', zhCN: '物种'),
+    'economy' => L.pick(en: 'Economy', zhTW: '經濟', zhCN: '经济'),
+    'language' => L.pick(en: 'Language', zhTW: '語言', zhCN: '语言'),
+    'religion' => L.pick(en: 'Religion', zhTW: '宗教', zhCN: '宗教'),
+    _ => L.pick(en: 'Other', zhTW: '其他', zhCN: '其他'),
+  };
+
+  String _bindingScopeLabel(String value) => value == 'character_global'
+      ? L.pick(
+          en: 'All storylines for this character',
+          zhTW: '此角色的所有故事線',
+          zhCN: '此角色的所有故事线',
+        )
+      : L.pick(en: 'Current storyline only', zhTW: '僅目前故事線', zhCN: '仅当前故事线');
+
+  String _activationModeLabel(String value) => switch (value) {
+    'always' => L.pick(en: 'Always', zhTW: '常駐', zhCN: '常驻'),
+    'scene' => L.pick(en: 'Scene match', zhTW: '場景符合', zhCN: '场景符合'),
+    _ => L.pick(en: 'Recall-term match', zhTW: '召回詞命中', zhCN: '召回词命中'),
+  };
 
   @override
   Widget build(BuildContext context) {
@@ -447,7 +570,7 @@ class _RpWorldbookScreenState extends State<RpWorldbookScreen> {
                         const SizedBox(height: 5),
                         MarkdownBody(
                           data: row['content']?.toString() ?? '',
-                          selectable: true,
+                          selectable: false,
                           styleSheet: MarkdownStyleSheet(
                             p: YanciTheme.bodySmall.copyWith(height: 1.45),
                             listBullet: YanciTheme.bodySmall.copyWith(
@@ -458,7 +581,9 @@ class _RpWorldbookScreenState extends State<RpWorldbookScreen> {
                         ),
                         const SizedBox(height: 7),
                         Text(
-                          '${row['category']} · ${row['scope']} · ${row['visibility']}',
+                          '${_categoryLabel(row['category']?.toString() ?? 'other')} · '
+                          '${_bindingScopeLabel(row['binding_scope']?.toString() ?? 'storyline')} · '
+                          '${_activationModeLabel(row['activation_mode']?.toString() ?? 'triggered')}',
                           style: YanciTheme.bodySmall.copyWith(
                             fontSize: 10,
                             color: YanciTheme.textSecondary.withValues(
@@ -521,222 +646,304 @@ class _RpWorldbookScreenState extends State<RpWorldbookScreen> {
       return second.isEmpty ? defaultValue : second;
     }
 
-    final name = TextEditingController(
-      text: valueOr(payload['candidate_name'], suggestedTarget?['name'], ''),
-    );
-    final content = TextEditingController(
-      text: valueOr(
-        payload['candidate_content'],
-        suggestedTarget?['content'],
-        '',
-      ),
-    );
-    final category = TextEditingController(
-      text: valueOr(payload['category'], suggestedTarget?['category'], 'other'),
-    );
-    final scope = TextEditingController(
-      text: valueOr(payload['scope'], suggestedTarget?['scope'], 'global'),
-    );
-    final visibility = TextEditingController(
-      text: valueOr(
-        payload['visibility'],
-        suggestedTarget?['visibility'],
-        'public',
-      ),
-    );
     final payloadTriggers = _valueStringList(payload['triggers']);
     final initialTriggers = payloadTriggers.isNotEmpty
         ? payloadTriggers
         : _stringList(suggestedTarget?['triggers_json']);
-    final triggers = TextEditingController(text: initialTriggers.join('、'));
     var targetEntryKey = suggestedTarget?['entry_key']?.toString() ?? '';
 
-    final result = await showModalBottomSheet<String>(
+    final result = await showModalBottomSheet<Map<String, String>>(
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
       backgroundColor: YanciTheme.surfacePanel,
-      builder: (sheetContext) => StatefulBuilder(
-        builder: (sheetContext, setSheetState) {
-          final media = MediaQuery.of(sheetContext);
-          final activeEntries = _entries
-              .where((entry) => entry['status'] != 'archived')
-              .toList(growable: false);
-          return ConstrainedBox(
-            constraints: BoxConstraints(maxHeight: media.size.height * 0.9),
-            child: SingleChildScrollView(
-              keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-              padding: EdgeInsets.fromLTRB(
-                24,
-                20,
-                24,
-                media.viewInsets.bottom + 32,
-              ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: <Widget>[
-                  Text(
-                    L.pick(
-                      en: 'Review worldbook change',
-                      zhTW: '審核世界書變更',
-                      zhCN: '审核世界书变更',
+      builder: (sheetContext) => ManagedTextControllers(
+        initialValues: <String>[
+          valueOr(payload['candidate_name'], suggestedTarget?['name'], ''),
+          valueOr(
+            payload['candidate_content'],
+            suggestedTarget?['content'],
+            '',
+          ),
+          valueOr(payload['category'], suggestedTarget?['category'], 'other'),
+          valueOr(payload['scope'], suggestedTarget?['scope'], 'global'),
+          valueOr(
+            payload['binding_scope'],
+            suggestedTarget?['binding_scope'],
+            'storyline',
+          ),
+          valueOr(
+            payload['activation_mode'],
+            suggestedTarget?['activation_mode'],
+            'triggered',
+          ),
+          valueOr(
+            payload['visibility'],
+            suggestedTarget?['visibility'],
+            'public',
+          ),
+          initialTriggers.join('、'),
+        ],
+        builder: (sheetContext, controllers) => StatefulBuilder(
+          builder: (sheetContext, setSheetState) {
+            final name = controllers[0];
+            final content = controllers[1];
+            final category = controllers[2];
+            final scope = controllers[3];
+            final bindingScope = controllers[4];
+            final activationMode = controllers[5];
+            final visibility = controllers[6];
+            final triggers = controllers[7];
+            final media = MediaQuery.of(sheetContext);
+            final activeEntries = _entries
+                .where(
+                  (entry) =>
+                      entry['status'] != 'archived' &&
+                      entry['continuity_id']?.toString() == widget.continuityId,
+                )
+                .toList(growable: false);
+            return ConstrainedBox(
+              constraints: BoxConstraints(maxHeight: media.size.height * 0.9),
+              child: SingleChildScrollView(
+                keyboardDismissBehavior:
+                    ScrollViewKeyboardDismissBehavior.onDrag,
+                padding: EdgeInsets.fromLTRB(
+                  24,
+                  20,
+                  24,
+                  media.viewInsets.bottom + 32,
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: <Widget>[
+                    Text(
+                      L.pick(
+                        en: 'Review worldbook change',
+                        zhTW: '審核世界書變更',
+                        zhCN: '审核世界书变更',
+                      ),
+                      style: YanciTheme.headingMedium,
                     ),
-                    style: YanciTheme.headingMedium,
-                  ),
-                  const SizedBox(height: 16),
-                  _field(name, L.pick(en: 'Name', zhTW: '名稱', zhCN: '名称')),
-                  _field(
-                    content,
-                    L.pick(
-                      en: 'Final world setting',
-                      zhTW: '最終世界設定',
-                      zhCN: '最终世界设定',
+                    const SizedBox(height: 16),
+                    _field(name, L.pick(en: 'Name', zhTW: '名稱', zhCN: '名称')),
+                    _field(
+                      content,
+                      L.pick(
+                        en: 'Final world setting',
+                        zhTW: '最終世界設定',
+                        zhCN: '最终世界设定',
+                      ),
+                      maxLines: 8,
                     ),
-                    maxLines: 8,
-                  ),
-                  _field(
-                    category,
-                    L.pick(en: 'Category', zhTW: '分類', zhCN: '分类'),
-                  ),
-                  _field(
-                    scope,
-                    L.pick(en: 'Scope', zhTW: '生效範圍', zhCN: '生效范围'),
-                  ),
-                  _field(
-                    visibility,
-                    L.pick(en: 'Visibility', zhTW: '知情範圍', zhCN: '知情范围'),
-                  ),
-                  _field(
-                    triggers,
-                    L.pick(
-                      en: 'Recall terms',
-                      zhTW: '召回詞（以逗號分隔）',
-                      zhCN: '召回词（以逗号分隔）',
+                    _enumField(
+                      value: category.text,
+                      label: L.pick(en: 'Category', zhTW: '分類', zhCN: '分类'),
+                      values: _worldbookCategories,
+                      labelFor: _categoryLabel,
+                      onChanged: (value) => category.text = value,
                     ),
-                  ),
-                  const SizedBox(height: 2),
-                  DropdownButtonFormField<String>(
-                    initialValue: targetEntryKey,
-                    isExpanded: true,
-                    decoration: InputDecoration(
-                      labelText: L.pick(
-                        en: 'Resolution',
-                        zhTW: '處理方式',
-                        zhCN: '处理方式',
+                    _field(
+                      scope,
+                      L.pick(en: 'Scope', zhTW: '生效範圍', zhCN: '生效范围'),
+                    ),
+                    _enumField(
+                      value: bindingScope.text,
+                      label: L.pick(
+                        en: 'Available in',
+                        zhTW: '資料綁定範圍',
+                        zhCN: '数据绑定范围',
+                      ),
+                      values: const <String>['storyline', 'character_global'],
+                      labelFor: _bindingScopeLabel,
+                      onChanged: (value) => bindingScope.text = value,
+                    ),
+                    _enumField(
+                      value: activationMode.text,
+                      label: L.pick(
+                        en: 'Recall mode',
+                        zhTW: '召回方式',
+                        zhCN: '召回方式',
+                      ),
+                      values: const <String>['triggered', 'scene', 'always'],
+                      labelFor: _activationModeLabel,
+                      onChanged: (value) => activationMode.text = value,
+                    ),
+                    _field(
+                      visibility,
+                      L.pick(en: 'Visibility', zhTW: '知情範圍', zhCN: '知情范围'),
+                    ),
+                    _field(
+                      triggers,
+                      L.pick(
+                        en: 'Recall terms',
+                        zhTW: '召回詞（以逗號分隔）',
+                        zhCN: '召回词（以逗号分隔）',
                       ),
                     ),
-                    items: <DropdownMenuItem<String>>[
-                      DropdownMenuItem<String>(
-                        value: '',
-                        child: Text(
-                          L.pick(
-                            en: 'Create a new entry',
-                            zhTW: '建立為新條目',
-                            zhCN: '建立为新条目',
-                          ),
+                    const SizedBox(height: 2),
+                    DropdownButtonFormField<String>(
+                      initialValue: targetEntryKey,
+                      isExpanded: true,
+                      decoration: InputDecoration(
+                        labelText: L.pick(
+                          en: 'Resolution',
+                          zhTW: '處理方式',
+                          zhCN: '处理方式',
                         ),
                       ),
-                      for (final entry in activeEntries)
+                      items: <DropdownMenuItem<String>>[
                         DropdownMenuItem<String>(
-                          value: entry['entry_key']?.toString() ?? '',
+                          value: '',
                           child: Text(
                             L.pick(
-                              en: 'Merge into ${entry['name']}',
-                              zhTW: '合併至「${entry['name']}」',
-                              zhCN: '合并至“${entry['name']}”',
-                            ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                    ],
-                    onChanged: (value) =>
-                        setSheetState(() => targetEntryKey = value ?? ''),
-                  ),
-                  const SizedBox(height: 14),
-                  Row(
-                    children: <Widget>[
-                      Expanded(
-                        child: TextButton(
-                          onPressed: () => Navigator.pop(sheetContext, 'draft'),
-                          child: Text(
-                            L.pick(
-                              en: 'Save draft',
-                              zhTW: '儲存草稿',
-                              zhCN: '保存草稿',
+                              en: 'Create a new entry',
+                              zhTW: '建立為新條目',
+                              zhCN: '建立为新条目',
                             ),
                           ),
                         ),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: FilledButton(
-                          onPressed: () {
-                            if (name.text.trim().isEmpty ||
-                                content.text.trim().isEmpty) {
-                              return;
-                            }
-                            Navigator.pop(sheetContext, 'resolve');
-                          },
-                          child: Text(
-                            targetEntryKey.isEmpty
-                                ? L.pick(
-                                    en: 'Create entry',
-                                    zhTW: '建立條目',
-                                    zhCN: '建立条目',
-                                  )
-                                : L.pick(
-                                    en: 'Submit merge',
-                                    zhTW: '送出合併',
-                                    zhCN: '提交合并',
+                        for (final entry in activeEntries)
+                          DropdownMenuItem<String>(
+                            value: entry['entry_key']?.toString() ?? '',
+                            child: Text(
+                              L.pick(
+                                en: 'Merge into ${entry['name']}',
+                                zhTW: '合併至「${entry['name']}」',
+                                zhCN: '合并至“${entry['name']}”',
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                      ],
+                      onChanged: (value) =>
+                          setSheetState(() => targetEntryKey = value ?? ''),
+                    ),
+                    const SizedBox(height: 14),
+                    Row(
+                      children: <Widget>[
+                        Expanded(
+                          child: TextButton(
+                            onPressed: () =>
+                                Navigator.pop(sheetContext, <String, String>{
+                                  'operation': 'draft',
+                                  'name': name.text,
+                                  'content': content.text,
+                                  'category': category.text,
+                                  'scope': scope.text,
+                                  'binding_scope': bindingScope.text,
+                                  'activation_mode': activationMode.text,
+                                  'visibility': visibility.text,
+                                  'triggers': triggers.text,
+                                  'target_entry_key': targetEntryKey,
+                                }),
+                            child: Text(
+                              L.pick(
+                                en: 'Save draft',
+                                zhTW: '儲存草稿',
+                                zhCN: '保存草稿',
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: FilledButton(
+                            onPressed: () {
+                              if (name.text.trim().isEmpty ||
+                                  content.text.trim().isEmpty) {
+                                ScaffoldMessenger.of(sheetContext).showSnackBar(
+                                  SnackBar(
+                                    content: Text(
+                                      L.pick(
+                                        en: 'Name and world setting are required.',
+                                        zhTW: '請填寫名稱與世界設定。',
+                                        zhCN: '请填写名称与世界设定。',
+                                      ),
+                                    ),
+                                    behavior: SnackBarBehavior.floating,
                                   ),
+                                );
+                                return;
+                              }
+                              Navigator.pop(sheetContext, <String, String>{
+                                'operation': 'resolve',
+                                'name': name.text,
+                                'content': content.text,
+                                'category': category.text,
+                                'scope': scope.text,
+                                'binding_scope': bindingScope.text,
+                                'activation_mode': activationMode.text,
+                                'visibility': visibility.text,
+                                'triggers': triggers.text,
+                                'target_entry_key': targetEntryKey,
+                              });
+                            },
+                            child: Text(
+                              targetEntryKey.isEmpty
+                                  ? L.pick(
+                                      en: 'Create entry',
+                                      zhTW: '建立條目',
+                                      zhCN: '建立条目',
+                                    )
+                                  : L.pick(
+                                      en: 'Submit merge',
+                                      zhTW: '送出合併',
+                                      zhCN: '提交合并',
+                                    ),
+                            ),
                           ),
                         ),
-                      ),
-                    ],
-                  ),
-                ],
+                      ],
+                    ),
+                  ],
+                ),
               ),
-            ),
-          );
-        },
+            );
+          },
+        ),
       ),
     );
 
-    final parsedTriggers = triggers.text
+    if (result == null) return;
+    final parsedTriggers = (result['triggers'] ?? '')
         .split(RegExp(r'[,，、]'))
         .map((item) => item.trim())
         .where((item) => item.isNotEmpty)
         .toList(growable: false);
     try {
-      if (result == 'draft') {
+      if (result['operation'] == 'draft') {
         await RpWorldbookService.updatePendingReviewDraft(
           id: row['id'].toString(),
           characterId: widget.characterId,
           continuityId: widget.continuityId,
-          name: name.text,
-          content: content.text,
-          category: category.text,
-          scope: scope.text,
-          visibility: visibility.text,
+          name: result['name'] ?? '',
+          content: result['content'] ?? '',
+          category: result['category'] ?? 'other',
+          scope: result['scope'] ?? 'global',
+          bindingScope: result['binding_scope'] ?? 'storyline',
+          activationMode: result['activation_mode'] ?? 'triggered',
+          visibility: result['visibility'] ?? 'public',
           triggers: parsedTriggers,
         );
-      } else if (result == 'resolve') {
+      } else if (result['operation'] == 'resolve') {
         await RpWorldbookService.resolvePendingReview(
           id: row['id'].toString(),
           characterId: widget.characterId,
           continuityId: widget.continuityId,
-          name: name.text,
-          content: content.text,
-          category: category.text,
-          scope: scope.text,
-          visibility: visibility.text,
+          name: result['name'] ?? '',
+          content: result['content'] ?? '',
+          category: result['category'] ?? 'other',
+          scope: result['scope'] ?? 'global',
+          bindingScope: result['binding_scope'] ?? 'storyline',
+          activationMode: result['activation_mode'] ?? 'triggered',
+          visibility: result['visibility'] ?? 'public',
           triggers: parsedTriggers,
-          targetEntryKey: targetEntryKey,
+          targetEntryKey: result['target_entry_key'] ?? '',
         );
       }
-      if (result != null) await _load();
+      await _load();
     } catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -751,13 +958,6 @@ class _RpWorldbookScreenState extends State<RpWorldbookScreen> {
           ),
         );
       }
-    } finally {
-      name.dispose();
-      content.dispose();
-      category.dispose();
-      scope.dispose();
-      visibility.dispose();
-      triggers.dispose();
     }
   }
 

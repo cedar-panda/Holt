@@ -35,7 +35,7 @@ abstract final class RpSummaryPrompt {
 若既有資料全部為空，只能依本輪正文建立第一份卷宗。只能處理【當前故事線】，不同故事線的資料不得混合。
 
 二、資料層職責
-summary 是敘事地圖，保存事件的前因、關鍵過程、結果、關係形成與轉折原因、衝突與懸念的推進、事件留下的影響，以及仍可能被後續牽動的劇情線。summary 不重複抄寫人物卡、逐項狀態或關係表。每輪輸出的 summary 都是整合最近兩份既有卷宗與本輪內容後的完整替換版本，不是增量附錄。既有卷宗中的每個重點事件都必須在新 summary 中繼續存在；即使壓縮成一句話，也要保留事件主體、發生內容、必要原因、結果與持續影響。
+summary 是當前劇情的敘事地圖，保存主要因果鏈、關係形成與轉折原因、未解衝突與懸念、仍在持續的影響，以及後續仍可能牽動的劇情線。summary 不重複抄寫人物卡、逐項狀態或關係表。每輪輸出的 summary 都是整合最近兩份既有卷宗與本輪內容後的完整替換版本，不是增量附錄。既有事件只在仍支撐當前因果、關係、未解線索或持續狀態時保留；已收束且不再影響後文的事件可退出當前 summary，由其已儲存的 recall_segments 在需要時召回。
 
 recall_segments 是 summary 自身的分段召回索引。每個可召回事件段只覆蓋一個摘要段落；若單一段落含多個可獨立召回的事件，先在 summary 內按事件邊界拆段。content 必須逐字複製自 summary，每段只附一個高辨識度事件關鍵詞。它不是第二份摘要，也不新增任何事實。程式會把它與本次摘要及來源消息固定綁定，舊摘要退為標籤時直接使用，不再另行呼叫模型。
 
@@ -90,7 +90,7 @@ summary 只使用非空的「### ——主線——」「### ——支線——�
 
 八、內容與去重
 使用中性客觀第三人稱，不輸出第一人稱、前言、自我介紹、結語或對 User 的建議。使用具體事件，不用抽象文學語句代替實際原因。可以調整語序，但保持行動主體、先後、因果與立場。
-同一事件、關係轉折或身份對照在完整 summary 中只保留一份；新進展更新原條目。兩份既有卷宗中的重複事件先合併，不重複堆疊。已被覆蓋的舊現況只保留持續影響；結束支線至少用一句話保留起因、結果與影響；兌現承諾保留結果及關係變化。既有事件條目的標題保持不變，除非 User 明確修正事件，方便程式確認重點事件沒有在滾動中消失。
+同一事件、關係轉折或身份對照在完整 summary 中只保留一份；新進展更新原條目。兩份既有卷宗中的重複事件先合併，不重複堆疊。已被覆蓋的舊現況只保留持續影響；已結束且不再牽動後續的支線可從當前 summary 移除，交由其已儲存的 recall_segments 在需要時召回。兌現承諾只在其結果仍改變關係或局勢時保留。既有標題不是必須永久保留的清單；根據當前劇情節點保留主線因果、仍活著的支線及後續仍會使用的結果。
 
 若【摘要來源範圍】指向既有摘要，將該摘要視為本次修訂目標：讀取其內容與來源正文，輸出同一範圍的完整替換版本，不把修訂內容追加成新的獨立事件。保留原本的故事線位置與仍有效的因果；只有本次正文證明已變更的部分才更新。程式會負責保存 revision、來源範圍與依賴關係。
 
@@ -132,8 +132,8 @@ story_characters 每輪最多 24 個，只輸出首次出場，或本輪獲得�
 relationships 使用 entity_id 配對，每輪最多 8 條。origin 只保存最早相遇或最初建立關聯的原因；既有非空 origin 原樣保留，除非 User 明確修正。後續靠近、決裂、和好、背叛、結盟、身份揭露及關係公開寫入 change，並保留造成變化的具體事件。
 
 十三、summary 長度
-summary 必須不超過 {{rp_summary_max_chars}} 個中文字。這是儲存硬上限，不是目標；不必寫滿，正確性優先。接近上限時依序壓縮：無後續作用的氛圍、已結束支線、已兌現承諾、被覆蓋舊現況、已收束且不再影響後續的過程。每個既有重要事件即使只剩一句，也必須保留其存在、主體、結果與持續影響。
-相遇起源、靠近契機、轉折原因、未解衝突、未回收伏筆、待兌現承諾、身份對照、知情邊界、不可逆事件、持續身體狀態與當前接續點不得因長度移除。判斷標準是該內容是否仍可能被後續劇情再次牽動。
+summary 必須不超過 {{rp_summary_max_chars}} 個中文字。這是儲存硬上限，不是目標；不必寫滿，正確性優先。接近上限時，根據當前劇情節點優先保留主線因果、決定後續的支線、關係轉折原因與仍未解決的線索；依序壓縮或移除無後續作用的氛圍、已結束支線、已兌現承諾、被覆蓋舊現況與已收束過程。
+相遇起源、靠近契機、轉折原因、未解衝突、未回收伏筆、待兌現承諾、身份對照、知情邊界、持續身體狀態與當前接續點，只在仍可能被後續劇情牽動時優先保留。不可逆事件若仍是當前因果鏈的重要節點，壓縮為一段內的一至兩句，保留主體、必要原因、結果與持續影響；無持續影響時不必因「不可逆」標籤而永久保留。
 
 十四、輸出
 只輸出一個合法 JSON 物件，不要 code fence、前言、分析或結語。JSON 必須正確跳脫換行、雙引號與反斜線。沒有候選的陣列輸出空陣列。summary 不得為空。storyline_id 原樣返回【當前故事線】ID。
@@ -158,7 +158,7 @@ Inputs may include the current storyline, up to the two most recent valid dossie
 
 The source-range block identifies the storyline, source window, first message id, and last message id covered by this summary. When it points to an existing summary, it is the exact summary slot to revise.
 
-summary is the complete replacement narrative map, not an incremental appendix. Preserve how important events happened, supported reasons for important choices, relationship origins and turns, unresolved conflicts and clues, consequences, and still-active lines. Every important event in either supplied dossier must remain represented in the new summary. Even when compressed to one sentence, retain its actor, event, necessary cause, result, and lasting effect. Do not duplicate full character cards, state rows, or relationship records inside summary.
+summary is the complete replacement narrative map, not an incremental appendix. Preserve the current causal spine, supported reasons for important choices, relationship origins and turns, unresolved conflicts and clues, consequences, and still-active lines. A closed event that no longer affects later story may leave the current summary because its stored recall segment remains available for retrieval. Existing headings are not a permanent checklist. Keep mainline integrity, side threads that are still alive, and results that later scenes still depend on. Do not duplicate full character cards, state rows, or relationship records inside summary.
 
 recall_segments is the summary's own segmented recall index. Each recall segment covers exactly one summary paragraph. If a paragraph contains independently recallable events, split that paragraph inside summary at the event boundary first. Each content value must be copied verbatim from summary and carry exactly one highly distinctive event-retrieval keyword. It is not a second summary and adds no facts. The program binds it to this summary and its source messages and later uses it directly when an old summary becomes labels; no second model request is made.
 
@@ -196,7 +196,7 @@ Emit at most 8 new, corrected, or closed timeline events; 24 changed characters;
 character_index is the compact persistence safety index and must be emitted before summary. Compare every explicitly named person in this source batch against the supplied existing-character roster. Emit every name that is absent from that roster or its aliases, even when the person is already long-established in story chronology rather than making a first chronological appearance. Each of at most 24 items contains only entity_id, name, source_message_ids, and exact evidence. Do not index unnamed titles or kinship labels. A person may also have a full story_characters item; the program merges them.
 Every identifiable named person appearing for the first time in this batch must produce one story_characters item. Even when only the name and entrance scene are known, output entity_id=new, use unknown for unsupported fields, and cite the first-appearance message id and exact evidence. Reuse an existing entity_id only when that exact person and name are present in the supplied existing-character list; the supplied matched-existing list is not exhaustive of people in the source dialogue.
 
-The summary must not exceed {{rp_summary_max_chars}} characters. This is a hard storage ceiling, not a target. Near it, compress inactive atmosphere, closed side lines, fulfilled promises, superseded conditions, then closed process detail. Every existing important event must remain represented in at least one sentence with its actor, result, and lasting effect. Never remove meeting origins, closeness catalysts, turn causes, unresolved conflicts or clues, pending promises, identity mappings, knowledge boundaries, irreversible events, continuing body states, or current handoff merely to meet the ceiling.
+The summary must not exceed {{rp_summary_max_chars}} characters. This is a hard storage ceiling, not a target. Near it, preserve the current main causal chain, side threads that determine later events, relationship-turn causes, and unresolved lines. Compress or remove inactive atmosphere, closed side lines, fulfilled promises, superseded conditions, and closed process detail in that order. Meeting origins, closeness catalysts, turn causes, unresolved conflicts or clues, pending promises, identity mappings, knowledge boundaries, continuing body states, and the current handoff receive priority only while they can still affect later story. If an irreversible event remains an important node in the current causal chain, condense it to one or two sentences in a single paragraph with its actor, necessary cause, result, and lasting effect. Irreversibility alone does not make an event permanent when it has no continuing effect.
 
 Output exactly one valid JSON object with escaped newlines, quotes, and backslashes. No code fence, preface, analysis, or conclusion. Empty candidates use empty arrays. summary must not be empty. Return storyline_id exactly as supplied.
 

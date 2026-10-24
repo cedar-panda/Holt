@@ -170,10 +170,40 @@ class OpenRouterService implements ApiAdapter {
     if (raw is! List) return '';
     return raw
         .whereType<Map>()
-        .map((detail) => detail['text'] ?? detail['content'] ?? '')
+        // reasoning.text 用 text；Claude 等摘要式思考是 reasoning.summary 的
+        // summary；encrypted 區塊沒有可顯示文字，自然被略過。
+        .map(
+          (detail) =>
+              detail['text'] ?? detail['summary'] ?? detail['content'] ?? '',
+        )
         .whereType<String>()
         .where((text) => text.isNotEmpty)
         .join();
+  }
+
+  /// 強制推理（不能關閉思考）的模型。OpenRouter 對這類模型收到
+  /// `reasoning.enabled=false` 會回 400「Reasoning is mandatory」。
+  /// 已知型號直接列；其他型號第一次撞到這個 400 時記下並自動重試一次。
+  static final Set<String> _learnedMandatoryReasoningModels = <String>{};
+  static final RegExp _knownMandatoryReasoningModel = RegExp(
+    r'^anthropic/claude-(opus|sonnet)-5\.5',
+  );
+
+  static bool _reasoningIsMandatory(String model) =>
+      GeminiCachePolicy.usesImplicitCaching(model) ||
+      _learnedMandatoryReasoningModels.contains(model) ||
+      _knownMandatoryReasoningModel.hasMatch(model.trim().toLowerCase());
+
+  /// 第一次遇到「推理不可關閉」的 400 時記下模型並回傳 true（呼叫端重試一次）。
+  static bool _learnMandatoryReasoning(
+    String model,
+    int statusCode,
+    String body,
+  ) {
+    if (statusCode != 400 || !body.contains('Reasoning is mandatory')) {
+      return false;
+    }
+    return _learnedMandatoryReasoningModels.add(model);
   }
 
   /// Claude 在工具與動態背景很長時，偶爾會把上一輪當成當前任務。
@@ -222,27 +252,34 @@ class OpenRouterService implements ApiAdapter {
     _activeClient?.close();
     _activeClient = client;
     try {
-      final body = _sanitizeRequestBody(
-        await _buildBody(
-          messages,
-          model,
-          systemPrompt,
-          structuredPrompt: structuredPrompt,
-          stream: false,
-          diagnosticsOut: requestDiagnostics,
-        ),
-      );
-      final response = await client
-          .post(
-            Uri.parse(_baseUrl),
-            headers: _headers(),
-            body: jsonEncode(body),
-          )
-          .timeout(
-            isGeminiImplicitCache
-                ? const Duration(minutes: 20)
-                : const Duration(seconds: 180),
-          );
+      Future<http.Response> post() async {
+        final body = _sanitizeRequestBody(
+          await _buildBody(
+            messages,
+            model,
+            systemPrompt,
+            structuredPrompt: structuredPrompt,
+            stream: false,
+            diagnosticsOut: requestDiagnostics,
+          ),
+        );
+        return client
+            .post(
+              Uri.parse(_baseUrl),
+              headers: _headers(),
+              body: jsonEncode(body),
+            )
+            .timeout(
+              isGeminiImplicitCache
+                  ? const Duration(minutes: 20)
+                  : const Duration(seconds: 180),
+            );
+      }
+
+      var response = await post();
+      if (_learnMandatoryReasoning(model, response.statusCode, response.body)) {
+        response = await post();
+      }
 
       if (response.statusCode != 200) {
         throw Exception('API 錯誤 ${response.statusCode}: ${response.body}');
@@ -300,36 +337,49 @@ class OpenRouterService implements ApiAdapter {
     _activeClient?.close();
     _activeClient = client;
     try {
-      final body = _sanitizeRequestBody(
-        await _buildBody(
-          messages,
-          model,
-          systemPrompt,
-          structuredPrompt: structuredPrompt,
-          stream: true,
-          diagnosticsOut: requestDiagnostics,
-        ),
-      );
-
-      final request = http.Request('POST', Uri.parse(_baseUrl));
-      request.headers.addAll(_headers());
-      request.body = jsonEncode(body);
-
-      final response = await StreamTransport.waitForResponseStart(
-        client.send(request),
-        provider: 'OpenRouter',
-        timeout: isGeminiImplicitCache
-            ? const Duration(minutes: 20)
-            : StreamTransport.responseStartTimeout,
-      );
-
-      if (response.statusCode != 200) {
-        final errorBody = await response.stream.bytesToString().timeout(
-          isGeminiImplicitCache
-              ? const Duration(minutes: 20)
-              : SseStream.defaultIdleTimeout,
+      Future<http.StreamedResponse> send() async {
+        final body = _sanitizeRequestBody(
+          await _buildBody(
+            messages,
+            model,
+            systemPrompt,
+            structuredPrompt: structuredPrompt,
+            stream: true,
+            diagnosticsOut: requestDiagnostics,
+          ),
         );
-        throw Exception('API 錯誤 ${response.statusCode}: $errorBody');
+        final request = http.Request('POST', Uri.parse(_baseUrl));
+        request.headers.addAll(_headers());
+        request.body = jsonEncode(body);
+        return StreamTransport.waitForResponseStart(
+          client.send(request),
+          provider: 'OpenRouter',
+          timeout: isGeminiImplicitCache
+              ? const Duration(minutes: 20)
+              : StreamTransport.responseStartTimeout,
+        );
+      }
+
+      Future<String> readErrorBody(http.StreamedResponse failed) =>
+          failed.stream.bytesToString().timeout(
+            isGeminiImplicitCache
+                ? const Duration(minutes: 20)
+                : SseStream.defaultIdleTimeout,
+          );
+
+      var response = await send();
+      if (response.statusCode != 200) {
+        final errorBody = await readErrorBody(response);
+        if (!_learnMandatoryReasoning(model, response.statusCode, errorBody)) {
+          throw Exception('API 錯誤 ${response.statusCode}: $errorBody');
+        }
+        // 已改用「不可關閉推理」的參數，同一個 client 重試一次。
+        response = await send();
+        if (response.statusCode != 200) {
+          throw Exception(
+            'API 錯誤 ${response.statusCode}: ${await readErrorBody(response)}',
+          );
+        }
       }
 
       Map<String, dynamic>? finalUsageData;
@@ -756,6 +806,7 @@ class OpenRouterService implements ApiAdapter {
           (grokPrepared?.reasoningPayloadCount ?? 0) > 0,
       'reasoning_payload_count': grokPrepared?.reasoningPayloadCount ?? 0,
       'grok_turn_anchor': grokPrepared?.currentTurnAnchor ?? '',
+      'grok_ledger_scope': grokPrepared?.ledgerScope ?? '',
       'grok_provider_route': enableGrokCache ? 'openrouter_xai' : '',
       'static_tokens': structuredPrompt == null
           ? TokenEstimator.estimate(systemPrompt ?? '')
@@ -813,14 +864,18 @@ class OpenRouterService implements ApiAdapter {
       'model': model,
       'messages': allMessages,
       'stream': stream,
-      'max_tokens': isGeminiImplicitCache ? 32768 : 4096,
+      'max_tokens': isGeminiImplicitCache
+          ? 32768
+          // 強制推理的模型：思考預算從 max_tokens 按比例切出，
+          // 4096 會讓正文只剩一半左右，提高上限避免回覆被截斷。
+          : (_reasoningIsMandatory(model) ? 8192 : 4096),
       // Thinking is request policy, not prompt-cache content. Explicitly send
       // both states so models whose OpenRouter default enables reasoning do
       // not keep reasoning after the UI switch is turned off.
-      'reasoning': isGeminiImplicitCache
+      'reasoning': _reasoningIsMandatory(model)
           ? <String, dynamic>{
-              // Argon always reasons. "Off" lowers the effort and hides the
-              // reasoning text instead of pretending it can be disabled.
+              // Argon 與 Claude Opus／Sonnet 5.5 等模型一定會推理。「關閉」改成
+              // 降低 effort 並隱藏思考內容，而不是送 enabled:false 被拒。
               'effort': thinkingEnabled ? 'medium' : 'low',
               'exclude': !thinkingEnabled,
             }
@@ -990,6 +1045,7 @@ class OpenRouterService implements ApiAdapter {
       model: model,
       cacheChannel: '${diagnostics['cache_channel'] ?? 'text'}',
       turnAnchor: turnAnchor,
+      lineageScope: '${diagnostics['grok_ledger_scope'] ?? ''}',
       payload: payload,
     );
   }

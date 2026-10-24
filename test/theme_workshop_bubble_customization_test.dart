@@ -23,6 +23,34 @@ void main() {
     expect(presets.where((item) => item.id == 'yanci'), hasLength(1));
   });
 
+  testWidgets('send button previews persist the selected built-in style', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    await L.setLocale('zh_TW');
+    final originalStyle = YanciTheme.sendButtonStyle;
+    final originalPath = YanciTheme.sendButtonCustomPath;
+    addTearDown(() async {
+      YanciTheme.sendButtonStyle = originalStyle;
+      YanciTheme.sendButtonCustomPath = originalPath;
+      await tester.binding.setSurfaceSize(null);
+    });
+    YanciTheme.sendButtonStyle = 'leaf';
+    YanciTheme.sendButtonCustomPath = '';
+    await tester.binding.setSurfaceSize(const Size(1080, 2400));
+
+    await tester.pumpWidget(const MaterialApp(home: ThemeWorkshopScreen()));
+    await tester.pumpAndSettle();
+
+    for (final style in <String>['leaf', 'paw', 'shell', 'custom']) {
+      expect(find.byKey(ValueKey('theme-send-button-$style')), findsOneWidget);
+    }
+    await tester.tap(find.byKey(const ValueKey('theme-send-button-shell')));
+    await tester.pump();
+    expect(await ThemeSettings.getSendButtonStyle(), 'shell');
+    expect(YanciTheme.sendButtonStyle, 'shell');
+  });
+
   testWidgets(
     'bubble colors preview, persist per theme, and reset to preset defaults',
     (tester) async {

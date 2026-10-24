@@ -36,6 +36,7 @@ class _TtsPlayButtonState extends State<TtsPlayButton>
   late List<AnimationController> _barCtrls;
   // 連接旋轉
   late AnimationController _connectCtrl;
+  bool _reduceMotion = false;
 
   TtsButtonState _state = TtsButtonState.idle;
 
@@ -58,6 +59,15 @@ class _TtsPlayButtonState extends State<TtsPlayButton>
     // 監聽 TTS 狀態
     TtsService.stateNotifier.addListener(_onTtsChanged);
     TtsService.playingMessageId.addListener(_onTtsChanged);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final reduceMotion = MediaQuery.disableAnimationsOf(context);
+    if (_reduceMotion == reduceMotion) return;
+    _reduceMotion = reduceMotion;
+    _syncAnimations();
   }
 
   void _onTtsChanged() {
@@ -83,6 +93,13 @@ class _TtsPlayButtonState extends State<TtsPlayButton>
   }
 
   void _syncAnimations() {
+    if (_reduceMotion) {
+      _connectCtrl.stop();
+      for (final controller in _barCtrls) {
+        controller.stop();
+      }
+      return;
+    }
     switch (_state) {
       case TtsButtonState.idle:
         _connectCtrl.stop();

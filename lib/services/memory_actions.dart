@@ -159,29 +159,17 @@ class MemoryActions {
   {"type":"memory.propose","arguments":{"category":"Category","content":"durable fact in third person","triggers":["event trigger","specific result"]}}
   Keep only durable plot facts, relationship changes, promises, established setting facts, and unresolved threads supported by this RP window. Use third person, max 2 entries and 2 triggers each.
   {"type":"search.chat","arguments":{"scope":"rp","query":"keyword"}}
-  Search exact past context when needed. Prefer scope="rp" in RP; use all only when cross-mode context is genuinely useful. Never mention searching or hidden records.
-  If the latest user message explicitly corrects a supplied RP chronology/state record, you may update that existing record only:
-  {"type":"rp.timeline.correct","arguments":{"event_key":"existing event_key","value":"corrected event fact","story_time":"optional corrected story time","evidence":"exact quote from the latest user message"}}
-  {"type":"rp.state.correct","arguments":{"state_key":"existing state_key","value":"corrected current fact","status":"valid status for this state type","evidence":"exact quote from the latest user message"}}
-  Reuse a key shown in the supplied references. Never create a key, infer a correction from character dialogue, or revise a record without an exact quote from the latest user message.''',
+  Search exact past context when needed. Prefer scope="rp" in RP; use all only when cross-mode context is genuinely useful. Never mention searching or hidden records.''',
         zhTW: '''■ RP 記憶
   {"type":"memory.propose","arguments":{"category":"類別","content":"第三人稱耐久事實","triggers":["事件觸發詞","具體結果"]}}
   只記本 RP 窗口正文支持、對後續有持續價值的劇情事實、關係轉折、承諾、已確立設定與未完線索。使用第三人稱，每次最多 2 條，每條最多 2 個觸發詞。
   {"type":"search.chat","arguments":{"scope":"rp","query":"關鍵詞"}}
-  需要精確過往內容時才搜尋；RP 中優先選 rp，只有確實需要跨模式時才選 all。不得向使用者提及搜尋或隱藏記錄。
-  若最新一則 user 訊息明確指出已注入的 RP 時間線／劇情狀態記錯，可只修正該既有記錄：
-  {"type":"rp.timeline.correct","arguments":{"event_key":"既有 event_key","value":"修正後事件事實","story_time":"可選的修正後劇情時間","evidence":"最新 user 訊息中的逐字原文"}}
-  {"type":"rp.state.correct","arguments":{"state_key":"既有 state_key","value":"修正後當前事實","status":"該狀態類型的合法值","evidence":"最新 user 訊息中的逐字原文"}}
-  必須沿用參考區塊提供的 key。不得自創 key、不得把角色台詞視為 user 修正，也不得在沒有最新 user 逐字證據時改動記錄。''',
+  需要精確過往內容時才搜尋；RP 中優先選 rp，只有確實需要跨模式時才選 all。不得向使用者提及搜尋或隱藏記錄。''',
         zhCN: '''■ RP 记忆
   {"type":"memory.propose","arguments":{"category":"类别","content":"第三人称耐久事实","triggers":["事件触发词","具体结果"]}}
   只记本 RP 窗口正文支持、对后续有持续价值的剧情事实、关系转折、承诺、已确立设定与未完线索。使用第三人称，每次最多 2 条，每条最多 2 个触发词。
   {"type":"search.chat","arguments":{"scope":"rp","query":"关键词"}}
-  需要精确过往内容时才搜索；RP 中优先选择 rp，只有确实需要跨模式时才选 all。不得向用户提及搜索或隐藏记录。
-  若最新一条 user 消息明确指出已注入的 RP 时间线／剧情状态记错，可只修正该既有记录：
-  {"type":"rp.timeline.correct","arguments":{"event_key":"既有 event_key","value":"修正后事件事实","story_time":"可选的修正后剧情时间","evidence":"最新 user 消息中的逐字原文"}}
-  {"type":"rp.state.correct","arguments":{"state_key":"既有 state_key","value":"修正后当前事实","status":"该状态类型的合法值","evidence":"最新 user 消息中的逐字原文"}}
-  必须沿用参考区块提供的 key。不得自创 key、不得把角色台词视为 user 修正，也不得在没有最新 user 逐字证据时改动记录。''',
+  需要精确过往内容时才搜索；RP 中优先选择 rp，只有确实需要跨模式时才选 all。不得向用户提及搜索或隐藏记录。''',
       );
     }
     if (L.locale == 'en') {
@@ -225,6 +213,32 @@ class MemoryActions {
   回想過去聊天內容時使用；日常模式優先選 daily，只有確實需要時才選 rp 或 all。一次最多 1 個。''',
     );
   }
+
+  static bool isRpCorrectionIntent(String text) {
+    final normalized = text.trim();
+    if (normalized.isEmpty) return false;
+    return RegExp(
+      r'(修正|更正|糾正|纠正|改成|應該是|应该是|不是.+而是|其實是|其实是|'
+      r'資料錯|资料错|記錯|记错|correction|correct\s+that|should\s+be|'
+      r'not\s+.+but)',
+      caseSensitive: false,
+    ).hasMatch(normalized);
+  }
+
+  static String rpCorrectionRuntimeInstruction() => L.pick(
+    en: '''The latest user message explicitly requests an RP correction. You may update only an existing supplied record:
+{"type":"rp.timeline.correct","arguments":{"event_key":"existing event_key","value":"corrected event fact","story_time":"optional corrected story time","evidence":"exact quote from the latest user message"}}
+{"type":"rp.state.correct","arguments":{"state_key":"existing state_key","value":"corrected current fact","status":"valid status for this state type","evidence":"exact quote from the latest user message"}}
+Reuse a key shown in the supplied references. Never create a key, infer a correction from character dialogue, or revise a record without an exact quote from the latest user message.''',
+    zhTW: '''最新一則 user 訊息明確要求修正 RP 資料；只可修正已注入的既有記錄：
+{"type":"rp.timeline.correct","arguments":{"event_key":"既有 event_key","value":"修正後事件事實","story_time":"可選的修正後劇情時間","evidence":"最新 user 訊息中的逐字原文"}}
+{"type":"rp.state.correct","arguments":{"state_key":"既有 state_key","value":"修正後當前事實","status":"該狀態類型的合法值","evidence":"最新 user 訊息中的逐字原文"}}
+必須沿用參考區塊提供的 key；不得自創 key、不得把角色台詞視為 user 修正，也不得在沒有最新 user 逐字證據時改動記錄。''',
+    zhCN: '''最新一条 user 消息明确要求修正 RP 数据；只可修正已注入的既有记录：
+{"type":"rp.timeline.correct","arguments":{"event_key":"既有 event_key","value":"修正后事件事实","story_time":"可选的修正后剧情时间","evidence":"最新 user 消息中的逐字原文"}}
+{"type":"rp.state.correct","arguments":{"state_key":"既有 state_key","value":"修正后当前事实","status":"该状态类型的合法值","evidence":"最新 user 消息中的逐字原文"}}
+必须沿用参考区块提供的 key；不得自创 key、不得把角色台词视为 user 修正，也不得在没有最新 user 逐字证据时改动记录。''',
+  );
 
   /// 處理模型回覆：執行標籤動作，返回剝離後的正文
   static Future<String> processReply(
@@ -272,7 +286,11 @@ class MemoryActions {
       // 情緒座標按範圍讀：RP 故事線與日常各自一份（平行時空）。
       final points = emotionEnabled
           ? await EmotionCoordinates.activePoints(
-              EmotionCoordinates.scopeId(characterId, contextMode, continuityId),
+              EmotionCoordinates.scopeId(
+                characterId,
+                contextMode,
+                continuityId,
+              ),
             )
           : const <EmotionPoint>[];
       int? emoX, emoY, emoRes;

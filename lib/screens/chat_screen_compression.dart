@@ -101,9 +101,12 @@ extension _ChatCompressionMethods on _ChatScreenState {
 
   Future<String> _buildStaticWindowSummaryPrompt(String characterId) async {
     _syncPromptLocaleCaches();
-    final cacheEnabled = await MemorySettings.getEnablePromptCaching();
-    final summaryEnabled = await MemorySettings.getCacheWindowSummaryEnabled();
-    if (!cacheEnabled || !summaryEnabled) {
+    if (_requiredSessionIdentity.contextMode == ContextMode.rp &&
+        _rpContinuationSummaryPrompt.trim().isNotEmpty) {
+      return '';
+    }
+    final costStrategy = await ModelCostPolicy.resolveCurrentStrategy();
+    if (!costStrategy.promptCacheEnabled || !costStrategy.cacheSummaryEnabled) {
       _cacheWindowSummaryStaticSnapshot = null;
       return '';
     }
@@ -157,20 +160,17 @@ extension _ChatCompressionMethods on _ChatScreenState {
     String characterId, {
     String currentMessage = '',
   }) async {
-    final cacheEnabled = await MemorySettings.getEnablePromptCaching();
-    final cacheSummaryEnabled =
-        await MemorySettings.getCacheWindowSummaryEnabled();
-    final contextLimitEnabled = await MemorySettings.getContextLimitEnabled();
-    final contextSummaryEnabled =
-        await MemorySettings.getContextWindowSummaryEnabled();
-
-    final useCacheKeywordRecall = cacheEnabled && cacheSummaryEnabled;
+    final costStrategy = await ModelCostPolicy.resolveCurrentStrategy();
+    final useCacheKeywordRecall =
+        costStrategy.promptCacheEnabled && costStrategy.cacheSummaryEnabled;
     final useContextDynamic =
-        !cacheEnabled && contextLimitEnabled && contextSummaryEnabled;
+        costStrategy.contextLimitEnabled && costStrategy.contextSummaryEnabled;
     if (!useCacheKeywordRecall && !useContextDynamic) return '';
 
     final windowId = await _currentWindowSummaryId();
     final isRp = _requiredSessionIdentity.contextMode == ContextMode.rp;
+    final hasContinuation =
+        isRp && _rpContinuationSummaryPrompt.trim().isNotEmpty;
     final includeKeyword = useCacheKeywordRecall || useContextDynamic;
     if (!isRp) {
       final pack = await ContextCompressor.loadSummaryPack(
@@ -189,14 +189,16 @@ extension _ChatCompressionMethods on _ChatScreenState {
     }
 
     var includeLatest = false;
-    if (useContextDynamic) {
+    if (useContextDynamic && !hasContinuation) {
       final previous =
           await (_previousWindowTurnsFuture ??
               Future<List<Message>>.value(const <Message>[]));
       final limit = await MemorySettings.getContextMessageLimit();
       includeLatest = previous.length + _messages.length + 1 > limit;
     }
-    final pinned = await _buildStaticWindowSummaryPrompt(characterId);
+    final pinned = hasContinuation
+        ? ''
+        : await _buildStaticWindowSummaryPrompt(characterId);
     var latest = '';
     if (includeLatest) {
       final pack = await ContextCompressor.loadSummaryPack(
@@ -217,7 +219,9 @@ extension _ChatCompressionMethods on _ChatScreenState {
     var keyword = '';
     if (includeKeyword) {
       const rpTotalChars = 2000;
-      final budget = max(400, rpTotalChars - pinned.length - latest.length);
+      final budget = hasContinuation
+          ? ContextCompressor.rpContinuationRecallReserveChars
+          : max(400, rpTotalChars - pinned.length - latest.length);
       final pack = await ContextCompressor.loadSummaryPack(
         characterId,
         currentMessage: currentMessage,
@@ -227,7 +231,9 @@ extension _ChatCompressionMethods on _ChatScreenState {
         contextMode: ContextMode.rp,
         continuityId: _requiredSessionIdentity.continuityId,
         rpKeywordMaxChars: budget,
-        alreadyInjected: '$pinned\n$latest',
+        alreadyInjected: hasContinuation
+            ? _rpContinuationSummaryPrompt
+            : '$pinned\n$latest',
       );
       keyword = (pack['keywordSummaries'] ?? '').trim();
     }
@@ -284,13 +290,12 @@ extension _ChatCompressionMethods on _ChatScreenState {
   }
 
   Future<int?> _windowSummaryTriggerMessageLimit() async {
-    final cacheEnabled = await MemorySettings.getEnablePromptCaching();
-    if (cacheEnabled && await MemorySettings.getCacheWindowSummaryEnabled()) {
+    final costStrategy = await ModelCostPolicy.resolveCurrentStrategy();
+    if (costStrategy.promptCacheEnabled && costStrategy.cacheSummaryEnabled) {
       return MemorySettings.getCacheSummaryTriggerMessages();
     }
-    final contextEnabled = await MemorySettings.getContextLimitEnabled();
-    if (contextEnabled &&
-        await MemorySettings.getContextWindowSummaryEnabled()) {
+    if (costStrategy.contextLimitEnabled &&
+        costStrategy.contextSummaryEnabled) {
       return MemorySettings.getContextSummaryTriggerMessages();
     }
     return null;

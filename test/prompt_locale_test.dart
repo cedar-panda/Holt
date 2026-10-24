@@ -2,6 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:project_yanci/memory/emotion_coordinates.dart';
+import 'package:project_yanci/models/context_mode.dart';
 import 'package:project_yanci/services/bio_clock_service.dart';
 import 'package:project_yanci/services/keep_alive_service.dart';
 import 'package:project_yanci/services/locale_strings.dart';
@@ -114,5 +115,18 @@ void main() {
     final englishPrompt = MemoryActions.abilityPrompt();
     expect(englishPrompt, isNot(contains('Categories: Long-term Emotion')));
     expect(englishPrompt, isNot(contains('this feeling will still matter')));
+  });
+
+  test('RP correction tools are request-only instead of static', () async {
+    await L.setLocale('zh_TW');
+    final staticPrompt = MemoryActions.abilityPrompt(
+      contextMode: ContextMode.rp,
+    );
+    expect(staticPrompt, isNot(contains('rp.timeline.correct')));
+    expect(staticPrompt, isNot(contains('rp.state.correct')));
+    expect(MemoryActions.isRpCorrectionIntent('請修正前面的時間線'), isTrue);
+    final runtimePrompt = MemoryActions.rpCorrectionRuntimeInstruction();
+    expect(runtimePrompt, contains('rp.timeline.correct'));
+    expect(runtimePrompt, contains('rp.state.correct'));
   });
 }

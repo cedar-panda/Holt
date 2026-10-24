@@ -73,10 +73,22 @@ void callbackDispatcher() {
   });
 }
 
-void main() async {
+void main() {
   WidgetsFlutterBinding.ensureInitialized();
   HoltLicenseRegistry.register();
 
+  // Establish a Flutter root before touching optional platform plugins. On
+  // iOS, a stalled preference/file/download plugin used to keep the native
+  // launch view on screen because runApp() lived after the entire bootstrap
+  // chain. The splash can render immediately now; the same initialization
+  // work resumes after the first frame and refreshes its own notifiers.
+  runApp(const YanciApp());
+  WidgetsBinding.instance.addPostFrameCallback((_) {
+    unawaited(_initializeAfterFirstFrame());
+  });
+}
+
+Future<void> _initializeAfterFirstFrame() async {
   // Android 後台保活調度（iOS 不註冊，靠回前台補針）
   await _startupStep('background scheduler', () async {
     if (!kIsWeb && Platform.isAndroid) {
@@ -101,6 +113,9 @@ void main() async {
     YanciTheme.starDensity = await ThemeSettings.getStarDensity();
     YanciTheme.particleEffectOverride = await ThemeSettings.getParticleEffect();
     YanciTheme.aiBubbleFlat = await ThemeSettings.getAiBubbleFlat();
+    YanciTheme.sendButtonStyle = await ThemeSettings.getSendButtonStyle();
+    YanciTheme.sendButtonCustomPath =
+        await ThemeSettings.getSendButtonCustomPath();
     YanciTheme.homeBackgroundImagePath =
         await ThemeSettings.getBackgroundImagePath('home');
     YanciTheme.homeBackgroundImageScale =
@@ -203,11 +218,6 @@ void main() async {
           return <void>[];
         }),
   );
-
-  // Even if a platform plugin or a damaged preference failed above, there is
-  // always a Flutter root. Each affected feature can retry from inside the app
-  // instead of leaving the user on a permanent native splash/blank screen.
-  runApp(const YanciApp());
 }
 
 Future<void> _startupStep(

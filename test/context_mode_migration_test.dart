@@ -67,7 +67,7 @@ void main() {
   test('fresh schema enforces context values and creates RP indexes', () async {
     await DatabaseHelper.createSchemaForTesting(db);
 
-    expect(DatabaseHelper.schemaVersionForTesting, 82);
+    expect(DatabaseHelper.schemaVersionForTesting, 84);
     expect(
       await _columnNames(db, 'conversations'),
       containsAll(<String>[
@@ -80,7 +80,7 @@ void main() {
     );
     expect(
       await _columnNames(db, 'memories'),
-      containsAll(<String>['context_mode', 'continuity_id']),
+      containsAll(<String>['context_mode', 'continuity_id', 'is_pinned']),
     );
     expect(await _columnNames(db, 'messages'), contains('summary_recorded'));
     expect(

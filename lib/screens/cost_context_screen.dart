@@ -32,6 +32,15 @@ class _CostContextScreenState extends State<CostContextScreen> {
   bool _signatureEnabled = true;
   bool _emotionEnabled = true;
   bool _guideEnabled = true;
+  bool _settingsLoaded = false;
+  bool _conciseMode = false;
+  bool _freeformMode = false;
+  bool _splitReply = false;
+  bool _bioclockEnabled = true;
+  bool _timelineEnabled = true;
+  bool _selfNotesEnabled = true;
+  bool _vibrationEnabled = true;
+  bool _showChatAvatar = false;
   ToolFeatureState _toolFeatures = const ToolFeatureState();
 
   String get _screenTitle => switch (widget.section) {
@@ -71,6 +80,14 @@ class _CostContextScreenState extends State<CostContextScreen> {
       MemorySettings.isAbilityEnabled('emotion'),
       ToolFeatureSettings.load(),
       GuideSettings.isEnabled(),
+      ApiSettings.getConciseMode(),
+      ApiSettings.getFreeformMode(),
+      MemorySettings.getSplitReply(),
+      MemorySettings.isAbilityEnabled('bioclock'),
+      MemorySettings.getTimelineEnabled(),
+      MemorySettings.getSelfNotesEnabled(),
+      UserSettings.getEnableVibration(),
+      UserSettings.getShowChatAvatar(),
     ]);
     if (!mounted) return;
     setState(() {
@@ -79,7 +96,71 @@ class _CostContextScreenState extends State<CostContextScreen> {
       _emotionEnabled = results[2] as bool;
       _toolFeatures = results[3] as ToolFeatureState;
       _guideEnabled = results[4] as bool;
+      _conciseMode = results[5] as bool;
+      _freeformMode = results[6] as bool;
+      _splitReply = results[7] as bool;
+      _bioclockEnabled = results[8] as bool;
+      _timelineEnabled = results[9] as bool;
+      _selfNotesEnabled = results[10] as bool;
+      _vibrationEnabled = results[11] as bool;
+      _showChatAvatar = results[12] as bool;
+      _settingsLoaded = true;
     });
+  }
+
+  Future<void> _toggleConciseMode(bool value) async {
+    setState(() {
+      _conciseMode = value;
+      if (value) _freeformMode = false;
+    });
+    await ApiSettings.saveConciseMode(value);
+    if (value) await ApiSettings.saveFreeformMode(false);
+    if (mounted) StaticTokenEstimator.showAfterToggle(context);
+  }
+
+  Future<void> _toggleFreeformMode(bool value) async {
+    setState(() {
+      _freeformMode = value;
+      if (value) _conciseMode = false;
+    });
+    await ApiSettings.saveFreeformMode(value);
+    if (value) await ApiSettings.saveConciseMode(false);
+    if (mounted) StaticTokenEstimator.showAfterToggle(context);
+  }
+
+  Future<void> _toggleSplitReply(bool value) async {
+    setState(() => _splitReply = value);
+    await MemorySettings.saveSplitReply(value);
+    if (mounted) StaticTokenEstimator.showAfterToggle(context);
+  }
+
+  Future<void> _toggleAbility(String key, bool value) async {
+    setState(() {
+      if (key == 'bioclock') _bioclockEnabled = value;
+    });
+    await MemorySettings.setAbilityEnabled(key, value);
+    if (mounted) StaticTokenEstimator.showAfterToggle(context);
+  }
+
+  Future<void> _toggleTimeline(bool value) async {
+    setState(() => _timelineEnabled = value);
+    await MemorySettings.saveTimelineEnabled(value);
+  }
+
+  Future<void> _toggleSelfNotes(bool value) async {
+    setState(() => _selfNotesEnabled = value);
+    await MemorySettings.saveSelfNotesEnabled(value);
+    if (mounted) StaticTokenEstimator.showAfterToggle(context);
+  }
+
+  Future<void> _toggleVibration(bool value) async {
+    setState(() => _vibrationEnabled = value);
+    await UserSettings.saveEnableVibration(value);
+  }
+
+  Future<void> _toggleChatAvatar(bool value) async {
+    setState(() => _showChatAvatar = value);
+    await UserSettings.saveShowChatAvatar(value);
   }
 
   Future<void> _toggleSignature(bool value) async {
@@ -534,48 +615,31 @@ class _CostContextScreenState extends State<CostContextScreen> {
                       _buildGlassCard(
                         child: Column(
                           children: [
-                            FutureBuilder<bool>(
-                              future: ApiSettings.getConciseMode(),
-                              builder: (ctx, snap) => HelpSwitchTile(
-                                title: L.get('settings_concise'),
-                                description: L.get('settings_concise_desc'),
-                                value: snap.data ?? false,
-                                onChanged: (v) {
-                                  ApiSettings.saveConciseMode(v);
-                                  if (v) ApiSettings.saveFreeformMode(false);
-                                  setState(() {});
-                                  StaticTokenEstimator.showAfterToggle(context);
-                                },
-                              ),
+                            HelpSwitchTile(
+                              title: L.get('settings_concise'),
+                              description: L.get('settings_concise_desc'),
+                              value: _conciseMode,
+                              enabled: _settingsLoaded,
+                              onChanged: (value) =>
+                                  unawaited(_toggleConciseMode(value)),
                             ),
                             _softDivider(),
-                            FutureBuilder<bool>(
-                              future: ApiSettings.getFreeformMode(),
-                              builder: (ctx, snap) => HelpSwitchTile(
-                                title: L.get('settings_freeform'),
-                                description: L.get('settings_freeform_desc'),
-                                value: snap.data ?? false,
-                                onChanged: (v) {
-                                  ApiSettings.saveFreeformMode(v);
-                                  if (v) ApiSettings.saveConciseMode(false);
-                                  setState(() {});
-                                  StaticTokenEstimator.showAfterToggle(context);
-                                },
-                              ),
+                            HelpSwitchTile(
+                              title: L.get('settings_freeform'),
+                              description: L.get('settings_freeform_desc'),
+                              value: _freeformMode,
+                              enabled: _settingsLoaded,
+                              onChanged: (value) =>
+                                  unawaited(_toggleFreeformMode(value)),
                             ),
                             _softDivider(),
-                            FutureBuilder<bool>(
-                              future: MemorySettings.getSplitReply(),
-                              builder: (ctx, snap) => HelpSwitchTile(
-                                title: L.get('settings_split'),
-                                description: L.get('settings_split_desc'),
-                                value: snap.data ?? false,
-                                onChanged: (v) {
-                                  MemorySettings.saveSplitReply(v);
-                                  setState(() {});
-                                  StaticTokenEstimator.showAfterToggle(context);
-                                },
-                              ),
+                            HelpSwitchTile(
+                              title: L.get('settings_split'),
+                              description: L.get('settings_split_desc'),
+                              value: _splitReply,
+                              enabled: _settingsLoaded,
+                              onChanged: (value) =>
+                                  unawaited(_toggleSplitReply(value)),
                             ),
                           ],
                         ),
@@ -640,74 +704,55 @@ class _CostContextScreenState extends State<CostContextScreen> {
                               onTap: _openMemoryMode,
                             ),
                             _softDivider(),
-                            FutureBuilder<bool>(
-                              future: MemorySettings.isAbilityEnabled(
-                                'bioclock',
+                            HelpSwitchTile(
+                              title: L.pick(
+                                en: 'Bio Clock',
+                                zhTW: '生物鐘',
+                                zhCN: '生物钟',
                               ),
-                              builder: (ctx, snap) => HelpSwitchTile(
-                                title: L.pick(
-                                  en: 'Bio Clock',
-                                  zhTW: '生物鐘',
-                                  zhCN: '生物钟',
-                                ),
-                                description: L.pick(
-                                  en: 'Inject fatigue and daily-rhythm cues.',
-                                  zhTW: '注入疲勞與日常作息提示。',
-                                  zhCN: '注入疲劳与日常作息提示。',
-                                ),
-                                value: snap.data ?? true,
-                                onChanged: (v) {
-                                  MemorySettings.setAbilityEnabled(
-                                    'bioclock',
-                                    v,
-                                  );
-                                  setState(() {});
-                                  StaticTokenEstimator.showAfterToggle(context);
-                                },
+                              description: L.pick(
+                                en: 'Inject fatigue and daily-rhythm cues.',
+                                zhTW: '注入疲勞與日常作息提示。',
+                                zhCN: '注入疲劳与日常作息提示。',
                               ),
+                              value: _bioclockEnabled,
+                              enabled: _settingsLoaded,
+                              onChanged: (value) =>
+                                  unawaited(_toggleAbility('bioclock', value)),
                             ),
                             _softDivider(),
-                            FutureBuilder<bool>(
-                              future: MemorySettings.getTimelineEnabled(),
-                              builder: (ctx, snap) => HelpSwitchTile(
-                                title: L.pick(
-                                  en: 'Timeline',
-                                  zhTW: '時間線',
-                                  zhCN: '时间线',
-                                ),
-                                description: L.pick(
-                                  en: 'Show and inject character timeline context.',
-                                  zhTW: '顯示並注入角色時間線內容。',
-                                  zhCN: '显示并注入角色时间线内容。',
-                                ),
-                                value: snap.data ?? true,
-                                onChanged: (v) {
-                                  MemorySettings.saveTimelineEnabled(v);
-                                  setState(() {});
-                                },
+                            HelpSwitchTile(
+                              title: L.pick(
+                                en: 'Timeline',
+                                zhTW: '時間線',
+                                zhCN: '时间线',
                               ),
+                              description: L.pick(
+                                en: 'Show and inject character timeline context.',
+                                zhTW: '顯示並注入角色時間線內容。',
+                                zhCN: '显示并注入角色时间线内容。',
+                              ),
+                              value: _timelineEnabled,
+                              enabled: _settingsLoaded,
+                              onChanged: (value) =>
+                                  unawaited(_toggleTimeline(value)),
                             ),
                             _softDivider(),
-                            FutureBuilder<bool>(
-                              future: MemorySettings.getSelfNotesEnabled(),
-                              builder: (ctx, snap) => HelpSwitchTile(
-                                title: L.pick(
-                                  en: 'Secretly remembering you',
-                                  zhTW: '偷偷記住你',
-                                  zhCN: '偷偷记住你',
-                                ),
-                                description: L.pick(
-                                  en: 'Keep the quiet self-notes panel and prompt.',
-                                  zhTW: '保留安靜的自我註記面板與提示。',
-                                  zhCN: '保留安静的自我注记面板与提示。',
-                                ),
-                                value: snap.data ?? true,
-                                onChanged: (v) {
-                                  MemorySettings.saveSelfNotesEnabled(v);
-                                  setState(() {});
-                                  StaticTokenEstimator.showAfterToggle(context);
-                                },
+                            HelpSwitchTile(
+                              title: L.pick(
+                                en: 'Secretly remembering you',
+                                zhTW: '偷偷記住你',
+                                zhCN: '偷偷记住你',
                               ),
+                              description: L.pick(
+                                en: 'Keep the quiet self-notes panel and prompt.',
+                                zhTW: '保留安靜的自我註記面板與提示。',
+                                zhCN: '保留安静的自我注记面板与提示。',
+                              ),
+                              value: _selfNotesEnabled,
+                              enabled: _settingsLoaded,
+                              onChanged: (value) =>
+                                  unawaited(_toggleSelfNotes(value)),
                             ),
                           ],
                         ),
@@ -721,33 +766,25 @@ class _CostContextScreenState extends State<CostContextScreen> {
                       _buildGlassCard(
                         child: Column(
                           children: [
-                            FutureBuilder<bool>(
-                              future: UserSettings.getEnableVibration(),
-                              builder: (ctx, snap) => HelpSwitchTile(
-                                title: L.get('settings_vibration'),
-                                description: L.get('settings_vibration_on'),
-                                value: snap.data ?? true,
-                                onChanged: (v) {
-                                  UserSettings.saveEnableVibration(v);
-                                  setState(() {});
-                                },
-                              ),
+                            HelpSwitchTile(
+                              title: L.get('settings_vibration'),
+                              description: L.get('settings_vibration_on'),
+                              value: _vibrationEnabled,
+                              enabled: _settingsLoaded,
+                              onChanged: (value) =>
+                                  unawaited(_toggleVibration(value)),
                             ),
                             _softDivider(),
-                            FutureBuilder<bool>(
-                              future: UserSettings.getShowChatAvatar(),
-                              builder: (ctx, snap) => HelpSwitchTile(
-                                title: L.pick(en: 'Chat Avatars', zhTW: '頭像顯示'),
-                                description: L.pick(
-                                  en: 'Shows avatars next to chat bubbles.',
-                                  zhTW: '在對話氣泡旁顯示使用者的頭像。',
-                                ),
-                                value: snap.data ?? false,
-                                onChanged: (v) {
-                                  UserSettings.saveShowChatAvatar(v);
-                                  setState(() {});
-                                },
+                            HelpSwitchTile(
+                              title: L.pick(en: 'Chat Avatars', zhTW: '頭像顯示'),
+                              description: L.pick(
+                                en: 'Shows avatars next to chat bubbles.',
+                                zhTW: '在對話氣泡旁顯示使用者的頭像。',
                               ),
+                              value: _showChatAvatar,
+                              enabled: _settingsLoaded,
+                              onChanged: (value) =>
+                                  unawaited(_toggleChatAvatar(value)),
                             ),
                             // 桌面像素精靈：已隱藏。僅在舊用戶仍開啟時顯示，讓他們能關閉；關閉後即消失。
                             ValueListenableBuilder<bool>(
@@ -785,25 +822,21 @@ class _CostContextScreenState extends State<CostContextScreen> {
                         L.pick(en: 'Chat avatars', zhTW: '頭像顯示', zhCN: '头像显示'),
                       ),
                       _buildGlassCard(
-                        child: FutureBuilder<bool>(
-                          future: UserSettings.getShowChatAvatar(),
-                          builder: (ctx, snap) => HelpSwitchTile(
-                            title: L.pick(
-                              en: 'Chat avatars',
-                              zhTW: '頭像顯示',
-                              zhCN: '头像显示',
-                            ),
-                            description: L.pick(
-                              en: 'Shows avatars next to chat bubbles.',
-                              zhTW: '在對話氣泡旁顯示使用者的頭像。',
-                              zhCN: '在对话气泡旁显示使用者的头像。',
-                            ),
-                            value: snap.data ?? false,
-                            onChanged: (value) {
-                              UserSettings.saveShowChatAvatar(value);
-                              setState(() {});
-                            },
+                        child: HelpSwitchTile(
+                          title: L.pick(
+                            en: 'Chat avatars',
+                            zhTW: '頭像顯示',
+                            zhCN: '头像显示',
                           ),
+                          description: L.pick(
+                            en: 'Shows avatars next to chat bubbles.',
+                            zhTW: '在對話氣泡旁顯示使用者的頭像。',
+                            zhCN: '在对话气泡旁显示使用者的头像。',
+                          ),
+                          value: _showChatAvatar,
+                          enabled: _settingsLoaded,
+                          onChanged: (value) =>
+                              unawaited(_toggleChatAvatar(value)),
                         ),
                       ),
                     ],

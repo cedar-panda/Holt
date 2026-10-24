@@ -24,6 +24,7 @@ class OpenAICompatibleService implements ApiAdapter {
   final bool thinkingEnabled;
   final String providerId;
   final String providerLabel;
+  final OpenAICompatibleCapabilities? capabilities;
   http.Client? _activeClient;
   static Map<String, int> lastUsageStats = <String, int>{};
 
@@ -34,6 +35,7 @@ class OpenAICompatibleService implements ApiAdapter {
     this.thinkingEnabled = false,
     this.providerId = 'openai_compatible',
     this.providerLabel = 'OpenAI-compatible API',
+    this.capabilities,
   });
 
   Future<Map<String, dynamic>> debugBuildBodyForTesting({
@@ -50,6 +52,11 @@ class OpenAICompatibleService implements ApiAdapter {
       stream: false,
     );
   }
+
+  Map<String, dynamic>? debugDowngradeBodyForTesting(
+    Map<String, dynamic> body,
+    String errorBody,
+  ) => _downgradeBodyForUnsupported400(body, errorBody);
 
   /// 優先讀取 New API / One API 公開的模型定價清單；不支援時再退回
   /// OpenAI 標準的 /models。公開定價清單不需要 API Key。
@@ -290,9 +297,21 @@ class OpenAICompatibleService implements ApiAdapter {
         structuredPrompt: structuredPrompt,
         stream: false,
       );
-      final response = await client
+      var response = await client
           .post(_completionsUri, headers: _headers(), body: jsonEncode(body))
           .timeout(const Duration(seconds: 180));
+      if (response.statusCode == 400) {
+        final downgraded = _downgradeBodyForUnsupported400(body, response.body);
+        if (downgraded != null) {
+          response = await client
+              .post(
+                _completionsUri,
+                headers: _headers(),
+                body: jsonEncode(downgraded),
+              )
+              .timeout(const Duration(seconds: 180));
+        }
+      }
       if (response.statusCode != 200) {
         _debugHttpFailure(response.statusCode, response.bodyBytes.length);
         throw Exception(_httpErrorMessage(response.statusCode, response.body));
@@ -342,22 +361,37 @@ class OpenAICompatibleService implements ApiAdapter {
         stream: true,
       );
 
-      final request = http.Request('POST', _completionsUri);
-      request.headers.addAll(_headers());
-      request.body = jsonEncode(body);
-
-      final http.StreamedResponse response;
-      try {
-        response = await StreamTransport.waitForResponseStart(
+      Future<http.StreamedResponse> sendBody(Map<String, dynamic> requestBody) {
+        final request = http.Request('POST', _completionsUri);
+        request.headers.addAll(_headers());
+        request.body = jsonEncode(requestBody);
+        return StreamTransport.waitForResponseStart(
           client.send(request),
           provider: providerLabel,
         );
+      }
+
+      http.StreamedResponse response;
+      try {
+        response = await sendBody(body);
       } on SocketException catch (e) {
         throw Exception(_friendlyNetworkError(e));
       } on HttpException catch (e) {
         throw Exception(_friendlyNetworkError(e));
       }
 
+      if (response.statusCode == 400) {
+        final errorBody = await response.stream.bytesToString().timeout(
+          SseStream.defaultIdleTimeout,
+        );
+        final downgraded = _downgradeBodyForUnsupported400(body, errorBody);
+        if (downgraded != null) {
+          response = await sendBody(downgraded);
+        } else {
+          _debugHttpFailure(response.statusCode, utf8.encode(errorBody).length);
+          throw Exception(_httpErrorMessage(response.statusCode, errorBody));
+        }
+      }
       if (response.statusCode != 200) {
         final errorBody = await response.stream.bytesToString().timeout(
           SseStream.defaultIdleTimeout,
@@ -515,7 +549,12 @@ class OpenAICompatibleService implements ApiAdapter {
       provider: providerId,
       model: model,
     );
-    final shouldCache = isClaudeRoute && cacheControl != null && enableCache;
+    final supportsCacheControl = capabilities?.supportsCacheControl ?? true;
+    final shouldCache =
+        supportsCacheControl &&
+        isClaudeRoute &&
+        cacheControl != null &&
+        enableCache;
 
     // ═══ system 分層：只放可快取的穩定前綴 ═══
     final cacheableParts =
@@ -632,16 +671,25 @@ class OpenAICompatibleService implements ApiAdapter {
         }
       }
     } else {
-      final runtimeRole =
-          lowerModel.contains('gpt') || lowerModel.contains('openai')
-          ? 'developer'
-          : 'system';
-      final attached = RuntimeContextSidecar.insertSystemBeforeLatestUser(
+      final supportsMidSystem =
+          capabilities?.supportsMidConversationSystem ?? true;
+      final useDeveloperRole =
+          capabilities?.supportsDeveloperRole ??
+          (lowerModel.contains('gpt') || lowerModel.contains('openai'));
+      final runtimeRole = useDeveloperRole ? 'developer' : 'system';
+      if (supportsMidSystem) {
+        final attached = RuntimeContextSidecar.insertSystemBeforeLatestUser(
+          allMessages,
+          liveState,
+          role: runtimeRole,
+        );
+        if (attached) runtimeTransport = '${runtimeRole}_before_latest_user';
+      } else if (RuntimeContextSidecar.appendToLeadingSystemMessage(
         allMessages,
         liveState,
-        role: runtimeRole,
-      );
-      if (attached) runtimeTransport = '${runtimeRole}_before_latest_user';
+      )) {
+        runtimeTransport = 'top_level_system_capability_fallback';
+      }
     }
 
     final body = <String, dynamic>{
@@ -684,4 +732,109 @@ class OpenAICompatibleService implements ApiAdapter {
     }
     return body;
   }
+
+  Map<String, dynamic>? _downgradeBodyForUnsupported400(
+    Map<String, dynamic> body,
+    String errorBody,
+  ) {
+    final error = errorBody.toLowerCase();
+    final explicitlyUnsupported =
+        error.contains('unsupported') ||
+        error.contains('not supported') ||
+        error.contains('unrecognized') ||
+        error.contains('unknown field') ||
+        error.contains('not allowed') ||
+        error.contains('extra field');
+    final systemMustLead =
+        error.contains('system') &&
+        (error.contains('must be first') ||
+            error.contains('only at the beginning') ||
+            error.contains('not allowed after') ||
+            error.contains('system message must'));
+    if (!explicitlyUnsupported && !systemMustLead) return null;
+
+    final downgraded = jsonDecode(jsonEncode(body)) as Map<String, dynamic>;
+    var changed = false;
+    final messages = downgraded['messages'];
+
+    if (messages is List &&
+        explicitlyUnsupported &&
+        error.contains('developer')) {
+      for (final message in messages.whereType<Map>()) {
+        if (message['role'] == 'developer') {
+          message['role'] = 'system';
+          changed = true;
+        }
+      }
+    }
+    if (explicitlyUnsupported && error.contains('cache_control')) {
+      changed = _removeKeyRecursively(downgraded, 'cache_control') || changed;
+    }
+    if (explicitlyUnsupported &&
+        (error.contains('tool_choice') || error.contains('tools'))) {
+      changed = downgraded.remove('tools') != null || changed;
+      changed = downgraded.remove('tool_choice') != null || changed;
+    }
+    if (messages is List && systemMustLead) {
+      changed = _collapseMidConversationSystems(messages) || changed;
+    }
+    return changed ? downgraded : null;
+  }
+
+  static bool _removeKeyRecursively(dynamic value, String key) {
+    var changed = false;
+    if (value is Map) {
+      changed = value.remove(key) != null;
+      for (final child in value.values) {
+        changed = _removeKeyRecursively(child, key) || changed;
+      }
+    } else if (value is List) {
+      for (final child in value) {
+        changed = _removeKeyRecursively(child, key) || changed;
+      }
+    }
+    return changed;
+  }
+
+  static bool _collapseMidConversationSystems(List<dynamic> messages) {
+    final lateSystems = <Map>[];
+    var historyStarted = false;
+    for (final item in messages) {
+      if (item is! Map) continue;
+      if (item['role'] != 'system') historyStarted = true;
+      if (historyStarted && item['role'] == 'system') lateSystems.add(item);
+    }
+    if (lateSystems.isEmpty) return false;
+    final text = lateSystems
+        .map((message) => ProviderContentParser.visibleText(message['content']))
+        .where((value) => value.trim().isNotEmpty)
+        .join('\n\n');
+    messages.removeWhere(lateSystems.contains);
+    if (text.isEmpty) return true;
+    final leading = messages.whereType<Map>().firstWhere(
+      (message) => message['role'] == 'system',
+      orElse: () => <String, dynamic>{},
+    );
+    if (leading.isNotEmpty) {
+      final existing = ProviderContentParser.visibleText(leading['content']);
+      leading['content'] = existing.isEmpty ? text : '$existing\n\n$text';
+    } else {
+      messages.insert(0, <String, dynamic>{'role': 'system', 'content': text});
+    }
+    return true;
+  }
+}
+
+class OpenAICompatibleCapabilities {
+  final bool supportsDeveloperRole;
+  final bool supportsMidConversationSystem;
+  final bool supportsCacheControl;
+  final bool supportsTools;
+
+  const OpenAICompatibleCapabilities({
+    this.supportsDeveloperRole = false,
+    this.supportsMidConversationSystem = true,
+    this.supportsCacheControl = true,
+    this.supportsTools = false,
+  });
 }

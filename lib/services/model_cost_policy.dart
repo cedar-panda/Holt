@@ -11,6 +11,23 @@ enum ModelCostPolicyNotice {
 
 enum ModelCostModeRecommendation { promptCache, contextLimit }
 
+enum EffectiveCostMode { none, promptCache, contextLimit }
+
+class EffectiveCostStrategy {
+  final EffectiveCostMode mode;
+  final bool cacheSummaryEnabled;
+  final bool contextSummaryEnabled;
+
+  const EffectiveCostStrategy({
+    required this.mode,
+    this.cacheSummaryEnabled = false,
+    this.contextSummaryEnabled = false,
+  });
+
+  bool get promptCacheEnabled => mode == EffectiveCostMode.promptCache;
+  bool get contextLimitEnabled => mode == EffectiveCostMode.contextLimit;
+}
+
 class ModelCostPolicyResult {
   final ModelCostPolicyNotice notice;
   final bool changed;
@@ -28,6 +45,44 @@ class ModelCostPolicyResult {
 /// 在用戶切換 provider／模型、保存有效 Inkling Key，以及啟動／還原後
 /// 校驗一次；不在發送請求時暗中改寫設定。
 class ModelCostPolicy {
+  /// Resolves restored or legacy contradictory settings without rewriting
+  /// preferences during a request. All request-building paths should consume
+  /// this result rather than interpreting the two switches independently.
+  static Future<EffectiveCostStrategy> resolveEffectiveStrategy({
+    required String provider,
+    required String model,
+  }) async {
+    final cacheRequested = await MemorySettings.getEnablePromptCaching();
+    final contextRequested = await MemorySettings.getContextLimitEnabled();
+    final cacheInfo = TokenEstimator.cacheThresholdInfoForModel(
+      provider: provider.trim().toLowerCase(),
+      model: model,
+    );
+    final cacheSupported = cacheInfo.kind != CacheThresholdKind.unavailable;
+
+    if (cacheRequested && cacheSupported) {
+      return EffectiveCostStrategy(
+        mode: EffectiveCostMode.promptCache,
+        cacheSummaryEnabled:
+            await MemorySettings.getCacheWindowSummaryEnabled(),
+      );
+    }
+    if (contextRequested) {
+      return EffectiveCostStrategy(
+        mode: EffectiveCostMode.contextLimit,
+        contextSummaryEnabled:
+            await MemorySettings.getContextWindowSummaryEnabled(),
+      );
+    }
+    return const EffectiveCostStrategy(mode: EffectiveCostMode.none);
+  }
+
+  static Future<EffectiveCostStrategy> resolveCurrentStrategy() async {
+    final provider = await ApiSettings.getApiProvider();
+    final model = await ApiSettings.getModelForProvider(provider);
+    return resolveEffectiveStrategy(provider: provider, model: model);
+  }
+
   /// Re-applies the same cost rule after startup or a preferences restore.
   static Future<ModelCostPolicyResult> validateCurrentSelection() async {
     final provider = await ApiSettings.getApiProvider();
@@ -35,7 +90,47 @@ class ModelCostPolicy {
     final apiKey = provider == 'thinking_machines'
         ? await ApiSettings.getThinkingMachinesApiKey()
         : '';
-    return applySelection(provider: provider, model: model, apiKey: apiKey);
+    final normalized = await normalizePersistedStrategy(
+      provider: provider,
+      model: model,
+    );
+    final result = await applySelection(
+      provider: provider,
+      model: model,
+      apiKey: apiKey,
+    );
+    return ModelCostPolicyResult(
+      notice: result.notice,
+      recommendation: result.recommendation,
+      changed: normalized || result.changed,
+    );
+  }
+
+  /// Repairs legacy or restored preferences where both mutually exclusive
+  /// strategies are enabled. This runs only at startup/restore validation;
+  /// request building remains read-only and still resolves defensively.
+  static Future<bool> normalizePersistedStrategy({
+    required String provider,
+    required String model,
+  }) async {
+    final cacheRequested = await MemorySettings.getEnablePromptCaching();
+    final contextRequested = await MemorySettings.getContextLimitEnabled();
+    if (!cacheRequested || !contextRequested) return false;
+
+    final cacheInfo = TokenEstimator.cacheThresholdInfoForModel(
+      provider: provider.trim().toLowerCase(),
+      model: model,
+    );
+    final cacheSupported = cacheInfo.kind != CacheThresholdKind.unavailable;
+    if (cacheSupported) {
+      await MemorySettings.saveContextLimitEnabled(false);
+      await MemorySettings.saveContextWindowSummaryEnabled(false);
+    } else {
+      await MemorySettings.saveEnablePromptCaching(false);
+      await MemorySettings.saveCacheWindowSummaryEnabled(false);
+      await MemorySettings.saveKeepAliveEnabled(false);
+    }
+    return true;
   }
 
   static Future<void> setPromptCachingEnabled(bool enabled) async {

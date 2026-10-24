@@ -1,3 +1,4 @@
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
 import '../screens/rp_story_relationship_screen.dart';
@@ -31,7 +32,7 @@ class RpStoryRelationshipEntry extends StatelessWidget {
                 : continuityId;
             if (!context.mounted || selected == null) return;
             await Navigator.of(context).push(
-              MaterialPageRoute<void>(
+              CupertinoPageRoute<void>(
                 builder: (_) => RpStoryRelationshipScreen(
                   characterId: characterId,
                   continuityId: selected,

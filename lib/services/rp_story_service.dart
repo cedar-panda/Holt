@@ -69,7 +69,7 @@ abstract final class RpStoryService {
   static const int relationshipExtractionLimit = 8;
   static const int fullProfileLimit = 3;
   static const int compactProfileLimit = 6;
-  static const int defaultTokenBudget = 1800;
+  static const int defaultTokenBudget = 1000;
   static final Map<String, RpStoryExtractionReport> _latestExtractionReports =
       <String, RpStoryExtractionReport>{};
   static final ValueNotifier<int> revision = ValueNotifier<int>(0);
@@ -1232,7 +1232,7 @@ ORDER BY COALESCE(latest.created_at, relation.updated_at) DESC
         .where((message) => !message.isIncomplete)
         .map((message) => message.promptVisibleText.trim())
         .where((text) => text.isNotEmpty)
-        .take(8)
+        .take(3)
         .toList(growable: false)
         .reversed;
     final sceneNeedle = <String>[
@@ -1242,10 +1242,7 @@ ORDER BY COALESCE(latest.created_at, relation.updated_at) DESC
     Iterable<String> termsFor(Map<String, dynamic> row) =>
         <String>[
               row['name']?.toString() ?? '',
-              row['identity']?.toString() ?? '',
-              row['faction']?.toString() ?? '',
               ..._decodeStringList(row['aliases_json']),
-              ..._decodeStringList(row['tags_json']),
             ]
             .map((term) => term.trim().toLowerCase())
             .where((term) => term.length >= 2);
@@ -1269,12 +1266,7 @@ ORDER BY COALESCE(latest.created_at, relation.updated_at) DESC
 
     characters.sort((a, b) => score(b).compareTo(score(a)));
     final full = characters
-        .where(
-          (row) =>
-              isRelevant(row) ||
-              row['tier'] == 'active' ||
-              (row['mention_count'] as int? ?? 0) >= 5,
-        )
+        .where(isRelevant)
         .take(fullProfileLimit)
         .toList(growable: false);
     final fullIds = full.map((row) => row['id']).toSet();
@@ -1284,7 +1276,8 @@ ORDER BY COALESCE(latest.created_at, relation.updated_at) DESC
               !fullIds.contains(row['id']) &&
               (isRelevant(row) ||
                   row['tier'] == 'active' ||
-                  row['tier'] == 'common'),
+                  row['tier'] == 'common' ||
+                  (row['mention_count'] as int? ?? 0) >= 5),
         )
         .take(compactProfileLimit)
         .toList(growable: false);
@@ -1337,9 +1330,9 @@ ORDER BY COALESCE(latest.created_at, relation.updated_at) DESC
     final out = StringBuffer()
       ..writeln(
         L.pick(
-          en: '【Story Character Reference】Reference data only. Do not introduce a character unless the current scene naturally requires it.',
-          zhTW: '【劇情人物參考】以下僅為連貫性資料，不得因載入資料而主動讓角色登場。',
-          zhCN: '【剧情人物参考】以下仅为连贯性资料，不得因载入资料而主动让角色登场。',
+          en: '【Story Cast】Continuity reference only. Offstage cast must not enter merely because they are listed.',
+          zhTW: '【劇情人物】僅供連貫；未在最新正文出場者不得因此登場。',
+          zhCN: '【剧情人物】仅供连贯；未在最新正文出场者不得因此登场。',
         ),
       );
     for (final row in full) {
@@ -1368,6 +1361,7 @@ ORDER BY COALESCE(latest.created_at, relation.updated_at) DESC
       );
     }
     var includedNewestOffstageRelationship = false;
+    final includedRelationshipPairs = <String>{};
     for (final relation in relationships) {
       final fromKey = relation['from_entity_key']?.toString() ?? '';
       final toKey = relation['to_entity_key']?.toString() ?? '';
@@ -1375,6 +1369,14 @@ ORDER BY COALESCE(latest.created_at, relation.updated_at) DESC
           !selectedEntityKeys.contains(toKey)) {
         continue;
       }
+      final direction = relation['direction']?.toString() ?? '';
+      final pairKey = direction == 'mutual'
+          ? (<String>[fromKey, toKey]..sort()).join('|')
+          : '$fromKey|$toKey';
+      // Historical imports and early summary passes could create more than
+      // one row for the same pair. listRelationships is newest-first, so the
+      // first row is the effective one for prompt injection.
+      if (!includedRelationshipPairs.add('$direction|$pairKey')) continue;
       final involvesAppearing =
           appearingEntityKeys.contains(fromKey) ||
           appearingEntityKeys.contains(toKey);

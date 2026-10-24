@@ -6,6 +6,7 @@ import '../memory/database.dart';
 import '../models/message.dart';
 import 'character_timeline_service.dart';
 import 'locale_strings.dart';
+import 'memory_actions.dart';
 import 'recall_text_matcher.dart';
 import 'token_estimator.dart';
 
@@ -227,7 +228,11 @@ abstract final class RpCharacterTimelineService {
     // RP chronology contains discrete events only. Ongoing scene/body/
     // promise/identity facts are recalled by RpStoryStateService.
     final query = userMessage.trim().toLowerCase();
-    final terms = RecallTextMatcher.relevanceTerms(query);
+    final includeCorrectionKeys = _hasExplicitCorrectionIntent(userMessage);
+    final terms = RecallTextMatcher.relevanceTerms(
+      query,
+      dropCommonCjkTerms: true,
+    );
     final events = entries
         .where((row) => (row['type'] as String? ?? '') != 'state')
         .toList();
@@ -236,17 +241,33 @@ abstract final class RpCharacterTimelineService {
       final value = (row['value'] as String? ?? '').toLowerCase();
       final time = (row['story_time_text'] as String? ?? '').toLowerCase();
       var score = 0.0;
-      if (query.isNotEmpty && value.contains(query)) score += 5;
+      final exactQueryHit = query.isNotEmpty && value.contains(query);
+      if (exactQueryHit) score += 5;
+      final longMatches = <String>{};
+      final shortMatches = <String>{};
       for (final term in terms) {
         if (value.contains(term) || time.contains(term)) {
-          score += term.length >= 3 ? 2 : 1;
+          if (term.length >= 3) {
+            longMatches.add(term);
+          } else {
+            shortMatches.add(term);
+          }
         }
+      }
+      final matched =
+          exactQueryHit ||
+          longMatches.isNotEmpty ||
+          shortMatches.length >= 2 ||
+          (includeCorrectionKeys && shortMatches.isNotEmpty);
+      if (matched) {
+        score += longMatches.length * 2;
+        score += shortMatches.length * 0.75;
       }
       final sequence = (row['sequence_order'] as int?) ?? 0;
       // Tiny deterministic tie-breaker only; it must never turn an unrelated
       // event into a recall match.
       score += sequence / 1000000000000;
-      return (row: row, score: score);
+      return (row: row, score: score, matched: matched);
     }).toList();
     scoredEvents.sort((left, right) => right.score.compareTo(left.score));
 
@@ -254,7 +275,7 @@ abstract final class RpCharacterTimelineService {
     // unrelated recent events merely because fewer keywords matched; that is
     // what made settled plans repeatedly reappear as current objectives.
     final selected = scoredEvents
-        .where((candidate) => candidate.score >= 1)
+        .where((candidate) => candidate.matched)
         .take(6)
         .map((candidate) => candidate.row)
         .toList(growable: false);
@@ -278,7 +299,9 @@ abstract final class RpCharacterTimelineService {
         if (layerLabel.isNotEmpty) layerLabel,
       ].map((value) => '[$value]').join();
       final eventKey = row['event_key']?.toString().trim() ?? '';
-      final keyLabel = eventKey.isEmpty ? '' : '[event_key=$eventKey] ';
+      final keyLabel = !includeCorrectionKeys || eventKey.isEmpty
+          ? ''
+          : '[event_key=$eventKey] ';
       final line =
           '- $keyLabel$prefix$labels${labels.isEmpty ? '' : ' '}$value';
       final cost = TokenEstimator.estimate(line);
@@ -292,6 +315,10 @@ abstract final class RpCharacterTimelineService {
       'continuity=$continuityId entries=${entries.length} selected=${lines.length}',
     );
     return '${L.pick(en: '【RP chronology reference】', zhTW: '【RP 劇情時間線參考】', zhCN: '【RP 剧情时间线参考】')}\n${lines.join('\n')}';
+  }
+
+  static bool _hasExplicitCorrectionIntent(String userMessage) {
+    return MemoryActions.isRpCorrectionIntent(userMessage);
   }
 
   static int _chronological(

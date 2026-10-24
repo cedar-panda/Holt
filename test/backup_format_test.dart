@@ -219,6 +219,8 @@ void main() {
     expect(rows, hasLength(1));
     expect(rows.single['memory_id'], 7);
     expect(rows.single['dimensions'], 3);
+    final memories = BackupService.normalizeForTesting(backup)['memories']!;
+    expect(memories.single['is_pinned'], 0);
   });
 
   test('pre-diagnostic v5 backups may omit diagnostic cards', () {

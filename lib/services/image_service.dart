@@ -2,15 +2,99 @@ import 'dart:convert';
 import 'dart:collection';
 import 'package:image/image.dart' as img;
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
 import 'background_foreground_service.dart';
+
+enum SendButtonImageValidation { valid, notPng, notSquare, unreadable }
 
 /// 圖片壓縮 & 編碼服務
 ///
 /// 壓縮交給 image_picker（選圖時 maxWidth/imageQuality），
 /// 這裡只負責：複製到 app 目錄 + base64 編碼送 API。
 class ImageService {
+  static const List<int> _pngMagic = <int>[
+    0x89,
+    0x50,
+    0x4E,
+    0x47,
+    0x0D,
+    0x0A,
+    0x1A,
+    0x0A,
+  ];
+
+  static SendButtonImageValidation validateSendButtonPngBytes(List<int> bytes) {
+    if (bytes.length < _pngMagic.length) {
+      return SendButtonImageValidation.notPng;
+    }
+    for (var i = 0; i < _pngMagic.length; i++) {
+      if (bytes[i] != _pngMagic[i]) return SendButtonImageValidation.notPng;
+    }
+    img.Image? decoded;
+    try {
+      decoded = img.decodePng(Uint8List.fromList(bytes));
+    } catch (_) {
+      return SendButtonImageValidation.unreadable;
+    }
+    if (decoded == null) return SendButtonImageValidation.unreadable;
+    if (decoded.width != decoded.height) {
+      return SendButtonImageValidation.notSquare;
+    }
+    return SendButtonImageValidation.valid;
+  }
+
+  static Future<SendButtonImageValidation> validateSendButtonPng(
+    String sourcePath,
+  ) async {
+    final source = File(sourcePath);
+    if (!await source.exists()) return SendButtonImageValidation.unreadable;
+    return validateSendButtonPngBytes(await source.readAsBytes());
+  }
+
+  /// Copies a validated, byte-identical custom send-button PNG into Documents.
+  static Future<String> copySendButtonToAppDir(String sourcePath) async {
+    final source = File(sourcePath);
+    if (!await source.exists()) {
+      throw FileSystemException('Send-button image does not exist', sourcePath);
+    }
+    final validation = await validateSendButtonPng(sourcePath);
+    if (validation != SendButtonImageValidation.valid) {
+      throw FormatException(validation.name);
+    }
+    final dir = await getApplicationDocumentsDirectory();
+    final outPath = p.join(
+      dir.path,
+      'send_button_images',
+      'send_button_${DateTime.now().microsecondsSinceEpoch}.png',
+    );
+    await Directory(p.dirname(outPath)).create(recursive: true);
+    final sourceLength = await source.length();
+    final copied = await source.copy(outPath);
+    if (await copied.length() != sourceLength) {
+      await copied.delete();
+      throw FileSystemException(
+        'Send-button image copy was incomplete',
+        outPath,
+      );
+    }
+    return outPath;
+  }
+
+  /// Deletes only App-owned custom send-button images.
+  static Future<void> deleteSendButtonFile(String path) async {
+    if (path.trim().isEmpty) return;
+    try {
+      final dir = await getApplicationDocumentsDirectory();
+      final root = p.normalize(p.join(dir.path, 'send_button_images'));
+      final target = p.normalize(path);
+      if (!p.isWithin(root, target)) return;
+      final file = File(target);
+      if (await file.exists()) await file.delete();
+    } catch (_) {}
+  }
+
   /// 複製圖片到 app 目錄（防止相簿清理後丟失）
   static Future<String> copyToAppDir(String sourcePath) async {
     final file = File(sourcePath);

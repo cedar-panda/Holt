@@ -3,6 +3,7 @@ import 'dart:math';
 import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart' show SchedulerBinding;
 import '../theme/app_theme.dart';
 import 'neural_field.dart';
 import 'rain_painter.dart';
@@ -17,6 +18,7 @@ class AmbientParticleField extends StatefulWidget {
   final int rainCount;
   final int rippleCount;
   final int emberCount;
+  final int fogCount;
   final int dandelionCount;
 
   const AmbientParticleField({
@@ -28,6 +30,7 @@ class AmbientParticleField extends StatefulWidget {
     this.rainCount = 30,
     this.rippleCount = 7,
     this.emberCount = 22,
+    this.fogCount = 4,
     this.dandelionCount = 16,
   });
 
@@ -37,13 +40,24 @@ class AmbientParticleField extends StatefulWidget {
 
 class _AmbientParticleFieldState extends State<AmbientParticleField>
     with WidgetsBindingObserver {
-  static const Duration _activeInterval = Duration(milliseconds: 33);
-  static const Duration _quietInterval = Duration(milliseconds: 67);
+  // 幀要跟螢幕 vsync 對齊：以前純 Timer 推幀會和螢幕刷新錯開，有時兩次更新擠在
+  // 同一幀、有時空一格，連續移動（雨、漣漪）看起來一頓一頓。
+  // 做法：Timer 只負責「睡到快要該更新的時候」，醒來後向排程器要一個 frame
+  // callback，在下一個 vsync 才更新時鐘。這樣更新一定落在真正要畫的那一幀，
+  // 而且只在需要時才要幀（不像 Ticker 會每個 vsync 都觸發一次合成，
+  // 在 120Hz 螢幕上會讓毛玻璃等效果每秒重算 120 次）。
+  // 正常 60fps；閒置或聊天正在忙時 30fps。退後台、路由被蓋住、reduce motion 一律停止。
+  static const Duration _activeInterval = Duration(microseconds: 16667);
+  static const Duration _quietInterval = Duration(microseconds: 33333);
+
+  /// Timer 提早醒來的量，讓「要幀」剛好趕上目標時間點前最近的 vsync。
+  static const Duration _vsyncLead = Duration(milliseconds: 4);
   static const Duration _idleAfter = Duration(seconds: 20);
 
   final ValueNotifier<double> _clock = ValueNotifier<double>(0);
   final Stopwatch _runClock = Stopwatch();
   Timer? _frameTimer;
+  int? _frameCallbackId;
   Duration _clockOffset = Duration.zero;
   DateTime _lastInteraction = DateTime.now();
   bool _appActive = true;
@@ -86,6 +100,7 @@ class _AmbientParticleFieldState extends State<AmbientParticleField>
     if (event is! PointerDownEvent || !_routeVisible) return;
     final wasIdle = DateTime.now().difference(_lastInteraction) >= _idleAfter;
     _lastInteraction = DateTime.now();
+    // 從閒置回到操作：立刻要一幀，不必等滿 30fps 的間隔。
     if (wasIdle && !widget.isBusy) _rescheduleFrame(immediate: true);
   }
 
@@ -96,9 +111,19 @@ class _AmbientParticleFieldState extends State<AmbientParticleField>
       _tickerModeEnabled &&
       YanciTheme.starEnabled;
 
+  /// 本身動得很慢的效果，60fps 看不出差別，固定走 30fps。
+  static const Set<String> _slowEffects = {'fog'};
+
+  String get _selectedEffect =>
+      YanciTheme.particleEffectIds.contains(widget.effect)
+      ? widget.effect!
+      : YanciTheme.particleEffect;
+
   Duration get _frameInterval {
     final idle = DateTime.now().difference(_lastInteraction) >= _idleAfter;
-    return widget.isBusy || idle ? _quietInterval : _activeInterval;
+    return widget.isBusy || idle || _slowEffects.contains(_selectedEffect)
+        ? _quietInterval
+        : _activeInterval;
   }
 
   void _syncClock() {
@@ -111,9 +136,18 @@ class _AmbientParticleFieldState extends State<AmbientParticleField>
     _scheduleFrame(Duration.zero);
   }
 
-  void _stopClock() {
+  void _cancelPendingFrame() {
     _frameTimer?.cancel();
     _frameTimer = null;
+    final id = _frameCallbackId;
+    if (id != null) {
+      SchedulerBinding.instance.cancelFrameCallbackWithId(id);
+      _frameCallbackId = null;
+    }
+  }
+
+  void _stopClock() {
+    _cancelPendingFrame();
     if (_runClock.isRunning) {
       _clockOffset += _runClock.elapsed;
       _runClock
@@ -124,25 +158,34 @@ class _AmbientParticleFieldState extends State<AmbientParticleField>
 
   void _rescheduleFrame({bool immediate = false}) {
     if (!_shouldRun) return;
-    _frameTimer?.cancel();
-    _frameTimer = null;
-    _scheduleFrame(immediate ? Duration.zero : _frameInterval);
+    _cancelPendingFrame();
+    _scheduleFrame(immediate ? Duration.zero : _frameInterval - _vsyncLead);
   }
 
   void _scheduleFrame(Duration delay) {
-    if (!_shouldRun || _frameTimer != null) return;
-    _frameTimer = Timer(delay, _publishFrame);
+    if (!_shouldRun || _frameTimer != null || _frameCallbackId != null) return;
+    _frameTimer = Timer(delay, () {
+      _frameTimer = null;
+      if (!_shouldRun) {
+        _stopClock();
+        return;
+      }
+      _frameCallbackId = SchedulerBinding.instance.scheduleFrameCallback(
+        _onFrame,
+      );
+    });
   }
 
-  void _publishFrame() {
-    _frameTimer = null;
+  void _onFrame(Duration _) {
+    _frameCallbackId = null;
     if (!_shouldRun) {
       _stopClock();
       return;
     }
+    // 位置一律由真實經過時間決定，掉幀時粒子仍在正確位置。
     final elapsed = _clockOffset + _runClock.elapsed;
     _clock.value = elapsed.inMicroseconds / Duration.microsecondsPerSecond;
-    _scheduleFrame(_frameInterval);
+    _scheduleFrame(_frameInterval - _vsyncLead);
   }
 
   @override
@@ -170,9 +213,7 @@ class _AmbientParticleFieldState extends State<AmbientParticleField>
   }
 
   Widget _buildParticleField() {
-    final selected = YanciTheme.particleEffectIds.contains(widget.effect)
-        ? widget.effect!
-        : YanciTheme.particleEffect;
+    final selected = _selectedEffect;
     final childKey = ValueKey(
       'ambient-$selected-${YanciTheme.starDensity}-'
       '${YanciTheme.starColor.toARGB32()}-${YanciTheme.starGlow.toARGB32()}',
@@ -193,6 +234,11 @@ class _AmbientParticleFieldState extends State<AmbientParticleField>
         key: childKey,
         clock: _clock,
         rippleCount: _scaledCount(widget.rippleCount),
+      ),
+      'fog' => FogParticleWidget(
+        key: childKey,
+        clock: _clock,
+        fogCount: _scaledCount(widget.fogCount),
       ),
       'ember' => EmberParticleWidget(
         key: childKey,
@@ -910,4 +956,190 @@ class _DandelionPainter extends CustomPainter {
   bool shouldRepaint(covariant _DandelionPainter oldDelegate) {
     return !identical(oldDelegate.seeds, seeds);
   }
+}
+
+// ─────────────────────────────────────────────────────────────
+// 霧氣（絲綢煙縷）— FogParticleWidget
+// 幾條細長、兩端收尖的半透明緞帶，沿兩組反向正弦波起伏，
+// 寬度隨第三組波「扭轉」收窄，像絲綢翻面。慢慢橫向漂移。
+// 只畫 path，不做逐幀模糊。
+// ─────────────────────────────────────────────────────────────
+
+class _SilkRibbon {
+  final double baseY, length, period, direction, startX;
+  final double amp1, k1, w1, p1;
+  final double amp2, k2, w2, p2;
+  final double thick, k3, w3, p3;
+  final double opacity, tilt, bobPeriod;
+
+  const _SilkRibbon({
+    required this.baseY,
+    required this.length,
+    required this.period,
+    required this.direction,
+    required this.startX,
+    required this.amp1,
+    required this.k1,
+    required this.w1,
+    required this.p1,
+    required this.amp2,
+    required this.k2,
+    required this.w2,
+    required this.p2,
+    required this.thick,
+    required this.k3,
+    required this.w3,
+    required this.p3,
+    required this.opacity,
+    required this.tilt,
+    required this.bobPeriod,
+  });
+}
+
+class FogParticleWidget extends StatefulWidget {
+  final ValueListenable<double> clock;
+  final int fogCount;
+
+  const FogParticleWidget({
+    super.key,
+    required this.clock,
+    this.fogCount = 4,
+  }) : assert(fogCount > 0);
+
+  @override
+  State<FogParticleWidget> createState() => _FogParticleWidgetState();
+}
+
+class _FogParticleWidgetState extends State<FogParticleWidget> {
+  final Random _random = Random();
+  late final List<_SilkRibbon> _ribbons;
+
+  double _r(double min, double span) => min + _random.nextDouble() * span;
+  double _omega(double minPeriod, double span) =>
+      2 * pi / _r(minPeriod, span);
+
+  @override
+  void initState() {
+    super.initState();
+    _ribbons = List.generate(widget.fogCount, (_) {
+      return _SilkRibbon(
+        baseY: _r(0.15, 0.70),
+        length: _r(0.70, 0.60),
+        period: _r(45, 40),
+        direction: _random.nextBool() ? 1.0 : -1.0,
+        startX: _random.nextDouble(),
+        amp1: _r(0.035, 0.05),
+        k1: _r(0.6, 0.8),
+        w1: _omega(16, 12),
+        p1: _r(0, 2 * pi),
+        amp2: _r(0.01, 0.02),
+        k2: _r(1.8, 1.5),
+        w2: _omega(9, 7),
+        p2: _r(0, 2 * pi),
+        thick: _r(0.022, 0.03),
+        k3: _r(0.5, 0.9),
+        w3: _omega(18, 14),
+        p3: _r(0, 2 * pi),
+        opacity: _r(0.06, 0.06),
+        tilt: _r(-0.06, 0.12),
+        bobPeriod: _r(40, 30),
+      );
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return RepaintBoundary(
+      child: CustomPaint(
+        painter: _SilkPainter(ribbons: _ribbons, clock: widget.clock),
+        size: Size.infinite,
+      ),
+    );
+  }
+}
+
+class _SilkPainter extends CustomPainter {
+  static const int _samples = 48;
+  final List<_SilkRibbon> ribbons;
+  final ValueListenable<double> clock;
+  final Paint _fill = Paint()..style = PaintingStyle.fill;
+  final Paint _sheen = Paint()
+    ..style = PaintingStyle.stroke
+    ..strokeWidth = 0.8
+    ..strokeCap = StrokeCap.round;
+  final List<double> _xs = List<double>.filled(_samples + 1, 0);
+  final List<double> _ys = List<double>.filled(_samples + 1, 0);
+  final List<double> _hs = List<double>.filled(_samples + 1, 0);
+
+  _SilkPainter({required this.ribbons, required this.clock})
+    : super(repaint: clock);
+
+  Path _band(double widthScale, double pad) {
+    final path = Path()
+      ..moveTo(_xs[0], _ys[0] - (_hs[0] * widthScale + pad * 0) / 2);
+    for (var i = 1; i <= _samples; i++) {
+      final env = sin(pi * i / _samples);
+      path.lineTo(_xs[i], _ys[i] - (_hs[i] * widthScale + pad * env) / 2);
+    }
+    for (var i = _samples; i >= 0; i--) {
+      final env = sin(pi * i / _samples);
+      path.lineTo(_xs[i], _ys[i] + (_hs[i] * widthScale + pad * env) / 2);
+    }
+    return path..close();
+  }
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final t = clock.value;
+    final color = YanciTheme.starColor;
+    final w = size.width;
+    final h = size.height;
+
+    for (final r in ribbons) {
+      final len = r.length * w;
+      final travel = (r.startX + r.direction * t / r.period) % 1.0;
+      final x0 = -len + travel * (w + len);
+      final baseY =
+          (r.baseY + sin(t * 2 * pi / r.bobPeriod + r.p1) * 0.03) * h;
+
+      for (var i = 0; i <= _samples; i++) {
+        final u = i / _samples;
+        final x = x0 + u * len;
+        final xn = x / w;
+        _xs[i] = x;
+        _ys[i] =
+            baseY +
+            r.tilt * (u - 0.5) * h +
+            (r.amp1 * sin(2 * pi * r.k1 * xn + t * r.w1 + r.p1) +
+                    r.amp2 * sin(2 * pi * r.k2 * xn - t * r.w2 + r.p2)) *
+                h;
+        final twist = pow(
+          sin(2 * pi * r.k3 * xn + t * r.w3 + r.p3).abs(),
+          0.8,
+        ).toDouble();
+        final env = pow(sin(pi * u), 0.7).toDouble();
+        _hs[i] = r.thick * h * (0.12 + 0.88 * twist) * env;
+      }
+
+      // 外層薄霧：讓邊緣柔一點。
+      _fill.color = color.withValues(alpha: r.opacity * 0.35);
+      canvas.drawPath(_band(2.2, 4), _fill);
+      // 緞面本體。
+      _fill.color = color.withValues(alpha: r.opacity);
+      canvas.drawPath(_band(1.0, 0), _fill);
+      // 上緣一道細光，絲綢的反光。
+      final edge = Path()..moveTo(_xs[0], _ys[0] - _hs[0] / 2);
+      for (var i = 1; i <= _samples; i++) {
+        edge.lineTo(_xs[i], _ys[i] - _hs[i] / 2);
+      }
+      _sheen.color = color.withValues(
+        alpha: (r.opacity * 1.3).clamp(0.0, 0.25),
+      );
+      canvas.drawPath(edge, _sheen);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _SilkPainter oldDelegate) =>
+      oldDelegate.ribbons != ribbons;
 }

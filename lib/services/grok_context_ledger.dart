@@ -16,8 +16,7 @@ import 'locale_strings.dart';
 /// user turn. It never writes to the visible chat message table.
 class GrokContextLedger {
   static const String _storageKey = 'grok_api_context_ledger_v1';
-  static const int _maxEntriesPerScope = 160;
-  static const int _maxEntriesTotal = 600;
+  static const int _maxLineagesPerConversation = 4;
   static Future<void> _writeTail = Future<void>.value();
 
   static Future<GrokPreparedHistory> prepareHistory({
@@ -31,10 +30,24 @@ class GrokContextLedger {
     return _serialized(() async {
       final prefs = await SharedPreferences.getInstance();
       final entries = _readEntries(prefs);
+      final historyRoot = sourceMessages.isEmpty
+          ? 'empty'
+          : _messageHash(sourceMessages.first);
+      final baseScope = _baseScope(
+        providerRoute: providerRoute,
+        model: model,
+        cacheChannel: cacheChannel,
+      );
       final scope = _scope(
         providerRoute: providerRoute,
         model: model,
         cacheChannel: cacheChannel,
+        historyRoot: historyRoot,
+      );
+      final retiredLineage = _retireOldLineages(
+        entries,
+        baseScope: baseScope,
+        activeScope: scope,
       );
       final scoped = entries.where((entry) => entry.scope == scope).toList();
       final runtimeByAnchor = <String, _LedgerEntry>{
@@ -61,7 +74,7 @@ class GrokContextLedger {
       var reasoningAttachedForActiveTurn = false;
       var runtimeEventCount = 0;
       var reasoningPayloadCount = 0;
-      var changed = false;
+      var changed = retiredLineage;
       var reusedCurrentRuntime = false;
 
       for (var i = 0; i < sourceMessages.length; i++) {
@@ -121,19 +134,16 @@ class GrokContextLedger {
       }
 
       if (changed) {
-        _trim(entries, scope);
         await prefs.setString(
           _storageKey,
           jsonEncode(entries.map((entry) => entry.toJson()).toList()),
         );
       }
 
-      final historyRoot = sourceMessages.isEmpty
-          ? 'empty'
-          : _messageHash(sourceMessages.first);
       return GrokPreparedHistory(
         messages: prepared,
         currentTurnAnchor: latestUserAnchor,
+        ledgerScope: scope,
         affinityId: affinityId(
           providerRoute: providerRoute,
           model: model,
@@ -157,16 +167,32 @@ class GrokContextLedger {
     required String cacheChannel,
     required String turnAnchor,
     required Map<String, dynamic> payload,
+    String lineageScope = '',
   }) {
     if (turnAnchor.isEmpty || payload.isEmpty) return Future<void>.value();
     return _serialized(() async {
       final prefs = await SharedPreferences.getInstance();
       final entries = _readEntries(prefs);
-      final scope = _scope(
+      final baseScope = _baseScope(
         providerRoute: providerRoute,
         model: model,
         cacheChannel: cacheChannel,
       );
+      final matchingRuntime =
+          entries
+              .where(
+                (entry) =>
+                    entry.scope.startsWith('$baseScope\u0000') &&
+                    entry.kind == 'runtime' &&
+                    entry.anchor == turnAnchor,
+              )
+              .toList()
+            ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+      final scope = lineageScope.trim().isNotEmpty
+          ? lineageScope
+          : (matchingRuntime.isNotEmpty
+                ? matchingRuntime.first.scope
+                : '$baseScope\u0000legacy');
       entries.removeWhere(
         (entry) =>
             entry.scope == scope &&
@@ -183,7 +209,6 @@ class GrokContextLedger {
           createdAt: DateTime.now().toUtc().toIso8601String(),
         ),
       );
-      _trim(entries, scope);
       await prefs.setString(
         _storageKey,
         jsonEncode(entries.map((entry) => entry.toJson()).toList()),
@@ -254,7 +279,7 @@ class GrokContextLedger {
     return '$title\n> $note\n\n${liveState.trim()}';
   }
 
-  static String _scope({
+  static String _baseScope({
     required String providerRoute,
     required String model,
     required String cacheChannel,
@@ -264,6 +289,20 @@ class GrokContextLedger {
         : CacheSession.conversationId;
     return '$providerRoute\u0000${model.trim().toLowerCase()}\u0000'
         '$cacheChannel\u0000$conversation';
+  }
+
+  static String _scope({
+    required String providerRoute,
+    required String model,
+    required String cacheChannel,
+    required String historyRoot,
+  }) {
+    final base = _baseScope(
+      providerRoute: providerRoute,
+      model: model,
+      cacheChannel: cacheChannel,
+    );
+    return '$base\u0000$historyRoot';
   }
 
   static void _appendCanonical(
@@ -309,17 +348,38 @@ class GrokContextLedger {
     }
   }
 
-  static void _trim(List<_LedgerEntry> entries, String activeScope) {
-    final scoped = entries.where((entry) => entry.scope == activeScope).toList()
-      ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
-    if (scoped.length > _maxEntriesPerScope) {
-      final remove = scoped.take(scoped.length - _maxEntriesPerScope).toSet();
-      entries.removeWhere(remove.contains);
+  /// A changed first retained message is an explicit cache checkpoint: the
+  /// old immutable prefix must never be spliced into the new history. Keep the
+  /// active lineage append-only, and retire only whole older lineages here.
+  static bool _retireOldLineages(
+    List<_LedgerEntry> entries, {
+    required String baseScope,
+    required String activeScope,
+  }) {
+    final prefix = '$baseScope\u0000';
+    final lineages = <String, String>{};
+    for (final entry in entries) {
+      if (!entry.scope.startsWith(prefix)) continue;
+      final previous = lineages[entry.scope];
+      if (previous == null || entry.createdAt.compareTo(previous) > 0) {
+        lineages[entry.scope] = entry.createdAt;
+      }
     }
-    if (entries.length > _maxEntriesTotal) {
-      entries.sort((a, b) => a.createdAt.compareTo(b.createdAt));
-      entries.removeRange(0, entries.length - _maxEntriesTotal);
+    if (lineages.containsKey(activeScope) ||
+        lineages.length < _maxLineagesPerConversation) {
+      return false;
     }
+    final retired =
+        lineages.entries.where((entry) => entry.key != activeScope).toList()
+          ..sort((a, b) => a.value.compareTo(b.value));
+    final removeCount = lineages.length - _maxLineagesPerConversation + 1;
+    final removedScopes = retired
+        .take(removeCount.clamp(0, retired.length))
+        .map((entry) => entry.key)
+        .toSet();
+    if (removedScopes.isEmpty) return false;
+    entries.removeWhere((entry) => removedScopes.contains(entry.scope));
+    return true;
   }
 
   static Future<T> _serialized<T>(Future<T> Function() action) async {
@@ -338,6 +398,7 @@ class GrokContextLedger {
 class GrokPreparedHistory {
   final List<Map<String, dynamic>> messages;
   final String currentTurnAnchor;
+  final String ledgerScope;
   final String affinityId;
   final int runtimeEventCount;
   final int reasoningPayloadCount;
@@ -346,6 +407,7 @@ class GrokPreparedHistory {
   const GrokPreparedHistory({
     required this.messages,
     required this.currentTurnAnchor,
+    required this.ledgerScope,
     required this.affinityId,
     required this.runtimeEventCount,
     required this.reasoningPayloadCount,

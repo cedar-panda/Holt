@@ -19,6 +19,14 @@ class ThemeSettings {
   static const String _keyStarDensity = 'star_density';
   static const String _keyParticleEffect = 'particle_effect';
   static const String _keyAiBubbleFlat = 'ai_bubble_flat';
+  static const String _keySendButtonStyle = 'send_button_style';
+  static const String _keySendButtonCustomPath = 'send_button_custom_path';
+  static const Set<String> _sendButtonStyles = <String>{
+    'leaf',
+    'paw',
+    'shell',
+    'custom',
+  };
 
   static Future<void> saveDarkMode(bool v) async {
     final p = await SharedPreferences.getInstance();
@@ -182,6 +190,32 @@ class ThemeSettings {
   static Future<bool> getAiBubbleFlat() async {
     final p = await SharedPreferences.getInstance();
     return p.getBool(_keyAiBubbleFlat) ?? false;
+  }
+
+  static Future<void> saveSendButtonStyle(String value) async {
+    final p = await SharedPreferences.getInstance();
+    final normalized = _sendButtonStyles.contains(value) ? value : 'leaf';
+    await p.setString(_keySendButtonStyle, normalized);
+  }
+
+  static Future<String> getSendButtonStyle() async {
+    final p = await SharedPreferences.getInstance();
+    final saved = p.getString(_keySendButtonStyle);
+    return _sendButtonStyles.contains(saved) ? saved! : 'leaf';
+  }
+
+  static Future<void> saveSendButtonCustomPath(String path) async {
+    final p = await SharedPreferences.getInstance();
+    if (path.trim().isEmpty) {
+      await p.remove(_keySendButtonCustomPath);
+    } else {
+      await p.setString(_keySendButtonCustomPath, path);
+    }
+  }
+
+  static Future<String> getSendButtonCustomPath() async {
+    final p = await SharedPreferences.getInstance();
+    return p.getString(_keySendButtonCustomPath) ?? '';
   }
 
   // ═══ 自定義圖片背景（首頁 / 對話分開）═══

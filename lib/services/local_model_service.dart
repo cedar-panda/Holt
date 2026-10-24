@@ -1150,6 +1150,7 @@ class LocalModelService implements ApiAdapter {
   Future<void> _inferenceQueue = Future.value();
   int _llamaGenerationMaxTokens = 768;
   int _llamaContextSize = 2048;
+  int _gemmaContextSize = 2048;
   bool _llamaCpuBackend = false;
 
   LocalModelService({required String modelKey}) : _modelKey = modelKey;
@@ -1220,6 +1221,7 @@ class LocalModelService implements ApiAdapter {
 
     // ═══ 自適應 maxTokens（只影響本地，不影響 API）═══
     final gemmaMaxTokens = await _adaptiveGemmaMaxTokens(info);
+    _gemmaContextSize = gemmaMaxTokens;
 
     // ═══ GPU → CPU fallback（跟 llamadart Vulkan 策略同理）═══
     _gpuCanaryCleared = false;
@@ -1261,6 +1263,7 @@ class LocalModelService implements ApiAdapter {
 
     // CPU fallback（maxTokens 再壓一級保穩定）
     final cpuMaxTokens = (gemmaMaxTokens * 0.75).round().clamp(512, 2048);
+    _gemmaContextSize = cpuMaxTokens;
     _gemmaModel = await gemma.FlutterGemma.getActiveModel(
       maxTokens: cpuMaxTokens,
       preferredBackend: gemma.PreferredBackend.cpu,
@@ -1702,8 +1705,13 @@ class LocalModelService implements ApiAdapter {
     StructuredPrompt? structuredPrompt,
     required List<Map<String, String>> messages,
   }) async* {
-    final chat = await _createGemmaChat(systemPrompt, structuredPrompt);
-    await _replayMessages(chat, messages);
+    final payload = _buildGemmaPrompt(
+      systemPrompt: systemPrompt,
+      structuredPrompt: structuredPrompt,
+      messages: messages,
+    );
+    final chat = await _createGemmaChat(payload.systemPrompt);
+    await _replayMessages(chat, payload.messages);
     await for (final response in chat.generateChatResponseAsync()) {
       if (response is gemma.TextResponse) {
         yield response.token;
@@ -1711,6 +1719,86 @@ class LocalModelService implements ApiAdapter {
         yield response.content;
       }
     }
+  }
+
+  @visibleForTesting
+  Map<String, Object> debugBuildGemmaPromptForTesting({
+    String? systemPrompt,
+    StructuredPrompt? structuredPrompt,
+    required List<Map<String, String>> messages,
+    int? maxPromptTokens,
+  }) {
+    final payload = _buildGemmaPrompt(
+      systemPrompt: systemPrompt,
+      structuredPrompt: structuredPrompt,
+      messages: messages,
+      maxPromptTokens: maxPromptTokens,
+    );
+    return <String, Object>{
+      'system': payload.systemPrompt,
+      'messages': payload.messages,
+    };
+  }
+
+  _GemmaPromptPayload _buildGemmaPrompt({
+    String? systemPrompt,
+    StructuredPrompt? structuredPrompt,
+    required List<Map<String, String>> messages,
+    int? maxPromptTokens,
+  }) {
+    var remaining = maxPromptTokens ?? _gemmaPromptBudget();
+    final fullSystem = structuredPrompt?.combined ?? systemPrompt ?? '';
+    final systemBudget = _systemPromptBudget(remaining);
+    final clippedSystem = _truncateToTokenBudget(
+      fullSystem,
+      systemBudget,
+      keepTail: false,
+    );
+    remaining = (remaining - TokenEstimator.estimate(clippedSystem))
+        .clamp(0, remaining)
+        .toInt();
+
+    final candidates = messages
+        .where(
+          (message) =>
+              (message['role'] ?? 'user') != 'system' &&
+              (message['content'] ?? '').trim().isNotEmpty,
+        )
+        .map((message) => Map<String, String>.from(message))
+        .toList();
+    final kept = <Map<String, String>>[];
+    for (final message in candidates.reversed) {
+      if (remaining <= 0) break;
+      final content = message['content'] ?? '';
+      final estimate = TokenEstimator.estimate(content);
+      if (estimate <= remaining) {
+        kept.add(message);
+        remaining -= estimate;
+        continue;
+      }
+      if (remaining >= 96) {
+        final clipped = _truncateToTokenBudget(
+          content,
+          remaining,
+          keepTail: true,
+        );
+        if (clipped.trim().isNotEmpty) {
+          kept.add(<String, String>{...message, 'content': clipped});
+        }
+      }
+      break;
+    }
+    return _GemmaPromptPayload(
+      systemPrompt: clippedSystem,
+      messages: kept.reversed.toList(growable: false),
+    );
+  }
+
+  int _gemmaPromptBudget() {
+    final responseReserve = (_gemmaContextSize * 0.25).round().clamp(256, 768);
+    return (_gemmaContextSize - responseReserve - 64)
+        .clamp(192, _gemmaContextSize)
+        .toInt();
   }
 
   /// 釋放模型（省內存）
@@ -1920,17 +2008,13 @@ class LocalModelService implements ApiAdapter {
         : text.substring(0, low);
   }
 
-  Future<gemma.InferenceChat> _createGemmaChat(
-    String? systemPrompt,
-    StructuredPrompt? structuredPrompt,
-  ) async {
+  Future<gemma.InferenceChat> _createGemmaChat(String systemPrompt) async {
     final model = _gemmaModel;
     if (model == null) {
       throw Exception(L.locale == 'en' ? 'Local model not loaded' : '本地模型未加載');
     }
-    final prompt = structuredPrompt?.combined ?? systemPrompt ?? '';
     return model.createChat(
-      systemInstruction: prompt.isEmpty ? null : prompt,
+      systemInstruction: systemPrompt.isEmpty ? null : systemPrompt,
       modelType: _gemmaModelTypeForKey(_modelKey),
       isThinking: false,
     );
@@ -1973,6 +2057,16 @@ class LocalModelService implements ApiAdapter {
     }
     return '下載：$size · 運行約需 ~$estimated';
   }
+}
+
+class _GemmaPromptPayload {
+  final String systemPrompt;
+  final List<Map<String, String>> messages;
+
+  const _GemmaPromptPayload({
+    required this.systemPrompt,
+    required this.messages,
+  });
 }
 
 // ─────────────────────────────────────────────

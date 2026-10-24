@@ -4,6 +4,7 @@ import 'dart:ui' show ImageFilter, TileMode;
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:image_picker/image_picker.dart';
 import '../theme/app_theme.dart';
 import '../services/locale_strings.dart';
 import '../theme/theme_presets.dart';
@@ -14,6 +15,7 @@ import '../services/background_foreground_service.dart';
 import '../models/background_preset.dart';
 import '../memory/database.dart';
 import '../main.dart' show themeNotifier;
+import '../widgets/input_bar.dart';
 
 part 'theme_workshop_background_logic.dart';
 part 'theme_workshop_background_page.dart';
@@ -40,6 +42,8 @@ class _ThemeWorkshopScreenState extends State<ThemeWorkshopScreen> {
   late int _starDensity;
   late String _particleEffect;
   late bool _aiBubbleFlat;
+  late SendButtonStyle _sendButtonStyle;
+  String _sendButtonCustomPath = '';
   String _homeBgPath = '';
   double _homeBgScale = 1.0;
   double _homeBgOffsetX = 0.0;
@@ -74,6 +78,8 @@ class _ThemeWorkshopScreenState extends State<ThemeWorkshopScreen> {
     _starDensity = YanciTheme.starDensity;
     _particleEffect = YanciTheme.particleEffect;
     _aiBubbleFlat = YanciTheme.aiBubbleFlat;
+    _sendButtonStyle = sendButtonStyleFromName(YanciTheme.sendButtonStyle);
+    _sendButtonCustomPath = YanciTheme.sendButtonCustomPath;
     _homeBgPath = YanciTheme.homeBackgroundImagePath;
     _homeBgScale = YanciTheme.homeBackgroundImageScale;
     _homeBgOffsetX = YanciTheme.homeBackgroundImageOffsetX;
@@ -99,6 +105,7 @@ class _ThemeWorkshopScreenState extends State<ThemeWorkshopScreen> {
     _loadColorHistory();
     _loadShortcutPresets();
     _loadBackgroundSlot();
+    _loadSendButtonSettings();
     ThemeSettings.restoreThemeBubbleColors(_selectedId).then((_) {
       if (!mounted) return;
       setState(() {});
@@ -137,6 +144,20 @@ class _ThemeWorkshopScreenState extends State<ThemeWorkshopScreen> {
       _lightShortcutId = light;
       _darkShortcutId = dark;
     });
+  }
+
+  Future<void> _loadSendButtonSettings() async {
+    final style = sendButtonStyleFromName(
+      await ThemeSettings.getSendButtonStyle(),
+    );
+    final customPath = await ThemeSettings.getSendButtonCustomPath();
+    if (!mounted) return;
+    setState(() {
+      _sendButtonStyle = style;
+      _sendButtonCustomPath = customPath;
+    });
+    YanciTheme.sendButtonStyle = style.name;
+    YanciTheme.sendButtonCustomPath = customPath;
   }
 
   Future<void> _setShortcutPreset(ThemePreset preset) async {
@@ -190,8 +211,6 @@ class _ThemeWorkshopScreenState extends State<ThemeWorkshopScreen> {
     );
 
     return Scaffold(
-      floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
-      floatingActionButton: _buildBackgroundMenuButton(),
       body: Container(
         decoration: BoxDecoration(
           gradient: LinearGradient(

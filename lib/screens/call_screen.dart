@@ -976,16 +976,20 @@ class _CallScreenState extends State<CallScreen>
         expectedConversationId: widget.conversationId,
         conversation: conversation,
       );
+      final configuredMemoryMode = await MemorySettings.getMemoryMode();
+      final memoryBucket = configuredMemoryMode == 'story'
+          ? 'story'
+          : 'romance';
       final memoryPrompt = identity.contextMode == ContextMode.rp
           ? await RpMemoryService.buildPrompt(
-              mode: 'romance',
+              mode: memoryBucket,
               currentMessage: userText ?? '',
               characterId: _characterId,
               windowId: widget.conversationId,
               continuityId: identity.continuityId,
             )
           : await Retriever.buildMemoryPrompt(
-              mode: 'romance',
+              mode: memoryBucket,
               currentMessage: userText ?? '',
               characterId: _characterId,
               windowId: widget.conversationId,

@@ -133,36 +133,55 @@ class CharacterSignaturePanel extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 2),
-        CustomPaint(
-          painter: _SignatureRulePainter(
-            color:
-                ruleColor?.withValues(alpha: 0.42) ??
-                YanciTheme.accent.withValues(
-                  alpha: YanciTheme.isDark ? 0.14 : 0.10,
-                ),
-            lineCount: CharacterSignaturePrompt.maxLines,
-          ),
-          child: SizedBox(
-            height: 52,
-            width: double.infinity,
-            child: Align(
-              alignment: Alignment.topLeft,
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(0, 2, 4, 3),
-                child: Text(
-                  _displayText(),
-                  maxLines: 4,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 10.5,
-                    height: 1.55,
-                    color: _signatureTextColor(),
-                    fontFamily: YanciTheme.fontFamily,
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final textStyle = TextStyle(
+              fontSize: 10.5,
+              height: 1.55,
+              color: _signatureTextColor(),
+              fontFamily: YanciTheme.fontFamily,
+            );
+            final measure = TextPainter(
+              text: TextSpan(text: _displayText(), style: textStyle),
+              textDirection: Directionality.of(context),
+              textScaler: MediaQuery.textScalerOf(context),
+              maxLines: CharacterSignaturePrompt.maxLines,
+              ellipsis: '…',
+            )..layout(maxWidth: (constraints.maxWidth - 4).clamp(1, 10000));
+            final lineCount = measure.computeLineMetrics().length.clamp(
+              1,
+              CharacterSignaturePrompt.maxLines,
+            );
+            final height = (measure.preferredLineHeight * lineCount + 8)
+                .clamp(52.0, 96.0)
+                .toDouble();
+            return CustomPaint(
+              painter: _SignatureRulePainter(
+                color:
+                    ruleColor?.withValues(alpha: 0.42) ??
+                    YanciTheme.accent.withValues(
+                      alpha: YanciTheme.isDark ? 0.14 : 0.10,
+                    ),
+                lineCount: lineCount,
+              ),
+              child: SizedBox(
+                height: height,
+                width: double.infinity,
+                child: Align(
+                  alignment: Alignment.topLeft,
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(0, 2, 4, 3),
+                    child: Text(
+                      _displayText(),
+                      maxLines: lineCount,
+                      overflow: TextOverflow.ellipsis,
+                      style: textStyle,
+                    ),
                   ),
                 ),
               ),
-            ),
-          ),
+            );
+          },
         ),
       ],
     );

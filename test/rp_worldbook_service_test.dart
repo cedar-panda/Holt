@@ -147,59 +147,139 @@ void main() {
     );
   });
 
-  test('recall keeps global lore but omits unrelated scoped entries', () async {
-    const now = '2026-10-02T00:00:00.000Z';
-    for (final row in <Map<String, Object?>>[
-      <String, Object?>{
-        'id': 'entry-global',
-        'entry_key': 'WB-0001',
-        'name': '共同曆法',
-        'category': 'custom',
-        'content': '全年分為十二月。',
-        'scope': 'global',
-        'visibility': 'public',
-        'triggers_json': '["曆法"]',
-      },
-      <String, Object?>{
-        'id': 'entry-local',
-        'entry_key': 'WB-0002',
-        'name': '北境禁令',
-        'category': 'law',
-        'content': '北境城門夜間封閉。',
-        'scope': '北境',
-        'visibility': 'public',
-        'triggers_json': '["北境","城門"]',
-      },
-    ]) {
+  test(
+    'recall keeps only triggerless global lore always-on and matches triggered lore',
+    () async {
+      const now = '2026-10-02T00:00:00.000Z';
+      for (final row in <Map<String, Object?>>[
+        <String, Object?>{
+          'id': 'entry-global',
+          'entry_key': 'WB-0001',
+          'name': '共同曆法',
+          'category': 'custom',
+          'content': '全年分為十二月。',
+          'scope': 'global',
+          'activation_mode': 'always',
+          'visibility': 'public',
+          'triggers_json': '[]',
+        },
+        <String, Object?>{
+          'id': 'entry-global-triggered',
+          'entry_key': 'WB-0003',
+          'name': '王室曆法',
+          'category': 'custom',
+          'content': '王室典禮使用銀月曆。',
+          'scope': 'global',
+          'activation_mode': 'triggered',
+          'visibility': 'public',
+          'triggers_json': '["銀月曆"]',
+        },
+        <String, Object?>{
+          'id': 'entry-local',
+          'entry_key': 'WB-0002',
+          'name': '北境禁令',
+          'category': 'law',
+          'content': '北境城門夜間封閉。',
+          'scope': '北境',
+          'activation_mode': 'triggered',
+          'visibility': 'public',
+          'triggers_json': '["北境","城門"]',
+        },
+      ]) {
+        await db.insert('rp_worldbook_entries', <String, Object?>{
+          ...row,
+          'character_id': 'char-a',
+          'continuity_id': 'story-a',
+          'status': 'active',
+          'ended_reason': '',
+          'source_summary_ids': '[1]',
+          'user_edited': 0,
+          'created_at': now,
+          'updated_at': now,
+        });
+      }
+
+      final unrelated = await RpWorldbookService.recallPrompt(
+        characterId: 'char-a',
+        continuityId: 'story-a',
+        query: '她在南方茶樓坐下',
+      );
+      expect(unrelated, contains('共同曆法'));
+      expect(unrelated, isNot(contains('王室曆法')));
+      expect(unrelated, isNot(contains('北境禁令')));
+
+      final related = await RpWorldbookService.recallPrompt(
+        characterId: 'char-a',
+        continuityId: 'story-a',
+        query: '一行人抵達北境城門',
+      );
+      expect(related, contains('共同曆法'));
+      expect(related, contains('北境禁令'));
+
+      final triggeredGlobal = await RpWorldbookService.recallPrompt(
+        characterId: 'char-a',
+        continuityId: 'story-a',
+        query: '王室正在核對銀月曆',
+      );
+      expect(triggeredGlobal, contains('王室曆法'));
+      expect(triggeredGlobal, contains('共同曆法'));
+    },
+  );
+
+  test(
+    'recall caps triggerless global lore without starving a triggered entry',
+    () async {
+      const now = '2026-10-02T00:00:00.000Z';
+      for (var index = 1; index <= 20; index++) {
+        await db.insert('rp_worldbook_entries', <String, Object?>{
+          'id': 'always-on-$index',
+          'entry_key': 'WB-100$index',
+          'character_id': 'char-a',
+          'continuity_id': 'story-a',
+          'name': '常駐設定 $index',
+          'category': 'custom',
+          'content': '這是第 $index 條常駐背景設定。',
+          'scope': 'global',
+          'activation_mode': 'always',
+          'visibility': 'public',
+          'status': 'active',
+          'ended_reason': '',
+          'triggers_json': '[]',
+          'source_summary_ids': '[1]',
+          'user_edited': 0,
+          'created_at': now,
+          'updated_at': now,
+        });
+      }
       await db.insert('rp_worldbook_entries', <String, Object?>{
-        ...row,
+        'id': 'triggered-entry',
+        'entry_key': 'WB-2001',
         'character_id': 'char-a',
         'continuity_id': 'story-a',
+        'name': '銀月橋規則',
+        'category': 'law',
+        'content': '銀月橋只在月圓時開放。',
+        'scope': 'global',
+        'activation_mode': 'triggered',
+        'visibility': 'public',
         'status': 'active',
         'ended_reason': '',
+        'triggers_json': '["銀月橋"]',
         'source_summary_ids': '[1]',
         'user_edited': 0,
         'created_at': now,
         'updated_at': now,
       });
-    }
 
-    final unrelated = await RpWorldbookService.recallPrompt(
-      characterId: 'char-a',
-      continuityId: 'story-a',
-      query: '她在南方茶樓坐下',
-    );
-    expect(unrelated, contains('共同曆法'));
-    expect(unrelated, isNot(contains('北境禁令')));
-
-    final related = await RpWorldbookService.recallPrompt(
-      characterId: 'char-a',
-      continuityId: 'story-a',
-      query: '一行人抵達北境城門',
-    );
-    expect(related, contains('共同曆法'));
-    expect(related, contains('北境禁令'));
-  });
+      final prompt = await RpWorldbookService.recallPrompt(
+        characterId: 'char-a',
+        continuityId: 'story-a',
+        query: '眾人抵達銀月橋',
+      );
+      expect(RegExp(r'常駐設定 \d+').allMatches(prompt), hasLength(3));
+      expect(prompt, contains('銀月橋規則'));
+    },
+  );
 
   test('lead name alone cannot recall unrelated scoped lore', () async {
     const now = '2026-10-02T00:00:00.000Z';

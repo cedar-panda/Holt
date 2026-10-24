@@ -86,6 +86,11 @@ void main() {
     await tester.tap(find.text('取消'));
     await tester.pumpAndSettle();
     expect(find.byIcon(Icons.delete_outline_rounded), findsNWidgets(2));
+
+    await tester.tapAt(const Offset(12, 12));
+    await tester.pumpAndSettle();
+    expect(find.byIcon(Icons.delete_outline_rounded), findsNothing);
+    expect(find.textContaining('小禾喜歡下雨天'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 }

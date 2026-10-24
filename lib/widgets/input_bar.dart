@@ -1,3 +1,5 @@
+import 'dart:io';
+import 'dart:math' as math;
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
@@ -6,9 +8,52 @@ import 'gradient_background.dart';
 import '../services/locale_strings.dart';
 
 import '../services/scratch_service.dart';
+import 'managed_text_controllers.dart';
 
 /// 發送按鈕樣式
-enum SendButtonStyle { leaf, paw }
+enum SendButtonStyle { leaf, paw, shell, custom }
+
+SendButtonStyle sendButtonStyleFromName(String? value) {
+  for (final style in SendButtonStyle.values) {
+    if (style.name == value) return style;
+  }
+  return SendButtonStyle.leaf;
+}
+
+/// The shell asset's alpha-weighted source hue, measured once from the PNG.
+const double _shellSourceHueDegrees = 40.56;
+
+ColorFilter shellHueColorFilter(Color accent) {
+  final targetHue = HSLColor.fromColor(accent).hue;
+  final angle = (targetHue - _shellSourceHueDegrees) * math.pi / 180;
+  final cosine = math.cos(angle);
+  final sine = math.sin(angle);
+  const lumR = 0.213;
+  const lumG = 0.715;
+  const lumB = 0.072;
+  return ColorFilter.matrix(<double>[
+    lumR + cosine * (1 - lumR) + sine * -lumR,
+    lumG + cosine * -lumG + sine * -lumG,
+    lumB + cosine * -lumB + sine * (1 - lumB),
+    0,
+    0,
+    lumR + cosine * -lumR + sine * 0.143,
+    lumG + cosine * (1 - lumG) + sine * 0.140,
+    lumB + cosine * -lumB + sine * -0.283,
+    0,
+    0,
+    lumR + cosine * -lumR + sine * -(1 - lumR),
+    lumG + cosine * -lumG + sine * lumG,
+    lumB + cosine * (1 - lumB) + sine * lumB,
+    0,
+    0,
+    0,
+    0,
+    0,
+    1,
+    0,
+  ]);
+}
 
 /// 輸入欄組件 — ＋按鈕 + 毛玻璃輸入框 + 發送鍵
 class InputBar extends StatefulWidget {
@@ -53,7 +98,11 @@ class InputBar extends StatefulWidget {
   final bool marriageCertPending;
   final VoidCallback? onCancelMarriageCert;
   final bool hasPendingContent;
+
+  /// 加號選單是否展開；由聊天頁持有，讓「點空白收起」能從外面關掉它。
+  final ValueNotifier<bool>? drawerOpen;
   final SendButtonStyle sendStyle;
+  final String sendCustomPath;
   final bool isGeneratingImage;
   final bool isGeneratingResponse;
   final bool isSendBlocked;
@@ -84,7 +133,9 @@ class InputBar extends StatefulWidget {
     this.marriageCertPending = false,
     this.onCancelMarriageCert,
     this.hasPendingContent = false,
+    this.drawerOpen,
     this.sendStyle = SendButtonStyle.leaf,
+    this.sendCustomPath = '',
     this.isGeneratingImage = false,
     this.isGeneratingResponse = false,
     this.isSendBlocked = false,
@@ -130,12 +181,15 @@ class _InputBarState extends State<InputBar> with TickerProviderStateMixin {
       _ownsController = true;
     }
     _controller.addListener(_scheduleRadiusSync);
+    widget.drawerOpen?.addListener(_onExternalDrawerChanged);
+    _focusNode.addListener(_onFocusChanged);
     WidgetsBinding.instance.addPostFrameCallback((_) => _syncSurfaceRadius());
-    // 待機搖擺：持續循環
+    // 待機姿態：停在中點（0°）。不再持續循環——repeat() 會每個 vsync
+    // 重建按鈕並令輸入框的 BackdropFilter 重算，閒置時也耗電。
     _swayCtrl = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 2400),
-    )..repeat(reverse: true);
+    )..value = 0.5;
     _swayAnim = Tween(
       begin: -0.06,
       end: 0.06,
@@ -170,7 +224,6 @@ class _InputBarState extends State<InputBar> with TickerProviderStateMixin {
     _sendCtrl.addStatusListener((status) {
       if (status == AnimationStatus.completed) {
         _swayCtrl.value = 0.5;
-        _swayCtrl.repeat(reverse: true);
       }
     });
     // 縮小後彈回
@@ -230,6 +283,10 @@ class _InputBarState extends State<InputBar> with TickerProviderStateMixin {
   @override
   void didUpdateWidget(covariant InputBar oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.drawerOpen, widget.drawerOpen)) {
+      oldWidget.drawerOpen?.removeListener(_onExternalDrawerChanged);
+      widget.drawerOpen?.addListener(_onExternalDrawerChanged);
+    }
     if (identical(oldWidget.externalController, widget.externalController)) {
       return;
     }
@@ -251,6 +308,8 @@ class _InputBarState extends State<InputBar> with TickerProviderStateMixin {
   void dispose() {
     _controller.removeListener(_scheduleRadiusSync);
     if (_ownsController) _controller.dispose();
+    widget.drawerOpen?.removeListener(_onExternalDrawerChanged);
+    _focusNode.removeListener(_onFocusChanged);
     _focusNode.dispose();
     _swayCtrl.dispose();
     _sendCtrl.dispose();
@@ -262,13 +321,72 @@ class _InputBarState extends State<InputBar> with TickerProviderStateMixin {
     final text = _controller.text.trim();
     if (text.isEmpty && !widget.hasPendingContent) return;
     _sendCtrl.forward(from: 0.0);
+    _setDrawerOpen(false);
     widget.onSend(text);
-    if (widget.sendStyle == SendButtonStyle.leaf) {
-      // Let the send callback commit its first UI frame before the IME hide
-      // animation starts; doing both synchronously causes a frame spike.
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) _focusNode.unfocus();
-      });
+    // Let the send callback commit its first UI frame before the IME hide
+    // animation starts; doing both synchronously causes a frame spike.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _focusNode.unfocus();
+    });
+  }
+
+  Widget _leafSendImage() => Image.asset(
+    'assets/images/send_leaf.png',
+    key: const ValueKey('send-button-image-leaf'),
+    width: 32,
+    height: 32,
+    fit: BoxFit.contain,
+    filterQuality: FilterQuality.none,
+  );
+
+  Widget _buildSendImage({required bool isActive}) {
+    switch (widget.sendStyle) {
+      case SendButtonStyle.leaf:
+        return _leafSendImage();
+      case SendButtonStyle.paw:
+        // The paw PNG is white. On the lit button, tinting it with the same
+        // accent as the button makes it disappear; choose the contrasting
+        // on-accent ink only for that state. The idle tint stays unchanged.
+        final pawColor = isActive
+            ? (YanciTheme.accent.computeLuminance() > 0.179
+                  ? Colors.black
+                  : Colors.white)
+            : YanciTheme.accent;
+        return ColorFiltered(
+          colorFilter: ColorFilter.mode(pawColor, BlendMode.modulate),
+          child: Image.asset(
+            'assets/images/send_paw.png',
+            key: const ValueKey('send-button-image-paw'),
+            width: 32,
+            height: 32,
+            fit: BoxFit.contain,
+            filterQuality: FilterQuality.none,
+          ),
+        );
+      case SendButtonStyle.shell:
+        return ColorFiltered(
+          colorFilter: shellHueColorFilter(YanciTheme.accent),
+          child: Image.asset(
+            'assets/images/shell_coin.png',
+            key: const ValueKey('send-button-image-shell'),
+            width: 32,
+            height: 32,
+            fit: BoxFit.contain,
+            filterQuality: FilterQuality.none,
+          ),
+        );
+      case SendButtonStyle.custom:
+        final path = widget.sendCustomPath.trim();
+        if (path.isEmpty || !File(path).existsSync()) return _leafSendImage();
+        return Image.file(
+          File(path),
+          key: const ValueKey('send-button-image-custom'),
+          width: 32,
+          height: 32,
+          fit: BoxFit.contain,
+          filterQuality: FilterQuality.none,
+          errorBuilder: (_, _, _) => _leafSendImage(),
+        );
     }
   }
 
@@ -352,7 +470,11 @@ class _InputBarState extends State<InputBar> with TickerProviderStateMixin {
                       ),
                       const SizedBox(width: 6),
                       Text(
-                        '${widget.pendingGiftName}（隨消息送出）',
+                        L.pick(
+                          en: '${widget.pendingGiftName} (sent with message)',
+                          zhTW: '${widget.pendingGiftName}（隨消息送出）',
+                          zhCN: '${widget.pendingGiftName}（随消息发送）',
+                        ),
                         style: TextStyle(
                           fontSize: 12,
                           color: YanciTheme.textPrimary,
@@ -360,9 +482,19 @@ class _InputBarState extends State<InputBar> with TickerProviderStateMixin {
                         ),
                       ),
                       const SizedBox(width: 6),
-                      GestureDetector(
-                        onTap: widget.onCancelGift,
-                        child: Icon(
+                      IconButton(
+                        tooltip: L.pick(
+                          en: 'Cancel gift',
+                          zhTW: '取消禮物',
+                          zhCN: '取消礼物',
+                        ),
+                        onPressed: widget.onCancelGift,
+                        constraints: const BoxConstraints.tightFor(
+                          width: 36,
+                          height: 36,
+                        ),
+                        padding: EdgeInsets.zero,
+                        icon: Icon(
                           Icons.close_rounded,
                           size: 15,
                           color: YanciTheme.textSecondary.withValues(
@@ -418,9 +550,19 @@ class _InputBarState extends State<InputBar> with TickerProviderStateMixin {
                         ),
                       ),
                       const SizedBox(width: 6),
-                      GestureDetector(
-                        onTap: widget.onCancelMarriageCert,
-                        child: Icon(
+                      IconButton(
+                        tooltip: L.pick(
+                          en: 'Cancel certificate',
+                          zhTW: '取消結婚證書',
+                          zhCN: '取消结婚证书',
+                        ),
+                        onPressed: widget.onCancelMarriageCert,
+                        constraints: const BoxConstraints.tightFor(
+                          width: 36,
+                          height: 36,
+                        ),
+                        padding: EdgeInsets.zero,
+                        icon: Icon(
                           Icons.close_rounded,
                           size: 15,
                           color: YanciTheme.textSecondary.withValues(
@@ -810,17 +952,11 @@ class _InputBarState extends State<InputBar> with TickerProviderStateMixin {
                                                                   : null,
                                                             ),
                                                             child: Center(
-                                                              child: Image.asset(
-                                                                widget.sendStyle ==
-                                                                        SendButtonStyle
-                                                                            .leaf
-                                                                    ? 'assets/images/send_leaf.png'
-                                                                    : 'assets/images/send_paw.png',
-                                                                width: 32,
-                                                                height: 32,
-                                                                fit: BoxFit
-                                                                    .contain,
-                                                              ),
+                                                              child:
+                                                                  _buildSendImage(
+                                                                    isActive:
+                                                                        showBtn,
+                                                                  ),
                                                             ),
                                                           ),
                                                         ),
@@ -882,7 +1018,23 @@ class _InputBarState extends State<InputBar> with TickerProviderStateMixin {
 
   void _toggleActionPanel() {
     _focusNode.unfocus();
-    setState(() => _drawerOpen = !_drawerOpen);
+    _setDrawerOpen(!_drawerOpen);
+  }
+
+  void _setDrawerOpen(bool open) {
+    if (_drawerOpen == open) return;
+    setState(() => _drawerOpen = open);
+    widget.drawerOpen?.value = open;
+  }
+
+  void _onExternalDrawerChanged() {
+    final open = widget.drawerOpen?.value ?? false;
+    if (mounted && open != _drawerOpen) setState(() => _drawerOpen = open);
+  }
+
+  /// 開始打字就收起加號選單。
+  void _onFocusChanged() {
+    if (_focusNode.hasFocus && _drawerOpen) _setDrawerOpen(false);
   }
 
   Widget _buildActionPanel() {
@@ -1088,7 +1240,7 @@ class _InputBarState extends State<InputBar> with TickerProviderStateMixin {
   }
 
   void _runPanelAction(VoidCallback action) {
-    setState(() => _drawerOpen = false);
+    _setDrawerOpen(false);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) action();
     });
@@ -1101,7 +1253,7 @@ class _InputBarState extends State<InputBar> with TickerProviderStateMixin {
       imageQuality: 70,
     );
     if (files.isEmpty) return;
-    final paths = files.map((file) => file.path).toSet().take(10).toList();
+    final paths = files.map((file) => file.path).toSet().take(9).toList();
     if (widget.onImagesPicked != null) {
       widget.onImagesPicked!(paths);
     } else if (paths.isNotEmpty) {
@@ -1181,160 +1333,205 @@ class _InputBarState extends State<InputBar> with TickerProviderStateMixin {
   }
 
   void _showTransferDialog() {
-    final amountCtrl = TextEditingController();
-
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
       isScrollControlled: true,
-      builder: (ctx) => Padding(
-        padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
-        child: Container(
-          decoration: BoxDecoration(
-            color: YanciTheme.isDark
-                ? const Color(0xFF1E1C22)
-                : const Color(0xFFFDFCFE),
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.1),
-                blurRadius: 10,
-                offset: const Offset(0, -2),
-              ),
-            ],
+      builder: (ctx) => ManagedTextControllers(
+        initialValues: const <String>[''],
+        builder: (ctx, controllers) => Padding(
+          padding: EdgeInsets.only(
+            bottom: MediaQuery.of(ctx).viewInsets.bottom,
           ),
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Center(
-                child: Container(
-                  width: 32,
-                  height: 3,
-                  decoration: BoxDecoration(
-                    color: YanciTheme.textSecondary.withValues(alpha: 0.2),
-                    borderRadius: BorderRadius.circular(1.5),
+          child: Container(
+            decoration: BoxDecoration(
+              color: YanciTheme.isDark
+                  ? const Color(0xFF1E1C22)
+                  : const Color(0xFFFDFCFE),
+              borderRadius: const BorderRadius.vertical(
+                top: Radius.circular(20),
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.1),
+                  blurRadius: 10,
+                  offset: const Offset(0, -2),
+                ),
+              ],
+            ),
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Center(
+                  child: Container(
+                    width: 32,
+                    height: 3,
+                    decoration: BoxDecoration(
+                      color: YanciTheme.textSecondary.withValues(alpha: 0.2),
+                      borderRadius: BorderRadius.circular(1.5),
+                    ),
                   ),
                 ),
-              ),
-              const SizedBox(height: 16),
-              Row(
-                children: [
-                  Expanded(
-                    child: Container(
-                      height: 40,
-                      decoration: BoxDecoration(
-                        color: YanciTheme.isDark
-                            ? const Color(0xFF28252C)
-                            : const Color(0xFFF3F0F5),
-                        borderRadius: BorderRadius.circular(20),
-                        border: Border.all(
-                          color: YanciTheme.accent.withValues(alpha: 0.2),
-                          width: 1,
-                        ),
-                      ),
-                      child: Row(
-                        children: [
-                          const SizedBox(width: 12),
-                          Image.asset(
-                            'assets/images/shell_coin.png',
-                            width: 18,
-                            height: 18,
-                            filterQuality: FilterQuality.none,
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Container(
+                        height: 40,
+                        decoration: BoxDecoration(
+                          color: YanciTheme.isDark
+                              ? const Color(0xFF28252C)
+                              : const Color(0xFFF3F0F5),
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(
+                            color: YanciTheme.accent.withValues(alpha: 0.2),
+                            width: 1,
                           ),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: TextField(
-                              controller: amountCtrl,
-                              keyboardType: TextInputType.number,
-                              autofocus: true,
-                              style: TextStyle(
-                                fontSize: 16,
-                                fontFamily: YanciTheme.fontFamily,
-                                color: YanciTheme.textPrimary,
-                                fontWeight: FontWeight.bold,
-                              ),
-                              decoration: InputDecoration(
-                                hintText: '0',
-                                hintStyle: TextStyle(
+                        ),
+                        child: Row(
+                          children: [
+                            const SizedBox(width: 12),
+                            Image.asset(
+                              'assets/images/shell_coin.png',
+                              width: 18,
+                              height: 18,
+                              filterQuality: FilterQuality.none,
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: TextField(
+                                controller: controllers.single,
+                                keyboardType: TextInputType.number,
+                                autofocus: true,
+                                style: TextStyle(
                                   fontSize: 16,
-                                  color: YanciTheme.textSecondary.withValues(
-                                    alpha: 0.4,
-                                  ),
+                                  fontFamily: YanciTheme.fontFamily,
+                                  color: YanciTheme.textPrimary,
+                                  fontWeight: FontWeight.bold,
                                 ),
-                                border: InputBorder.none,
-                                isDense: true,
-                                contentPadding: EdgeInsets.zero,
+                                decoration: InputDecoration(
+                                  hintText: '0',
+                                  hintStyle: TextStyle(
+                                    fontSize: 16,
+                                    color: YanciTheme.textSecondary.withValues(
+                                      alpha: 0.4,
+                                    ),
+                                  ),
+                                  border: InputBorder.none,
+                                  isDense: true,
+                                  contentPadding: EdgeInsets.zero,
+                                ),
                               ),
                             ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  GestureDetector(
-                    onTap: () {
-                      final amount = int.tryParse(amountCtrl.text.trim()) ?? 0;
-                      Navigator.pop(ctx);
-                      if (amount > 0) {
-                        widget.onTransfer?.call(amount);
-                      }
-                    },
-                    child: Container(
-                      width: 40,
-                      height: 40,
-                      decoration: BoxDecoration(
-                        gradient: const LinearGradient(
-                          colors: [Color(0xFF8B2C4F), Color(0xFFC05C7E)],
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                        ),
-                        shape: BoxShape.circle,
-                        boxShadow: [
-                          BoxShadow(
-                            color: const Color(
-                              0xFF8B2C4F,
-                            ).withValues(alpha: 0.3),
-                            blurRadius: 6,
-                            offset: const Offset(0, 2),
-                          ),
-                        ],
-                      ),
-                      child: const Center(
-                        child: Icon(
-                          Icons.arrow_forward_rounded,
-                          color: Colors.white,
-                          size: 20,
+                          ],
                         ),
                       ),
                     ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 6),
-              Padding(
-                padding: const EdgeInsets.only(left: 16),
-                child: FutureBuilder<int>(
-                  future: ScratchService.getUserCoins(),
-                  builder: (ctx, snap) {
-                    final coins = snap.data ?? 0;
-                    return Text(
-                      L.pick(en: 'Balance: $coins', zhTW: '目前餘額：$coins 貝'),
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: YanciTheme.textSecondary.withValues(alpha: 0.6),
-                        fontFamily: YanciTheme.fontFamily,
+                    const SizedBox(width: 12),
+                    GestureDetector(
+                      onTap: () {
+                        final amount =
+                            int.tryParse(controllers.single.text.trim()) ?? 0;
+                        Navigator.pop(ctx);
+                        if (amount > 0) {
+                          widget.onTransfer?.call(amount);
+                        }
+                      },
+                      child: Container(
+                        width: 40,
+                        height: 40,
+                        decoration: BoxDecoration(
+                          gradient: const LinearGradient(
+                            colors: [Color(0xFF8B2C4F), Color(0xFFC05C7E)],
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                          ),
+                          shape: BoxShape.circle,
+                          boxShadow: [
+                            BoxShadow(
+                              color: const Color(
+                                0xFF8B2C4F,
+                              ).withValues(alpha: 0.3),
+                              blurRadius: 6,
+                              offset: const Offset(0, 2),
+                            ),
+                          ],
+                        ),
+                        child: const Center(
+                          child: Icon(
+                            Icons.arrow_forward_rounded,
+                            color: Colors.white,
+                            size: 20,
+                          ),
+                        ),
                       ),
-                    );
-                  },
+                    ),
+                  ],
                 ),
-              ),
-            ],
+                const SizedBox(height: 6),
+                Padding(
+                  padding: const EdgeInsets.only(left: 16),
+                  child: FutureBuilder<int>(
+                    future: ScratchService.getUserCoins(),
+                    builder: (ctx, snap) {
+                      final coins = snap.data ?? 0;
+                      return Text(
+                        L.pick(en: 'Balance: $coins', zhTW: '目前餘額：$coins 貝'),
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: YanciTheme.textSecondary.withValues(
+                            alpha: 0.6,
+                          ),
+                          fontFamily: YanciTheme.fontFamily,
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),
+    );
+  }
+}
+
+/// 加號選單展開時，蓋在訊息列表上的透明觸控層：
+/// 第一下觸碰只負責收起選單，不會同時點到訊息、圖片或連結。
+class ComposerDrawerDismissLayer extends StatelessWidget {
+  final ValueNotifier<bool> open;
+  final Widget child;
+
+  const ComposerDrawerDismissLayer({
+    super.key,
+    required this.open,
+    required this.child,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      fit: StackFit.passthrough,
+      children: [
+        child,
+        ValueListenableBuilder<bool>(
+          valueListenable: open,
+          builder: (context, isOpen, _) {
+            if (!isOpen) return const SizedBox.shrink();
+            return Positioned.fill(
+              child: GestureDetector(
+                key: const ValueKey<String>('composer-drawer-dismiss-layer'),
+                behavior: HitTestBehavior.opaque,
+                onTapDown: (_) => open.value = false,
+                onVerticalDragStart: (_) => open.value = false,
+              ),
+            );
+          },
+        ),
+      ],
     );
   }
 }

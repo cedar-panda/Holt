@@ -27,13 +27,12 @@ void main() {
     final backgroundEntry = find.byKey(
       const ValueKey('theme-image-background-entry'),
     );
-    final backgroundEntrySize = tester.getSize(backgroundEntry);
-    expect(backgroundEntrySize, const Size(156, 44));
-    expect(find.byIcon(Icons.image_outlined), findsNothing);
+    expect(tester.getSize(backgroundEntry).height, greaterThanOrEqualTo(44));
+    expect(find.byIcon(Icons.image_outlined), findsOneWidget);
     expect(find.text('自訂背景'), findsOneWidget);
     expect(
-      tester.getCenter(find.text('自訂背景')).dx,
-      closeTo(tester.getCenter(backgroundEntry).dx, 0.5),
+      tester.getTopLeft(backgroundEntry).dy,
+      lessThan(tester.getTopLeft(find.text('回應方式')).dy),
     );
 
     await tester.tap(backgroundEntry);

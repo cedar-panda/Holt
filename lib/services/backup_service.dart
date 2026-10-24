@@ -1175,6 +1175,10 @@ class BackupService {
       }
     }
 
+    for (final memory in tables['memories']!) {
+      memory['is_pinned'] = memory['is_pinned'] == 1 ? 1 : 0;
+    }
+
     for (final summary in tables['context_summaries']!) {
       final revision = summary['revision'];
       summary['revision'] = revision is int && revision > 0 ? revision : 1;
@@ -1552,6 +1556,8 @@ class BackupService {
     }
 
     const worldbookStatuses = <String>{'active', 'archived'};
+    const worldbookBindingScopes = <String>{'storyline', 'character_global'};
+    const worldbookActivationModes = <String>{'always', 'triggered', 'scene'};
     for (final entry in tables['rp_worldbook_entries']!) {
       entry['id'] = _requiredId(entry['id'], 'rp_worldbook_entries.id');
       entry['entry_key'] = _requiredId(
@@ -1582,6 +1588,17 @@ class BackupService {
       entry['status'] = worldbookStatuses.contains(entry['status'])
           ? entry['status']
           : 'active';
+      entry['binding_scope'] =
+          worldbookBindingScopes.contains(entry['binding_scope'])
+          ? entry['binding_scope']
+          : 'storyline';
+      final restoredTriggers = entry['triggers_json']?.toString().trim() ?? '';
+      entry['activation_mode'] =
+          worldbookActivationModes.contains(entry['activation_mode'])
+          ? entry['activation_mode']
+          : (restoredTriggers.isEmpty || restoredTriggers == '[]'
+                ? 'always'
+                : 'triggered');
       entry['user_edited'] = _sqliteBool(entry['user_edited']);
       entry['created_at'] =
           _validIsoString(entry['created_at']) ?? fallbackTime;

@@ -5,37 +5,32 @@ part of 'theme_workshop_screen.dart';
 extension _ThemeWorkshopBubbleMethods on _ThemeWorkshopScreenState {
   Widget _buildBackgroundMenuButton() {
     final label = L.pick(en: 'Custom Background', zhTW: '自訂背景', zhCN: '自定义背景');
-    return Transform.translate(
-      offset: const Offset(0, 8),
-      child: Semantics(
-        button: true,
-        label: label,
-        child: Tooltip(
-          message: label,
-          child: Material(
-            color: Colors.transparent,
-            child: InkWell(
-              key: const ValueKey('theme-image-background-entry'),
-              onTap: _openBackgroundPage,
-              borderRadius: BorderRadius.circular(999),
-              child: SizedBox(
-                width: 156,
-                height: 44,
-                child: Center(
-                  child: Text(
-                    label,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      fontSize: 15,
-                      fontWeight: FontWeight.w600,
-                      letterSpacing: 0.8,
-                      color: YanciTheme.accent,
-                    ),
+    return Semantics(
+      button: true,
+      label: label,
+      child: Tooltip(
+        message: label,
+        child: GestureDetector(
+          key: const ValueKey('theme-image-background-entry'),
+          behavior: HitTestBehavior.opaque,
+          onTap: _openBackgroundPage,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minHeight: 44),
+            child: Row(
+              children: [
+                Icon(Icons.image_outlined, size: 18, color: YanciTheme.accent),
+                const SizedBox(width: 8),
+                Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w500,
+                    color: YanciTheme.accent,
                   ),
                 ),
-              ),
+              ],
             ),
           ),
         ),
@@ -184,12 +179,222 @@ extension _ThemeWorkshopBubbleMethods on _ThemeWorkshopScreenState {
     _notifyThemeChanged();
   }
 
+  Future<void> _selectSendButtonStyle(SendButtonStyle style) async {
+    if (style == SendButtonStyle.custom) {
+      await _pickCustomSendButton();
+      return;
+    }
+    final oldCustomPath = _sendButtonCustomPath;
+    setState(() {
+      _sendButtonStyle = style;
+      _sendButtonCustomPath = '';
+    });
+    YanciTheme.sendButtonStyle = style.name;
+    YanciTheme.sendButtonCustomPath = '';
+    await ThemeSettings.saveSendButtonStyle(style.name);
+    await ThemeSettings.saveSendButtonCustomPath('');
+    _notifyThemeChanged();
+    await ImageService.deleteSendButtonFile(oldCustomPath);
+  }
+
+  Future<void> _pickCustomSendButton() async {
+    final picked = await ImagePicker().pickImage(source: ImageSource.gallery);
+    if (picked == null || !mounted) return;
+    final validation = await ImageService.validateSendButtonPng(picked.path);
+    if (validation != SendButtonImageValidation.valid) {
+      if (!mounted) return;
+      final message = validation == SendButtonImageValidation.notSquare
+          ? L.get('theme_send_button_square_error')
+          : L.get('theme_send_button_png_error');
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(message)));
+      return;
+    }
+
+    final oldCustomPath = _sendButtonCustomPath;
+    try {
+      final saved = await ImageService.copySendButtonToAppDir(picked.path);
+      if (!mounted) {
+        await ImageService.deleteSendButtonFile(saved);
+        return;
+      }
+      setState(() {
+        _sendButtonStyle = SendButtonStyle.custom;
+        _sendButtonCustomPath = saved;
+      });
+      YanciTheme.sendButtonStyle = SendButtonStyle.custom.name;
+      YanciTheme.sendButtonCustomPath = saved;
+      await ThemeSettings.saveSendButtonCustomPath(saved);
+      await ThemeSettings.saveSendButtonStyle(SendButtonStyle.custom.name);
+      _notifyThemeChanged();
+      if (oldCustomPath != saved) {
+        await ImageService.deleteSendButtonFile(oldCustomPath);
+      }
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(L.get('theme_send_button_import_error'))),
+      );
+    }
+  }
+
+  Widget _sendButtonPreview(SendButtonStyle style, ThemePreset preset) {
+    Widget image;
+    switch (style) {
+      case SendButtonStyle.leaf:
+        image = Image.asset(
+          'assets/images/send_leaf.png',
+          width: 32,
+          height: 32,
+          fit: BoxFit.contain,
+          filterQuality: FilterQuality.none,
+        );
+        break;
+      case SendButtonStyle.paw:
+        image = ColorFiltered(
+          colorFilter: ColorFilter.mode(preset.accent, BlendMode.modulate),
+          child: Image.asset(
+            'assets/images/send_paw.png',
+            width: 32,
+            height: 32,
+            fit: BoxFit.contain,
+            filterQuality: FilterQuality.none,
+          ),
+        );
+        break;
+      case SendButtonStyle.shell:
+        image = ColorFiltered(
+          colorFilter: shellHueColorFilter(preset.accent),
+          child: Image.asset(
+            'assets/images/shell_coin.png',
+            width: 32,
+            height: 32,
+            fit: BoxFit.contain,
+            filterQuality: FilterQuality.none,
+          ),
+        );
+        break;
+      case SendButtonStyle.custom:
+        final custom = File(_sendButtonCustomPath);
+        image = _sendButtonCustomPath.isNotEmpty && custom.existsSync()
+            ? Image.file(
+                custom,
+                width: 32,
+                height: 32,
+                fit: BoxFit.contain,
+                filterQuality: FilterQuality.none,
+                errorBuilder: (_, _, _) => Icon(
+                  Icons.add_photo_alternate_outlined,
+                  size: 24,
+                  color: preset.accent,
+                ),
+              )
+            : Icon(
+                Icons.add_photo_alternate_outlined,
+                size: 24,
+                color: preset.accent,
+              );
+        break;
+    }
+    return image;
+  }
+
+  Widget _buildSendButtonStyleRow(ThemePreset preset) {
+    final labels = <SendButtonStyle, String>{
+      SendButtonStyle.leaf: L.get('theme_send_button_leaf'),
+      SendButtonStyle.paw: L.get('theme_send_button_paw'),
+      SendButtonStyle.shell: L.get('theme_send_button_shell'),
+      SendButtonStyle.custom: L.get('theme_send_button_custom'),
+    };
+    return Padding(
+      padding: const EdgeInsets.only(left: 4, right: 4, bottom: 8),
+      child: Row(
+        children: [
+          Text(
+            L.get('theme_send_button'),
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w500,
+              color: preset.textPrimary,
+            ),
+          ),
+          const Spacer(),
+          for (final style in SendButtonStyle.values) ...[
+            Tooltip(
+              message: labels[style]!,
+              child: Semantics(
+                button: true,
+                selected: _sendButtonStyle == style,
+                label: labels[style],
+                child: GestureDetector(
+                  key: ValueKey('theme-send-button-${style.name}'),
+                  behavior: HitTestBehavior.opaque,
+                  onTap: () => _selectSendButtonStyle(style),
+                  onLongPress: style == SendButtonStyle.custom
+                      ? _pickCustomSendButton
+                      : null,
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 180),
+                    width: 48,
+                    height: 48,
+                    margin: const EdgeInsets.only(left: 5),
+                    decoration: BoxDecoration(
+                      color: _sendButtonStyle == style
+                          ? preset.accent.withValues(alpha: 0.10)
+                          : Colors.transparent,
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(
+                        color: _sendButtonStyle == style
+                            ? preset.accent.withValues(alpha: 0.76)
+                            : preset.textSecondary.withValues(alpha: 0.16),
+                        width: _sendButtonStyle == style ? 1.2 : 0.7,
+                      ),
+                    ),
+                    child: Stack(
+                      alignment: Alignment.center,
+                      children: [
+                        _sendButtonPreview(style, preset),
+                        if (style == SendButtonStyle.custom &&
+                            _sendButtonCustomPath.isNotEmpty)
+                          Positioned(
+                            right: 2,
+                            bottom: 2,
+                            child: Icon(
+                              Icons.refresh_rounded,
+                              size: 11,
+                              color: preset.accent,
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
   // ═══ 氣泡設定區 ═══
   Widget _buildBubbleSection(ThemePreset preset) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12),
       child: Column(
         children: [
+          // ── 自訂背景：與回應方式同級，但保留主題重點色 ──
+          Padding(
+            padding: const EdgeInsets.only(
+              left: 4,
+              right: 4,
+              top: 2,
+              bottom: 4,
+            ),
+            child: _buildBackgroundMenuButton(),
+          ),
+
           // ── 回應方式（氣泡 / 平鋪）：決定是否有氣泡，故置於氣泡設定之上 ──
           Padding(
             padding: const EdgeInsets.only(
@@ -200,6 +405,8 @@ extension _ThemeWorkshopBubbleMethods on _ThemeWorkshopScreenState {
             ),
             child: _buildAiBubbleStylePill(preset),
           ),
+
+          _buildSendButtonStyleRow(preset),
 
           // ── 標題列：氣泡 icon + 文字 + 展開箭頭 ──
           GestureDetector(

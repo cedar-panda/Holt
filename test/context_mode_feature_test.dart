@@ -561,6 +561,13 @@ void main() {
         );
         expect(prompt, contains('幼時曾住在王城'));
         expect(prompt, isNot(contains('王城失火')));
+        expect(prompt, isNot(contains('event_key=')));
+
+        final correctionPrompt = await RpCharacterTimelineService.recallPrompt(
+          'char-a',
+          '記錯了，請更正王城的回憶',
+        );
+        expect(correctionPrompt, contains('event_key=history.lived_in_city'));
       },
     );
 
@@ -895,6 +902,9 @@ void main() {
         expect(context, isNot(contains('無關人物的高熱')));
         expect(context, isNot(contains('夢中傷勢')));
         expect(context, isNot(contains('不應注入的逐字證據')));
+        expect(RegExp('【當前 User 身份】').allMatches(context), isEmpty);
+        expect(RegExp('【現有劇情人物】').allMatches(context), isEmpty);
+        expect(RegExp('"display_name":"清川"').allMatches(context), hasLength(1));
       },
     );
 
@@ -1004,7 +1014,12 @@ void main() {
           '她走進了王城',
         );
         expect(prompt, isNot(contains('她仍然保管著王城的信物')));
-        expect(prompt, contains('兩人約定在鐘樓見面'));
+        expect(prompt, isNot(contains('兩人約定在鐘樓見面')));
+        final precisePrompt = await RpCharacterTimelineService.recallPrompt(
+          'char-a',
+          '她想起王城曆 312 年的鐘樓約定',
+        );
+        expect(precisePrompt, contains('兩人約定在鐘樓見面'));
         final rows = await RpCharacterTimelineService.getEntries('char-a');
         expect(rows, hasLength(1));
         expect(rows.single['type'], 'event');
@@ -1052,10 +1067,8 @@ void main() {
           contextMode: ContextMode.rp,
           continuityId: 'main',
         );
-        expect(
-          prompt.text.indexOf('王城的信物會在鐘樓約定中再次出現'),
-          lessThan(prompt.text.indexOf('北境的古老王朝有七座城門')),
-        );
+        expect(prompt.text, contains('王城的信物會在鐘樓約定中再次出現'));
+        expect(prompt.text, isNot(contains('北境的古老王朝有七座城門')));
         expect(
           (await db.query(
             'memories',
@@ -1077,6 +1090,135 @@ void main() {
         );
       },
     );
+
+    test(
+      'RP memory does not fill the prompt with unmatched non-core rows',
+      () async {
+        SharedPreferences.setMockInitialValues(<String, Object>{
+          'memory_send_limit_v1': 5,
+          'mem_budget_total': 2000,
+          'mem_budget_v2_migrated': true,
+        });
+        await DatabaseHelper.insertMemory(
+          Memory(
+            characterId: 'char-a',
+            contextMode: ContextMode.rp,
+            continuityId: 'main',
+            mode: 'romance',
+            category: '世界觀',
+            narrativeWeight: 'branch',
+            content: '西境海港每月舉行一次魚市。',
+            triggers: '西境,魚市',
+          ),
+        );
+
+        Retriever.resetWindowIds('rp-unmatched-window');
+        final prompt = await Retriever.buildMemoryPrompt(
+          mode: 'romance',
+          currentMessage: '她在王城書房打開旧信',
+          characterId: 'char-a',
+          windowId: 'rp-unmatched-window',
+          contextMode: ContextMode.rp,
+          continuityId: 'main',
+        );
+        expect(prompt.text, isEmpty);
+      },
+    );
+
+    test(
+      'daily memory does not fill the prompt with unrelated active rows',
+      () async {
+        SharedPreferences.setMockInitialValues(<String, Object>{
+          'memory_send_limit_v1': 5,
+          'mem_budget_total': 2000,
+          'mem_budget_v2_migrated': true,
+        });
+        await DatabaseHelper.insertMemory(
+          Memory(
+            characterId: 'char-a',
+            contextMode: ContextMode.daily,
+            continuityId: 'main',
+            mode: 'romance',
+            category: '偏好',
+            content: '對方曾經說過喜歡收集藍色玻璃珠。',
+            triggers: '藍色玻璃珠,收藏',
+          ),
+        );
+
+        Retriever.resetWindowIds('daily-unmatched-window');
+        final prompt = await Retriever.buildMemoryPrompt(
+          mode: 'romance',
+          currentMessage: '今天午餐要吃什麼？',
+          characterId: 'char-a',
+          windowId: 'daily-unmatched-window',
+          contextMode: ContextMode.daily,
+          continuityId: 'main',
+        );
+        expect(prompt.text, isEmpty);
+      },
+    );
+
+    test(
+      'permanent memory is not injected unless relevant or pinned',
+      () async {
+        SharedPreferences.setMockInitialValues(<String, Object>{
+          'memory_send_limit_v1': 5,
+          'mem_budget_total': 2000,
+          'mem_budget_v2_migrated': true,
+        });
+        await DatabaseHelper.insertMemory(
+          Memory(
+            characterId: 'char-a',
+            contextMode: ContextMode.daily,
+            continuityId: 'main',
+            mode: 'romance',
+            category: '重要事件',
+            content: '對方在海邊留下了一枚銀色徽章。',
+            triggers: '海邊,銀色徽章',
+            isPermanent: true,
+          ),
+        );
+
+        final prompt = await Retriever.buildMemoryPrompt(
+          mode: 'romance',
+          currentMessage: '今天午餐要吃什麼？',
+          characterId: 'char-a',
+          windowId: 'daily-permanent-window',
+          contextMode: ContextMode.daily,
+          continuityId: 'main',
+        );
+        expect(prompt.text, isEmpty);
+      },
+    );
+
+    test('explicitly pinned memory may be injected without a match', () async {
+      SharedPreferences.setMockInitialValues(<String, Object>{
+        'memory_send_limit_v1': 5,
+        'mem_budget_total': 2000,
+        'mem_budget_v2_migrated': true,
+      });
+      await DatabaseHelper.insertMemory(
+        Memory(
+          characterId: 'char-a',
+          contextMode: ContextMode.daily,
+          continuityId: 'main',
+          mode: 'romance',
+          category: '身分',
+          content: '對方需要被稱作昭昭。',
+          isPinned: true,
+        ),
+      );
+
+      final prompt = await Retriever.buildMemoryPrompt(
+        mode: 'romance',
+        currentMessage: '今天午餐要吃什麼？',
+        characterId: 'char-a',
+        windowId: 'daily-pinned-window',
+        contextMode: ContextMode.daily,
+        continuityId: 'main',
+      );
+      expect(prompt.text, contains('對方需要被稱作昭昭'));
+    });
 
     test(
       'RP timeline reads the newest 200 entries in a long continuity',

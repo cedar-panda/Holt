@@ -338,6 +338,8 @@ Output JSON only, with no other text or Markdown:
   static Future<String> buildStickerPrompt({
     String characterId = legacyDefaultBucket,
     String? userPersonaId,
+    int? maxEntries,
+    int? maxCharacters,
   }) async {
     var ownStickers = await getStickers(characterId: characterId);
     // fallback：舊版角色共用表情可能仍在 default；新資料不再寫入 default。
@@ -350,44 +352,68 @@ Output JSON only, with no other text or Markdown:
     if (ownStickers.isEmpty && userStickers.isEmpty) return '';
 
     final buffer = StringBuffer();
-    if (ownStickers.isNotEmpty) {
-      buffer.writeln(
+    var remainingEntries = maxEntries ?? 1 << 30;
+
+    String buildSection(List<StickerInfo> stickers, {required bool own}) {
+      if (stickers.isEmpty || remainingEntries <= 0) return '';
+      final section = StringBuffer();
+      section.writeln(
         L.pick(
-          en: 'You can use the following stickers. Insert one at an appropriate moment with [sticker:ID].',
-          zhTW: '你有以下表情包可以使用。在回覆中適當的時機，用 [sticker:ID] 來插入表情包。',
+          en: own
+              ? 'You can use the following stickers. Insert one at an appropriate moment with [sticker:ID].'
+              : 'The other person (user) may send the following stickers. When [sticker:ID] appears, interpret it as a sticker rather than ordinary text.',
+          zhTW: own
+              ? '你有以下表情包可以使用。在回覆中適當的時機，用 [sticker:ID] 來插入表情包。'
+              : '對方（user）可能發以下表情包。看到 [sticker:ID] 時按表情含義理解，不要把 ID 當普通文字回覆。',
         ),
       );
-      buffer.writeln(
-        L.pick(
-          en: 'Do not use one in every reply; use them only for strong emotion or nonverbal expression.',
-          zhTW: '不要每句話都用，只在情緒強烈或想表達非文字情感時使用。',
-        ),
+      if (own) {
+        section.writeln(
+          L.pick(
+            en: 'Use them only for strong emotion or nonverbal expression, not in every reply.',
+            zhTW: '只在情緒強烈或想表達非文字情感時使用，不要每句話都用。',
+          ),
+        );
+      }
+      section.writeln('---');
+      final sectionLimit = maxCharacters == null
+          ? null
+          : maxCharacters - buffer.length;
+      final emitted = _writeStickerLines(
+        section,
+        stickers,
+        maxEntries: remainingEntries,
+        maxCharacters: sectionLimit,
       );
-      buffer.writeln('---');
-      _writeStickerLines(buffer, ownStickers);
-      buffer.writeln('---');
+      if (emitted == 0) return '';
+      remainingEntries -= emitted;
+      section.writeln('---');
+      return section.toString();
     }
-    if (userStickers.isNotEmpty) {
-      buffer.writeln(
-        L.pick(
-          en: 'The other person (user) may send the following stickers. When [sticker:ID] appears in their message, interpret its meaning as a sticker; do not reply to the ID as ordinary text.',
-          zhTW:
-              '對方（user）可能發以下表情包。當你在對方消息中看到 [sticker:ID]，請按含義理解，那是對方在發表情包；不要把 ID 當普通文字回覆。',
-        ),
-      );
-      buffer.writeln('---');
-      _writeStickerLines(buffer, userStickers);
-      buffer.writeln('---');
+
+    for (final section in <String>[
+      buildSection(ownStickers, own: true),
+      buildSection(userStickers, own: false),
+    ]) {
+      if (section.isEmpty) continue;
+      if (maxCharacters != null &&
+          buffer.length + section.length > maxCharacters) {
+        break;
+      }
+      buffer.write(section);
     }
     return buffer.toString();
   }
 
-  static void _writeStickerLines(
+  static int _writeStickerLines(
     StringBuffer buffer,
-    List<StickerInfo> stickers,
-  ) {
-    // 全量發送：台詞/情緒/場景/標籤，有什麼帶什麼。
+    List<StickerInfo> stickers, {
+    required int maxEntries,
+    int? maxCharacters,
+  }) {
+    var emitted = 0;
     for (final s in stickers) {
+      if (emitted >= maxEntries) break;
       final parts = <String>[];
       if (s.line != null && s.line!.isNotEmpty) parts.add('「${s.line}」');
       if (s.mood != null && s.mood!.isNotEmpty) {
@@ -398,8 +424,15 @@ Output JSON only, with no other text or Markdown:
       }
       if (s.tags != null && s.tags!.isNotEmpty) parts.add('#${s.tags}');
       if (parts.isEmpty) continue;
-      buffer.writeln('ID:${s.id} ${parts.join(' ')}');
+      final line = 'ID:${s.id} ${parts.join(' ')}\n';
+      if (maxCharacters != null &&
+          buffer.length + line.length + 4 > maxCharacters) {
+        break;
+      }
+      buffer.write(line);
+      emitted += 1;
     }
+    return emitted;
   }
 
   /// 從 AI 回覆中解析表情包標記

@@ -180,10 +180,9 @@ class _ChatWindowStatusButtonState extends State<ChatWindowStatusButton>
           zhCN: '窗口模型与活动',
         ),
         excludeFromSemantics: true,
-        child: InkResponse(
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
           onTap: widget.onPressed,
-          radius: 22,
-          containedInkWell: true,
           child: SizedBox.square(
             dimension: 44,
             child: AnimatedBuilder(
@@ -581,7 +580,8 @@ class _ChatWindowMemorySheetState extends State<ChatWindowMemorySheet> {
           child: Material(
             color: YanciTheme.surfacePanel,
             borderRadius: const BorderRadius.vertical(top: Radius.circular(22)),
-            child: Padding(
+            child: SingleChildScrollView(
+              keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
               padding: const EdgeInsets.fromLTRB(18, 18, 18, 20),
               child: Column(
                 mainAxisSize: MainAxisSize.min,

@@ -18,6 +18,7 @@ class OrbitLoadingIndicator extends StatefulWidget {
 class _OrbitLoadingIndicatorState extends State<OrbitLoadingIndicator>
     with SingleTickerProviderStateMixin {
   late AnimationController _ctrl;
+  bool _reduceMotion = false;
 
   @override
   void initState() {
@@ -26,6 +27,21 @@ class _OrbitLoadingIndicatorState extends State<OrbitLoadingIndicator>
       vsync: this,
       duration: const Duration(milliseconds: 1800),
     )..repeat();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final reduceMotion = MediaQuery.disableAnimationsOf(context);
+    if (_reduceMotion == reduceMotion) return;
+    _reduceMotion = reduceMotion;
+    if (reduceMotion) {
+      _ctrl
+        ..stop()
+        ..value = 0;
+    } else if (!_ctrl.isAnimating) {
+      _ctrl.repeat();
+    }
   }
 
   @override

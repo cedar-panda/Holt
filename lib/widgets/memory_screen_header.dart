@@ -42,8 +42,8 @@ class MemoryScreenHeader extends StatelessWidget {
         horizontal: YanciTheme.spacingSm,
         vertical: YanciTheme.spacingXs,
       ),
-      child: SizedBox(
-        height: 52,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(minHeight: 52),
         child: Row(
           children: [
             SizedBox(

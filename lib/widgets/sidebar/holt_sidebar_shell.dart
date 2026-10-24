@@ -191,7 +191,16 @@ class HoltSidebarShellState extends State<HoltSidebarShell>
       child: Stack(
         children: [
           // ── Layer 0: fixed theme/background image ──
-          Positioned.fill(child: RepaintBoundary(child: widget.background)),
+          Positioned.fill(
+            child: TickerMode(
+              // The full-height sidebar blur otherwise forces an animated
+              // background to be recomposited behind sigma-50 glass every
+              // frame. Freeze ambient motion while the drawer is visible;
+              // the last rendered frame remains as the visual backdrop.
+              enabled: !_sidebarVisible,
+              child: RepaintBoundary(child: widget.background),
+            ),
+          ),
 
           // ── Layer 1: Sidebar panel ──
           // Stays in widget tree (Offstage); avoids construction jank on open.

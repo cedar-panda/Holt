@@ -2,10 +2,13 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:image/image.dart' as img;
 
 import 'package:project_yanci/models/background_preset.dart';
 import 'package:project_yanci/services/background_foreground_service.dart';
+import 'package:project_yanci/services/image_service.dart';
 import 'package:project_yanci/services/locale_strings.dart';
+import 'package:project_yanci/services/settings_manager.dart';
 import 'package:project_yanci/theme/app_theme.dart';
 import 'package:project_yanci/widgets/gradient_background.dart';
 import 'package:project_yanci/widgets/input_bar.dart';
@@ -15,6 +18,115 @@ void main() {
   setUp(() async {
     SharedPreferences.setMockInitialValues(<String, Object>{});
     await L.setLocale('en');
+  });
+
+  test(
+    'send button preference persists shell and rejects unknown styles',
+    () async {
+      await ThemeSettings.saveSendButtonStyle('shell');
+      expect(await ThemeSettings.getSendButtonStyle(), 'shell');
+
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('send_button_style', 'unexpected-style');
+      expect(await ThemeSettings.getSendButtonStyle(), 'leaf');
+    },
+  );
+
+  test('custom send button accepts only square PNG data', () {
+    final square = img.encodePng(img.Image(width: 24, height: 24));
+    final rectangle = img.encodePng(img.Image(width: 32, height: 20));
+
+    expect(
+      ImageService.validateSendButtonPngBytes(square),
+      SendButtonImageValidation.valid,
+    );
+    expect(
+      ImageService.validateSendButtonPngBytes(rectangle),
+      SendButtonImageValidation.notSquare,
+    );
+    expect(
+      ImageService.validateSendButtonPngBytes(<int>[0xFF, 0xD8, 0xFF]),
+      SendButtonImageValidation.notPng,
+    );
+  });
+
+  testWidgets('missing custom send button path falls back to leaf', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: InputBar(
+            sendStyle: SendButtonStyle.custom,
+            sendCustomPath: '/missing/custom-send-button.png',
+            onSend: (_) {},
+          ),
+        ),
+      ),
+    );
+
+    expect(
+      find.byKey(const ValueKey('send-button-image-leaf')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('send-button-image-custom')),
+      findsNothing,
+    );
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('lit paw contrasts with both light and dark theme accents', (
+    tester,
+  ) async {
+    final originalPreset = YanciTheme.presetId;
+    addTearDown(() => YanciTheme.setPreset(originalPreset));
+    final controller = TextEditingController(text: 'hello');
+    addTearDown(controller.dispose);
+
+    for (final presetId in ['ivory', 'nightlamp']) {
+      YanciTheme.setPreset(presetId);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: InputBar(
+              key: ValueKey(presetId),
+              externalController: controller,
+              sendStyle: SendButtonStyle.paw,
+              onSend: (_) {},
+            ),
+          ),
+        ),
+      );
+
+      final pawFilter = tester.widget<ColorFiltered>(
+        find.ancestor(
+          of: find.byKey(const ValueKey('send-button-image-paw')),
+          matching: find.byType(ColorFiltered),
+        ),
+      );
+      final expectedInk = YanciTheme.accent.computeLuminance() > 0.179
+          ? Colors.black
+          : Colors.white;
+      expect(
+        pawFilter.colorFilter,
+        ColorFilter.mode(expectedInk, BlendMode.modulate),
+      );
+    }
+
+    controller.clear();
+    await tester.pump();
+    final idleFilter = tester.widget<ColorFiltered>(
+      find.ancestor(
+        of: find.byKey(const ValueKey('send-button-image-paw')),
+        matching: find.byType(ColorFiltered),
+      ),
+    );
+    expect(
+      idleFilter.colorFilter,
+      ColorFilter.mode(YanciTheme.accent, BlendMode.modulate),
+    );
+    await tester.pumpWidget(const SizedBox.shrink());
   });
 
   testWidgets('bound input follows palette, then its manual text color', (

@@ -11,6 +11,7 @@ import '../services/locale_strings.dart';
 import '../theme/app_theme.dart';
 import 'marriage_cert_card.dart';
 import 'pixel_art_editor.dart';
+import 'managed_text_controllers.dart';
 
 // ════════════════════════════════════════════════════════════════════
 // 商店 Bottom Sheet
@@ -97,81 +98,85 @@ class _ShopBottomSheetState extends State<ShopBottomSheet>
   }
 
   Future<void> _processNewItem(String imagePath) async {
-    final nameController = TextEditingController();
-    final priceController = TextEditingController(text: '100');
     bool autoRemoveBackground = false;
 
     if (!mounted) return;
 
-    final bool? confirm = await showDialog<bool>(
+    final result = await showDialog<({String name, String price})>(
       context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setStateDialog) => _ThemedDialog(
-          title: L.pick(en: 'Upload new item', zhTW: '上傳新商品'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                width: 64,
-                height: 64,
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(
-                    color: YanciTheme.accent.withValues(alpha: 0.3),
-                  ),
-                ),
-                clipBehavior: Clip.antiAlias,
-                child: Image.file(
-                  File(imagePath),
-                  fit: BoxFit.contain,
-                  filterQuality: FilterQuality.none,
-                ),
-              ),
-              const SizedBox(height: 16),
-              _ThemedTextField(
-                controller: nameController,
-                hint: L.pick(en: 'Item name', zhTW: '商品名稱'),
-              ),
-              const SizedBox(height: 8),
-              _ThemedTextField(
-                controller: priceController,
-                hint: L.pick(en: 'Shell price', zhTW: '貝殼價格'),
-                keyboardType: TextInputType.number,
-              ),
-              const SizedBox(height: 8),
-              Row(
-                children: [
-                  Checkbox(
-                    value: autoRemoveBackground,
-                    onChanged: (v) =>
-                        setStateDialog(() => autoRemoveBackground = v ?? false),
-                    activeColor: YanciTheme.accent,
-                  ),
-                  Text(
-                    L.pick(
-                      en: 'Remove background automatically (white to transparent)',
-                      zhTW: '自動去背（白底轉透明）',
-                    ),
-                    style: TextStyle(
-                      color: YanciTheme.textSecondary,
-                      fontSize: 14,
+      builder: (ctx) => ManagedTextControllers(
+        initialValues: const <String>['', '100'],
+        builder: (ctx, controllers) => StatefulBuilder(
+          builder: (ctx, setStateDialog) => _ThemedDialog(
+            title: L.pick(en: 'Upload new item', zhTW: '上傳新商品'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 64,
+                  height: 64,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: YanciTheme.accent.withValues(alpha: 0.3),
                     ),
                   ),
-                ],
-              ),
-            ],
+                  clipBehavior: Clip.antiAlias,
+                  child: Image.file(
+                    File(imagePath),
+                    fit: BoxFit.contain,
+                    filterQuality: FilterQuality.none,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                _ThemedTextField(
+                  controller: controllers[0],
+                  hint: L.pick(en: 'Item name', zhTW: '商品名稱'),
+                ),
+                const SizedBox(height: 8),
+                _ThemedTextField(
+                  controller: controllers[1],
+                  hint: L.pick(en: 'Shell price', zhTW: '貝殼價格'),
+                  keyboardType: TextInputType.number,
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Checkbox(
+                      value: autoRemoveBackground,
+                      onChanged: (v) => setStateDialog(
+                        () => autoRemoveBackground = v ?? false,
+                      ),
+                      activeColor: YanciTheme.accent,
+                    ),
+                    Text(
+                      L.pick(
+                        en: 'Remove background automatically (white to transparent)',
+                        zhTW: '自動去背（白底轉透明）',
+                      ),
+                      style: TextStyle(
+                        color: YanciTheme.textSecondary,
+                        fontSize: 14,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+            confirmLabel: L.pick(en: 'Add', zhTW: '新增'),
+            onConfirm: () => Navigator.of(
+              ctx,
+            ).pop((name: controllers[0].text, price: controllers[1].text)),
+            onCancel: () => Navigator.of(ctx).pop(),
           ),
-          confirmLabel: L.pick(en: 'Add', zhTW: '新增'),
-          onConfirm: () => Navigator.of(ctx).pop(true),
-          onCancel: () => Navigator.of(ctx).pop(false),
         ),
       ),
     );
 
-    if (confirm == true) {
-      final finalName = nameController.text.trim().isEmpty
+    if (result != null) {
+      final finalName = result.name.trim().isEmpty
           ? L.pick(en: 'Custom item', zhTW: '自定義商品')
-          : nameController.text.trim();
+          : result.name.trim();
       setState(() => _isLoading = true);
 
       String finalImagePath = imagePath;
@@ -187,7 +192,7 @@ class _ShopBottomSheetState extends State<ShopBottomSheet>
       await ShopService.addShopItem(
         name: finalName,
         description: '',
-        price: int.tryParse(priceController.text) ?? 100,
+        price: int.tryParse(result.price) ?? 100,
         type: 'non_consumable',
         category: '預設',
         sortOrder: 0,

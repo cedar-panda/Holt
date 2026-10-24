@@ -252,6 +252,58 @@ class _CharacterListScreenState extends State<CharacterListScreen> {
     );
   }
 
+  Widget _buildPageIndicator() {
+    final count = _characters.length;
+    if (count <= 1) return const SizedBox.shrink();
+    final visibleCount = count.clamp(1, 5);
+    final maxStart = count - visibleCount;
+    final start = (_currentPage - visibleCount ~/ 2).clamp(0, maxStart);
+    final indices = List<int>.generate(
+      visibleCount,
+      (offset) => start + offset,
+    );
+    final label = L.pick(
+      en: 'Character ${_currentPage + 1} of $count',
+      zhTW: '第 ${_currentPage + 1} 個角色，共 $count 個',
+      zhCN: '第 ${_currentPage + 1} 个角色，共 $count 个',
+    );
+    return Semantics(
+      label: label,
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          ...indices.map((index) {
+            final isActive = index == _currentPage;
+            return AnimatedContainer(
+              duration: MediaQuery.disableAnimationsOf(context)
+                  ? Duration.zero
+                  : const Duration(milliseconds: 200),
+              margin: const EdgeInsets.symmetric(horizontal: 3),
+              width: isActive ? 18 : 6,
+              height: 6,
+              decoration: BoxDecoration(
+                color: isActive
+                    ? YanciTheme.accent
+                    : YanciTheme.textSecondary.withValues(alpha: 0.2),
+                borderRadius: BorderRadius.circular(3),
+              ),
+            );
+          }),
+          if (count > visibleCount) ...[
+            const SizedBox(width: 8),
+            Text(
+              '${_currentPage + 1}/$count',
+              style: YanciTheme.bodySmall.copyWith(
+                fontSize: 10,
+                color: YanciTheme.textSecondary.withValues(alpha: 0.72),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final content = Column(
@@ -274,6 +326,7 @@ class _CharacterListScreenState extends State<CharacterListScreen> {
                     children: [
                       if (!widget.embedded)
                         IconButton(
+                          tooltip: L.pick(en: 'Back', zhTW: '返回', zhCN: '返回'),
                           icon: Icon(
                             Icons.arrow_back_ios_rounded,
                             size: 20,
@@ -318,6 +371,11 @@ class _CharacterListScreenState extends State<CharacterListScreen> {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       IconButton(
+                        tooltip: L.pick(
+                          en: 'Import character',
+                          zhTW: '匯入角色',
+                          zhCN: '导入角色',
+                        ),
                         icon: Icon(
                           Icons.download_rounded,
                           size: 20,
@@ -326,6 +384,11 @@ class _CharacterListScreenState extends State<CharacterListScreen> {
                         onPressed: _importFromCode,
                       ),
                       IconButton(
+                        tooltip: L.pick(
+                          en: 'Create character',
+                          zhTW: '新增角色',
+                          zhCN: '新增角色',
+                        ),
                         icon: Icon(
                           Icons.add_rounded,
                           size: 22,
@@ -384,9 +447,17 @@ class _CharacterListScreenState extends State<CharacterListScreen> {
                         ),
                       )
                     : SizedBox(
-                        height: Theme.of(context).platform == TargetPlatform.iOS
-                            ? 310
-                            : 400,
+                        height:
+                            (Theme.of(context).platform == TargetPlatform.iOS
+                                ? 310
+                                : 400) +
+                            ((YanciTheme.fontScale *
+                                            MediaQuery.textScalerOf(
+                                              context,
+                                            ).scale(1) -
+                                        1)
+                                    .clamp(0.0, 1.0) *
+                                72),
                         child: PageView.builder(
                           controller: _pageCtrl,
                           itemCount: _characters.length,
@@ -403,26 +474,7 @@ class _CharacterListScreenState extends State<CharacterListScreen> {
                 if (_characters.length > 1)
                   Padding(
                     padding: const EdgeInsets.only(top: 12),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: List.generate(_characters.length, (i) {
-                        final isActive = i == _currentPage;
-                        return AnimatedContainer(
-                          duration: const Duration(milliseconds: 200),
-                          margin: const EdgeInsets.symmetric(horizontal: 3),
-                          width: isActive ? 18 : 6,
-                          height: 6,
-                          decoration: BoxDecoration(
-                            color: isActive
-                                ? YanciTheme.accent
-                                : YanciTheme.textSecondary.withValues(
-                                    alpha: 0.2,
-                                  ),
-                            borderRadius: BorderRadius.circular(3),
-                          ),
-                        );
-                      }),
-                    ),
+                    child: _buildPageIndicator(),
                   ),
 
                 const SizedBox(height: 16),
@@ -661,21 +713,29 @@ class _CharacterListScreenState extends State<CharacterListScreen> {
                             });
                             widget.onActiveCharacterChanged?.call(id);
                           },
-                          child: Container(
+                          child: SizedBox(
                             key: const ValueKey('character-card-talk-button'),
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 12,
-                              vertical: 5,
-                            ),
-                            decoration: BoxDecoration(
-                              color: YanciTheme.accent.withValues(alpha: 0.1),
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            child: Text(
-                              L.get('char_use'),
-                              style: TextStyle(
-                                fontSize: 11,
-                                color: YanciTheme.accent,
+                            width: 64,
+                            height: 44,
+                            child: Center(
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                  vertical: 5,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: YanciTheme.accent.withValues(
+                                    alpha: 0.1,
+                                  ),
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                child: Text(
+                                  L.get('char_use'),
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    color: YanciTheme.accent,
+                                  ),
+                                ),
                               ),
                             ),
                           ),

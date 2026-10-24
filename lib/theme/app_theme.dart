@@ -22,6 +22,8 @@ class YanciTheme {
   static int starDensity = 12; // 粒子數
   static String? particleEffectOverride;
   static bool aiBubbleFlat = false; // true = AI 訊息無氣泡（平鋪）
+  static String sendButtonStyle = 'leaf';
+  static String sendButtonCustomPath = '';
   static String homeBackgroundImagePath = '';
   static double homeBackgroundImageScale = 1.0;
   static double homeBackgroundImageOffsetX = 0.0;
@@ -153,13 +155,16 @@ class YanciTheme {
   static Color get aiBubbleBorder => _preset.aiBubbleBorder;
   static String? get bgEffect => _preset.bgEffect;
   static String get particleEffect {
-    final candidate = particleEffectOverride ?? bgEffect ?? 'neural';
+    var candidate = particleEffectOverride ?? bgEffect ?? 'neural';
+    // 星光已由霧氣取代；舊設定的 'stars' 自動改用霧氣。
+    if (candidate == 'stars') candidate = 'fog';
     return particleEffectIds.contains(candidate) ? candidate : 'neural';
   }
 
   static const Set<String> particleEffectIds = {
     'neural',
     'stars',
+    'fog',
     'rain',
     'ripple',
     'ember',

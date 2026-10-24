@@ -47,10 +47,14 @@ extension _ChatRpContinuationMethods on _ChatScreenState {
   }) async {
     final continuationBudget =
         await MemorySettings.getRpContinuationSummaryMaxChars();
+    final summaryBudget = max(
+      600,
+      continuationBudget - ContextCompressor.rpContinuationRecallReserveChars,
+    );
     final continuationSummary =
         ContextCompressor.fitRpSummariesToCharacterBudget(
           source.summaries.take(1),
-          continuationBudget,
+          summaryBudget,
         );
     void update() {
       _previousWindowTurnsFuture = Future<List<Message>>.value(source.messages);
