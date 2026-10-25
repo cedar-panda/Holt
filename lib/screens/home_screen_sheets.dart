@@ -77,25 +77,11 @@ extension _HomeSheetMethods on _HomeScreenState {
                           controller: ctrl,
                           autofocus: true,
                           style: YanciTheme.bodyText.copyWith(fontSize: 14),
-                          decoration: InputDecoration(
+                          decoration: YanciTheme.themedInputDecoration(
                             hintText: L.pick(
                               en: 'Write something…',
                               zhTW: '寫點什麼……',
                             ),
-                            hintStyle: YanciTheme.bodySmall.copyWith(
-                              color: YanciTheme.textSecondary.withValues(
-                                alpha: 0.4,
-                              ),
-                            ),
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(
-                                YanciTheme.radiusSm,
-                              ),
-                              borderSide: BorderSide(
-                                color: YanciTheme.accent.withValues(alpha: 0.2),
-                              ),
-                            ),
-                            isDense: true,
                             contentPadding: const EdgeInsets.symmetric(
                               horizontal: 12,
                               vertical: 10,
@@ -704,13 +690,8 @@ extension _HomeSheetMethods on _HomeScreenState {
           controller: ctrl,
           autofocus: true,
           style: YanciTheme.bodyText,
-          decoration: InputDecoration(
+          decoration: YanciTheme.themedInputDecoration(
             hintText: L.pick(en: 'Enter a title…', zhTW: '輸入標題……'),
-            hintStyle: YanciTheme.bodySmall.copyWith(
-              color: YanciTheme.textSecondary.withValues(alpha: 0.4),
-            ),
-            border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-            isDense: true,
             contentPadding: const EdgeInsets.symmetric(
               horizontal: 12,
               vertical: 10,

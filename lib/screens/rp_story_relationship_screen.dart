@@ -241,7 +241,7 @@ class _RpStoryRelationshipScreenState extends State<RpStoryRelationshipScreen> {
                 ),
                 DropdownButtonFormField<String>(
                   initialValue: controllers[2].text,
-                  decoration: InputDecoration(
+                  decoration: YanciTheme.themedInputDecoration(
                     labelText: L.pick(
                       en: 'Visibility',
                       zhTW: '公開狀態',
@@ -342,7 +342,7 @@ class _RpStoryRelationshipScreenState extends State<RpStoryRelationshipScreen> {
                   if (statuses.isNotEmpty && type != 'scene')
                     DropdownButtonFormField<String>(
                       initialValue: status,
-                      decoration: InputDecoration(
+                      decoration: YanciTheme.themedInputDecoration(
                         labelText: L.pick(
                           en: 'Progress',
                           zhTW: '進度',
@@ -427,7 +427,8 @@ class _RpStoryRelationshipScreenState extends State<RpStoryRelationshipScreen> {
       controller: controller,
       minLines: 1,
       maxLines: 3,
-      decoration: InputDecoration(labelText: label),
+      style: YanciTheme.bodyText,
+      decoration: YanciTheme.themedInputDecoration(labelText: label),
     ),
   );
 
@@ -495,7 +496,8 @@ class _RpStoryRelationshipScreenState extends State<RpStoryRelationshipScreen> {
                 child: TextField(
                   controller: _searchController,
                   onChanged: (_) => _showStates ? setState(() {}) : _load(),
-                  decoration: InputDecoration(
+                  style: YanciTheme.bodyText,
+                  decoration: YanciTheme.themedInputDecoration(
                     hintText: _showStates
                         ? L.pick(
                             en: 'Search story states',
@@ -643,20 +645,21 @@ class _RpStoryRelationshipScreenState extends State<RpStoryRelationshipScreen> {
     return InkWell(
       onTap: () => _editState(row),
       borderRadius: BorderRadius.circular(14),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 11, horizontal: 12),
+        decoration: BoxDecoration(
+          color: YanciTheme.glassInputBg.withValues(
+            alpha: YanciTheme.isDark ? 0.24 : 0.42,
+          ),
+          borderRadius: BorderRadius.circular(YanciTheme.radiusInput),
+          border: Border.all(color: YanciTheme.glassBorder, width: 0.5),
+        ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
               children: [
-                Text(
-                  _stateTypeLabel(type),
-                  style: YanciTheme.bodySmall.copyWith(
-                    color: YanciTheme.accent.withValues(alpha: 0.78),
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
+                _badge(_stateTypeLabel(type), accent: true),
                 if (people.isNotEmpty) ...[
                   const SizedBox(width: 8),
                   Expanded(
@@ -671,13 +674,7 @@ class _RpStoryRelationshipScreenState extends State<RpStoryRelationshipScreen> {
                 ] else
                   const Spacer(),
                 if (layer != 'main' && layer != 'mainline')
-                  Text(
-                    _layerLabel(layer),
-                    style: YanciTheme.bodySmall.copyWith(
-                      fontSize: 10,
-                      color: YanciTheme.textSecondary.withValues(alpha: 0.6),
-                    ),
-                  ),
+                  _badge(_layerLabel(layer)),
               ],
             ),
             const SizedBox(height: 5),
@@ -687,15 +684,25 @@ class _RpStoryRelationshipScreenState extends State<RpStoryRelationshipScreen> {
             ),
             if (status.isNotEmpty || storyTime.isNotEmpty) ...[
               const SizedBox(height: 4),
-              Text(
-                <String>[
-                  if (status.isNotEmpty) _statusLabel(status),
-                  if (storyTime.isNotEmpty) storyTime,
-                ].join(' · '),
-                style: YanciTheme.bodySmall.copyWith(
-                  fontSize: 10.5,
-                  color: YanciTheme.textSecondary.withValues(alpha: 0.64),
-                ),
+              Row(
+                children: <Widget>[
+                  if (status.isNotEmpty) _badge(_statusLabel(status)),
+                  if (status.isNotEmpty && storyTime.isNotEmpty)
+                    const SizedBox(width: 7),
+                  if (storyTime.isNotEmpty)
+                    Expanded(
+                      child: Text(
+                        storyTime,
+                        overflow: TextOverflow.ellipsis,
+                        style: YanciTheme.bodySmall.copyWith(
+                          fontSize: 10.5,
+                          color: YanciTheme.textSecondary.withValues(
+                            alpha: 0.64,
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
               ),
             ],
           ],
@@ -714,6 +721,31 @@ class _RpStoryRelationshipScreenState extends State<RpStoryRelationshipScreen> {
           color: YanciTheme.textSecondary,
           height: 1.45,
         ),
+      ),
+    ),
+  );
+
+  Widget _badge(String value, {bool accent = false}) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+    decoration: BoxDecoration(
+      color: (accent ? YanciTheme.accent : YanciTheme.textSecondary).withValues(
+        alpha: accent ? 0.11 : 0.07,
+      ),
+      borderRadius: BorderRadius.circular(YanciTheme.radiusPill),
+      border: Border.all(
+        color: (accent ? YanciTheme.accent : YanciTheme.textSecondary)
+            .withValues(alpha: accent ? 0.24 : 0.14),
+        width: 0.5,
+      ),
+    ),
+    child: Text(
+      value,
+      style: YanciTheme.bodySmall.copyWith(
+        fontSize: 10,
+        height: 1.15,
+        color: accent
+            ? YanciTheme.accent
+            : YanciTheme.textSecondary.withValues(alpha: 0.78),
       ),
     ),
   );
@@ -805,8 +837,16 @@ class _RpStoryRelationshipScreenState extends State<RpStoryRelationshipScreen> {
   Widget _characterTile(Map<String, dynamic> row) => InkWell(
     onTap: () => _editCharacter(row),
     borderRadius: BorderRadius.circular(14),
-    child: Padding(
-      padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
+    child: Container(
+      margin: const EdgeInsets.only(bottom: 6),
+      padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
+      decoration: BoxDecoration(
+        color: YanciTheme.glassInputBg.withValues(
+          alpha: YanciTheme.isDark ? 0.18 : 0.34,
+        ),
+        borderRadius: BorderRadius.circular(YanciTheme.radiusInput),
+        border: Border.all(color: YanciTheme.glassBorder, width: 0.5),
+      ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -869,8 +909,16 @@ class _RpStoryRelationshipScreenState extends State<RpStoryRelationshipScreen> {
   Widget _relationshipTile(Map<String, dynamic> row) => InkWell(
     onTap: () => _editRelationship(row),
     borderRadius: BorderRadius.circular(14),
-    child: Padding(
-      padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
+    child: Container(
+      margin: const EdgeInsets.only(bottom: 6),
+      padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
+      decoration: BoxDecoration(
+        color: YanciTheme.glassInputBg.withValues(
+          alpha: YanciTheme.isDark ? 0.18 : 0.34,
+        ),
+        borderRadius: BorderRadius.circular(YanciTheme.radiusInput),
+        border: Border.all(color: YanciTheme.glassBorder, width: 0.5),
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [

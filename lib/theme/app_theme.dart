@@ -311,6 +311,50 @@ class YanciTheme {
   static const double radiusPill = 999.0;
   static double get radiusBubble => bubbleRadius;
 
+  /// Shared filled-field treatment for secondary pages and sheets.
+  /// This creates a themed surface only; callers must not add BackdropFilter.
+  static InputDecoration themedInputDecoration({
+    String? labelText,
+    String? hintText,
+    Widget? prefixIcon,
+    Widget? suffixIcon,
+    EdgeInsetsGeometry contentPadding = const EdgeInsets.symmetric(
+      horizontal: 14,
+      vertical: 11,
+    ),
+  }) {
+    final enabledSide = BorderSide(color: glassBorder, width: 0.7);
+    final focusedSide = BorderSide(
+      color: accent.withValues(alpha: 0.55),
+      width: 1.1,
+    );
+    final radius = BorderRadius.circular(radiusInput);
+    return InputDecoration(
+      labelText: labelText,
+      hintText: hintText,
+      prefixIcon: prefixIcon,
+      suffixIcon: suffixIcon,
+      filled: true,
+      fillColor: glassInputBg.withValues(alpha: isDark ? 0.45 : 0.65),
+      contentPadding: contentPadding,
+      labelStyle: bodySmall.copyWith(color: textSecondary),
+      hintStyle: bodySmall.copyWith(
+        color: textSecondary.withValues(alpha: 0.62),
+      ),
+      prefixIconColor: textSecondary.withValues(alpha: 0.72),
+      suffixIconColor: textSecondary.withValues(alpha: 0.72),
+      border: OutlineInputBorder(borderRadius: radius, borderSide: enabledSide),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: radius,
+        borderSide: enabledSide,
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: radius,
+        borderSide: focusedSide,
+      ),
+    );
+  }
+
   /// Adds a very small top-light/bottom-shade shift while preserving the
   /// bubble's source alpha. This is a paint-only glaze, not backdrop blur.
   static LinearGradient bubbleGlazeGradient(

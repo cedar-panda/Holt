@@ -32,6 +32,7 @@
 - 角色時間線：`RpCharacterTimelineService.recallPrompt`，加入 request-only 的 RP 時間線參考；一般回合隱藏內部 `event_key`，只有 user 明確要求修正時間線時才附上。
 - 世界書：`RpWorldbookService.recallPrompt`，加入 request-only 的世界設定參考。`always` 無條件候選，`triggered` 只依條目自己的 triggers 命中，`scene` 依 triggers、完整 scope 片語或較強場景詞共現命中；不再用 query 的 2 字碎片反查整段 scope。`character_global` 可跨該角色故事線讀取，`storyline` 只讀目前故事線。
 - 來源摘要與續接內容由 `ContextCompressor.buildRpArchiveContext` 組合；歸檔請求只保留一份 user 人設與一份本輪實際提及人物的精簡結構，不重複傾倒 evidence、來源 ID、建立時間等內部欄位。
+- 顯示與人工編輯入口：`lib/screens/rp_story_relationship_screen.dart` 與 `lib/screens/rp_worldbook_screen.dart`。搜尋、文字欄位與枚舉選擇共用 `YanciTheme.themedInputDecoration`；人物、關係、劇情狀態以輕量卡片分組，狀態類型／層級／進度以徽章顯示。這些視覺調整不改資料寫入或 Prompt 注入。
 
 ## 檢索方式（字面 / BM25 / 向量 / 名字觸發 / 無）
 - 人物、關係、狀態：以故事線、角色與有效狀態篩選；不是記憶 FTS5。人物參考預算預設 1000 tokens；完整人物最多 3、場外精簡人物最多 6。狀態預算預設 800 tokens，另按 scene／identity／knowledge／body／promise／item／plot 設全域上限，同一主客體同類最多 2 條。

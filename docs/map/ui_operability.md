@@ -21,6 +21,8 @@
 - 大字體：`CharacterListScreen.build` 增加卡片高度；`CharacterSignaturePanel._buildPanel` 先量測再決定高度。
 - 角色輪盤高度：`CharacterListScreen.build` 依可用螢幕高度取約 40%，並限制在 320～380pt，再疊加既有文字放大補償；iOS／Android 不再使用 310／400 兩套斷裂的固定高度。
 - 彈窗與選單表面：初次命名、便箋、歷史編輯／刪除、圖片／文字選單、刮刮卡與轉帳面板共用 `YanciTheme.surfacePanel`／`glassBorder`，沒有新增即時 `BackdropFilter`。
+- 次級表單：`lib/theme/app_theme.dart:YanciTheme.themedInputDecoration` 提供 14pt 圓角、主題填色、0.7px 邊界與 accent 聚焦線；便箋、歷史標題、RP 人物／關係／狀態與世界書編輯共用，僅使用主題色表面，不新增即時模糊。
+- RP 資料閱讀：`RpStoryRelationshipScreen` 的人物、關係與狀態使用低對比 0.5px 卡片邊界；狀態類型、敘事層級與進度使用小型主題徽章，世界書既有卡片層級不重複加框。
 - 模型入口：`lib/screens/chat_screen_app_bar.dart:_buildAppBar` 擴大中央模型入口熱區並提高次級文字辨識度。
 - 這些 UI 狀態不注入 prompt。
 - 人設卡頁以 dirty tracking + `PopScope` 攔截返回，提供儲存並離開／捨棄／取消；分享前先保存目前表單，編輯其他角色不偷換全域 active character。

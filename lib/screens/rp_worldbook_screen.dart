@@ -299,7 +299,12 @@ class _RpWorldbookScreenState extends State<RpWorldbookScreen> {
                 ),
               ),
               const SizedBox(height: 12),
-              TextField(controller: controllers.single, autofocus: true),
+              TextField(
+                controller: controllers.single,
+                autofocus: true,
+                style: YanciTheme.bodyText,
+                decoration: YanciTheme.themedInputDecoration(),
+              ),
             ],
           ),
           actions: [
@@ -337,7 +342,8 @@ class _RpWorldbookScreenState extends State<RpWorldbookScreen> {
       controller: controller,
       minLines: 1,
       maxLines: maxLines,
-      decoration: InputDecoration(labelText: label),
+      style: YanciTheme.bodyText,
+      decoration: YanciTheme.themedInputDecoration(labelText: label),
     ),
   );
 
@@ -354,7 +360,7 @@ class _RpWorldbookScreenState extends State<RpWorldbookScreen> {
       child: DropdownButtonFormField<String>(
         initialValue: initialValue,
         isExpanded: true,
-        decoration: InputDecoration(labelText: label),
+        decoration: YanciTheme.themedInputDecoration(labelText: label),
         items: values
             .map(
               (item) => DropdownMenuItem<String>(
@@ -472,7 +478,8 @@ class _RpWorldbookScreenState extends State<RpWorldbookScreen> {
                   child: TextField(
                     controller: _searchController,
                     onChanged: (_) => _load(),
-                    decoration: InputDecoration(
+                    style: YanciTheme.bodyText,
+                    decoration: YanciTheme.themedInputDecoration(
                       hintText: L.pick(
                         en: 'Search worldbook',
                         zhTW: '搜尋世界設定',
@@ -785,7 +792,7 @@ class _RpWorldbookScreenState extends State<RpWorldbookScreen> {
                     DropdownButtonFormField<String>(
                       initialValue: targetEntryKey,
                       isExpanded: true,
-                      decoration: InputDecoration(
+                      decoration: YanciTheme.themedInputDecoration(
                         labelText: L.pick(
                           en: 'Resolution',
                           zhTW: '處理方式',

@@ -11,6 +11,26 @@ import 'package:project_yanci/theme/theme_presets.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  test('shared themed fields use a filled rounded outline without blur', () {
+    YanciTheme.setPreset('ivory');
+    final decoration = YanciTheme.themedInputDecoration(
+      labelText: 'Name',
+      hintText: 'Value',
+      prefixIcon: const Icon(Icons.search_rounded),
+    );
+
+    expect(decoration.filled, isTrue);
+    expect(decoration.labelText, 'Name');
+    expect(decoration.hintText, 'Value');
+    expect(decoration.border, isA<OutlineInputBorder>());
+    expect(decoration.enabledBorder, isA<OutlineInputBorder>());
+    expect(decoration.focusedBorder, isA<OutlineInputBorder>());
+    final enabled = decoration.enabledBorder! as OutlineInputBorder;
+    final focused = decoration.focusedBorder! as OutlineInputBorder;
+    expect(enabled.borderRadius.topLeft.x, YanciTheme.radiusInput);
+    expect(focused.borderSide.width, 1.1);
+  });
+
   test('bubble radius and brightness share the same runtime source', () {
     final originalPreset = YanciTheme.presetId;
     final originalRadius = YanciTheme.bubbleRadius;
