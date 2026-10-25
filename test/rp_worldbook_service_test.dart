@@ -223,6 +223,22 @@ void main() {
       );
       expect(triggeredGlobal, contains('王室曆法'));
       expect(triggeredGlobal, contains('共同曆法'));
+
+      final stablePrefix = await RpWorldbookService.recallAlwaysOnPrompt(
+        characterId: 'char-a',
+        continuityId: 'story-a',
+      );
+      expect(stablePrefix, contains('共同曆法'));
+      expect(stablePrefix, isNot(contains('王室曆法')));
+      expect(stablePrefix, isNot(contains('北境禁令')));
+
+      final dynamicRecall = await RpWorldbookService.recallTriggeredPrompt(
+        characterId: 'char-a',
+        continuityId: 'story-a',
+        query: '一行人抵達北境城門',
+      );
+      expect(dynamicRecall, contains('北境禁令'));
+      expect(dynamicRecall, isNot(contains('共同曆法')));
     },
   );
 
@@ -278,6 +294,15 @@ void main() {
       );
       expect(RegExp(r'常駐設定 \d+').allMatches(prompt), hasLength(3));
       expect(prompt, contains('銀月橋規則'));
+
+      final tightPrompt = await RpWorldbookService.recallPrompt(
+        characterId: 'char-a',
+        continuityId: 'story-a',
+        query: '眾人抵達銀月橋',
+        maxChars: 150,
+      );
+      expect(tightPrompt, contains('常駐設定'));
+      expect(tightPrompt, isNot(contains('銀月橋規則')));
     },
   );
 

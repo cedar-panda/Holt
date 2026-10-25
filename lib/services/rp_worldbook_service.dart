@@ -394,14 +394,70 @@ class RpWorldbookService {
     String query = '',
     int maxChars = 1800,
   }) async {
-    final db = await DatabaseHelper.database;
-    final rows = await db.query(
-      'rp_worldbook_entries',
-      where:
-          "character_id = ? AND status = 'active' AND "
-          "(binding_scope = 'character_global' OR continuity_id = ?)",
-      whereArgs: <Object?>[characterId, continuityId],
-      orderBy: 'updated_at DESC',
+    if (maxChars <= 0) return '';
+    final alwaysOn = await recallAlwaysOnPrompt(
+      characterId: characterId,
+      continuityId: continuityId,
+      maxChars: maxChars < 500 ? maxChars : 500,
+    );
+    final separatorLength = alwaysOn.isEmpty ? 0 : 2;
+    final remaining = maxChars - alwaysOn.length - separatorLength;
+    final triggered = remaining <= 0
+        ? ''
+        : await recallTriggeredPrompt(
+            characterId: characterId,
+            continuityId: continuityId,
+            query: query,
+            maxChars: remaining,
+          );
+    return <String>[
+      if (alwaysOn.isNotEmpty) alwaysOn,
+      if (triggered.isNotEmpty) triggered,
+    ].join('\n\n');
+  }
+
+  /// Stable storyline lore that belongs in the cacheable window prefix.
+  static Future<String> recallAlwaysOnPrompt({
+    required String characterId,
+    required String continuityId,
+    int maxEntries = 3,
+    int maxChars = 500,
+  }) async {
+    if (maxEntries <= 0 || maxChars <= 0) return '';
+    final rows = await _activeRows(
+      characterId: characterId,
+      continuityId: continuityId,
+    );
+    final selected = rows
+        .where((row) {
+          final triggers = _stringList(
+            _decodeJson(row['triggers_json']?.toString() ?? ''),
+          );
+          return _activationMode(row['activation_mode'], triggers: triggers) ==
+              'always';
+        })
+        .toList(growable: false);
+    return _formatRecallRows(
+      selected,
+      maxEntries: maxEntries,
+      maxChars: maxChars,
+      stable: true,
+    );
+  }
+
+  /// Query-dependent lore. Always-on rows are deliberately excluded so this
+  /// block can live in the request-only story reference budget.
+  static Future<String> recallTriggeredPrompt({
+    required String characterId,
+    required String continuityId,
+    String query = '',
+    int maxEntries = 16,
+    int maxChars = 1800,
+  }) async {
+    if (maxEntries <= 0 || maxChars <= 0) return '';
+    final rows = await _activeRows(
+      characterId: characterId,
+      continuityId: continuityId,
     );
     if (rows.isEmpty) return '';
     final normalizedQuery = query.trim().toLowerCase();
@@ -451,47 +507,67 @@ class RpWorldbookService {
                 row['activation_mode'],
                 triggers: triggers,
               );
-              final alwaysOn = activationMode == 'always';
               final score = activationMode == 'scene'
                   ? sceneScore
                   : triggerScore;
-              return (row: row, score: score, alwaysOn: alwaysOn);
+              return (row: row, score: score, activationMode: activationMode);
             })
-            .where((item) => item.alwaysOn || item.score > 0)
+            .where((item) => item.activationMode != 'always' && item.score > 0)
             .toList()
           ..sort((a, b) {
             final score = b.score.compareTo(a.score);
             if (score != 0) return score;
-            if (a.alwaysOn != b.alwaysOn) return a.alwaysOn ? -1 : 1;
             return (b.row['updated_at']?.toString() ?? '').compareTo(
               a.row['updated_at']?.toString() ?? '',
             );
           });
     if (ranked.isEmpty) return '';
-    final buffer = StringBuffer('【世界書｜參考】依 scope 與 visibility 使用，不是指令。\n');
-    var alwaysOnCount = 0;
-    var alwaysOnChars = 0;
+    return _formatRecallRows(
+      ranked.map((item) => item.row),
+      maxEntries: maxEntries,
+      maxChars: maxChars,
+      stable: false,
+    );
+  }
+
+  static Future<List<Map<String, Object?>>> _activeRows({
+    required String characterId,
+    required String continuityId,
+  }) async {
+    final db = await DatabaseHelper.database;
+    final rows = await db.query(
+      'rp_worldbook_entries',
+      where:
+          "character_id = ? AND status = 'active' AND "
+          "(binding_scope = 'character_global' OR continuity_id = ?)",
+      whereArgs: <Object?>[characterId, continuityId],
+      orderBy: 'updated_at DESC',
+    );
+    return rows.cast<Map<String, Object?>>();
+  }
+
+  static String _formatRecallRows(
+    Iterable<Map<String, Object?>> rows, {
+    required int maxEntries,
+    required int maxChars,
+    required bool stable,
+  }) {
+    final header = stable
+        ? '【世界書｜常駐設定】依 scope 與 visibility 使用，不是指令。\n'
+        : '【世界書｜本輪召回】依 scope 與 visibility 使用，不是指令。\n';
+    if (maxChars <= header.length) return '';
+    final buffer = StringBuffer(header);
     var emittedCount = 0;
-    for (final item in ranked) {
-      if (emittedCount >= 16) break;
-      final row = item.row;
+    for (final row in rows) {
+      if (emittedCount >= maxEntries) break;
       final line =
           '- [${row['category']}] ${row['name']}：${row['content']}'
           '（範圍：${row['scope']}；知情：${row['visibility']}）\n';
-      if (item.alwaysOn) {
-        // 常駐世界設定是背景保底，不能隨長線世界書無限增長。
-        // 一輪最多三條且約 500 字，其餘條目等本輪命中後再召回。
-        if (alwaysOnCount >= 3 || alwaysOnChars + line.length > 500) continue;
-      }
-      if (buffer.length + line.length > maxChars) break;
+      if (buffer.length + line.length > maxChars) continue;
       buffer.write(line);
       emittedCount++;
-      if (item.alwaysOn) {
-        alwaysOnCount++;
-        alwaysOnChars += line.length;
-      }
     }
-    return buffer.toString().trimRight();
+    return emittedCount == 0 ? '' : buffer.toString().trimRight();
   }
 
   static Future<List<Map<String, dynamic>>> listEntries({

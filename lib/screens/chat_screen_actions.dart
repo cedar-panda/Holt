@@ -1277,6 +1277,7 @@ extension _ChatActionMethods on _ChatScreenState {
       final toolFeatures = await ToolFeatureSettings.load();
       final bundle = await _buildCommonStaticParts(
         characterId: charId,
+        continuityId: sessionIdentity.continuityId,
         systemPrompt: systemPrompt,
         charDesc: charData?['description'] as String? ?? '',
         characterName: charData?['name'] as String? ?? '',

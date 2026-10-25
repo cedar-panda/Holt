@@ -484,7 +484,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
               continuityId: sessionIdentity.continuityId,
               recentMessages: _messages,
             ),
-            RpWorldbookService.recallPrompt(
+            RpWorldbookService.recallTriggeredPrompt(
               characterId: charId,
               continuityId: sessionIdentity.continuityId,
               query: promptVisibleOutboundText,
@@ -528,6 +528,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
     final staticWindowSummary = await staticWindowSummaryF;
     final staticBundle = await _buildCommonStaticParts(
       characterId: charId,
+      continuityId: sessionIdentity.continuityId,
       systemPrompt: systemPrompt,
       charDesc: charDesc,
       characterName: charName,
@@ -2104,7 +2105,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
               continuityId: sessionIdentity.continuityId,
               recentMessages: _messages,
             ),
-            RpWorldbookService.recallPrompt(
+            RpWorldbookService.recallTriggeredPrompt(
               characterId: _activeCharacterId,
               continuityId: sessionIdentity.continuityId,
               query: imageRecallQuery,
@@ -2166,6 +2167,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
     );
     final staticBundle = await _buildCommonStaticParts(
       characterId: _activeCharacterId,
+      continuityId: sessionIdentity.continuityId,
       systemPrompt: systemPrompt,
       charDesc: imgCharDesc,
       characterName: imgCharName,

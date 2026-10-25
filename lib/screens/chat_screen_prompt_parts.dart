@@ -272,6 +272,7 @@ extension _ChatPromptPartMethods on _ChatScreenState {
 
   Future<_StaticPromptBundle> _buildCommonStaticParts({
     required String characterId,
+    required String continuityId,
     required String systemPrompt,
     required String charDesc,
     required String characterName,
@@ -377,6 +378,15 @@ extension _ChatPromptPartMethods on _ChatScreenState {
     }
     if (staticWindowSummary.isNotEmpty) {
       windowParts.add(staticWindowSummary);
+    }
+    if (contextMode == ContextMode.rp) {
+      final alwaysOnWorldbook = await RpWorldbookService.recallAlwaysOnPrompt(
+        characterId: characterId,
+        continuityId: continuityId,
+      );
+      if (alwaysOnWorldbook.isNotEmpty) {
+        windowParts.add(alwaysOnWorldbook);
+      }
     }
 
     final toolSections = <String>[];
