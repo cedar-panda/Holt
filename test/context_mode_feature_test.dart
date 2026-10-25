@@ -231,6 +231,56 @@ void main() {
     expect(decoded.recallSegments.last.keywords, hasLength(1));
   });
 
+  test('RP recall anchors restore the complete summary paragraph locally', () {
+    final decoded = ContextCompressor.decodeSummaryEnvelope(r'''
+{"storyline_id":"story-a","summary":"第一段：渡口交付青鸞印信，並約定只在危急時啟用。\n\n第二段：兩人在藥鋪立下冬至之約。","timeline":[],"story_states":[],"story_characters":[],"relationships":[],"recall_segments":[{"segment_order":1,"title":"印信交付","anchor":"第一段：渡口交付青鸞印信","keywords":["青鸞印信交付"]},{"segment_order":2,"title":"冬至之約","anchor":"第二段：兩人在藥鋪立下冬至","keywords":["藥鋪冬至之約"]}]}
+''');
+
+    expect(decoded.recallSegments, hasLength(2));
+    expect(decoded.recallSegments.first.content, isEmpty);
+    expect(decoded.recallSegments.first.anchor, '第一段：渡口交付青鸞印信');
+
+    final segments = ContextCompressor.buildRpRecallSegmentDrafts(
+      summary: decoded.summary,
+      modelSegments: decoded.recallSegments,
+    );
+    expect(segments, hasLength(2));
+    expect(segments.first.content, '第一段：渡口交付青鸞印信，並約定只在危急時啟用。');
+    expect(segments.first.keywords, <String>['青鸞印信交付']);
+    expect(segments.first.tokenCount, greaterThan(0));
+    expect(segments.last.content, '第二段：兩人在藥鋪立下冬至之約。');
+  });
+
+  test('RP recall title and order remain a lightweight locator fallback', () {
+    const summary = '''
+### ——主線——
+**[物品] 青鸞印信交付**
+渡口交付印信並約定用途。
+
+**[承諾] 冬至之約**
+兩人在藥鋪約定冬至重逢。
+''';
+    final segments = ContextCompressor.buildRpRecallSegmentDrafts(
+      summary: summary,
+      modelSegments: const <SummaryRecallSegment>[
+        SummaryRecallSegment(
+          order: 1,
+          title: '青鸞印信交付',
+          keywords: <String>['青鸞印信交付'],
+        ),
+        SummaryRecallSegment(
+          order: 2,
+          title: '冬至之約',
+          keywords: <String>['藥鋪冬至之約'],
+        ),
+      ],
+    );
+
+    expect(segments, hasLength(2));
+    expect(segments.first.content, contains('渡口交付印信並約定用途'));
+    expect(segments.last.content, contains('兩人在藥鋪約定冬至重逢'));
+  });
+
   test('RP recall fallback indexes each paragraph with one label', () {
     final segments = ContextCompressor.buildRpRecallSegmentDrafts(
       summary: '### ——主線——\n渡口交付青鸞印信。\n\n藥鋪立下冬至之約。',

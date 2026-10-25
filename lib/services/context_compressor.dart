@@ -2497,6 +2497,8 @@ Rules:
         _ => 0,
       };
       final content = value['content']?.toString().trim() ?? '';
+      final anchor = value['anchor']?.toString().trim() ?? '';
+      final title = value['title']?.toString().trim() ?? '';
       final rawKeywords = value['keywords'];
       final keywords = rawKeywords is List
           ? rawKeywords
@@ -2506,22 +2508,27 @@ Rules:
                 .take(1)
                 .toList(growable: false)
           : const <String>[];
-      // The model must bind its labels to text that is actually present in
-      // the replacement summary. Dropping an unbound segment is safer than
-      // creating a recall path to invented or stale material.
+      final hasValidLegacyContent =
+          content.isNotEmpty &&
+          !RegExp(r'\n\s*\n').hasMatch(content) &&
+          summary.contains(content);
+      final hasLightweightLocator =
+          anchor.isNotEmpty || (content.isEmpty && title.isNotEmpty);
+      // Legacy full-content rows must still bind to the replacement summary.
+      // New rows may use an exact anchor, or title + order as a final fallback.
       if (order <= 0 ||
-          !usedOrders.add(order) ||
-          content.isEmpty ||
-          RegExp(r'\n\s*\n').hasMatch(content) ||
+          usedOrders.contains(order) ||
           keywords.isEmpty ||
-          !summary.contains(content)) {
+          (!hasValidLegacyContent && !hasLightweightLocator)) {
         continue;
       }
+      usedOrders.add(order);
       result.add(
         SummaryRecallSegment(
           order: order,
-          title: value['title']?.toString().trim() ?? '',
-          content: content,
+          title: title,
+          content: hasValidLegacyContent ? content : '',
+          anchor: anchor,
           keywords: keywords,
         ),
       );
@@ -2542,6 +2549,35 @@ Rules:
     final normalized = normalizeRpSummaryFormat(summary).trim();
     if (normalized.isEmpty) return const <ContextSummarySegmentDraft>[];
 
+    final paragraphs =
+        <({int order, int start, int end, String title, String content})>[];
+    var searchOffset = 0;
+    for (final segment in _splitSummarySegments(normalized).expand((segment) {
+      final parts = segment.content
+          .split(RegExp(r'\n\s*\n'))
+          .map((paragraph) => paragraph.trim())
+          .where((paragraph) => paragraph.isNotEmpty)
+          .toList(growable: false);
+      return <_SummarySegment>[
+        for (var index = 0; index < parts.length; index++)
+          _SummarySegment(index == 0 ? segment.title : '', parts[index]),
+      ];
+    })) {
+      final content = segment.content.trim();
+      var start = normalized.indexOf(content, searchOffset);
+      if (start < 0) start = normalized.indexOf(content);
+      if (start < 0 || content.isEmpty) continue;
+      final end = start + content.length;
+      paragraphs.add((
+        order: paragraphs.length + 1,
+        start: start,
+        end: end,
+        title: segment.title.trim(),
+        content: content,
+      ));
+      searchOffset = end;
+    }
+
     final indexed =
         <
           ({
@@ -2552,48 +2588,108 @@ Rules:
             List<String> keywords,
           })
         >[];
+    final usedParagraphs = <int>{};
     for (final segment in modelSegments) {
-      final content = segment.content.trim();
-      final start = normalized.indexOf(content);
-      if (start < 0 ||
-          segment.keywords.isEmpty ||
-          RegExp(r'\n\s*\n').hasMatch(content)) {
-        continue;
+      if (segment.keywords.isEmpty) continue;
+      final legacyContent = segment.content.trim();
+      if (legacyContent.isNotEmpty &&
+          !RegExp(r'\n\s*\n').hasMatch(legacyContent)) {
+        final start = normalized.indexOf(legacyContent);
+        if (start >= 0) {
+          final end = start + legacyContent.length;
+          indexed.add((
+            start: start,
+            end: end,
+            title: segment.title.trim(),
+            content: legacyContent,
+            keywords: segment.keywords,
+          ));
+          for (var index = 0; index < paragraphs.length; index++) {
+            final paragraph = paragraphs[index];
+            if (paragraph.start < end && paragraph.end > start) {
+              usedParagraphs.add(index);
+            }
+          }
+          continue;
+        }
       }
+
+      int? matchedIndex;
+      final anchor = segment.anchor.trim();
+      if (anchor.isNotEmpty) {
+        final startsWithMatches = <int>[
+          for (var index = 0; index < paragraphs.length; index++)
+            if (!usedParagraphs.contains(index) &&
+                paragraphs[index].content.startsWith(anchor))
+              index,
+        ];
+        if (startsWithMatches.length == 1) {
+          matchedIndex = startsWithMatches.single;
+        } else {
+          final containsMatches = <int>[
+            for (var index = 0; index < paragraphs.length; index++)
+              if (!usedParagraphs.contains(index) &&
+                  paragraphs[index].content.contains(anchor))
+                index,
+          ];
+          if (containsMatches.length == 1) {
+            matchedIndex = containsMatches.single;
+          }
+        }
+      }
+
+      final normalizedTitle = _normalizeRecallTitle(segment.title);
+      if (matchedIndex == null && normalizedTitle.isNotEmpty) {
+        final titleMatches = <int>[
+          for (var index = 0; index < paragraphs.length; index++)
+            if (!usedParagraphs.contains(index) &&
+                _recallTitlesMatch(
+                  normalizedTitle,
+                  _normalizeRecallTitle(paragraphs[index].title),
+                ))
+              index,
+        ];
+        if (titleMatches.length == 1) matchedIndex = titleMatches.single;
+      }
+
+      final orderIndex = segment.order - 1;
+      if (matchedIndex == null &&
+          orderIndex >= 0 &&
+          orderIndex < paragraphs.length &&
+          !usedParagraphs.contains(orderIndex)) {
+        matchedIndex = orderIndex;
+      }
+      if (matchedIndex == null) continue;
+
+      final paragraph = paragraphs[matchedIndex];
+      usedParagraphs.add(matchedIndex);
       indexed.add((
-        start: start,
-        end: start + content.length,
-        title: segment.title.trim(),
-        content: content,
+        start: paragraph.start,
+        end: paragraph.end,
+        title: segment.title.trim().isEmpty
+            ? paragraph.title
+            : segment.title.trim(),
+        content: paragraph.content,
         keywords: segment.keywords,
       ));
     }
 
-    for (final segment in _splitSummarySegments(normalized).expand((segment) {
-      final paragraphs = segment.content
-          .split(RegExp(r'\n\s*\n'))
-          .map((paragraph) => paragraph.trim())
-          .where((paragraph) => paragraph.isNotEmpty)
-          .toList(growable: false);
-      return <_SummarySegment>[
-        for (var index = 0; index < paragraphs.length; index++)
-          _SummarySegment(index == 0 ? segment.title : '', paragraphs[index]),
-      ];
-    })) {
-      final content = segment.content.trim();
-      final start = normalized.indexOf(content);
-      if (start < 0 || content.isEmpty) continue;
-      final end = start + content.length;
+    for (final paragraph in paragraphs) {
+      final content = paragraph.content;
+      final start = paragraph.start;
+      final end = paragraph.end;
       final covered = indexed.any(
         (item) => item.start < end && item.end > start,
       );
       if (covered) continue;
-      final keywords = _fallbackRecallKeywords(segment);
+      final keywords = _fallbackRecallKeywords(
+        _SummarySegment(paragraph.title, content),
+      );
       if (keywords.isEmpty) continue;
       indexed.add((
         start: start,
         end: end,
-        title: segment.title.trim(),
+        title: paragraph.title,
         content: content,
         keywords: keywords,
       ));
@@ -2610,6 +2706,18 @@ Rules:
           tokenCount: TokenEstimator.estimate(indexed[index].content),
         ),
     ];
+  }
+
+  static String _normalizeRecallTitle(String source) {
+    return source
+        .toLowerCase()
+        .replaceAll(RegExp(r'[#*_>`\[\](){}：:·—–\-、，。！？；\s]+'), '')
+        .trim();
+  }
+
+  static bool _recallTitlesMatch(String left, String right) {
+    if (left.isEmpty || right.isEmpty) return false;
+    return left == right || left.contains(right) || right.contains(left);
   }
 
   static List<String> _fallbackRecallKeywords(_SummarySegment segment) {
@@ -3254,13 +3362,15 @@ class SummaryRecallSegment {
   final int order;
   final String title;
   final String content;
+  final String anchor;
   final List<String> keywords;
 
   const SummaryRecallSegment({
     required this.order,
-    required this.content,
     required this.keywords,
     this.title = '',
+    this.content = '',
+    this.anchor = '',
   });
 }
 
