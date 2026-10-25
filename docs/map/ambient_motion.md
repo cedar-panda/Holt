@@ -13,7 +13,8 @@
 - 各 painter 在初始化時生成自己的粒子位置與視覺參數，不在每幀改寫資料庫。
 
 ## 誰讀取、怎麼注入（檔案：函式；注入 prompt 的哪一層）
-- `lib/widgets/ambient_particles.dart:_buildParticleField` 依主題選擇神經網路、星光、雨絲、漣漪、餘燼或蒲公英，將同一個 clock 傳給當前可見 painter。
+- `lib/widgets/ambient_particles.dart:_buildParticleField` 依主題選擇神經網路、星光、雨絲、漣漪、餘燼、沉香煙霧或落花吹雪，將同一個 clock 傳給當前可見 painter。
+- `fog` 與 `dandelion` 是相容既有資料的穩定儲存 key；畫面名稱與繪製內容分別已更新為「沉香煙霧」及「落花吹雪」，不需要遷移舊偏好。
 - `lib/screens/home_screen.dart`、`lib/screens/character_card_screen.dart`、`lib/screens/chat_screen.dart` 掛載背景粒子。
 - 這個系統只影響畫面，不注入任何 Prompt。
 
@@ -32,6 +33,8 @@
 ## 量大時的風險
 - 所有粒子共用一個可見 clock，但較高刷新率仍會增加 painter 重繪與 GPU／螢幕功耗。
 - 目前前景目標約 60fps；20 秒無操作或聊天忙碌時約 30fps。`Timer` 只負責在目標時間前喚醒，真正更新由 `scheduleFrameCallback` 對齊下一個 vsync，避免獨立計時器與螢幕刷新錯拍。
+- 慢速 `fog` 固定走 30fps；本輪保留既有 60／30fps 排程，不把所有動畫降成低幀率。
+- 神經網路與餘燼重用 painter 內的 `Paint`；漣漪以兩層低透明度寬線模擬水霧，不再為每圈逐幀建立動態 `MaskFilter`。沉香煙霧與落花吹雪皆使用幾何 path／填色，不依賴外部貼圖或逐粒高斯模糊。
 - 動態粒子若與大面積 `BackdropFilter` 重疊，可能令模糊層跟著重算；`RepaintBoundary` 不能保證消除所有合成成本。
 
 ## 相關測試檔

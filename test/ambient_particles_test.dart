@@ -121,4 +121,23 @@ void main() {
     expect(YanciTheme.particleEffect, 'ember');
     expect(await ThemeSettings.getParticleEffect(), 'ember');
   });
+
+  testWidgets('legacy fog and dandelion keys use the new localized labels', (
+    tester,
+  ) async {
+    await L.setLocale('zh_TW');
+    await tester.binding.setSurfaceSize(const Size(1080, 2400));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(const MaterialApp(home: ThemeWorkshopScreen()));
+    await tester.pump();
+
+    expect(find.text('沉香煙霧'), findsOneWidget);
+    expect(find.text('落花吹雪'), findsOneWidget);
+    expect(find.byKey(const ValueKey('particle-effect-fog')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('particle-effect-dandelion')),
+      findsOneWidget,
+    );
+  });
 }

@@ -129,11 +129,11 @@ extension _ThemeWorkshopParticleHeroMethods on _ThemeWorkshopScreenState {
     final reduceMotion = MediaQuery.disableAnimationsOf(context);
     const effects = <_ParticleEffectOption>[
       _ParticleEffectOption('neural', 'Neural', '神經網路', '神经网络'),
-      _ParticleEffectOption('fog', 'Mist', '霧氣', '雾气'),
+      _ParticleEffectOption('fog', 'Incense', '沉香煙霧', '沉香烟雾'),
       _ParticleEffectOption('rain', 'Rain', '雨絲', '雨丝'),
       _ParticleEffectOption('ripple', 'Ripples', '偶發漣漪', '偶发涟漪'),
       _ParticleEffectOption('ember', 'Embers', '逆流餘燼', '逆流余烬'),
-      _ParticleEffectOption('dandelion', 'Dandelion', '蒲公英絨', '蒲公英绒'),
+      _ParticleEffectOption('dandelion', 'Petals', '落花吹雪', '落花吹雪'),
     ];
 
     Widget buildTab(_ParticleEffectOption option) {

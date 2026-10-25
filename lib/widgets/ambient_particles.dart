@@ -380,11 +380,25 @@ class _RippleParticleWidgetState extends State<RippleParticleWidget> {
 class _RipplePainter extends CustomPainter {
   final List<_RippleSlot> ripples;
   final ValueListenable<double> clock;
+  final Paint _mistOuterPaint = Paint()..style = PaintingStyle.stroke;
+  final Paint _mistInnerPaint = Paint()..style = PaintingStyle.stroke;
+  final Paint _ringCorePaint = Paint()..style = PaintingStyle.stroke;
+  final Paint _crestPaint = Paint()
+    ..style = PaintingStyle.stroke
+    ..strokeCap = StrokeCap.round;
+  final Paint _backCrestPaint = Paint()
+    ..style = PaintingStyle.stroke
+    ..strokeCap = StrokeCap.round;
+  final Paint _strikePaint = Paint()..strokeCap = StrokeCap.round;
+  final Paint _splashOuterPaint = Paint();
+  final Paint _splashInnerPaint = Paint();
+  final Paint _beadPaint = Paint();
 
   _RipplePainter({required this.ripples, required this.clock})
     : super(repaint: clock);
 
-  /// 繪製單圈水紋：初生時銳利清晰，隨 ringP 推進逐漸展寬筆畫並拉高模糊，以圈線為中心向兩側化開消失
+  /// 繪製單圈水紋：初生時銳利，散開時以兩層寬筆畫向內外化開。
+  /// 不使用逐圈動態高斯模糊，避免高密度時每幀反覆建立昂貴濾鏡。
   void _drawWaterRing(
     Canvas canvas,
     Offset center,
@@ -392,7 +406,6 @@ class _RipplePainter extends CustomPainter {
     double ry,
     double ringP, // 該圈自身的生命進度 0.0(初生) -> 1.0(徹底化開)
     Color baseColor,
-    Color glowColor,
     double peakAlpha,
     double baseStroke,
   ) {
@@ -411,59 +424,47 @@ class _RipplePainter extends CustomPainter {
       height: ry * 2.0,
     );
 
-    // ── 核心物理：散開時以圈線為中心向內外兩側模糊化開 ──
-    // 隨著 ringP 從 0 -> 1，模糊半徑從 0.6 一路拉高到 5.2，線寬也從 1x 張開到 4.2x
+    // 兩層低透明度寬線模擬水霧。視覺仍從圈線向兩側化開，
+    // 但不再為每一圈、每一幀建立 MaskFilter。
     final disperseCurve = pow(ringP, 1.45).toDouble();
-    final blurSigma = 0.6 + disperseCurve * 4.6;
     final spreadWidth = baseStroke * (1.0 + disperseCurve * 3.2);
 
-    // 1. 向圈線兩側散開的水霧柔光帶（越到尾聲越寬、越柔，像融進水裡）
-    final diffusePaint = Paint()
-      ..color = baseColor.withValues(alpha: (alpha * 0.62).clamp(0.0, 0.7))
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = spreadWidth
-      ..maskFilter = MaskFilter.blur(BlurStyle.normal, blurSigma);
-    canvas.drawOval(rect, diffusePaint);
+    _mistOuterPaint
+      ..color = baseColor.withValues(alpha: (alpha * 0.14).clamp(0.0, 0.20))
+      ..strokeWidth = spreadWidth * 1.75;
+    canvas.drawOval(rect, _mistOuterPaint);
+    _mistInnerPaint
+      ..color = baseColor.withValues(alpha: (alpha * 0.30).clamp(0.0, 0.38))
+      ..strokeWidth = spreadWidth;
+    canvas.drawOval(rect, _mistInnerPaint);
 
     // 2. 整圈連貫的細水紋（在後半段隨模糊拉高而提前淡出，交棒給上面的模糊帶）
     final sharpRetention = pow(1.0 - ringP, 1.8).toDouble();
     final coreAlpha = (alpha * 0.55 * sharpRetention).clamp(0.0, 1.0);
     if (coreAlpha > 0.01) {
-      final basePaint = Paint()
+      _ringCorePaint
         ..color = baseColor.withValues(alpha: coreAlpha)
-        ..style = PaintingStyle.stroke
         ..strokeWidth = baseStroke * (0.85 + ringP * 0.4);
-      canvas.drawOval(rect, basePaint);
+      canvas.drawOval(rect, _ringCorePaint);
     }
 
     // 3. 前後波峰受光高光弧（剛激起時清晰清脆，散開過程中逐漸軟化融入水霧）
     final crestAlpha = (alpha * sharpRetention).clamp(0.0, 1.0);
     if (crestAlpha > 0.012) {
-      final crestBlur = ringP * 1.8;
-      final crestPaint = Paint()
+      _crestPaint
         ..color = baseColor.withValues(alpha: crestAlpha)
-        ..style = PaintingStyle.stroke
-        ..strokeCap = StrokeCap.round
-        ..strokeWidth = baseStroke * (1.15 - ringP * 0.25)
-        ..maskFilter = crestBlur > 0.2
-            ? MaskFilter.blur(BlurStyle.normal, crestBlur)
-            : null;
+        ..strokeWidth = baseStroke * (1.15 - ringP * 0.25);
 
       // 前緣迎光主波峰（下方弧段）
-      canvas.drawArc(rect, pi * 0.18, pi * 0.64, false, crestPaint);
+      canvas.drawArc(rect, pi * 0.18, pi * 0.64, false, _crestPaint);
 
       // 後緣次波峰（上方弧段）
-      final backCrestPaint = Paint()
+      _backCrestPaint
         ..color = baseColor.withValues(
           alpha: (crestAlpha * 0.76).clamp(0.0, 1.0),
         )
-        ..style = PaintingStyle.stroke
-        ..strokeCap = StrokeCap.round
-        ..strokeWidth = baseStroke * (0.95 - ringP * 0.2)
-        ..maskFilter = crestBlur > 0.2
-            ? MaskFilter.blur(BlurStyle.normal, crestBlur)
-            : null;
-      canvas.drawArc(rect, pi * 1.22, pi * 0.56, false, backCrestPaint);
+        ..strokeWidth = baseStroke * (0.95 - ringP * 0.2);
+      canvas.drawArc(rect, pi * 1.22, pi * 0.56, false, _backCrestPaint);
     }
   }
 
@@ -494,14 +495,14 @@ class _RipplePainter extends CustomPainter {
             0.9,
           );
       if (strikeAlpha > 0.01) {
-        final streakPaint = Paint()
+        _strikePaint
           ..color = baseColor.withValues(alpha: strikeAlpha)
           ..strokeWidth = 0.65 + r.impact * 0.65
           ..strokeCap = StrokeCap.round;
         canvas.drawLine(
           Offset(center.dx, tailY),
           Offset(center.dx, headY),
-          streakPaint,
+          _strikePaint,
         );
       }
       return;
@@ -524,10 +525,17 @@ class _RipplePainter extends CustomPainter {
         width: craterW,
         height: craterH,
       );
-      final splashPaint = Paint()
-        ..color = baseColor.withValues(alpha: flashAlpha.clamp(0.0, 0.9))
-        ..maskFilter = MaskFilter.blur(BlurStyle.normal, 0.8 + r.impact * 1.2);
-      canvas.drawOval(splashRect, splashPaint);
+      _splashOuterPaint.color = baseColor.withValues(
+        alpha: (flashAlpha * 0.22).clamp(0.0, 0.24),
+      );
+      canvas.drawOval(
+        splashRect.inflate(1.2 + r.impact * 1.8),
+        _splashOuterPaint,
+      );
+      _splashInnerPaint.color = baseColor.withValues(
+        alpha: flashAlpha.clamp(0.0, 0.72),
+      );
+      canvas.drawOval(splashRect, _splashInnerPaint);
     }
 
     // 2. 反作用力向上彈起的回跳水珠（小衝擊力 < 0.28 時幾乎不彈起，大衝擊力彈得高且清晰）
@@ -544,10 +552,10 @@ class _RipplePainter extends CustomPainter {
           (0.85 + jetStrength * 0.7);
 
       if (beadAlpha > 0.015) {
-        final beadPaint = Paint()
-          ..color = baseColor.withValues(alpha: beadAlpha.clamp(0.0, 0.92))
-          ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 0.4);
-        canvas.drawCircle(beadCenter, beadRadius.clamp(0.3, 1.6), beadPaint);
+        _beadPaint.color = baseColor.withValues(
+          alpha: beadAlpha.clamp(0.0, 0.92),
+        );
+        canvas.drawCircle(beadCenter, beadRadius.clamp(0.3, 1.6), _beadPaint);
       }
     }
   }
@@ -556,7 +564,6 @@ class _RipplePainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     final t = (clock.value / 16.0) % 1.0;
     final baseColor = YanciTheme.starColor;
-    final glowColor = YanciTheme.starGlow;
 
     for (final r in ripples) {
       final cyclePos = (t * r.cycles + r.phase) % 1.0;
@@ -589,7 +596,6 @@ class _RipplePainter extends CustomPainter {
         ry1,
         waveP,
         baseColor,
-        glowColor,
         r.baseOpacity,
         baseStroke,
       );
@@ -609,7 +615,6 @@ class _RipplePainter extends CustomPainter {
           ry2,
           ring2P,
           baseColor,
-          glowColor,
           r.baseOpacity * 0.76,
           baseStroke * 0.82,
         );
@@ -632,7 +637,6 @@ class _RipplePainter extends CustomPainter {
           ry3,
           ring3P,
           baseColor,
-          glowColor,
           r.baseOpacity * 0.52,
           baseStroke * 0.68,
         );
@@ -732,6 +736,9 @@ class _EmberParticleWidgetState extends State<EmberParticleWidget> {
 class _EmberPainter extends CustomPainter {
   final List<_Ember> embers;
   final ValueListenable<double> clock;
+  final Paint _haloOuterPaint = Paint();
+  final Paint _haloInnerPaint = Paint();
+  final Paint _corePaint = Paint();
 
   _EmberPainter({required this.embers, required this.clock})
     : super(repaint: clock);
@@ -774,7 +781,7 @@ class _EmberPainter extends CustomPainter {
       canvas.drawCircle(
         offset,
         currentSize * 1.8,
-        Paint()
+        _haloOuterPaint
           ..color = glowColor.withValues(
             alpha: (alpha * 0.14).clamp(0.0, 0.20),
           ),
@@ -782,7 +789,7 @@ class _EmberPainter extends CustomPainter {
       canvas.drawCircle(
         offset,
         currentSize * 1.3,
-        Paint()
+        _haloInnerPaint
           ..color = glowColor.withValues(
             alpha: (alpha * 0.25).clamp(0.0, 0.34),
           ),
@@ -790,7 +797,7 @@ class _EmberPainter extends CustomPainter {
       canvas.drawCircle(
         offset,
         currentSize,
-        Paint()..color = baseColor.withValues(alpha: alpha),
+        _corePaint..color = baseColor.withValues(alpha: alpha),
       );
     }
   }
@@ -802,36 +809,39 @@ class _EmberPainter extends CustomPainter {
 }
 
 // ─────────────────────────────────────────────────────────────
-// 3. 蒲公英絨（無重力隨風）— DandelionParticleWidget
+// 3. 落花吹雪（保留 dandelion key 相容舊設定）— DandelionParticleWidget
 // ─────────────────────────────────────────────────────────────
 
-class _DandelionSeed {
+class _FallingPetal {
   final double startX;
   final double startY;
   final double driftX;
-  final double driftY;
+  final double travelY;
   final double size;
   final double opacity;
-  final double bobAmp;
+  final double swayAmp;
   final double phase;
-  final double gustPhase;
-  final int gusts;
+  final double rotationPhase;
+  final int swayWaves;
+  final int flipWaves;
 
-  const _DandelionSeed({
+  const _FallingPetal({
     required this.startX,
     required this.startY,
     required this.driftX,
-    required this.driftY,
+    required this.travelY,
     required this.size,
     required this.opacity,
-    required this.bobAmp,
+    required this.swayAmp,
     required this.phase,
-    required this.gustPhase,
-    required this.gusts,
+    required this.rotationPhase,
+    required this.swayWaves,
+    required this.flipWaves,
   });
 }
 
-/// 蒲公英絨：帶著毛茸茸柔光的小光點，「停頓懸浮 —— 被微風吹動斜飄 —— 再停頓」的無重力節奏
+/// 落花吹雪：花瓣由上方與側上方落下，隨風擺盪並自然翻面。
+/// 公開類名與設定 key 保持不變，舊資料不需要遷移。
 class DandelionParticleWidget extends StatefulWidget {
   final ValueListenable<double> clock;
   final int seedCount;
@@ -848,29 +858,29 @@ class DandelionParticleWidget extends StatefulWidget {
 }
 
 class _DandelionParticleWidgetState extends State<DandelionParticleWidget> {
-  late final List<_DandelionSeed> _seeds;
+  late final List<_FallingPetal> _petals;
   final Random _random = Random();
 
   @override
   void initState() {
     super.initState();
-    _seeds = _generateSeeds();
+    _petals = _generatePetals();
   }
 
-  List<_DandelionSeed> _generateSeeds() {
+  List<_FallingPetal> _generatePetals() {
     return List.generate(widget.seedCount, (_) {
-      return _DandelionSeed(
-        startX: _random.nextDouble(),
-        startY: _random.nextDouble(),
-        // 斜向微風位移：緩慢往右上或右下斜飄
-        driftX: 0.14 + _random.nextDouble() * 0.18,
-        driftY: (_random.nextDouble() - 0.45) * 0.16,
-        size: 1.4 + _random.nextDouble() * 1.8, // 1.4~3.2px
-        opacity: 0.22 + _random.nextDouble() * 0.38,
-        bobAmp: 4.0 + _random.nextDouble() * 7.0, // 停頓時的上下浮沉感 px
+      return _FallingPetal(
+        startX: -0.08 + _random.nextDouble() * 1.08,
+        startY: -0.28 + _random.nextDouble() * 0.34,
+        driftX: -0.12 + _random.nextDouble() * 0.34,
+        travelY: 1.04 + _random.nextDouble() * 0.34,
+        size: 3.5 + _random.nextDouble() * 4.0,
+        opacity: 0.20 + _random.nextDouble() * 0.30,
+        swayAmp: 7.0 + _random.nextDouble() * 18.0,
         phase: _random.nextDouble(),
-        gustPhase: _random.nextDouble() * 2 * pi,
-        gusts: _random.nextInt(2) + 2, // 單次循環內經歷 2~3 次微風吹拂與停頓
+        rotationPhase: _random.nextDouble() * 2 * pi,
+        swayWaves: 1 + _random.nextInt(3),
+        flipWaves: 2 + _random.nextInt(3),
       );
     });
   }
@@ -879,7 +889,7 @@ class _DandelionParticleWidgetState extends State<DandelionParticleWidget> {
   Widget build(BuildContext context) {
     return RepaintBoundary(
       child: CustomPaint(
-        painter: _DandelionPainter(seeds: _seeds, clock: widget.clock),
+        painter: _DandelionPainter(petals: _petals, clock: widget.clock),
         size: Size.infinite,
       ),
     );
@@ -887,33 +897,37 @@ class _DandelionParticleWidgetState extends State<DandelionParticleWidget> {
 }
 
 class _DandelionPainter extends CustomPainter {
-  final List<_DandelionSeed> seeds;
+  final List<_FallingPetal> petals;
   final ValueListenable<double> clock;
+  final Paint _softPaint = Paint()..style = PaintingStyle.fill;
+  final Paint _bodyPaint = Paint()..style = PaintingStyle.fill;
+  final Path _petalPath = Path()
+    ..moveTo(0, -1)
+    ..quadraticBezierTo(0.78, -0.35, 0.12, 1)
+    ..quadraticBezierTo(-0.64, 0.28, 0, -1)
+    ..close();
 
-  _DandelionPainter({required this.seeds, required this.clock})
+  _DandelionPainter({required this.petals, required this.clock})
     : super(repaint: clock);
 
   @override
   void paint(Canvas canvas, Size size) {
-    final t = (clock.value / 20.0) % 1.0;
+    final t = (clock.value / 24.0) % 1.0;
     final baseColor = YanciTheme.starColor;
 
-    for (final s in seeds) {
-      final u = (t + s.phase) % 1.0;
-
-      // 非勻速微風曲線：導數 = 1 + 0.82*cos(...)，在波谷處幾乎停滯懸浮，波峰處隨風斜飄
-      final omega = 2 * pi * s.gusts;
-      final windAdvance =
-          u + (sin(omega * u + s.gustPhase) - sin(s.gustPhase)) / omega * 0.82;
-
-      final rawX = (s.startX + windAdvance * s.driftX) % 1.0;
-      final rawY = (s.startY + windAdvance * s.driftY) % 1.0;
-
-      // 無重力上下輕微浮沉
-      final bobOffset = sin(u * 2 * pi * s.gusts + s.gustPhase) * s.bobAmp;
-
-      final currentX = rawX * size.width;
-      final currentY = rawY * size.height + bobOffset;
+    for (final petal in petals) {
+      final u = (t + petal.phase) % 1.0;
+      final swayPhase = u * 2 * pi * petal.swayWaves + petal.rotationPhase;
+      final currentX =
+          (petal.startX + petal.driftX * u) * size.width +
+          sin(swayPhase) * petal.swayAmp;
+      final currentY = (petal.startY + petal.travelY * u) * size.height;
+      if (currentX < -30 ||
+          currentX > size.width + 30 ||
+          currentY < -30 ||
+          currentY > size.height + 30) {
+        continue;
+      }
 
       // 生命週期首尾柔和淡入淡出，避免跨越邊界時閃跳
       final edgeFade = u < 0.10
@@ -921,89 +935,72 @@ class _DandelionPainter extends CustomPainter {
           : u > 0.90
           ? ((1.0 - u) / 0.10)
           : 1.0;
-      final alpha = (s.opacity * edgeFade).clamp(0.0, 0.9);
+      final alpha = (petal.opacity * edgeFade).clamp(0.0, 0.78);
       if (alpha < 0.02) continue;
 
-      final center = Offset(currentX, currentY);
+      final flip =
+          0.35 +
+          0.65 * cos(u * 2 * pi * petal.flipWaves + petal.rotationPhase).abs();
+      final rotation =
+          petal.rotationPhase * 0.35 +
+          sin(swayPhase) * 0.62 +
+          petal.driftX * 0.8;
 
-      // 1. 疊色軟圈模擬絨毛，避免逐粒高斯模糊。
-      canvas.drawCircle(
-        center,
-        s.size * 2.0,
-        Paint()..color = baseColor.withValues(alpha: alpha * 0.10),
-      );
-      canvas.drawCircle(
-        center,
-        s.size * 1.35,
-        Paint()..color = baseColor.withValues(alpha: alpha * 0.22),
-      );
-
-      // 2. 內層柔光核心
-      canvas.drawCircle(
-        center,
-        s.size * 0.75,
-        Paint()..color = baseColor.withValues(alpha: alpha * 0.9),
-      );
-
-      // 3. 若隱若現的極細絨絲小尾巴（隨風微微擺動角度）
-      if (s.size > 1.8) {
-        final swayAngle =
-            -0.35 + 0.25 * cos(omega * u + s.gustPhase); // 隨風力傾角變化
-        final stemLen = s.size * 2.6;
-        final tailOffset = Offset(
-          center.dx + sin(swayAngle) * stemLen,
-          center.dy + cos(swayAngle) * stemLen,
-        );
-        final stemPaint = Paint()
-          ..color = baseColor.withValues(alpha: alpha * 0.32)
-          ..strokeWidth = 0.55
-          ..strokeCap = StrokeCap.round;
-        canvas.drawLine(center, tailOffset, stemPaint);
-      }
+      canvas
+        ..save()
+        ..translate(currentX, currentY)
+        ..rotate(rotation)
+        ..scale(petal.size, petal.size * flip);
+      _softPaint.color = baseColor.withValues(alpha: alpha * 0.16);
+      canvas
+        ..save()
+        ..scale(1.18, 1.18)
+        ..drawPath(_petalPath, _softPaint)
+        ..restore();
+      _bodyPaint.color = baseColor.withValues(alpha: alpha);
+      canvas
+        ..drawPath(_petalPath, _bodyPaint)
+        ..restore();
     }
   }
 
   @override
   bool shouldRepaint(covariant _DandelionPainter oldDelegate) {
-    return !identical(oldDelegate.seeds, seeds);
+    return !identical(oldDelegate.petals, petals);
   }
 }
 
 // ─────────────────────────────────────────────────────────────
-// 霧氣（絲綢煙縷）— FogParticleWidget
-// 幾條細長、兩端收尖的半透明緞帶，沿兩組反向正弦波起伏，
-// 寬度隨第三組波「扭轉」收窄，像絲綢翻面。慢慢橫向漂移。
-// 只畫 path，不做逐幀模糊。
+// 沉香煙霧（保留 fog key 相容舊設定）— FogParticleWidget
 // ─────────────────────────────────────────────────────────────
 
-class _SilkRibbon {
-  final double baseY, length, period, direction, startX;
-  final double amp1, k1, w1, p1;
-  final double amp2, k2, w2, p2;
-  final double thick, k3, w3, p3;
-  final double opacity, tilt, bobPeriod;
+class _IncenseWisp {
+  final double startX;
+  final double startY;
+  final double endY;
+  final double period;
+  final double phase;
+  final double amplitude;
+  final double frequency1;
+  final double frequency2;
+  final double baseWidth;
+  final double topWidth;
+  final double opacity;
+  final double secondaryOffset;
 
-  const _SilkRibbon({
-    required this.baseY,
-    required this.length,
-    required this.period,
-    required this.direction,
+  const _IncenseWisp({
     required this.startX,
-    required this.amp1,
-    required this.k1,
-    required this.w1,
-    required this.p1,
-    required this.amp2,
-    required this.k2,
-    required this.w2,
-    required this.p2,
-    required this.thick,
-    required this.k3,
-    required this.w3,
-    required this.p3,
+    required this.startY,
+    required this.endY,
+    required this.period,
+    required this.phase,
+    required this.amplitude,
+    required this.frequency1,
+    required this.frequency2,
+    required this.baseWidth,
+    required this.topWidth,
     required this.opacity,
-    required this.tilt,
-    required this.bobPeriod,
+    required this.secondaryOffset,
   });
 }
 
@@ -1020,36 +1017,27 @@ class FogParticleWidget extends StatefulWidget {
 
 class _FogParticleWidgetState extends State<FogParticleWidget> {
   final Random _random = Random();
-  late final List<_SilkRibbon> _ribbons;
+  late final List<_IncenseWisp> _wisps;
 
   double _r(double min, double span) => min + _random.nextDouble() * span;
-  double _omega(double minPeriod, double span) => 2 * pi / _r(minPeriod, span);
 
   @override
   void initState() {
     super.initState();
-    _ribbons = List.generate(widget.fogCount, (_) {
-      return _SilkRibbon(
-        baseY: _r(0.15, 0.70),
-        length: _r(0.70, 0.60),
-        period: _r(45, 40),
-        direction: _random.nextBool() ? 1.0 : -1.0,
-        startX: _random.nextDouble(),
-        amp1: _r(0.035, 0.05),
-        k1: _r(0.6, 0.8),
-        w1: _omega(16, 12),
-        p1: _r(0, 2 * pi),
-        amp2: _r(0.01, 0.02),
-        k2: _r(1.8, 1.5),
-        w2: _omega(9, 7),
-        p2: _r(0, 2 * pi),
-        thick: _r(0.022, 0.03),
-        k3: _r(0.5, 0.9),
-        w3: _omega(18, 14),
-        p3: _r(0, 2 * pi),
-        opacity: _r(0.06, 0.06),
-        tilt: _r(-0.06, 0.12),
-        bobPeriod: _r(40, 30),
+    _wisps = List.generate(widget.fogCount, (_) {
+      return _IncenseWisp(
+        startX: _r(0.18, 0.64),
+        startY: _r(0.75, 0.20),
+        endY: _r(0.12, 0.16),
+        period: _r(32, 16),
+        phase: _random.nextDouble(),
+        amplitude: _r(10, 18),
+        frequency1: _r(1.1, 0.9),
+        frequency2: _r(2.2, 1.2),
+        baseWidth: _r(2.5, 3.0),
+        topWidth: _r(28, 20),
+        opacity: _r(0.045, 0.055),
+        secondaryOffset: _r(-10, 20),
       );
     });
   }
@@ -1058,94 +1046,115 @@ class _FogParticleWidgetState extends State<FogParticleWidget> {
   Widget build(BuildContext context) {
     return RepaintBoundary(
       child: CustomPaint(
-        painter: _SilkPainter(ribbons: _ribbons, clock: widget.clock),
+        painter: _IncensePainter(wisps: _wisps, clock: widget.clock),
         size: Size.infinite,
       ),
     );
   }
 }
 
-class _SilkPainter extends CustomPainter {
-  static const int _samples = 48;
-  final List<_SilkRibbon> ribbons;
+class _IncensePainter extends CustomPainter {
+  static const int _samples = 42;
+  final List<_IncenseWisp> wisps;
   final ValueListenable<double> clock;
   final Paint _fill = Paint()..style = PaintingStyle.fill;
-  final Paint _sheen = Paint()
-    ..style = PaintingStyle.stroke
-    ..strokeWidth = 0.8
-    ..strokeCap = StrokeCap.round;
+  final Path _path = Path();
   final List<double> _xs = List<double>.filled(_samples + 1, 0);
   final List<double> _ys = List<double>.filled(_samples + 1, 0);
   final List<double> _hs = List<double>.filled(_samples + 1, 0);
 
-  _SilkPainter({required this.ribbons, required this.clock})
+  _IncensePainter({required this.wisps, required this.clock})
     : super(repaint: clock);
 
-  Path _band(double widthScale, double pad) {
-    final path = Path()
-      ..moveTo(_xs[0], _ys[0] - (_hs[0] * widthScale + pad * 0) / 2);
+  Path _band(double widthScale) {
+    _path
+      ..reset()
+      ..moveTo(_xs[0] - _hs[0] * widthScale / 2, _ys[0]);
     for (var i = 1; i <= _samples; i++) {
-      final env = sin(pi * i / _samples);
-      path.lineTo(_xs[i], _ys[i] - (_hs[i] * widthScale + pad * env) / 2);
+      _path.lineTo(_xs[i] - _hs[i] * widthScale / 2, _ys[i]);
     }
     for (var i = _samples; i >= 0; i--) {
-      final env = sin(pi * i / _samples);
-      path.lineTo(_xs[i], _ys[i] + (_hs[i] * widthScale + pad * env) / 2);
+      _path.lineTo(_xs[i] + _hs[i] * widthScale / 2, _ys[i]);
     }
-    return path..close();
+    return _path..close();
+  }
+
+  void _prepareWisp(
+    _IncenseWisp wisp,
+    double time,
+    Size size, {
+    required bool secondary,
+  }) {
+    final life = (time / wisp.period + wisp.phase) % 1.0;
+    final easedLife = Curves.easeOutCubic.transform(life);
+    final headY =
+        (wisp.startY + (wisp.endY - wisp.startY) * easedLife) * size.height;
+    final trailLength = size.height * (0.24 + life * 0.14);
+    final phaseShift = secondary ? 0.58 : 0.0;
+
+    for (var i = 0; i <= _samples; i++) {
+      final v = i / _samples;
+      final y = headY + (1.0 - v) * trailLength;
+      final yNorm = y / size.height;
+      final heightProgress = ((wisp.startY - yNorm) / (wisp.startY - wisp.endY))
+          .clamp(0.0, 1.0);
+      final middleTwist = sin(pi * heightProgress);
+      final wave =
+          sin(v * 2 * pi * wisp.frequency1 + time * 0.34 + phaseShift) +
+          0.42 *
+              sin(
+                v * 2 * pi * wisp.frequency2 - time * 0.21 + phaseShift * 1.7,
+              );
+      _xs[i] =
+          wisp.startX * size.width +
+          wave * wisp.amplitude * (0.25 + middleTwist * 0.75) +
+          (secondary ? wisp.secondaryOffset * middleTwist : 0);
+      _ys[i] = y;
+
+      final topSpread = Curves.easeInOutCubic.transform(
+        ((heightProgress - 0.62) / 0.38).clamp(0.0, 1.0),
+      );
+      final tipEnvelope = pow(sin(pi * v), 0.55).toDouble();
+      final silkTurn = 0.62 + 0.38 * cos(v * pi * 3 + phaseShift).abs();
+      _hs[i] =
+          (wisp.baseWidth + (wisp.topWidth - wisp.baseWidth) * topSpread) *
+          tipEnvelope *
+          silkTurn *
+          (secondary ? 0.62 : 1.0);
+    }
+  }
+
+  void _drawPreparedWisp(Canvas canvas, Color color, double alpha) {
+    _fill.color = color.withValues(alpha: (alpha * 0.22).clamp(0.0, 0.12));
+    canvas.drawPath(_band(1.75), _fill);
+    _fill.color = color.withValues(alpha: (alpha * 0.46).clamp(0.0, 0.18));
+    canvas.drawPath(_band(1.18), _fill);
+    _fill.color = color.withValues(alpha: alpha.clamp(0.0, 0.22));
+    canvas.drawPath(_band(0.64), _fill);
   }
 
   @override
   void paint(Canvas canvas, Size size) {
     final t = clock.value;
     final color = YanciTheme.starColor;
-    final w = size.width;
-    final h = size.height;
+    for (final wisp in wisps) {
+      final life = (t / wisp.period + wisp.phase) % 1.0;
+      final edgeFade = life < 0.12
+          ? life / 0.12
+          : life > 0.82
+          ? (1.0 - life) / 0.18
+          : 1.0;
+      final alpha = wisp.opacity * edgeFade.clamp(0.0, 1.0);
+      if (alpha < 0.004) continue;
 
-    for (final r in ribbons) {
-      final len = r.length * w;
-      final travel = (r.startX + r.direction * t / r.period) % 1.0;
-      final x0 = -len + travel * (w + len);
-      final baseY = (r.baseY + sin(t * 2 * pi / r.bobPeriod + r.p1) * 0.03) * h;
-
-      for (var i = 0; i <= _samples; i++) {
-        final u = i / _samples;
-        final x = x0 + u * len;
-        final xn = x / w;
-        _xs[i] = x;
-        _ys[i] =
-            baseY +
-            r.tilt * (u - 0.5) * h +
-            (r.amp1 * sin(2 * pi * r.k1 * xn + t * r.w1 + r.p1) +
-                    r.amp2 * sin(2 * pi * r.k2 * xn - t * r.w2 + r.p2)) *
-                h;
-        final twist = pow(
-          sin(2 * pi * r.k3 * xn + t * r.w3 + r.p3).abs(),
-          0.8,
-        ).toDouble();
-        final env = pow(sin(pi * u), 0.7).toDouble();
-        _hs[i] = r.thick * h * (0.12 + 0.88 * twist) * env;
-      }
-
-      // 外層薄霧：讓邊緣柔一點。
-      _fill.color = color.withValues(alpha: r.opacity * 0.35);
-      canvas.drawPath(_band(2.2, 4), _fill);
-      // 緞面本體。
-      _fill.color = color.withValues(alpha: r.opacity);
-      canvas.drawPath(_band(1.0, 0), _fill);
-      // 上緣一道細光，絲綢的反光。
-      final edge = Path()..moveTo(_xs[0], _ys[0] - _hs[0] / 2);
-      for (var i = 1; i <= _samples; i++) {
-        edge.lineTo(_xs[i], _ys[i] - _hs[i] / 2);
-      }
-      _sheen.color = color.withValues(
-        alpha: (r.opacity * 1.3).clamp(0.0, 0.25),
-      );
-      canvas.drawPath(edge, _sheen);
+      _prepareWisp(wisp, t, size, secondary: true);
+      _drawPreparedWisp(canvas, color, alpha * 0.44);
+      _prepareWisp(wisp, t, size, secondary: false);
+      _drawPreparedWisp(canvas, color, alpha);
     }
   }
 
   @override
-  bool shouldRepaint(covariant _SilkPainter oldDelegate) =>
-      oldDelegate.ribbons != ribbons;
+  bool shouldRepaint(covariant _IncensePainter oldDelegate) =>
+      !identical(oldDelegate.wisps, wisps);
 }

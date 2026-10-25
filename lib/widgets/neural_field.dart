@@ -91,6 +91,12 @@ class _NeuralPainter extends CustomPainter {
   final Color color;
   final Color glowColor;
   final Color accent;
+  final Paint _linePaint = Paint()
+    ..style = PaintingStyle.stroke
+    ..strokeCap = StrokeCap.round;
+  final Paint _haloOuterPaint = Paint();
+  final Paint _haloInnerPaint = Paint();
+  final Paint _corePaint = Paint();
 
   _NeuralPainter({
     required this.nodes,
@@ -140,10 +146,7 @@ class _NeuralPainter extends CustomPainter {
     }
 
     // 連線（距離近的節點）
-    final linePaint = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = isDark ? 0.8 : 1.0
-      ..strokeCap = StrokeCap.round;
+    _linePaint.strokeWidth = isDark ? 0.8 : 1.0;
 
     for (int i = 0; i < nodes.length; i++) {
       for (int j = i + 1; j < nodes.length; j++) {
@@ -156,10 +159,10 @@ class _NeuralPainter extends CustomPainter {
               fade *
               NeuralFieldWidget.connectionStrength *
               (opacities[i] + opacities[j]);
-          linePaint.color = nodeColor.withValues(
+          _linePaint.color = nodeColor.withValues(
             alpha: lineOp.clamp(0.0, NeuralFieldWidget.connectionMaxOpacity),
           );
-          canvas.drawLine(positions[i], positions[j], linePaint);
+          canvas.drawLine(positions[i], positions[j], _linePaint);
         }
       }
     }
@@ -176,13 +179,13 @@ class _NeuralPainter extends CustomPainter {
       canvas.drawCircle(
         pos,
         n.r * 2.5,
-        Paint()
+        _haloOuterPaint
           ..color = haloColor.withValues(alpha: (op * 0.08).clamp(0.0, 0.14)),
       );
       canvas.drawCircle(
         pos,
         n.r * 1.65,
-        Paint()
+        _haloInnerPaint
           ..color = haloColor.withValues(alpha: (op * 0.13).clamp(0.0, 0.20)),
       );
 
@@ -190,7 +193,7 @@ class _NeuralPainter extends CustomPainter {
       canvas.drawCircle(
         pos,
         n.r,
-        Paint()
+        _corePaint
           ..color = nodeColor.withValues(alpha: (op * 0.5).clamp(0.0, 0.4)),
       );
     }
