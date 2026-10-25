@@ -2026,6 +2026,67 @@ Rules:
     return selected.join('\n\n').trim();
   }
 
+  /// Fits the five RP reference sources with explicit continuity priority.
+  /// The first pass reserves weighted room for every non-empty subsystem; any
+  /// unused room then flows from the highest-priority source downward.
+  static String fitPrioritizedRpReferencePartsToCharacterBudget({
+    required String storyState,
+    required String story,
+    required String worldbook,
+    required String memory,
+    required String timeline,
+    required int maxCharacters,
+  }) {
+    final sources = <({String text, int weight})>[
+      (text: storyState.trim(), weight: 5),
+      (text: story.trim(), weight: 4),
+      (text: worldbook.trim(), weight: 3),
+      (text: memory.trim(), weight: 2),
+      (text: timeline.trim(), weight: 1),
+    ].where((source) => source.text.isNotEmpty).toList(growable: false);
+    if (sources.isEmpty || maxCharacters <= 0) return '';
+    final complete = sources.map((source) => source.text).join('\n\n');
+    if (complete.length <= maxCharacters) return complete;
+
+    final separatorBudget = (sources.length - 1) * 2;
+    final contentBudget = maxCharacters > separatorBudget
+        ? maxCharacters - separatorBudget
+        : 0;
+    final totalWeight = sources.fold<int>(
+      0,
+      (sum, source) => sum + source.weight,
+    );
+    final selected = List<String>.filled(sources.length, '');
+    for (var index = 0; index < sources.length; index++) {
+      final share = (contentBudget * sources[index].weight / totalWeight)
+          .floor();
+      selected[index] = _fitCompleteLines(sources[index].text, share);
+    }
+
+    int joinedLength() =>
+        selected.where((part) => part.isNotEmpty).join('\n\n').length;
+
+    // Reflow unused weighted room in priority order. A short state block gives
+    // its spare budget to character/relationship context before old memories.
+    for (var index = 0; index < sources.length; index++) {
+      final remaining = maxCharacters - joinedLength();
+      if (remaining <= 0) break;
+      final addingNewPart =
+          selected[index].isEmpty && selected.any((part) => part.isNotEmpty);
+      final separatorCost = addingNewPart ? 2 : 0;
+      final available = remaining - separatorCost;
+      if (available <= 0) continue;
+      final candidate = _fitCompleteLines(
+        sources[index].text,
+        selected[index].length + available,
+      );
+      if (candidate.length > selected[index].length) {
+        selected[index] = candidate;
+      }
+    }
+    return selected.where((part) => part.isNotEmpty).join('\n\n').trim();
+  }
+
   static String _fitCompleteLines(String source, int maxCharacters) {
     final lines = source
         .split('\n')

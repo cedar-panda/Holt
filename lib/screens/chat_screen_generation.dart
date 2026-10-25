@@ -627,24 +627,34 @@ extension _ChatGenerationMethods on _ChatScreenState {
             continuationSummary.length,
       ),
     );
+    final rpStoryContextParts = await rpStoryContextPartsF;
     final rpStoryContext = isRpContext
-        ? ContextCompressor.fitRpReferencePartsToCharacterBudget(<String>[
-            if (memoryPrompt.isNotEmpty)
-              SystemContextMarkdown.section(
-                enTitle: 'Memory',
-                zhTWTitle: '記憶',
-                zhCNTitle: '记忆',
-                content: memoryPrompt.text,
-              ),
-            ...await rpStoryContextPartsF,
-            if (recallPrompt.isNotEmpty)
-              SystemContextMarkdown.section(
-                enTitle: 'Timeline Recall',
-                zhTWTitle: '時間線召回',
-                zhCNTitle: '时间线召回',
-                content: recallPrompt,
-              ),
-          ], storyBudget)
+        ? ContextCompressor.fitPrioritizedRpReferencePartsToCharacterBudget(
+            storyState: rpStoryContextParts.length > 1
+                ? rpStoryContextParts[1]
+                : '',
+            story: rpStoryContextParts.isNotEmpty ? rpStoryContextParts[0] : '',
+            worldbook: rpStoryContextParts.length > 2
+                ? rpStoryContextParts[2]
+                : '',
+            memory: memoryPrompt.isEmpty
+                ? ''
+                : SystemContextMarkdown.section(
+                    enTitle: 'Memory',
+                    zhTWTitle: '記憶',
+                    zhCNTitle: '记忆',
+                    content: memoryPrompt.text,
+                  ),
+            timeline: recallPrompt.isEmpty
+                ? ''
+                : SystemContextMarkdown.section(
+                    enTitle: 'Timeline Recall',
+                    zhTWTitle: '時間線召回',
+                    zhCNTitle: '时间线召回',
+                    content: recallPrompt,
+                  ),
+            maxCharacters: storyBudget,
+          )
         : '';
     if (contextSummary.isNotEmpty) {
       dynamicParts.add(
@@ -2276,23 +2286,34 @@ extension _ChatGenerationMethods on _ChatScreenState {
       ),
     );
     final imgRpStoryContext = isImgRpContext
-        ? ContextCompressor.fitRpReferencePartsToCharacterBudget(<String>[
-            if (memoryPrompt.isNotEmpty)
-              SystemContextMarkdown.section(
-                enTitle: 'Memory',
-                zhTWTitle: '記憶',
-                zhCNTitle: '记忆',
-                content: memoryPrompt.text,
-              ),
-            ...imgRpStoryContextParts,
-            if (imgRecallPrompt.isNotEmpty)
-              SystemContextMarkdown.section(
-                enTitle: 'Timeline Recall',
-                zhTWTitle: '時間線召回',
-                zhCNTitle: '时间线召回',
-                content: imgRecallPrompt,
-              ),
-          ], imgStoryBudget)
+        ? ContextCompressor.fitPrioritizedRpReferencePartsToCharacterBudget(
+            storyState: imgRpStoryContextParts.length > 1
+                ? imgRpStoryContextParts[1]
+                : '',
+            story: imgRpStoryContextParts.isNotEmpty
+                ? imgRpStoryContextParts[0]
+                : '',
+            worldbook: imgRpStoryContextParts.length > 2
+                ? imgRpStoryContextParts[2]
+                : '',
+            memory: memoryPrompt.isEmpty
+                ? ''
+                : SystemContextMarkdown.section(
+                    enTitle: 'Memory',
+                    zhTWTitle: '記憶',
+                    zhCNTitle: '记忆',
+                    content: memoryPrompt.text,
+                  ),
+            timeline: imgRecallPrompt.isEmpty
+                ? ''
+                : SystemContextMarkdown.section(
+                    enTitle: 'Timeline Recall',
+                    zhTWTitle: '時間線召回',
+                    zhCNTitle: '时间线召回',
+                    content: imgRecallPrompt,
+                  ),
+            maxCharacters: imgStoryBudget,
+          )
         : '';
     if (imgContextSummary.isNotEmpty) {
       dynamicParts.add(

@@ -1152,6 +1152,41 @@ void main() {
     expect(fitted, contains('劇情狀態'));
   });
 
+  test(
+    'RP prioritized reference budget protects current story state first',
+    () {
+      final fitted =
+          ContextCompressor.fitPrioritizedRpReferencePartsToCharacterBudget(
+            storyState: '【劇情現況】\n當前場景仍在城門，左手傷勢未癒，尚未回答守將的問題。',
+            story: '【劇情人物】\n守將與主角互相提防，仍維持暫時合作。',
+            worldbook: '【世界書】\n城門入夜後只允許持令者通行。',
+            memory: '【記憶】\n很久以前在茶樓談過一段與當前場景無關的往事。' * 4,
+            timeline: '【時間線召回】\n多年前曾經進城。' * 4,
+            maxCharacters: 150,
+          );
+
+      expect(fitted.length, lessThanOrEqualTo(150));
+      expect(fitted, startsWith('【劇情現況】'));
+      expect(fitted, contains('當前場景仍在城門'));
+      expect(fitted.indexOf('【劇情現況】'), lessThan(fitted.indexOf('【劇情人物】')));
+      expect(fitted, isNot(contains('多年前曾經進城')));
+    },
+  );
+
+  test('RP prioritized reference keeps all sources in semantic order', () {
+    final fitted =
+        ContextCompressor.fitPrioritizedRpReferencePartsToCharacterBudget(
+          storyState: 'STATE',
+          story: 'STORY',
+          worldbook: 'WORLD',
+          memory: 'MEMORY',
+          timeline: 'TIMELINE',
+          maxCharacters: 200,
+        );
+
+    expect(fitted, 'STATE\n\nSTORY\n\nWORLD\n\nMEMORY\n\nTIMELINE');
+  });
+
   test('summary cadence ignores hidden continuation and incomplete rows', () {
     final messages = <Message>[
       Message(id: 1, conversationId: 'conv-a', text: '正文', isUser: true),
