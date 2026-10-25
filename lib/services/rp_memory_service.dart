@@ -24,6 +24,7 @@ abstract final class RpMemoryService {
     required String windowId,
     required String continuityId,
     bool emotionEnabled = true,
+    Iterable<String> alreadyInjected = const <String>[],
   }) async {
     final prompt = await Retriever.buildMemoryPrompt(
       mode: mode,
@@ -33,6 +34,7 @@ abstract final class RpMemoryService {
       emotionEnabled: emotionEnabled,
       contextMode: ContextMode.rp,
       continuityId: continuityId,
+      alreadyInjected: alreadyInjected,
     );
     debugPrint(
       '[RpMemoryDebug] phase=recall character=$characterId '

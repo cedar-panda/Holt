@@ -1070,6 +1070,12 @@ void main() {
           '她想起王城曆 312 年的鐘樓約定',
         );
         expect(precisePrompt, contains('兩人約定在鐘樓見面'));
+        final duplicatePrompt = await RpCharacterTimelineService.recallPrompt(
+          'char-a',
+          '她想起王城曆 312 年的鐘樓約定',
+          alreadyInjected: const <String>['前情已記載：兩人約定在鐘樓見面。'],
+        );
+        expect(duplicatePrompt, isEmpty);
         final rows = await RpCharacterTimelineService.getEntries('char-a');
         expect(rows, hasLength(1));
         expect(rows.single['type'], 'event');
@@ -1137,6 +1143,52 @@ void main() {
             whereArgs: <Object?>[relevantMemoryId],
           )).single['mention_count'],
           1,
+        );
+      },
+    );
+
+    test(
+      'RP memory skips facts already carried by summaries without counting a hit',
+      () async {
+        SharedPreferences.setMockInitialValues(<String, Object>{
+          'memory_send_limit_v1': 5,
+          'mem_budget_total': 2000,
+          'mem_budget_v2_migrated': true,
+        });
+        final memoryId = await DatabaseHelper.insertMemory(
+          Memory(
+            characterId: 'char-a',
+            contextMode: ContextMode.rp,
+            continuityId: 'main',
+            mode: 'romance',
+            category: '伏筆',
+            narrativeWeight: 'branch',
+            content: '王城的信物會在鐘樓約定中再次出現。',
+            triggers: '王城信物',
+          ),
+        );
+
+        Retriever.resetWindowIds('rp-covered-memory-window');
+        final prompt = await Retriever.buildMemoryPrompt(
+          mode: 'romance',
+          currentMessage: '她回到王城，摸了摸信物',
+          characterId: 'char-a',
+          windowId: 'rp-covered-memory-window',
+          contextMode: ContextMode.rp,
+          continuityId: 'main',
+          alreadyInjected: const <String>['### ——主線——\n王城的信物會在鐘樓約定中再次出現。'],
+        );
+
+        expect(prompt.text, isEmpty);
+        await prompt.commit();
+        expect(
+          (await db.query(
+            'memories',
+            columns: const <String>['mention_count'],
+            where: 'id = ?',
+            whereArgs: <Object?>[memoryId],
+          )).single['mention_count'],
+          0,
         );
       },
     );

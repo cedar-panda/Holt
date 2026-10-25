@@ -201,6 +201,42 @@ class RecallTextMatcher {
   static bool containsPhrase(String text, String phrase) =>
       bestKeywordMatch(text, phrase) != null;
 
+  /// Returns whether [candidate] is already represented by one of the prompt
+  /// layers in [references]. Short text requires exact containment; longer
+  /// prose may use a conservative four-character shingle overlap.
+  static bool isSubstantiallyCovered(
+    String candidate,
+    Iterable<String> references,
+  ) {
+    final compactCandidate = _compact(_normalize(candidate));
+    if (compactCandidate.isEmpty) return false;
+    for (final reference in references) {
+      final compactReference = _compact(_normalize(reference));
+      if (compactReference.isEmpty) continue;
+      if (compactReference.contains(compactCandidate)) return true;
+      if (compactCandidate.length < 24 || compactReference.length < 24) {
+        continue;
+      }
+      final candidateShingles = _shingles(compactCandidate, 4);
+      if (candidateShingles.isEmpty) continue;
+      final referenceShingles = _shingles(compactReference, 4);
+      var overlap = 0;
+      for (final shingle in candidateShingles) {
+        if (referenceShingles.contains(shingle)) overlap++;
+      }
+      if (overlap / candidateShingles.length >= 0.9) return true;
+    }
+    return false;
+  }
+
+  static Set<String> _shingles(String source, int size) {
+    if (source.length < size) return <String>{source};
+    return <String>{
+      for (var index = 0; index + size <= source.length; index++)
+        source.substring(index, index + size),
+    };
+  }
+
   static List<String> splitKeywords(String raw) {
     final cached = _keywordCache.remove(raw);
     if (cached != null) {

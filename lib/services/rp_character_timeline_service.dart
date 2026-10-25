@@ -216,6 +216,7 @@ abstract final class RpCharacterTimelineService {
     String characterId,
     String userMessage, {
     String continuityId = 'main',
+    Iterable<String> alreadyInjected = const <String>[],
   }) async {
     final entries = await getEntries(
       characterId,
@@ -275,7 +276,14 @@ abstract final class RpCharacterTimelineService {
     // unrelated recent events merely because fewer keywords matched; that is
     // what made settled plans repeatedly reappear as current objectives.
     final selected = scoredEvents
-        .where((candidate) => candidate.matched)
+        .where((candidate) {
+          if (!candidate.matched) return false;
+          final value = candidate.row['value']?.toString() ?? '';
+          return !RecallTextMatcher.isSubstantiallyCovered(
+            value,
+            alreadyInjected,
+          );
+        })
         .take(6)
         .map((candidate) => candidate.row)
         .toList(growable: false);

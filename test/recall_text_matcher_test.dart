@@ -55,4 +55,29 @@ void main() {
       expect(batch[index]?.score, single?.score);
     }
   });
+
+  test(
+    'coverage detection is exact for short text and conservative for prose',
+    () {
+      expect(
+        RecallTextMatcher.isSubstantiallyCovered('兩人在藥鋪立下冬至之約。', const <String>[
+          '摘要記載：兩人在藥鋪立下冬至之約。後來各自離開。',
+        ]),
+        isTrue,
+      );
+      expect(
+        RecallTextMatcher.isSubstantiallyCovered('冬至之約', const <String>[
+          '摘要只提到冬至將近，沒有寫下約定。',
+        ]),
+        isFalse,
+      );
+      expect(
+        RecallTextMatcher.isSubstantiallyCovered(
+          '顧遠在渡口交付青鸞印信，清川因此允許他暫住藥鋪，兩人的合作由此開始。',
+          const <String>['顧遠在渡口交付青鸞印信；清川因此允許他暫住藥鋪，兩人的合作由此正式開始。'],
+        ),
+        isTrue,
+      );
+    },
+  );
 }

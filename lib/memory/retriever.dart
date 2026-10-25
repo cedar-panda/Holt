@@ -117,6 +117,7 @@ class Retriever {
     bool emotionEnabled = true,
     ContextMode contextMode = ContextMode.daily,
     String continuityId = 'main',
+    Iterable<String> alreadyInjected = const <String>[],
   }) async {
     final scope = _scope(windowId);
     final injectionLog = <String>[];
@@ -289,6 +290,13 @@ class Retriever {
     // ── 輔助：嘗試注入一條 ──
     bool tryInject(Memory mem, {String? prefix}) {
       if (injected.length >= sendLimit) return false;
+      if (contextMode == ContextMode.rp &&
+          RecallTextMatcher.isSubstantiallyCovered(
+            mem.content,
+            alreadyInjected,
+          )) {
+        return false;
+      }
       if (mem.id != null && !seen.add(mem.id!)) return false;
 
       final shortNo = mem.id != null ? shortFor(mem.id!, windowId: scope) : 0;

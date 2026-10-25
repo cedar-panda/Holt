@@ -431,27 +431,19 @@ extension _ChatGenerationMethods on _ChatScreenState {
 
     // 記憶注入依賴 bucket，先 await bucket 再發射
     final bucket = await bucketF;
-    final memoryPromptF = emotionEnabledF.then((emotionEnabled) {
-      if (sessionIdentity.contextMode == ContextMode.rp) {
-        return RpMemoryService.buildPrompt(
-          mode: bucket,
-          currentMessage: promptVisibleOutboundText,
-          characterId: charId,
-          windowId: widget.conversationId,
-          continuityId: sessionIdentity.continuityId,
-          emotionEnabled: emotionEnabled,
-        );
-      }
-      return Retriever.buildMemoryPrompt(
-        mode: bucket,
-        currentMessage: promptVisibleOutboundText,
-        characterId: charId,
-        windowId: widget.conversationId,
-        emotionEnabled: emotionEnabled,
-        contextMode: sessionIdentity.contextMode,
-        continuityId: sessionIdentity.continuityId,
-      );
-    });
+    final memoryPromptF = sessionIdentity.contextMode == ContextMode.rp
+        ? Future<DeferredPrompt>.value(DeferredPrompt.empty())
+        : emotionEnabledF.then(
+            (emotionEnabled) => Retriever.buildMemoryPrompt(
+              mode: bucket,
+              currentMessage: promptVisibleOutboundText,
+              characterId: charId,
+              windowId: widget.conversationId,
+              emotionEnabled: emotionEnabled,
+              contextMode: sessionIdentity.contextMode,
+              continuityId: sessionIdentity.continuityId,
+            ),
+          );
 
     // 動態部分：也提前發射
     final emoStateF = emotionEnabledF.then(
@@ -459,17 +451,11 @@ extension _ChatGenerationMethods on _ChatScreenState {
           enabled ? await EmotionCoordinates.statePrompt(_emotionScopeId) : '',
     );
     final recallPromptF = timelineEnabledF.then<String>((enabled) async {
-      if (!enabled) return '';
-      return sessionIdentity.contextMode == ContextMode.rp
-          ? RpCharacterTimelineService.recallPrompt(
-              charId,
-              promptVisibleOutboundText,
-              continuityId: sessionIdentity.continuityId,
-            )
-          : CharacterTimelineService.recallPrompt(
-              charId,
-              promptVisibleOutboundText,
-            );
+      if (!enabled || sessionIdentity.contextMode == ContextMode.rp) return '';
+      return CharacterTimelineService.recallPrompt(
+        charId,
+        promptVisibleOutboundText,
+      );
     });
     final rpStoryContextPartsF = sessionIdentity.contextMode == ContextMode.rp
         ? Future.wait<String>(<Future<String>>[
@@ -500,7 +486,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
     final systemPrompt = await systemPromptF;
     final model = await modelF;
     _currentModel = model;
-    final memoryPrompt = await memoryPromptF;
+    var memoryPrompt = await memoryPromptF;
     final userProfile = await userProfileF;
     final selfNotes = await selfNotesF;
     final userNicknameStr = await userNicknameF;
@@ -554,9 +540,10 @@ extension _ChatGenerationMethods on _ChatScreenState {
     if (isNewCharacterCommand) {
       controlParts.add(GuideService.newCharacterPrompt());
     }
-    final turnEffects = DeferredPromptBatch()..add(memoryPrompt);
-    final now = DateTime.now();
     final isRpContext = sessionIdentity.contextMode == ContextMode.rp;
+    final turnEffects = DeferredPromptBatch();
+    if (!isRpContext) turnEffects.add(memoryPrompt);
+    final now = DateTime.now();
     if (isRpContext &&
         memoryWriteEnabled &&
         toolFeatures.toolPromptsEnabled &&
@@ -602,7 +589,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
       );
     }
     final contextSummary = await dynamicWindowSummaryF;
-    final recallPrompt = await recallPromptF;
+    var recallPrompt = await recallPromptF;
     final continuationBudget = max(
       0,
       ContextCompressor.rpLiveContinuityMaxChars -
@@ -617,6 +604,33 @@ extension _ChatGenerationMethods on _ChatScreenState {
             preferLatest: true,
           )
         : _rpContinuationSummaryPrompt;
+    if (isRpContext) {
+      final alreadyInjected = <String>[
+        staticWindowSummary,
+        contextSummary,
+        continuationSummary,
+      ].where((part) => part.trim().isNotEmpty).toList(growable: false);
+      final rpMemoryPromptF = RpMemoryService.buildPrompt(
+        mode: bucket,
+        currentMessage: promptVisibleOutboundText,
+        characterId: charId,
+        windowId: widget.conversationId,
+        continuityId: sessionIdentity.continuityId,
+        emotionEnabled: emotionEnabled,
+        alreadyInjected: alreadyInjected,
+      );
+      final rpTimelinePromptF = timelineEnabled
+          ? RpCharacterTimelineService.recallPrompt(
+              charId,
+              promptVisibleOutboundText,
+              continuityId: sessionIdentity.continuityId,
+              alreadyInjected: alreadyInjected,
+            )
+          : Future<String>.value('');
+      memoryPrompt = await rpMemoryPromptF;
+      recallPrompt = await rpTimelinePromptF;
+      turnEffects.add(memoryPrompt);
+    }
     final storyBudget = min(
       ContextCompressor.rpStoryContextMaxChars,
       max(
@@ -2090,17 +2104,12 @@ extension _ChatGenerationMethods on _ChatScreenState {
     // 這些假關鍵詞撞記憶、時間線、人物與世界書。
     final imageRecallQuery = outboundCaption.trim();
     final imgTimelineEnabled = await MemorySettings.getTimelineEnabled();
-    final imgRecallPrompt = imgTimelineEnabled
-        ? sessionIdentity.contextMode == ContextMode.rp
-              ? await RpCharacterTimelineService.recallPrompt(
-                  _activeCharacterId,
-                  imageRecallQuery,
-                  continuityId: sessionIdentity.continuityId,
-                )
-              : await CharacterTimelineService.recallPrompt(
-                  _activeCharacterId,
-                  imageRecallQuery,
-                )
+    var imgRecallPrompt =
+        imgTimelineEnabled && sessionIdentity.contextMode == ContextMode.daily
+        ? await CharacterTimelineService.recallPrompt(
+            _activeCharacterId,
+            imageRecallQuery,
+          )
         : '';
     final imgRpStoryContextParts = sessionIdentity.contextMode == ContextMode.rp
         ? await Future.wait<String>(<Future<String>>[
@@ -2122,17 +2131,11 @@ extension _ChatGenerationMethods on _ChatScreenState {
             ),
           ])
         : const <String>[];
-    final memoryPrompt = sessionIdentity.contextMode == ContextMode.rp
-        ? await RpMemoryService.buildPrompt(
-            mode: await _memoryBucket(),
-            currentMessage: imageRecallQuery,
-            characterId: _activeCharacterId,
-            windowId: widget.conversationId,
-            continuityId: sessionIdentity.continuityId,
-            emotionEnabled: emotionEnabled,
-          )
+    final imgMemoryBucket = await _memoryBucket();
+    var memoryPrompt = sessionIdentity.contextMode == ContextMode.rp
+        ? DeferredPrompt.empty()
         : await Retriever.buildMemoryPrompt(
-            mode: await _memoryBucket(),
+            mode: imgMemoryBucket,
             currentMessage: imageRecallQuery,
             characterId: _activeCharacterId,
             windowId: widget.conversationId,
@@ -2210,8 +2213,9 @@ extension _ChatGenerationMethods on _ChatScreenState {
       dynamicParts.add(WhisperService.runtimeInstruction(imgWhisperState));
     }
     final controlParts = <String>[];
-    final turnEffects = DeferredPromptBatch()..add(memoryPrompt);
     final isImgRpContext = sessionIdentity.contextMode == ContextMode.rp;
+    final turnEffects = DeferredPromptBatch();
+    if (!isImgRpContext) turnEffects.add(memoryPrompt);
     if (isImgRpContext &&
         imgMemoryWriteEnabled &&
         imgToolFeatures.toolPromptsEnabled &&
@@ -2275,6 +2279,33 @@ extension _ChatGenerationMethods on _ChatScreenState {
             preferLatest: true,
           )
         : _rpContinuationSummaryPrompt;
+    if (isImgRpContext) {
+      final alreadyInjected = <String>[
+        imgStaticWindowSummary,
+        imgContextSummary,
+        imgContinuationSummary,
+      ].where((part) => part.trim().isNotEmpty).toList(growable: false);
+      final rpMemoryPromptF = RpMemoryService.buildPrompt(
+        mode: imgMemoryBucket,
+        currentMessage: imageRecallQuery,
+        characterId: _activeCharacterId,
+        windowId: widget.conversationId,
+        continuityId: sessionIdentity.continuityId,
+        emotionEnabled: emotionEnabled,
+        alreadyInjected: alreadyInjected,
+      );
+      final rpTimelinePromptF = imgTimelineEnabled
+          ? RpCharacterTimelineService.recallPrompt(
+              _activeCharacterId,
+              imageRecallQuery,
+              continuityId: sessionIdentity.continuityId,
+              alreadyInjected: alreadyInjected,
+            )
+          : Future<String>.value('');
+      memoryPrompt = await rpMemoryPromptF;
+      imgRecallPrompt = await rpTimelinePromptF;
+      turnEffects.add(memoryPrompt);
+    }
     final imgStoryBudget = min(
       ContextCompressor.rpStoryContextMaxChars,
       max(
