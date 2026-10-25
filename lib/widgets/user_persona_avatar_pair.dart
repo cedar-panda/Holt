@@ -278,23 +278,19 @@ class _RedThreadPainter extends CustomPainter {
     final exitDipY = h * (constrainedByLabel ? .58 : .78);
     final endY = h * (constrainedByLabel ? .48 : .58);
 
-    // Tangent vectors for seamless C1 continuous transitions between segments.
-    // tan1 defines the soft upward-right angle where the lead-in smoothly merges
-    // into the ascending sweep of the loop without any hard kink.
     // Keep the curl visually centred between the two avatars. The crossing
     // sits just left of centre and the apex mirrors it on the right.
     final loopCenterX = w * .50;
     final cross1X = loopCenterX - w * .035;
     final cross2X = loopCenterX - w * .035;
-    final tan1Dx = w * .065;
-    final tan1Dy = (crossY - baseY) * .65;
+    final ascDx = w * .085;
+    final ascDy = (crossY - baseY) * .52;
 
     final apexX = loopCenterX + w * .035;
     final apexY = loopTopY;
 
-    // exitTan defines the downward exit tangent through the crossing into the basin.
-    final exitDx = w * .08;
-    final exitDy = (exitDipY - crossY) * .55;
+    final descDx = w * .085;
+    final descDy = (exitDipY - crossY) * .48;
 
     final troughX = w * .74;
     final troughY = exitDipY;
@@ -305,8 +301,8 @@ class _RedThreadPainter extends CustomPainter {
       ..cubicTo(
         w * .14,
         baseY,
-        cross1X - tan1Dx * .90,
-        crossY - tan1Dy * .90,
+        cross1X - ascDx * .85,
+        crossY - ascDy * .85,
         cross1X,
         crossY,
       )
@@ -314,8 +310,8 @@ class _RedThreadPainter extends CustomPainter {
       // Keep the controls close to an oval instead of pulling the upper half
       // into a narrow teardrop.
       ..cubicTo(
-        cross1X + w * .105,
-        crossY - h * .055,
+        cross1X + ascDx * 1.05,
+        crossY + ascDy * 1.05,
         apexX + w * .105,
         apexY,
         apexX,
@@ -325,15 +321,15 @@ class _RedThreadPainter extends CustomPainter {
       ..cubicTo(
         apexX - w * .105,
         apexY,
-        cross2X - w * .105,
-        crossY - h * .055,
+        cross2X - descDx * 1.05,
+        crossY - descDy * 1.05,
         cross2X,
         crossY,
       )
       // 4. Smooth exit through crossing into the shallow basin (→).
       ..cubicTo(
-        cross2X + exitDx * 1.2,
-        crossY + exitDy * 1.2,
+        cross2X + descDx * .95,
+        crossY + descDy * .95,
         troughX - w * .15,
         troughY,
         troughX,

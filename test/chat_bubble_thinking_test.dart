@@ -33,7 +33,7 @@ void main() {
     },
   );
 
-  testWidgets('grouped bubbles keep one stable avatar and symmetric corners', (
+  testWidgets('grouped bubbles keep one avatar and softly join inner corners', (
     tester,
   ) async {
     SharedPreferences.setMockInitialValues(<String, Object>{});
@@ -74,14 +74,18 @@ void main() {
         )
         .toList();
     expect(surfaces, hasLength(2));
-    for (final surface in surfaces) {
-      final radius = (surface.decoration! as BoxDecoration).borderRadius!;
-      expect(radius, isA<BorderRadius>());
-      final corners = radius as BorderRadius;
-      expect(corners.topLeft, corners.topRight);
-      expect(corners.topLeft, corners.bottomLeft);
-      expect(corners.topLeft, corners.bottomRight);
-    }
+    final first =
+        (surfaces.first.decoration! as BoxDecoration).borderRadius!
+            as BorderRadius;
+    final second =
+        (surfaces.last.decoration! as BoxDecoration).borderRadius!
+            as BorderRadius;
+    expect(first.topLeft, first.topRight);
+    expect(first.bottomLeft.x, 14);
+    expect(first.bottomLeft.x, lessThan(first.topLeft.x));
+    expect(second.bottomLeft, second.bottomRight);
+    expect(second.topLeft.x, 14);
+    expect(second.topLeft.x, lessThan(second.topRight.x));
   });
 
   testWidgets('one rendered line is a pill and multiline keeps theme radius', (
@@ -119,6 +123,31 @@ void main() {
     final multiline = (surfaces[1].decoration! as BoxDecoration).borderRadius;
     expect(pill, BorderRadius.circular(YanciTheme.radiusPill));
     expect(multiline, BorderRadius.circular(23));
+  });
+
+  testWidgets('flat AI text keeps a readable asymmetric page margin', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    final originalFlatMode = YanciTheme.aiBubbleFlat;
+    YanciTheme.aiBubbleFlat = true;
+    addTearDown(() async {
+      YanciTheme.aiBubbleFlat = originalFlatMode;
+      await tester.binding.setSurfaceSize(null);
+    });
+    await tester.binding.setSurfaceSize(const Size(400, 800));
+
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: ChatBubble(text: '平鋪正文', isUser: false, captureMode: true),
+        ),
+      ),
+    );
+
+    final bubble = find.byKey(const ValueKey('chat-bubble-surface'));
+    expect(tester.getTopLeft(bubble).dx, greaterThanOrEqualTo(24));
+    expect(400 - tester.getTopRight(bubble).dx, greaterThanOrEqualTo(40));
   });
 
   testWidgets('persisted assistant content does not replay entry opacity', (

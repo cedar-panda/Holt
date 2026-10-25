@@ -50,6 +50,18 @@ void main() {
     );
   });
 
+  test(
+    'bubble glaze preserves source alpha and uses one restrained shadow',
+    () {
+      const base = Color(0x80446688);
+      final gradient = YanciTheme.bubbleGlazeGradient(base, isDark: true);
+      expect(gradient.colors, hasLength(2));
+      expect(gradient.colors.first.a, closeTo(base.a, 0.0001));
+      expect(gradient.colors.last.a, closeTo(base.a, 0.0001));
+      expect(YanciTheme.bubbleGlazeShadows(isDark: true), hasLength(1));
+    },
+  );
+
   test('unwashed ink preset keeps its cool ink semantic palette', () {
     final preset = findPreset('yanci');
 

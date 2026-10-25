@@ -301,18 +301,21 @@ extension _ThemeWorkshopParticleHeroMethods on _ThemeWorkshopScreenState {
                   ? null
                   : BoxDecoration(
                       color: YanciTheme.aiBubble,
+                      gradient: YanciTheme.bubbleGlazeGradient(
+                        YanciTheme.aiBubble,
+                        isDark: preset.isDark,
+                      ),
                       borderRadius: BorderRadius.circular(999),
                       border: Border.all(
-                        color: preset.aiBubbleBorder.withValues(alpha: 0.5),
-                        width: 0.5,
-                      ),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withValues(alpha: 0.06),
-                          blurRadius: 6,
-                          offset: const Offset(0, 2),
+                        color: YanciTheme.bubbleGlazeBorderColor(
+                          preset.aiBubbleBorder,
+                          isDark: preset.isDark,
                         ),
-                      ],
+                        width: 0.65,
+                      ),
+                      boxShadow: YanciTheme.bubbleGlazeShadows(
+                        isDark: preset.isDark,
+                      ),
                     ),
               child: Text(
                 '(\u00b4\u30fb\u1d17\u30fb\uff40)',
@@ -335,18 +338,19 @@ extension _ThemeWorkshopParticleHeroMethods on _ThemeWorkshopScreenState {
               constraints: const BoxConstraints(minWidth: 64),
               decoration: BoxDecoration(
                 color: YanciTheme.userBubble,
+                gradient: YanciTheme.bubbleGlazeGradient(
+                  YanciTheme.userBubble,
+                  isDark: preset.isDark,
+                ),
                 borderRadius: BorderRadius.circular(999),
                 border: Border.all(
-                  color: preset.userBubbleBorder.withValues(alpha: 0.5),
-                  width: 0.5,
-                ),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.06),
-                    blurRadius: 6,
-                    offset: const Offset(0, 2),
+                  color: YanciTheme.bubbleGlazeBorderColor(
+                    preset.userBubbleBorder,
+                    isDark: preset.isDark,
                   ),
-                ],
+                  width: 0.65,
+                ),
+                boxShadow: YanciTheme.bubbleGlazeShadows(isDark: preset.isDark),
               ),
               child: Text(
                 '( ˘ᵕ˘ )',

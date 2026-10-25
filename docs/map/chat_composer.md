@@ -22,7 +22,9 @@
 - 等待提示：`lib/widgets/chat_bubble.dart:_TypingIndicatorState`
 - 氣泡複製／書籤／朗讀的透明操作熱區：`lib/widgets/chat_bubble.dart:_buildToolbarTapTarget`
 - 聊天氣泡形狀：`lib/widgets/chat_bubble.dart:_usesSingleLinePill` 先以實際字級與可用寬度排版；真正只有一行的自然語言使用膠囊，換行或區塊內容使用主題工坊設定的大圓角。AI／User 共用同一個圓角設定來源。
+- 連續氣泡：`lib/widgets/chat_bubble.dart:_bubbleBorderRadius` 只把同一說話者相接側收至多行主圓角的 70%；單行膠囊的相接角為 14pt，外側仍保持完整膠囊，不回到尖尾巴。
 - 氣泡明度與透明度：`lib/theme/app_theme.dart:applyBubbleBrightness`、`chatBackgroundAiBubbleColor`、`chatBackgroundUserBubbleColor`；主題覆蓋色與自訂背景配色都走同一套微調，主題工坊預覽與聊天室一致。
+- 氣泡表面：`lib/theme/app_theme.dart:bubbleGlazeGradient`、`bubbleGlazeBorderColor`、`bubbleGlazeShadows` 在原實色與透明度上增加極輕頂光、底部陰影與單層柔影；不使用 `BackdropFilter`，既有特殊 AI 漸層優先保留。主題工坊兩種預覽與聊天室共用規則。
 - 串流轉正式訊息：`lib/screens/chat_screen_message_list.dart:_buildMessageList` 讓串流中的 AI 氣泡只播放一次入場；同一回覆寫入資料庫後以 `animateEntry: false` 接替，不再把已顯示正文短暫降成透明。`lib/screens/chat_screen_stream.dart:_markFreshAssistantContext` 只標記剛完成的回覆，讓其 Thinking／Memory／Mood 以 220ms 高度＋透明度過渡顯示；歷史訊息直接顯示。
 - Context 標題列：`lib/widgets/chat_bubble.dart:_buildThinkingTree`、`_buildStandaloneContextRoot` 與 `lib/widgets/thinking_context_widgets.dart:ThinkingSheetLauncher.build` 收合高度不超過 40pt。平鋪模式的標題留在 40pt 頭像橫列內；一般氣泡模式則在氣泡上方平滑展開，避免串流結束時硬把正文向下頂。
 - 加號工具盒：`lib/widgets/input_bar.dart:_buildActionPanel`；自訂對話背景存在時，文字、圖標、襯底與 0.5px 邊框沿用輸入框的自適應配色，沒有背景時維持主題預設。
@@ -37,6 +39,7 @@
 ## 相關開關
 - 主題工坊「發送鍵」四種樣式。
 - 主題工坊「氣泡圓角／明度／透明度」直接影響實際聊天氣泡；單行膠囊只改幾何外形，不覆寫使用者保存的多行圓角值。
+- AI 平鋪模式使用左窄右寬的閱讀版心：左側至少 20pt、約螢幕 5.5%，右側至少 40pt、約螢幕 11.5%；內側另保留 4pt，不影響氣泡模式。
 - 自訂圖必須為 1:1 PNG；檔案遺失或讀取失敗時回退葉子。
 - 等待前 5 秒只顯示三點；第 5 秒起在右側顯示秒數，第一個正文字符出現後整體消失。
 - 系統「減少動態效果」開啟時，等待三點、TTS 連接軌道與播放音條保留狀態提示但停止循環位移。
@@ -50,6 +53,7 @@
 ## 相關測試檔
 - `test/input_bar_test.dart`
 - `test/theme_workshop_bubble_customization_test.dart`
+- `test/user_persona_widgets_test.dart`
 - `test/portable_backup_bundle_test.dart`
 - `test/chat_bubble_thinking_test.dart`
 - `test/tts_play_button_test.dart`

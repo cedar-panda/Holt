@@ -311,6 +311,51 @@ class YanciTheme {
   static const double radiusPill = 999.0;
   static double get radiusBubble => bubbleRadius;
 
+  /// Adds a very small top-light/bottom-shade shift while preserving the
+  /// bubble's source alpha. This is a paint-only glaze, not backdrop blur.
+  static LinearGradient bubbleGlazeGradient(
+    Color baseColor, {
+    required bool isDark,
+  }) {
+    final alpha = baseColor.a;
+    final top = Color.lerp(
+      baseColor,
+      Colors.white,
+      isDark ? 0.045 : 0.065,
+    )!.withValues(alpha: alpha);
+    final bottom = Color.lerp(
+      baseColor,
+      Colors.black,
+      isDark ? 0.035 : 0.020,
+    )!.withValues(alpha: alpha);
+    return LinearGradient(
+      begin: Alignment.topLeft,
+      end: Alignment.bottomRight,
+      colors: <Color>[top, bottom],
+    );
+  }
+
+  static Color bubbleGlazeBorderColor(
+    Color baseBorder, {
+    required bool isDark,
+  }) {
+    final mixed = Color.lerp(baseBorder, Colors.white, isDark ? 0.14 : 0.28)!;
+    return mixed.withValues(
+      alpha: (baseBorder.a * (isDark ? 0.72 : 0.82)).clamp(0.0, 1.0),
+    );
+  }
+
+  /// A single restrained shadow keeps the bubble readable over imagery
+  /// without multiplying blur passes for every message.
+  static List<BoxShadow> bubbleGlazeShadows({required bool isDark}) => [
+    BoxShadow(
+      color: Colors.black.withValues(alpha: isDark ? 0.18 : 0.045),
+      blurRadius: 10,
+      spreadRadius: -1,
+      offset: const Offset(0, 3),
+    ),
+  ];
+
   // ═══════════════════════════════════
   // 字體
   // ═══════════════════════════════════

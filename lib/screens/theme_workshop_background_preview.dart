@@ -464,20 +464,21 @@ extension _ThemeWorkshopBackgroundPreview on _ThemeWorkshopScreenState {
           ? null
           : BoxDecoration(
               color: color,
+              gradient: YanciTheme.bubbleGlazeGradient(
+                color,
+                isDark: YanciTheme.isDark,
+              ),
               borderRadius: BorderRadius.circular(999),
               border: Border.all(
-                color: borderColor.withValues(alpha: 0.5),
-                width: 0.5,
-              ),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(
-                    alpha: YanciTheme.isDark ? 0.18 : 0.05,
-                  ),
-                  blurRadius: 8,
-                  offset: const Offset(0, 2),
+                color: YanciTheme.bubbleGlazeBorderColor(
+                  borderColor,
+                  isDark: YanciTheme.isDark,
                 ),
-              ],
+                width: 0.65,
+              ),
+              boxShadow: YanciTheme.bubbleGlazeShadows(
+                isDark: YanciTheme.isDark,
+              ),
             ),
       child: Text(
         text,

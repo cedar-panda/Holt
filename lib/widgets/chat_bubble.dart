@@ -622,6 +622,30 @@ class _ChatBubbleState extends State<ChatBubble>
     return painter.computeLineMetrics().length == 1;
   }
 
+  BorderRadius _bubbleBorderRadius({
+    required bool singleLine,
+    required double radius,
+  }) {
+    final outer = Radius.circular(singleLine ? YanciTheme.radiusPill : radius);
+    final joined = Radius.circular(
+      singleLine ? 14.0 : (radius * 0.70).clamp(8.0, 22.0),
+    );
+    if (widget.isUser) {
+      return BorderRadius.only(
+        topLeft: outer,
+        bottomLeft: outer,
+        topRight: widget.groupedWithPrevious ? joined : outer,
+        bottomRight: widget.groupedWithNext ? joined : outer,
+      );
+    }
+    return BorderRadius.only(
+      topLeft: widget.groupedWithPrevious ? joined : outer,
+      bottomLeft: widget.groupedWithNext ? joined : outer,
+      topRight: outer,
+      bottomRight: outer,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final sw = MediaQuery.of(context).size.width;
@@ -721,12 +745,12 @@ class _ChatBubbleState extends State<ChatBubble>
             left: widget.isUser
                 ? sw * (widget.showAvatar ? 0.15 : 0.2)
                 : aiFlatMode
-                ? sw * 0.02
+                ? math.max(20.0, sw * 0.055)
                 : YanciTheme.spacingMd,
             right: widget.isUser
                 ? YanciTheme.spacingMd
                 : aiFlatMode
-                ? sw * 0.05
+                ? math.max(40.0, sw * 0.115)
                 : sw * (widget.showAvatar ? 0.15 : 0.2),
             top: widget.groupedWithPrevious ? 2 : YanciTheme.spacingSm,
             bottom: widget.groupedWithNext ? 2 : YanciTheme.spacingSm,
@@ -882,77 +906,89 @@ class _ChatBubbleState extends State<ChatBubble>
                                                 sw,
                                               );
                                           final bubbleRadius =
-                                              BorderRadius.circular(
-                                                isSingleLinePill ? 999 : r,
+                                              _bubbleBorderRadius(
+                                                singleLine: isSingleLinePill,
+                                                radius: r,
                                               );
+                                          final baseBubbleColor =
+                                              imageBackgroundBubbleColor ??
+                                              (widget.isUser
+                                                  ? YanciTheme.userBubble
+                                                  : YanciTheme.aiBubble);
+                                          final presetAiGradient =
+                                              imageBackgroundBubbleColor ==
+                                                      null &&
+                                                  !widget.isUser
+                                              ? YanciTheme.aiBubbleGradient
+                                              : null;
+                                          final baseBorderColor = widget.isUser
+                                              ? YanciTheme.userBubbleBorder
+                                              : YanciTheme.aiBubbleBorder;
                                           final bubble = Container(
                                             key: const ValueKey(
                                               'chat-bubble-surface',
                                             ),
                                             padding: EdgeInsets.symmetric(
                                               horizontal: aiFlatMode
-                                                  ? 2.0
-                                                  : YanciTheme.spacingMd,
+                                                  ? 4.0
+                                                  : 15.0,
                                               vertical: aiFlatMode ? 6.0 : 12,
                                             ),
                                             decoration: aiFlatMode
                                                 ? null
                                                 : BoxDecoration(
-                                                    color:
-                                                        imageBackgroundBubbleColor ??
-                                                        (widget.isUser ||
-                                                                YanciTheme
-                                                                        .aiBubbleGradient ==
-                                                                    null
-                                                            ? (widget.isUser
-                                                                  ? YanciTheme
-                                                                        .userBubble
-                                                                  : YanciTheme
-                                                                        .aiBubble)
-                                                            : null),
+                                                    color: baseBubbleColor,
                                                     gradient:
-                                                        imageBackgroundBubbleColor ==
-                                                                null &&
-                                                            !widget.isUser
-                                                        ? YanciTheme
-                                                              .aiBubbleGradient
-                                                        : null,
+                                                        presetAiGradient ??
+                                                        YanciTheme.bubbleGlazeGradient(
+                                                          baseBubbleColor,
+                                                          isDark:
+                                                              YanciTheme.isDark,
+                                                        ),
                                                     borderRadius: bubbleRadius,
                                                     border: overlayAsset == null
                                                         ? Border.all(
-                                                            color:
-                                                                (widget.isUser
-                                                                        ? YanciTheme
-                                                                              .userBubbleBorder
-                                                                        : YanciTheme
-                                                                              .aiBubbleBorder)
-                                                                    .withValues(
-                                                                      alpha:
-                                                                          (widget.isUser
-                                                                              ? YanciTheme.userBubbleBorder.a
-                                                                              : YanciTheme.aiBubbleBorder.a) *
-                                                                          imageBackgroundBubbleOpacity,
-                                                                    ),
-                                                            width: 0.5,
+                                                            color: YanciTheme.bubbleGlazeBorderColor(
+                                                              baseBorderColor
+                                                                  .withValues(
+                                                                    alpha:
+                                                                        baseBorderColor
+                                                                            .a *
+                                                                        imageBackgroundBubbleOpacity,
+                                                                  ),
+                                                              isDark: YanciTheme
+                                                                  .isDark,
+                                                            ),
+                                                            width: 0.65,
                                                           )
                                                         : null,
-                                                    boxShadow: [
-                                                      BoxShadow(
-                                                        color: Colors.black.withValues(
-                                                          alpha:
-                                                              YanciTheme.isDark
-                                                              ? 0.20 *
-                                                                    imageBackgroundBubbleOpacity
-                                                              : 0.05 *
-                                                                    imageBackgroundBubbleOpacity,
-                                                        ),
-                                                        blurRadius: 10,
-                                                        offset: const Offset(
-                                                          0,
-                                                          3,
-                                                        ),
-                                                      ),
-                                                    ],
+                                                    boxShadow:
+                                                        YanciTheme.bubbleGlazeShadows(
+                                                              isDark: YanciTheme
+                                                                  .isDark,
+                                                            )
+                                                            .map(
+                                                              (
+                                                                shadow,
+                                                              ) => BoxShadow(
+                                                                color: shadow
+                                                                    .color
+                                                                    .withValues(
+                                                                      alpha:
+                                                                          shadow
+                                                                              .color
+                                                                              .a *
+                                                                          imageBackgroundBubbleOpacity,
+                                                                    ),
+                                                                blurRadius: shadow
+                                                                    .blurRadius,
+                                                                spreadRadius: shadow
+                                                                    .spreadRadius,
+                                                                offset: shadow
+                                                                    .offset,
+                                                              ),
+                                                            )
+                                                            .toList(),
                                                   ),
                                             child: Opacity(
                                               opacity: _contentOpacity.value,
