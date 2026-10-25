@@ -651,7 +651,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
             worldbook: rpStoryContextParts.length > 2
                 ? rpStoryContextParts[2]
                 : '',
-            memory: memoryPrompt.isEmpty
+            memory: memoryPrompt.text.isEmpty
                 ? ''
                 : SystemContextMarkdown.section(
                     enTitle: 'Memory',
@@ -2327,7 +2327,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
             worldbook: imgRpStoryContextParts.length > 2
                 ? imgRpStoryContextParts[2]
                 : '',
-            memory: memoryPrompt.isEmpty
+            memory: memoryPrompt.text.isEmpty
                 ? ''
                 : SystemContextMarkdown.section(
                     enTitle: 'Memory',

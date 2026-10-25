@@ -18,6 +18,7 @@
 - （無）
 
 ## 完成
+- （2026-10-26）Codex：完成 RP 摘要輸出與注入／快取保護四批優化。摘要模型的 `recall_segments` 改為只輸出 `segment_order + title + anchor + 單一 keyword`，由本地把錨點綁回完整摘要段落，舊版 `content` JSON 仍相容且資料庫段落格式不變。世界書拆成 cacheable window 前綴內的 always（最多 3 條／500 字）與 request-only 的 triggered／scene；相容入口亦保證 always 優先。RP Story Reference 改按「劇情狀態 → 人物／關係 → 動態世界書 → 記憶 → 時間線」分配共享預算。記憶與 RP 時間線在固定摘要、截斷前情、續接摘要確定後才召回，已被摘要覆蓋的內容不再二次注入，且略過記憶不會提交 mention／trigger 副作用。四批 commits：`2e7acfb`、`a1a32e8`、`82740eb`、`882d36b`。同步更新 `docs/map/`。驗證：`flutter analyze --no-pub lib test` 無問題；`flutter test --no-pub` 1018 項全部通過；`git diff --check` 通過。未做實機／Provider API 驗收，未安裝或覆蓋裝置。
 - （2026-10-25）Codex：完成 UI 五批施工的第五批。新增不含 BackdropFilter 的主題化表單規範 `YanciTheme.themedInputDecoration`，以 14pt 圓角、低透明填色、0.7px 主題邊界與 accent 聚焦線統一便箋、歷史標題、RP 人物／關係／狀態與世界書表單；保留既有語義化圓角 token，不硬改舊 `radiusMd`。RP 人物、關係與狀態改為低對比輕卡片，狀態類型／敘事層級／進度改為小型主題徽章，世界書既有卡片不重複加框。針對性 11 項 UI 測試通過；`flutter analyze lib test` 無問題；`flutter test` 1012 項全部通過；`git diff --check` 通過。
 - （2026-10-25）Codex：完成 UI 五批施工的第四批。保留背景粒子既有前景 60fps、忙碌／閒置 30fps 與 vsync 對齊調度；神經網路與餘燼改為重用 painter Paint，漣漪移除逐圈動態高斯模糊，改用雙層低透明度寬線保留水霧擴散。既有 `fog`／`dandelion` 儲存 key 不變，視覺與三語名稱分別更新為由下而上的「沉香煙霧」及帶擺盪翻面的「落花吹雪」，兩者皆不用外部貼圖或逐粒模糊。粒子針對 5 項測試通過；`flutter analyze lib test` 無問題；`flutter test` 1011 項全部通過；`git diff --check` 通過。
 - （2026-10-25）Codex：完成 UI 五批施工的第三批。聊天氣泡在既有 16 套主題實色與透明度上加入低幅頂光／底部陰影、0.65px 受光邊與單層柔影，不新增 BackdropFilter；特殊 AI 漸層保留，主題工坊預覽同步。連續氣泡只收斂相接側至 70% 主圓角，單行仍為外側完整膠囊；AI 平鋪正文改為左窄右寬閱讀版心。雙頭像紅線保留原錨點與手繪軌跡，只校正兩處交叉點切線。針對性 47 項測試通過；`flutter analyze lib test` 無問題；`flutter test` 1010 項全部通過；`git diff --check` 通過。

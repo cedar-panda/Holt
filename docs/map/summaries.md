@@ -16,7 +16,8 @@
 
 - `lib/screens/chat_screen_compression.dart:_triggerContextCompression` 及 `_performContextCompression` 依 token／消息條件啟動壓縮。
 - `lib/services/context_compressor.dart:ContextCompressor.compress` 串行化同一角色、模式、故事線的摘要工作。
-- `lib/services/rp_summary_prompt.dart:RpSummaryPrompt.compose` 要求按當前劇情節點保留主線、活躍支線與未結線索；不再要求每個舊事件永遠留在滾動摘要。仍影響現在的重要不可逆事件壓成同段 1～2 句，已結且不再影響後文的事件可退出當前摘要。
+- `lib/services/rp_summary_prompt.dart:RpSummaryPrompt.compose` 要求按當前劇情節點保留主線、活躍支線與未結線索；不再要求每個舊事件永遠留在滾動摘要。仍影響現在的重要不可逆事件壓成同段 1～2 句，已結且不再影響後文的事件可退出當前摘要。模型只為每段輸出 `segment_order + title + anchor + 單一 keyword`，不再在 `recall_segments` 重抄摘要正文。
+- `lib/services/context_compressor.dart:ContextCompressor.buildRpRecallSegmentDrafts` 依 `anchor`、標題與段落順序，把輕量索引重新綁回最終摘要的完整段落；舊版仍帶 `content` 的回應繼續相容，SQLite 內保存的仍是完整段落。
 - `lib/services/context_compressor.dart:ContextCompressor.compactRpSummaryToHardLimit` 依主線、未結衝突／伏筆／承諾與關係轉折等優先級保留完整事件短段；低優先級整段淘汰，不留下只有標題的空殼。
 - `lib/memory/database_context_summaries.dart:_ContextSummaryStore.insertContextSummary` 與 `insertContextSummaryAndAdvanceCursor` 寫摘要、來源範圍、段落和游標。
 - `lib/services/context_summary_repair_service.dart:ContextSummaryRepairService.processScope` 處理失效摘要鏈。
@@ -29,13 +30,14 @@
 - RP 的「截斷前情」也由 `_buildDynamicWindowSummaryPrompt` 處理：啟用上下文限制且本輪歷史將超出消息條數上限時，額外補入最新一份有效摘要，並以 1200 字為上限；未發生截斷時不補這份。
 - RP 動態摘要按「固定前情 → 截斷前情 → 關鍵詞召回」分配同一個 2000 字計算預算；關鍵詞召回使用 `max(400, 2000 - 固定前情字數 - 截斷前情字數)`，因此至少保留 400 字，極端情況下實際合計可略高於 2000 字。
 - 生成流程再以約 4000 字元約束「窗口固定／動態摘要 + 續接摘要 + RP 劇情參考」整體連續性內容。RP 劇情參考現已包含一般記憶、RP 時間線、人物／關係、狀態與世界書，且自身另有 1800 字元單輪硬上限；角色卡與工具協議不在此額度。
-- RP 續接窗口以 user 選定的篇章摘要取代普通固定／最新摘要，另保留 400 字元供命中事件段召回；`ContextCompressor.fitRpSummaryToCharacterBudget` 與 `fitRpReferencePartsToCharacterBudget` 負責按剩餘額度保留完整段落／完整行。
+- RP 續接窗口以 user 選定的篇章摘要取代普通固定／最新摘要，另保留 400 字元供命中事件段召回；`ContextCompressor.fitRpSummaryToCharacterBudget` 與 `fitPrioritizedRpReferencePartsToCharacterBudget` 負責按剩餘額度保留完整段落／完整行。
 - `lib/services/context_compressor.dart:ContextCompressor.loadSummaryPack` 先用關鍵詞索引挑候選，再取候選全文；RP 可限制段數與字數。
 - `lib/screens/chat_screen_generation.dart:_sendMessageLocked` 等待上述摘要結果並交給 `lib/screens/chat_screen_prompt_parts.dart:_buildCommonStaticParts` 組裝。
 
 ## 檢索方式（字面 / BM25 / 向量 / 名字觸發 / 無）
 
 - 摘要段落召回使用 `RecallTextMatcher.bestKeywordMatches` 的關鍵詞字面匹配與分數排序。
+- 歸檔時的 `anchor` 只用來把模型輸出的輕量索引綁回同次 `summary` 段落：優先精確開頭／包含匹配，其次標題與順序；不作為下一輪的額外召回正文。
 - 先讀 `context_summary_segments` 和 `context_keywords` 的索引欄位，再按候選 ID 讀正文；不是 BM25 或向量檢索。
 - 最新摘要是按來源範圍／建立順序讀取，不依賴關鍵詞。
 
@@ -60,6 +62,7 @@
 - cache 靜態摘要、最新摘要與關鍵詞召回同時啟用時，總注入量受字數預算限制，但不同模式仍有不同組合。
 - 兩段式召回只避免先載入整份摘要正文；第一段仍由 `getRecallIndexRows` 讀取該角色／模式／故事線範圍的全部關鍵詞欄位，再交給 Dart 逐條比對。資料以年累積時，關鍵詞讀取、物件建立與逐條匹配仍會變慢。
 - 後續方向是建立 SQLite 詞索引表，先在資料庫縮小候選；同時把已了結、長期不再活動的事件標籤摺疊成篇章標籤，避免索引無界增長。這兩項目前是 backlog，不是既有實作。
+- 新版不再要求模型重複輸出段落正文，可降低摘要輸出與 JSON 截斷風險；若模型給出的 anchor／標題失真，程式會用段落順序與尚未綁定段落補位，仍需靠測試與實際日誌監看模型輸出品質。
 
 ## 相關測試檔
 
@@ -69,6 +72,7 @@
 - `test/memory_settings_summary_trigger_test.dart`
 - `test/summary_model_settings_ui_test.dart`
 - `test/retriever_window_scope_test.dart`
+- `test/context_mode_feature_test.dart`
 
 ## ❓ 不確定的地方
 

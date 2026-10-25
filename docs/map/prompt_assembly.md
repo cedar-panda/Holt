@@ -19,9 +19,11 @@
 ## 誰讀取、怎麼注入（檔案：函式；注入 prompt 的哪一層）
 - `staticPart`：系統固定規則、角色設定、固定工具規則；包含 RP 身分鎖定的靜態前綴。
 - `profilePart`：user profile／persona；有內容時放入穩定前綴。
-- `windowPart`：開窗固定的摘要、自我註記、婚姻、貝殼、貼圖、習慣等窗口快照。
+- `windowPart`：開窗固定的摘要、自我註記、婚姻、貝殼、貼圖、習慣等窗口快照；RP 的 always 常駐世界書亦放在這個故事線綁定的穩定前綴，最多 3 條／500 字。
 - `controlPart`：語言、輸出格式、功能開關與 context contract；穩定時可快取。
-- `liveStatePart`：時間、記憶召回、動態摘要、RP 狀態／世界書／時間線、工具證據等本輪內容。
+- `liveStatePart`：時間、記憶召回、動態摘要、RP 狀態／本輪命中的動態世界書／時間線、工具證據等本輪內容。
+- RP 的 Story Reference 受 1800 字單輪上限與共享連續性預算約束，保底順序為「劇情狀態 → 人物／關係 → 動態世界書 → 一般記憶 → RP 時間線」；前項未用完的額度才交給後項。
+- RP 一般記憶與時間線會在固定窗口摘要、截斷前情摘要、續接摘要確定後才組裝；若候選正文已被這三層摘要完整包含或高度覆蓋，本輪直接略過，且不提交記憶 mention／trigger 副作用。
 - RP 未開啟「RP 中使用日常工具」時，不注入現實世界當前時間或貼圖清單；開啟後貼圖清單仍限制為最多 24 項／1600 字元。
 - `rp.timeline.correct`／`rp.state.correct` 的修正說明不再常駐 `staticPart`；只有本輪 user 明確要求修正 RP 時間線／狀態時才加入 request-only 動態說明，避免日常回合佔用前綴。
 - `requestOnlyPart` 只由 live state 組成，不進 cacheable parts、歷史或資料庫。
@@ -48,6 +50,7 @@ Prompt 組裝本身不做檢索；它接收記憶、摘要、RP 故事、世界�
 ## 量大時的風險
 - `liveStatePart` 過大會增加每輪輸入 token 與注意力分散；摘要／召回服務負責先限額。
 - 固定前綴內容變動會使 provider cache 失效；工具 prompt、控制規則和窗口快照要保持順序穩定。
+- always 世界書放入穩定窗口前綴後可參與 Prompt Cache；user 編輯常駐世界書時，下一輪重建一次此前綴屬於預期行為。
 - 多個功能同輪同時注入時，缺少總預算會造成動態 prompt 堆疊。
 
 ## 相關測試檔
@@ -59,6 +62,8 @@ Prompt 組裝本身不做檢索；它接收記憶、摘要、RP 故事、世界�
 - `test/local_model_prompt_budget_test.dart`
 - `test/openai_compatible_capability_test.dart`
 - `test/model_cost_policy_test.dart`
+- `test/context_summary_recycling_test.dart`
+- `test/context_mode_feature_test.dart`
 
 ## ❓ 不確定的地方
 - 各 provider 對 system、developer、user 部分的最終排列由 adapter 決定；本圖只記 `StructuredPrompt` 的分層契約。

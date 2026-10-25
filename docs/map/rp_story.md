@@ -30,7 +30,8 @@
 - 人物／關係：`RpStoryService.recallPrompt`，由生成流程加入 request-only 的 RP 參考內容；只用本輪與最近 3 條訊息的姓名／別名判定當前出場，完整人物卡只給明確出場人物，其他活躍人物改為單行摘要；相同有向／互相關係只注入最新一筆。
 - 劇情狀態：`RpStoryStateService.recallPrompt`，加入 live state；人物的 body／identity 以「人物 + 類型」只注入最新狀態，通常隱藏內部 `state_key`，只有明確修正上下文才顯示鍵值。遺失／摧毀／轉移物品不再永久常駐，場外 knowledge 只保留尚在懷疑／調查中的活躍項。
 - 角色時間線：`RpCharacterTimelineService.recallPrompt`，加入 request-only 的 RP 時間線參考；一般回合隱藏內部 `event_key`，只有 user 明確要求修正時間線時才附上。
-- 世界書：`RpWorldbookService.recallPrompt`，加入 request-only 的世界設定參考。`always` 無條件候選，`triggered` 只依條目自己的 triggers 命中，`scene` 依 triggers、完整 scope 片語或較強場景詞共現命中；不再用 query 的 2 字碎片反查整段 scope。`character_global` 可跨該角色故事線讀取，`storyline` 只讀目前故事線。
+- 世界書：`RpWorldbookService.recallAlwaysOnPrompt` 把最多 3 條／500 字常駐設定放入故事線綁定的 cacheable `windowPart`；`recallTriggeredPrompt` 只把本輪命中的 triggered／scene 條目放入 request-only 參考。相容入口 `recallPrompt` 也固定先保留 always，再使用剩餘額度裝動態條目，常駐設定不會再被高分觸發項擠掉。`triggered` 只依條目自身 triggers 命中，`scene` 依 triggers、完整 scope 片語或較強場景詞共現命中；`character_global` 可跨該角色故事線讀取，`storyline` 只讀目前故事線。
+- 生成端由 `ContextCompressor.fitPrioritizedRpReferencePartsToCharacterBudget` 依「劇情狀態 → 人物／關係 → 動態世界書 → 一般記憶 → RP 時間線」分配共享預算；高優先項未用完的額度才向後流動。
 - 來源摘要與續接內容由 `ContextCompressor.buildRpArchiveContext` 組合；歸檔請求只保留一份 user 人設與一份本輪實際提及人物的精簡結構，不重複傾倒 evidence、來源 ID、建立時間等內部欄位。
 - 顯示與人工編輯入口：`lib/screens/rp_story_relationship_screen.dart` 與 `lib/screens/rp_worldbook_screen.dart`。搜尋、文字欄位與枚舉選擇共用 `YanciTheme.themedInputDecoration`；人物、關係、劇情狀態以輕量卡片分組，狀態類型／層級／進度以徽章顯示。這些視覺調整不改資料寫入或 Prompt 注入。
 
@@ -50,8 +51,8 @@
 
 ## 量大時的風險
 - 人物、關係與狀態雖有限制，但故事線數量和世界書歷史仍會增加資料庫查詢量。生成端在共享總池之外，再把整份 `rpStoryContext` 限制為最多 1800 字元。
-- 世界書召回有整體字數上限，無觸發詞的全域背景另有 3 條／約 500 字上限；超過後依篩選與排序省略。
-- 人物、關係、狀態、時間線與世界書會與摘要／續接內容共享 RP 連續性總預算，生成流程按剩餘額度保留完整行，避免各自上限相加。
+- 世界書召回有整體字數上限；always 常駐背景另有 3 條／約 500 字上限並在穩定窗口前綴中優先保留，動態條目超過後依相關性省略。編輯常駐世界書會在下一輪合理地改變此前綴並重建一次 cache。
+- 人物、關係、狀態、時間線與動態世界書會與摘要／續接內容共享 RP 連續性總預算，生成流程按狀態、人物、世界書、記憶、時間線的順序保留完整行，避免各自上限相加。
 - 多個來源摘要同時失效或重跑時，投影版本與來源有效性需要一起維持。
 
 ## 相關測試檔

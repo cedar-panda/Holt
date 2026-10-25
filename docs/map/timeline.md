@@ -23,7 +23,7 @@
 - `lib/screens/chat_screen_generation.dart:_sendMessageLocked` 呼叫日常或 RP 的 `recallPrompt`，結果進入 dynamic/live 區。
 - `lib/screens/chat_screen_prompt_parts.dart:_buildCommonStaticParts` 在日常第一輪加入 `stateSnapshotPrompt`，屬於 window/static snapshot。
 - `lib/services/character_timeline_service.dart:CharacterTimelineService.recallPrompt` 只在日常訊息含回憶觸發詞時回傳事件。
-- `lib/services/rp_character_timeline_service.dart:RpCharacterTimelineService.recallPrompt` 以事件與劇情時間匹配，回傳 RP 時間線參考。
+- `lib/services/rp_character_timeline_service.dart:RpCharacterTimelineService.recallPrompt` 以事件與劇情時間匹配；在取最多 6 條之前，先略過已被固定窗口摘要、截斷前情摘要或續接摘要覆蓋的事件，再回傳 RP 時間線參考。
 
 ## 檢索方式（字面 / BM25 / 向量 / 名字觸發 / 無）
 
@@ -36,6 +36,7 @@
 - 日常狀態用穩定 `key` 覆蓋；事件按週分組並有去重。
 - RP 只落庫離散事件；scene、body、promise、identity 等持續狀態由 `RpStoryStateService` 管理。
 - RP 支援 narrative layer、event key 與 user 原文修正；日常另有生活狀態修正標籤。
+- RP 生成的共享 Story Reference 中，時間線排在劇情狀態、人物／關係、動態世界書與一般記憶之後，作為離散歷史補充；日常順序不受影響。
 
 ## 相關開關
 
@@ -53,6 +54,7 @@
 - `test/character_timeline_service_test.dart`
 - `test/rp_story_state_service_test.dart`
 - `test/context_compressor_timeline_test.dart`
+- `test/context_mode_feature_test.dart`
 
 ## ❓ 不確定的地方
 

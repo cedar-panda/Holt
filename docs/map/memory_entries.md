@@ -28,7 +28,7 @@
 ## 誰讀取、怎麼注入（檔案：函式；注入 prompt 的哪一層）
 
 - `lib/memory/retriever.dart`：`Retriever.buildMemoryPrompt` 讀永久與活躍記憶、排序並套用條數／token 預算。
-- `lib/services/rp_memory_service.dart`：`RpMemoryService.buildPrompt` 固定使用 RP scope 與經典記憶引擎。
+- `lib/services/rp_memory_service.dart`：`RpMemoryService.buildPrompt` 固定使用 RP scope 與經典記憶引擎；可接收本輪已注入摘要作為排重依據。
 - `lib/screens/chat_screen_generation.dart`：`_ChatScreenState._sendMessageLocked` 把非空記憶區塊放入 `dynamicParts`。
 - `lib/screens/chat_screen_generation.dart`：`_ChatScreenState._sendImageLocked` 對圖片訊息走同一類動態注入。
 - `lib/screens/call_screen.dart`：`_CallScreenState._generateTurn` 依目前的 `memory_mode` 選擇 `story`／`romance` 分桶，不再把通話固定讀成 `romance`。
@@ -42,6 +42,7 @@
 - 向量混合：`MemoryVectorRecallService.searchHybrid`；未設定向量模型或呼叫失敗時只保留字面結果。
 - 排序：日常依觸發詞、全文結果與永久記憶；沒有命中的一般活躍／永久記憶不再填滿剩餘位置，只有 `is_pinned` 可無條件保底最多 3 條。RP 將同故事線候選交給劇情相關性排序；只有最多 2 條 pinned 記憶可無命中進入，其餘候選必須對本輪文字有實際相關分。
 - RP 中文召回會移除常見代詞、虛詞與高頻口語詞；單一 2 字滑動片段不能獨自通過門檻，必須是既存觸發詞／完整 query 精確命中、命中至少一個 3 字以上詞，或有兩個以上有效短詞共現。日常召回沿用原規則。
+- RP 候選在正式注入前會與固定窗口摘要、截斷前情摘要、續接摘要比較；完整包含或高度重疊的內容直接略過。此檢查發生在 DeferredPrompt 提交前，因此被略過的記憶不會增加 mention count 或寫入 triggered ID。
 - 維護意圖：user 明確要求整理記憶時，改為在發送上限內注入較完整的帶短號清單。
 
 ## 日常 / RP 差異
@@ -51,7 +52,7 @@
 - RP 候選不使用蛛網清晰度／情緒共振排序；日常蛛網模式會使用清晰度與情緒距離。
 - RP 的一般記憶另有 600 token 單輪硬上限，避免與摘要、人物關係、狀態、世界書和時間線共同注入時擠掉較近的劇情資料。
 - RP 記憶區塊使用單行精簡說明頭；資料內容與審核流程不變，減少固定教學文字反覆佔用額度。
-- RP 生成時，記憶、RP 時間線、人物／關係、狀態與世界書會一起進 `fitRpReferencePartsToCharacterBudget`，共享剩餘連續性預算；不再各自疊加上限。
+- RP 生成時，劇情狀態、人物／關係、動態世界書、記憶、RP 時間線會依序進 `fitPrioritizedRpReferencePartsToCharacterBudget`，共享剩餘連續性預算；記憶排序第四，不再與高優先的當前場景平均分配。
 - 做夢整理按角色、context mode、故事線與 memory mode 分開計數；RP 整理只接受 `duplicate_candidate`，不建立蛛網關聯。
 
 ## 相關開關
