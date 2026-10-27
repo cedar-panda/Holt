@@ -7,6 +7,7 @@
 - 手風琴目前展開群組只存在 `SidebarAccordionCoordinator` 記憶體狀態，不入庫。
 - 各設定值由對應 service／SharedPreferences 保存，側邊欄本身不另建資料表。
 - 自訂中轉站能力保存在 `oai_compat_capability_*` 四個 SharedPreferences key。
+- 回覆通知開關保存在 SharedPreferences `reply_notifications_enabled`，預設開啟；首次權限請求另記 `reply_notifications_permission_attempted`。
 
 ## 誰寫入（檔案：函式）
 - 群組狀態：`lib/widgets/sidebar/sidebar_accordion.dart:SidebarAccordionCoordinator.activate`
@@ -15,6 +16,7 @@
 - 成本設定載入／本地狀態：`lib/widgets/sidebar/sidebar_behavior_settings.dart:_SidebarBehaviorSettingsState._load`
 - 數字設定失焦提交：`_CommittedCountFieldState._handleFocusChange`、`_commit`
 - 中轉站能力設定：`lib/screens/api_settings_screen.dart:_loadSettings`、`_saveSettings`，UI 在 `lib/widgets/api_compatible_provider_settings_card.dart:ApiCompatibleProviderSettingsCard.build`。
+- 回覆通知：`lib/widgets/sidebar/sidebar_feature_settings.dart:_SidebarFeatureSettingsState._setReplyNotifications`；平台權限與通知行為由 `ReplyNotificationService` 負責。
 
 ## 誰讀取、怎麼注入（檔案：函式；注入 prompt 的哪一層）
 - 側邊欄容器：`lib/widgets/sidebar/holt_control_sidebar.dart:_HoltControlSidebarState.build`
@@ -28,6 +30,7 @@
 
 ## 相關開關
 - 「模型與連線」「系統行為」「功能模組開關」「用量」等大區塊。
+- 「回覆通知」預設開啟；關閉後不發 iOS／Android 本機完成通知，再次開啟會向系統重新請求通知權限。
 - 無關聯群組展開時會收起上一組；同組是否互斥由 `exclusiveWithinGroup` 決定。
 - 上下文限制與緩存命中只在首次掛載時讀取持久設定；後續切換先更新本地狀態再保存，避免任意 `setState` 令開關短暫回到預設值。
 - 數字欄位只在編輯結束時保存；收起手風琴、滑動關閉側邊欄或鍵盤 Done 造成的失焦都會提交，避免 `18` 被非同步拆成 `1`／`18` 競態。

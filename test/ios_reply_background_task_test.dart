@@ -106,11 +106,37 @@ void main() {
     () async {
       final task = await begin();
       await task.record('partial');
-    await task.finish(discard: true, completed: true);
-    await task.finish(discard: true, completed: true);
+      await task.finish(
+        discard: true,
+        completed: true,
+        notificationTitle: '顧遠',
+        notificationBody: '回覆好了',
+        notificationPlaceholder: '顧遠回覆你了',
+        notificationCharacterId: 'char',
+      );
+      await task.finish(discard: true, completed: true);
       expect(await journal.exists(), isFalse);
-    expect(calls.where((call) => call.method == 'end'), hasLength(1));
-    expect((calls.last.arguments as Map)['success'], isTrue);
+      expect(calls.where((call) => call.method == 'end'), hasLength(1));
+      final arguments = calls.last.arguments as Map;
+      expect(arguments['success'], isTrue);
+      expect(arguments['title'], '顧遠');
+      expect(arguments['body'], '回覆好了');
+      expect(arguments['placeholder'], '顧遠回覆你了');
+      expect(arguments['characterId'], 'char');
+      expect(arguments['conversationId'], 'window');
+    },
+  );
+
+  test(
+    'notification permission and clear commands use the native bridge',
+    () async {
+      await IosReplyBackgroundTask.requestNotificationPermission();
+      await IosReplyBackgroundTask.clearConversationNotifications('window');
+      expect(calls.map((call) => call.method), [
+        'requestNotificationPermission',
+        'clearConversationNotifications',
+      ]);
+      expect((calls.last.arguments as Map)['conversationId'], 'window');
     },
   );
 

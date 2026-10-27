@@ -67,6 +67,8 @@ dependencies:
   workmanager: ^0.9.0
   # 前台服務保活：鎖屏後 Doze 會漂移 WorkManager，常駐通知是唯一穩的腿
   flutter_foreground_task: ^8.17.0
+  # Android 回覆完成通知；iOS 沿用原生 ReplyBackgroundBridge，避免 delegate 衝突。
+  flutter_local_notifications: ^22.3.3
   # 像素小屋遊戲引擎
   flame: ^1.37.0
   # 通話音頻引擎：低延遲播放 + 實時波形/FFT（聲波動畫真振幅）

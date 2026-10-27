@@ -45,6 +45,7 @@ flowchart LR
 | [ambient_motion.md](ambient_motion.md) | 主題背景粒子、幀率調度、可見性與省電邊界 |
 | [app_startup.md](app_startup.md) | App 首幀、開屏、啟動補載與 iOS Debug 邊界 |
 | [chat_composer.md](chat_composer.md) | 輸入框、發送鍵樣式與回覆前等待計時 |
+| [notifications.md](notifications.md) | 回覆完成通知、鎖屏隱私、點擊導航與平台限制 |
 | [sidebar_settings.md](sidebar_settings.md) | 設定側邊欄、群組展開與鍵盤收起協調 |
 | [ui_operability.md](ui_operability.md) | 觸控熱區、大字體、多角色指示、語意與 reduced motion |
 

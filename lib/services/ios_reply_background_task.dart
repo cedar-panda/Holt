@@ -20,6 +20,7 @@ class IosReplyBackgroundTask {
   static const channel = MethodChannel('holt/reply_background');
   static final Map<String, IosReplyBackgroundTask> _active = {};
   static bool _handlerInstalled = false;
+  static ValueChanged<String>? _onOpenConversation;
 
   final Message source;
   final File _file;
@@ -35,6 +36,75 @@ class IosReplyBackgroundTask {
   static bool get supported =>
       !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS;
 
+  static void installMethodHandler({ValueChanged<String>? onOpenConversation}) {
+    if (onOpenConversation != null) {
+      _onOpenConversation = onOpenConversation;
+    }
+    if (_handlerInstalled) return;
+    channel.setMethodCallHandler((call) async {
+      if (call.method == 'openConversation') {
+        final conversationId = call.arguments?.toString().trim() ?? '';
+        if (conversationId.isNotEmpty) {
+          _onOpenConversation?.call(conversationId);
+        }
+        return;
+      }
+      if (call.method != 'expired') return;
+      final token = call.arguments as String?;
+      final task = _active.values.where((task) => task.token == token);
+      if (task.isEmpty) return;
+      final active = task.first;
+      // Cancel network first; retain the received text without running tools.
+      active._onExpire();
+      await active.flush();
+      await active._native('end', {'success': false});
+    });
+    _handlerInstalled = true;
+  }
+
+  static Future<bool> requestNotificationPermission() async {
+    if (!supported) return false;
+    installMethodHandler();
+    try {
+      return await channel.invokeMethod<bool>(
+            'requestNotificationPermission',
+          ) ??
+          false;
+    } on PlatformException {
+      return false;
+    } on MissingPluginException {
+      return false;
+    }
+  }
+
+  static Future<void> markNotificationHandlerReady() async {
+    if (!supported) return;
+    installMethodHandler();
+    try {
+      await channel.invokeMethod<void>('notificationHandlerReady');
+    } on PlatformException {
+      // An old native shell simply cannot forward notification taps yet.
+    } on MissingPluginException {
+      // Unit tests and older installs remain usable.
+    }
+  }
+
+  static Future<void> clearConversationNotifications(
+    String conversationId,
+  ) async {
+    if (!supported) return;
+    installMethodHandler();
+    try {
+      await channel.invokeMethod<void>('clearConversationNotifications', {
+        'conversationId': conversationId,
+      });
+    } on PlatformException {
+      // Delivered notifications may remain, but chat navigation still works.
+    } on MissingPluginException {
+      // Old native shells remain compatible.
+    }
+  }
+
   static Future<File> _checkpointFile(String conversationId) async {
     final root = await getApplicationSupportDirectory();
     final directory = Directory('${root.path}/reply_checkpoints');
@@ -49,20 +119,7 @@ class IosReplyBackgroundTask {
     File? checkpointFile,
   }) async {
     if (!supported || source.id == null) return null;
-    if (!_handlerInstalled) {
-      channel.setMethodCallHandler((call) async {
-        if (call.method != 'expired') return;
-        final token = call.arguments as String?;
-        final task = _active.values.where((task) => task.token == token);
-        if (task.isEmpty) return;
-        final active = task.first;
-        // Cancel network first; retain the received text without running tools.
-        active._onExpire();
-        await active.flush();
-        await active._native('end', {'success': false});
-      });
-      _handlerInstalled = true;
-    }
+    installMethodHandler();
     final previous = _active[source.conversationId];
     if (previous != null) await previous.finish(discard: false);
     File file;
@@ -144,7 +201,14 @@ class IosReplyBackgroundTask {
   }
 
   /// Only call discard after the normal reply or incomplete reply is in SQLite.
-  Future<void> finish({required bool discard, bool completed = false}) async {
+  Future<void> finish({
+    required bool discard,
+    bool completed = false,
+    String? notificationTitle,
+    String? notificationBody,
+    String? notificationPlaceholder,
+    String? notificationCharacterId,
+  }) async {
     if (_closed) return;
     if (!discard) await flush();
     _discard = discard;
@@ -161,7 +225,19 @@ class IosReplyBackgroundTask {
     if (identical(_active[source.conversationId], this)) {
       _active.remove(source.conversationId);
     }
-    await _native('end', {'success': completed});
+    final arguments = <String, Object>{
+      'success': completed,
+      'conversationId': source.conversationId,
+    };
+    if (notificationTitle != null) arguments['title'] = notificationTitle;
+    if (notificationBody != null) arguments['body'] = notificationBody;
+    if (notificationPlaceholder != null) {
+      arguments['placeholder'] = notificationPlaceholder;
+    }
+    if (notificationCharacterId != null) {
+      arguments['characterId'] = notificationCharacterId;
+    }
+    await _native('end', arguments);
   }
 
   /// Recover only the last unanswered, unchanged user turn. An edited source,

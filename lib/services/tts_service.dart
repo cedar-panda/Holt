@@ -272,11 +272,25 @@ class TtsService {
     r'\[(?!sticker:|transfer:|scratch_gift:|call_event)[^\[\]\n]{1,20}\]\s?',
   );
 
+  /// Removes app-owned inline action markers while preserving ordinary prose.
+  ///
+  /// Hidden XML/tool blocks are stripped only by [VisibleModelOutput.finalOnly]
+  /// and the shared protocol tag registry. Notifications reuse this narrow
+  /// helper instead of duplicating protocol-tag regular expressions.
+  static String stripFunctionalMarkers(String raw) {
+    var text = VisibleModelOutput.finalOnly(raw);
+    text = text.replaceAll(RegExp(r'\[sticker:\d+\]'), '');
+    text = text.replaceAll(RegExp(r'\[transfer:\d+\]'), '');
+    text = text.replaceAll(RegExp(r'\[scratch_gift:[^\]]*\]'), '');
+    text = text.replaceAll(RegExp(r'\[call_event:[^\]]*\]'), '');
+    return text.trim();
+  }
+
   /// [keepAudioTags] = true 時保留 [sigh]/[happy] 等語音標籤——
   /// ElevenLabs v3 靠這些控制語氣，剝掉反而失去表現力。
   /// 顯示用文本永遠剝（chat_bubble 那邊處理）。
   static String extractSpeechContent(String raw, {bool keepAudioTags = false}) {
-    var text = VisibleModelOutput.finalOnly(raw);
+    var text = stripFunctionalMarkers(raw);
 
     // 1) 思考鏈
     text = text.replaceAll(RegExp(r'<think>.*?</think>', dotAll: true), '');
@@ -327,11 +341,6 @@ class TtsService {
       '',
     );
     text = text.replaceAll(RegExp(r'<home>.*?</home>', dotAll: true), '');
-
-    // 2) 功能性標記一律剝除
-    text = text.replaceAll(RegExp(r'\[sticker:\d+\]'), '');
-    text = text.replaceAll(RegExp(r'\[transfer:\d+\]'), '');
-    text = text.replaceAll(RegExp(r'\[call_event:[^\]]*\]'), '');
 
     // 2.5) 情緒標記（[sigh] [laughing] [whispers] 等）
     //      v3 模式保留——它們是給 TTS 的演出指令

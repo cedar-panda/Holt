@@ -21,6 +21,7 @@ import 'services/model_cost_policy.dart';
 import 'services/custom_font_service.dart';
 import 'services/background_preset_service.dart';
 import 'services/avatar_image_path_service.dart';
+import 'services/reply_notification_service.dart';
 import 'memory/emotion_coordinates.dart';
 import 'screens/splash_screen.dart';
 import 'screens/initial_setup_screen.dart';
@@ -180,6 +181,10 @@ Future<void> _initializeAfterFirstFrame() async {
 
   // 讀取界面語言
   await _startupStep('locale', L.load);
+  await _startupStep(
+    'reply notifications',
+    ReplyNotificationService.initialize,
+  );
 
   // iOS 更新後資料容器 UUID 可能改變；檔案仍在時重接舊頭像路徑。
   await _startupStep(
@@ -347,6 +352,7 @@ class _YanciAppState extends State<YanciApp> with WidgetsBindingObserver {
         title: 'Holt',
         debugShowCheckedModeBanner: false,
         navigatorKey: rootNavigatorKey,
+        navigatorObservers: [ReplyNotificationService.navigatorObserver],
         locale: switch (L.locale) {
           'zh_CN' => const Locale('zh', 'CN'),
           'zh_TW' => const Locale('zh', 'TW'),

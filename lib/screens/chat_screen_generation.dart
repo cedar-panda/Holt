@@ -295,6 +295,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
       final userId = await DatabaseHelper.insertMessage(userMsg);
       unawaited(MarriageService.scanMessage(userMsg.text, _activeCharacterId));
       _markMessageSentInSession();
+      unawaited(ReplyNotificationService.requestPermissionOnFirstSend());
       if (clearComposerOnAccept) {
         _clearComposerIfUnchanged(composerDraft);
       }
@@ -1006,6 +1007,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
     final rawReply = StringBuffer();
     var streamCompleted = false;
     IosReplyBackgroundTask? backgroundReply;
+    ReplyNotificationPayload? completionNotification;
     var replyPersisted = false;
     try {
       final enableVibration = await enableVibrationF;
@@ -1758,6 +1760,17 @@ extension _ChatGenerationMethods on _ChatScreenState {
       );
       final insertedId = await DatabaseHelper.insertMessage(aiMsg);
       replyPersisted = true;
+      final notificationCharacter =
+          await DatabaseHelper.getCharacter(_activeCharacterId) ??
+          <String, dynamic>{'id': _activeCharacterId, 'name': _characterName};
+      if (streamCompleted && !_stopGenerationRequested) {
+        completionNotification =
+            await ReplyNotificationService.notifyCompletion(
+              character: notificationCharacter,
+              reply: aiMsg.text,
+              conversationId: conversationId,
+            );
+      }
       final repairIdentity = _requiredSessionIdentity;
       unawaited(
         ContextSummaryRepairService.processScope(
@@ -1928,6 +1941,10 @@ extension _ChatGenerationMethods on _ChatScreenState {
         discard: replyPersisted,
         completed:
             replyPersisted && streamCompleted && !_stopGenerationRequested,
+        notificationTitle: completionNotification?.title,
+        notificationBody: completionNotification?.body,
+        notificationPlaceholder: completionNotification?.placeholder,
+        notificationCharacterId: completionNotification?.characterId,
       );
       if (_activeRequestThinkingGeneration == generationSerial) {
         _activeRequestThinkingEnabled = null;

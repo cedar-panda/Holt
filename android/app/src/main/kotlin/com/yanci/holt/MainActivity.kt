@@ -1,22 +1,38 @@
 package com.yanci.holt
 
 import android.app.Activity
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.Intent
+import android.os.Build
+import android.os.Bundle
 import java.io.File
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
+import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
 
 class MainActivity : FlutterActivity() {
     companion object {
         private const val FILE_SAVER_CHANNEL = "com.yanci.holt/file_saver"
         private const val SAVE_FILE_REQUEST = 0x484F
+        private const val REPLY_NOTIFICATION_CHANNEL = "holt/reply_notifications"
+        private const val REPLY_CHANNEL_ID = "holt_reply"
+        private const val REPLY_CONVERSATION_EXTRA = "holt.reply.conversation_id"
     }
 
     private var pendingSaveResult: MethodChannel.Result? = null
     private var pendingSaveSource: File? = null
+    private var replyNotificationChannel: MethodChannel? = null
+    private var pendingReplyConversationId: String? = null
 
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        captureReplyIntent(intent)
+    }
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         MethodChannel(
@@ -28,7 +44,128 @@ class MainActivity : FlutterActivity() {
                 else -> result.notImplemented()
             }
         }
+        replyNotificationChannel = MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            REPLY_NOTIFICATION_CHANNEL,
+        ).also { channel ->
+            channel.setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "notificationHandlerReady" -> {
+                        flushPendingReplyConversation()
+                        result.success(null)
+                    }
+                    "showCompletion" -> {
+                        showReplyCompletionNotification(call)
+                        result.success(null)
+                    }
+                    "clearConversationNotifications" -> {
+                        clearReplyNotifications(call.argument<String>("conversationId").orEmpty())
+                        result.success(null)
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+        }
     }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        captureReplyIntent(intent)
+    }
+
+    private fun captureReplyIntent(intent: Intent?) {
+        val conversationId = intent?.getStringExtra(REPLY_CONVERSATION_EXTRA).orEmpty()
+        if (conversationId.isBlank()) return
+        intent?.removeExtra(REPLY_CONVERSATION_EXTRA)
+        val channel = replyNotificationChannel
+        if (channel == null) {
+            pendingReplyConversationId = conversationId
+        } else {
+            channel.invokeMethod("openConversation", conversationId)
+        }
+    }
+
+    private fun flushPendingReplyConversation() {
+        val conversationId = pendingReplyConversationId ?: return
+        pendingReplyConversationId = null
+        replyNotificationChannel?.invokeMethod("openConversation", conversationId)
+    }
+
+    private fun showReplyCompletionNotification(call: MethodCall) {
+        val title = call.argument<String>("title").orEmpty()
+        val body = call.argument<String>("body").orEmpty()
+        val placeholder = call.argument<String>("placeholder").orEmpty()
+        val conversationId = call.argument<String>("conversationId").orEmpty()
+        if (title.isBlank() || body.isBlank() || placeholder.isBlank() || conversationId.isBlank()) {
+            return
+        }
+        ensureReplyNotificationChannel()
+        val notificationId = replyNotificationId(conversationId)
+        val tapIntent = Intent(this, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+            putExtra(REPLY_CONVERSATION_EXTRA, conversationId)
+        }
+        val pendingIntent = PendingIntent.getActivity(
+            this,
+            notificationId,
+            tapIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        val publicVersion = NotificationCompat.Builder(this, REPLY_CHANNEL_ID)
+            .setSmallIcon(applicationInfo.icon)
+            .setContentTitle(applicationInfo.loadLabel(packageManager))
+            .setContentText(placeholder)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .build()
+        val notification = NotificationCompat.Builder(this, REPLY_CHANNEL_ID)
+            .setSmallIcon(applicationInfo.icon)
+            .setContentTitle(title)
+            .setContentText(body)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(body))
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setCategory(NotificationCompat.CATEGORY_MESSAGE)
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+            .setPublicVersion(publicVersion)
+            .setGroup(conversationId)
+            .setContentIntent(pendingIntent)
+            .setAutoCancel(true)
+            .build()
+        try {
+            NotificationManagerCompat.from(this).notify(
+                conversationId,
+                notificationId,
+                notification,
+            )
+        } catch (_: SecurityException) {
+            // Permission denial must not affect the completed chat reply.
+        }
+    }
+
+    private fun ensureReplyNotificationChannel() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        val manager = getSystemService(NotificationManager::class.java)
+        manager.createNotificationChannel(
+            NotificationChannel(
+                REPLY_CHANNEL_ID,
+                "回覆通知",
+                NotificationManager.IMPORTANCE_HIGH,
+            ).apply {
+                description = "你送出的回合完成回覆時顯示"
+            },
+        )
+    }
+
+    private fun clearReplyNotifications(conversationId: String) {
+        if (conversationId.isBlank()) return
+        NotificationManagerCompat.from(this).cancel(
+            conversationId,
+            replyNotificationId(conversationId),
+        )
+    }
+
+    private fun replyNotificationId(conversationId: String): Int =
+        conversationId.hashCode() and Int.MAX_VALUE
 
     private fun startSaveFile(call: MethodCall, result: MethodChannel.Result) {
         if (pendingSaveResult != null) {

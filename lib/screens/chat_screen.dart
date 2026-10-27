@@ -25,6 +25,7 @@ import '../widgets/atom_thinking.dart';
 import '../services/api_adapter.dart';
 import '../services/api_error_localizer.dart';
 import '../services/app_error_log_service.dart';
+import '../services/reply_notification_service.dart';
 import '../services/stream_presentation_policy.dart';
 import '../services/model_stream_decoder.dart';
 import '../services/model_action_protocol.dart';
@@ -512,6 +513,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   @override
   void initState() {
     super.initState();
+    unawaited(
+      ReplyNotificationService.enterConversation(widget.conversationId),
+    );
     WidgetsBinding.instance.addObserver(this);
     final implicitView =
         WidgetsBinding.instance.platformDispatcher.implicitView;
@@ -690,6 +694,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
 
   @override
   void dispose() {
+    ReplyNotificationService.leaveConversation(widget.conversationId);
     _composerDrawerOpen.dispose();
     WidgetsBinding.instance.removeObserver(this);
     BackgroundPresetService.revision.removeListener(

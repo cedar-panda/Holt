@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../screens/cost_context_screen.dart';
 import '../../services/locale_strings.dart';
+import '../../services/reply_notification_service.dart';
 import '../../services/settings/user_settings.dart';
 import '../../theme/app_theme.dart';
 import 'holt_sidebar_shell.dart';
@@ -22,6 +23,8 @@ class SidebarFeatureSettings extends StatefulWidget {
 class _SidebarFeatureSettingsState extends State<SidebarFeatureSettings> {
   bool? _showAvatars;
   bool _savingAvatars = false;
+  bool? _replyNotifications;
+  bool _savingReplyNotifications = false;
 
   @override
   void initState() {
@@ -30,8 +33,31 @@ class _SidebarFeatureSettingsState extends State<SidebarFeatureSettings> {
   }
 
   Future<void> _loadAvatars() async {
-    final value = await UserSettings.getShowChatAvatar();
-    if (mounted) setState(() => _showAvatars = value);
+    final results = await Future.wait<Object>([
+      UserSettings.getShowChatAvatar(),
+      ReplyNotificationService.isEnabled(),
+    ]);
+    if (mounted) {
+      setState(() {
+        _showAvatars = results[0] as bool;
+        _replyNotifications = results[1] as bool;
+      });
+    }
+  }
+
+  Future<void> _setReplyNotifications(bool value) async {
+    final previous = _replyNotifications;
+    setState(() {
+      _replyNotifications = value;
+      _savingReplyNotifications = true;
+    });
+    try {
+      await ReplyNotificationService.setEnabled(value);
+    } catch (_) {
+      if (mounted) setState(() => _replyNotifications = previous);
+    } finally {
+      if (mounted) setState(() => _savingReplyNotifications = false);
+    }
   }
 
   Future<void> _setAvatars(bool value) async {
@@ -139,6 +165,33 @@ class _SidebarFeatureSettingsState extends State<SidebarFeatureSettings> {
           onTap: _showAvatars == null || _savingAvatars
               ? null
               : () => _setAvatars(!_showAvatars!),
+        ),
+        ListTile(
+          key: const ValueKey('sidebar-reply-notifications'),
+          contentPadding: const EdgeInsets.symmetric(horizontal: 18),
+          title: Text(
+            L.pick(en: 'Reply notifications', zhTW: '回覆通知', zhCN: '回复通知'),
+            style: YanciTheme.bodyText.copyWith(
+              color: SidebarVisualTokens.secondary,
+              fontSize: 13.5,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+          trailing: Transform.scale(
+            scale: 0.78,
+            alignment: Alignment.centerRight,
+            child: Switch.adaptive(
+              key: const ValueKey('reply-notification-switch'),
+              value: _replyNotifications ?? true,
+              onChanged:
+                  _replyNotifications == null || _savingReplyNotifications
+                  ? null
+                  : _setReplyNotifications,
+            ),
+          ),
+          onTap: _replyNotifications == null || _savingReplyNotifications
+              ? null
+              : () => _setReplyNotifications(!_replyNotifications!),
         ),
         // UI_SLOT: sidebar_memory_role
         _entry(
