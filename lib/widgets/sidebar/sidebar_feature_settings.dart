@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../screens/cost_context_screen.dart';
 import '../../services/locale_strings.dart';
+import '../../services/mood_glow_service.dart';
 import '../../services/reply_notification_service.dart';
 import '../../services/settings/user_settings.dart';
 import '../../theme/app_theme.dart';
@@ -25,6 +26,8 @@ class _SidebarFeatureSettingsState extends State<SidebarFeatureSettings> {
   bool _savingAvatars = false;
   bool? _replyNotifications;
   bool _savingReplyNotifications = false;
+  MoodGlowScope? _moodScope;
+  MoodGlowBlend? _moodBlend;
 
   @override
   void initState() {
@@ -35,12 +38,16 @@ class _SidebarFeatureSettingsState extends State<SidebarFeatureSettings> {
   Future<void> _loadAvatars() async {
     final results = await Future.wait<Object>([
       UserSettings.getShowChatAvatar(),
+      MoodGlowService.getScope(),
       ReplyNotificationService.isEnabled(),
+      MoodGlowService.getBlend(),
     ]);
     if (mounted) {
       setState(() {
         _showAvatars = results[0] as bool;
-        _replyNotifications = results[1] as bool;
+        _moodScope = results[1] as MoodGlowScope;
+        _replyNotifications = results[2] as bool;
+        _moodBlend = results[3] as MoodGlowBlend;
       });
     }
   }
@@ -58,6 +65,159 @@ class _SidebarFeatureSettingsState extends State<SidebarFeatureSettings> {
     } finally {
       if (mounted) setState(() => _savingReplyNotifications = false);
     }
+  }
+
+  Future<void> _setMoodScope(MoodGlowScope scope) async {
+    setState(() => _moodScope = scope);
+    await MoodGlowService.saveScope(scope);
+    // 關掉時立刻收起目前窗口的光；重新開啟時下次進窗口再載入。
+    if (scope == MoodGlowScope.off) MoodGlowService.activeColor.value = null;
+  }
+
+  /// 「頭像顯示」底下的子項：心情流光範圍（關／日常／RP／全部）。
+  /// 關閉＝聊天頭像與通話流光都不顯示，模型也不會被要求輸出顏色。
+  Widget _moodGlowRow() {
+    final current = _moodScope;
+    String label(MoodGlowScope scope) => switch (scope) {
+      MoodGlowScope.off => L.pick(en: 'Off', zhTW: '關', zhCN: '关'),
+      MoodGlowScope.daily => L.pick(en: 'Daily', zhTW: '日常', zhCN: '日常'),
+      MoodGlowScope.rp => 'RP',
+      MoodGlowScope.all => L.pick(en: 'All', zhTW: '全部', zhCN: '全部'),
+    };
+    return _moodSubRow(
+      key: const ValueKey('sidebar-mood-glow-scope'),
+      title: L.pick(en: 'Mood glow', zhTW: '心情流光', zhCN: '心情流光'),
+      pills: [
+        for (final scope in MoodGlowScope.values)
+          _moodPill(
+            key: ValueKey('mood-glow-scope-${scope.storageValue}'),
+            text: label(scope),
+            semantics:
+                '${L.pick(en: 'Mood glow', zhTW: '心情流光', zhCN: '心情流光')} ${label(scope)}',
+            selected: current == scope,
+            onTap: current == null || current == scope
+                ? null
+                : () => _setMoodScope(scope),
+          ),
+      ],
+    );
+  }
+
+  /// 心情流光的顏色呈現：融入主題色／獨立流光（預設）。範圍為「關」時不顯示。
+  Widget _moodBlendRow() {
+    final current = _moodBlend;
+    String label(MoodGlowBlend mode) => switch (mode) {
+      MoodGlowBlend.theme => L.pick(
+        en: 'Theme',
+        zhTW: '融入主題色',
+        zhCN: '融入主题色',
+      ),
+      MoodGlowBlend.independent => L.pick(
+        en: 'Own color',
+        zhTW: '獨立流光',
+        zhCN: '独立流光',
+      ),
+    };
+    final title = L.pick(en: 'Glow color', zhTW: '流光顏色', zhCN: '流光颜色');
+    return _moodSubRow(
+      key: const ValueKey('sidebar-mood-glow-blend'),
+      title: title,
+      pills: [
+        for (final mode in MoodGlowBlend.values)
+          _moodPill(
+            key: ValueKey('mood-glow-blend-${mode.storageValue}'),
+            text: label(mode),
+            semantics: '$title ${label(mode)}',
+            selected: current == mode,
+            onTap: current == null || current == mode
+                ? null
+                : () => _setMoodBlend(mode),
+          ),
+      ],
+    );
+  }
+
+  Future<void> _setMoodBlend(MoodGlowBlend mode) async {
+    setState(() => _moodBlend = mode);
+    await MoodGlowService.saveBlend(mode);
+  }
+
+  Widget _moodSubRow({
+    required Key key,
+    required String title,
+    required List<Widget> pills,
+  }) {
+    return Padding(
+      key: key,
+      padding: const EdgeInsets.fromLTRB(34, 0, 14, 8),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              title,
+              style: YanciTheme.bodySmall.copyWith(
+                color: SidebarVisualTokens.secondary.withValues(alpha: 0.78),
+                fontSize: 12,
+              ),
+            ),
+          ),
+          ...pills,
+        ],
+      ),
+    );
+  }
+
+  Widget _moodPill({
+    required Key key,
+    required String text,
+    required String semantics,
+    required bool selected,
+    required VoidCallback? onTap,
+  }) {
+    final accent = SidebarVisualTokens.accent;
+    final secondary = SidebarVisualTokens.secondary;
+    return Padding(
+      padding: const EdgeInsets.only(left: 4),
+      child: Semantics(
+        button: true,
+        selected: selected,
+        label: semantics,
+        child: GestureDetector(
+          key: key,
+          behavior: HitTestBehavior.opaque,
+          onTap: onTap,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minHeight: 32),
+            child: Center(
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 160),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: selected
+                      ? accent.withValues(alpha: 0.16)
+                      : Colors.transparent,
+                  borderRadius: BorderRadius.circular(999),
+                  border: Border.all(
+                    color: selected
+                        ? accent.withValues(alpha: 0.5)
+                        : secondary.withValues(alpha: 0.22),
+                    width: 0.6,
+                  ),
+                ),
+                child: Text(
+                  text,
+                  style: YanciTheme.bodySmall.copyWith(
+                    fontSize: 11,
+                    fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+                    color: selected ? accent : secondary.withValues(alpha: 0.7),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
   }
 
   Future<void> _setAvatars(bool value) async {
@@ -166,6 +326,9 @@ class _SidebarFeatureSettingsState extends State<SidebarFeatureSettings> {
               ? null
               : () => _setAvatars(!_showAvatars!),
         ),
+        _moodGlowRow(),
+        if (_moodScope != null && _moodScope != MoodGlowScope.off)
+          _moodBlendRow(),
         ListTile(
           key: const ValueKey('sidebar-reply-notifications'),
           contentPadding: const EdgeInsets.symmetric(horizontal: 18),

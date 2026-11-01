@@ -348,6 +348,47 @@ void main() {
     expect(mode, ContextMode.rp);
   });
 
+  testWidgets('global RP disable confirmation explains future-window scope', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues(<String, Object>{
+      'app_locale': 'zh_TW',
+    });
+    await L.setLocale('zh_TW');
+    addTearDown(() => L.setLocale('en'));
+    bool? result;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (context) => Scaffold(
+            body: TextButton(
+              onPressed: () async {
+                result = await confirmDisableGlobalRp(context);
+              },
+              child: const Text('open'),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+    expect(find.text('關閉全域 RP 模式？'), findsOneWidget);
+    expect(find.textContaining('現有 RP 窗口仍會保留為 RP'), findsOneWidget);
+
+    await tester.tap(find.text('取消'));
+    await tester.pumpAndSettle();
+    expect(result, isFalse);
+
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('確定'));
+    await tester.pumpAndSettle();
+    expect(result, isTrue);
+  });
+
   testWidgets('history pill keeps all, daily, and RP reachable', (
     tester,
   ) async {

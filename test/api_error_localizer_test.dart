@@ -152,4 +152,23 @@ void main() {
       expect(raw, isNot(contains('messages')));
     },
   );
+
+  test('MetricKit disk-write payload is not mislabeled as a native crash', () {
+    final descriptor = AppErrorLogService.classifyMetricKitPayloadText(
+      '{"diskWriteExceptionDiagnostics":[{"diagnosticMetaData":{"writesCaused":"4295 MB"}}]}',
+    );
+
+    expect(descriptor.category, 'excessive_disk_writes');
+    expect(descriptor.summary, contains('disk-write'));
+    expect(descriptor.rawPrefix, contains('disk_write'));
+  });
+
+  test('MetricKit crash payload keeps the native crash category', () {
+    final descriptor = AppErrorLogService.classifyMetricKitPayloadText(
+      '{"crashDiagnostics":[{}]}',
+    );
+
+    expect(descriptor.category, 'native_crash');
+    expect(descriptor.rawPrefix, contains('crash'));
+  });
 }

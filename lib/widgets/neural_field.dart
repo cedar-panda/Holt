@@ -15,9 +15,9 @@ class NeuralFieldWidget extends StatefulWidget {
   // 全主題共用象牙白的低顯著性基準；只統一淡化程度，不統一色相。
   static const double particleColorMix = 0.72;
   static const double particleGlowMix = 0.74;
-  static const double particleOpacityBoost = 1.12;
-  static const double connectionStrength = 0.32;
-  static const double connectionMaxOpacity = 0.38;
+  static const double particleOpacityBoost = 1.45;
+  static const double connectionStrength = 0.42;
+  static const double connectionMaxOpacity = 0.52;
 
   const NeuralFieldWidget({
     super.key,
@@ -142,11 +142,11 @@ class _NeuralPainter extends CustomPainter {
       // 呼吸
       final breathe = sin(t * n.breatheSpeed + n.phase);
       final baseOp = (n.opacity + breathe * 0.18) * opBoost;
-      opacities.add(baseOp.clamp(0.08, 0.75));
+      opacities.add(baseOp.clamp(0.12, 0.85));
     }
 
     // 連線（距離近的節點）
-    _linePaint.strokeWidth = isDark ? 0.8 : 1.0;
+    _linePaint.strokeWidth = isDark ? 1.0 : 1.2;
 
     for (int i = 0; i < nodes.length; i++) {
       for (int j = i + 1; j < nodes.length; j++) {
@@ -168,8 +168,8 @@ class _NeuralPainter extends CustomPainter {
     }
 
     // 節點（氣泡感：柔光暈 + 實心小圓）
-    // 點的不透明度單獨壓低（×0.5）——線的計算用原始 op，存在感不變；
-    // 點退到和線同一層呼吸，不再搶戲。
+    // 點的不透明度 ×0.8（2026-10-29 昭昭反映粒子太淡，從 ×0.5 提高）；
+    // 線的計算用原始 op。
     for (int i = 0; i < nodes.length; i++) {
       final n = nodes[i];
       final pos = positions[i];
@@ -180,13 +180,13 @@ class _NeuralPainter extends CustomPainter {
         pos,
         n.r * 2.5,
         _haloOuterPaint
-          ..color = haloColor.withValues(alpha: (op * 0.08).clamp(0.0, 0.14)),
+          ..color = haloColor.withValues(alpha: (op * 0.14).clamp(0.0, 0.24)),
       );
       canvas.drawCircle(
         pos,
         n.r * 1.65,
         _haloInnerPaint
-          ..color = haloColor.withValues(alpha: (op * 0.13).clamp(0.0, 0.20)),
+          ..color = haloColor.withValues(alpha: (op * 0.22).clamp(0.0, 0.34)),
       );
 
       // 內核
@@ -194,7 +194,7 @@ class _NeuralPainter extends CustomPainter {
         pos,
         n.r,
         _corePaint
-          ..color = nodeColor.withValues(alpha: (op * 0.5).clamp(0.0, 0.4)),
+          ..color = nodeColor.withValues(alpha: (op * 0.8).clamp(0.0, 0.68)),
       );
     }
   }

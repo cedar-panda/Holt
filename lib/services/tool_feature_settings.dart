@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -103,9 +105,61 @@ class ToolFeatureState {
   );
 }
 
+@immutable
+class FeatureModulePreset {
+  const FeatureModulePreset({
+    required this.id,
+    required this.name,
+    required this.state,
+    this.applyToRp = false,
+  });
+
+  final String id;
+  final String name;
+  final ToolFeatureState state;
+  final bool applyToRp;
+
+  Map<String, Object?> toJson() => <String, Object?>{
+    'id': id,
+    'name': name,
+    'apply_to_rp': applyToRp,
+    'image_generation': state.imageGenerationEnabled,
+    'shell_economy': state.shellEconomyEnabled,
+    'diary': state.diaryEnabled,
+    'tool_prompts': state.toolPromptsEnabled,
+    'model_greeting': state.modelGreetingEnabled,
+    'email_draft': state.emailDraftEnabled,
+    'rp_daily_life_tools': state.rpDailyLifeToolsEnabled,
+  };
+
+  factory FeatureModulePreset.fromJson(Map<String, dynamic> json) {
+    bool flag(String key, bool fallback) => json[key] is bool
+        ? json[key] as bool
+        : json[key] is num
+        ? (json[key] as num) != 0
+        : fallback;
+    return FeatureModulePreset(
+      id: json['id']?.toString() ?? '',
+      name: json['name']?.toString() ?? '',
+      applyToRp: flag('apply_to_rp', false),
+      state: ToolFeatureState(
+        imageGenerationEnabled: flag('image_generation', true),
+        shellEconomyEnabled: flag('shell_economy', true),
+        diaryEnabled: flag('diary', true),
+        toolPromptsEnabled: flag('tool_prompts', true),
+        modelGreetingEnabled: flag('model_greeting', true),
+        emailDraftEnabled: flag('email_draft', true),
+        rpDailyLifeToolsEnabled: flag('rp_daily_life_tools', false),
+      ),
+    );
+  }
+}
+
 /// Global feature switches shared by settings, prompt assembly and local UI.
 /// Existing preference keys are retained so upgrades do not reset user choices.
 abstract final class ToolFeatureSettings {
+  static const String _presetsKey = 'feature_module_presets_v1';
+  static const String _activePresetKey = 'active_feature_module_preset_v1';
   static const String _imageGenerationKey = 'ability_imagegen_enabled';
   static const String _shellEconomyKey = 'ability_shell_economy_enabled';
   // Legacy keys are read once for migration and mirrored on writes so an
@@ -118,7 +172,8 @@ abstract final class ToolFeatureSettings {
   static const String _toolPromptsKey = 'ability_tool_prompts_enabled';
   static const String _modelGreetingKey = 'ability_model_greeting_enabled';
   static const String _emailDraftKey = 'ability_email_draft_enabled';
-  static const String _rpDailyLifeToolsKey = 'ability_rp_daily_life_tools_enabled';
+  static const String _rpDailyLifeToolsKey =
+      'ability_rp_daily_life_tools_enabled';
 
   static final ValueNotifier<ToolFeatureState> state =
       ValueNotifier<ToolFeatureState>(const ToolFeatureState());
@@ -143,6 +198,105 @@ abstract final class ToolFeatureSettings {
     }
     if (state.value != loaded) state.value = loaded;
     return loaded;
+  }
+
+  static Future<ToolFeatureState> loadForContext(ContextMode mode) async {
+    final base = await load();
+    if (mode != ContextMode.rp) return base;
+    final presets = await loadPresets();
+    for (final preset in presets.reversed) {
+      if (preset.applyToRp) return preset.state.forContext(mode);
+    }
+    return base.forContext(mode);
+  }
+
+  static Future<List<FeatureModulePreset>> loadPresets() async {
+    final preferences = await SharedPreferences.getInstance();
+    final raw = preferences.getString(_presetsKey);
+    if (raw == null || raw.trim().isEmpty) return const <FeatureModulePreset>[];
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! List) return const <FeatureModulePreset>[];
+      return decoded
+          .whereType<Map>()
+          .map(
+            (row) =>
+                FeatureModulePreset.fromJson(Map<String, dynamic>.from(row)),
+          )
+          .where((preset) => preset.id.isNotEmpty && preset.name.isNotEmpty)
+          .toList(growable: false);
+    } catch (_) {
+      return const <FeatureModulePreset>[];
+    }
+  }
+
+  static Future<void> savePreset(FeatureModulePreset preset) async {
+    final preferences = await SharedPreferences.getInstance();
+    final presets = (await loadPresets()).toList(growable: true);
+    final index = presets.indexWhere((item) => item.id == preset.id);
+    if (index < 0) {
+      presets.add(preset);
+    } else {
+      presets[index] = preset;
+    }
+    if (preset.applyToRp) {
+      for (var i = 0; i < presets.length; i++) {
+        final item = presets[i];
+        if (item.id != preset.id && item.applyToRp) {
+          presets[i] = FeatureModulePreset(
+            id: item.id,
+            name: item.name,
+            state: item.state,
+          );
+        }
+      }
+    }
+    await preferences.setString(
+      _presetsKey,
+      jsonEncode(presets.map((item) => item.toJson()).toList()),
+    );
+  }
+
+  static Future<void> deletePreset(String id) async {
+    final preferences = await SharedPreferences.getInstance();
+    final presets = (await loadPresets())
+        .where((item) => item.id != id)
+        .toList(growable: false);
+    await preferences.setString(
+      _presetsKey,
+      jsonEncode(presets.map((item) => item.toJson()).toList()),
+    );
+    if (preferences.getString(_activePresetKey) == id) {
+      await preferences.remove(_activePresetKey);
+    }
+  }
+
+  static Future<String> getActivePresetId() async {
+    final preferences = await SharedPreferences.getInstance();
+    return preferences.getString(_activePresetKey) ?? '';
+  }
+
+  static Future<void> activatePreset(FeatureModulePreset? preset) async {
+    final preferences = await SharedPreferences.getInstance();
+    if (preset == null) {
+      await preferences.remove(_activePresetKey);
+      return;
+    }
+    await saveState(preset.state);
+    await preferences.setString(_activePresetKey, preset.id);
+  }
+
+  static Future<void> saveState(ToolFeatureState value) async {
+    await Future.wait(<Future<void>>[
+      setImageGenerationEnabled(value.imageGenerationEnabled),
+      setShellEconomyEnabled(value.shellEconomyEnabled),
+      setDiaryEnabled(value.diaryEnabled),
+      setToolPromptsEnabled(value.toolPromptsEnabled),
+      setModelGreetingEnabled(value.modelGreetingEnabled),
+      setEmailDraftEnabled(value.emailDraftEnabled),
+      setRpDailyLifeToolsEnabled(value.rpDailyLifeToolsEnabled),
+    ]);
+    state.value = value;
   }
 
   static Future<void> setImageGenerationEnabled(bool value) =>

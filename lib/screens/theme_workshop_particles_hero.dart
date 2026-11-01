@@ -2,6 +2,25 @@
 
 part of 'theme_workshop_screen.dart';
 
+const _particleEffectOptions = <_ParticleEffectOption>[
+  _ParticleEffectOption('neural', 'Neural', '神經網路', '神经网络'),
+  _ParticleEffectOption('rain', 'Rain', '雨絲', '雨丝'),
+  _ParticleEffectOption('ripple', 'Ripples', '偶發漣漪', '偶发涟漪'),
+  _ParticleEffectOption('ember', 'Embers', '逆流餘燼', '逆流余烬'),
+  _ParticleEffectOption('dandelion', 'Petals', '飛花', '飞花'),
+  _ParticleEffectOption('gold', 'Gold', '金粉', '金粉'),
+  _ParticleEffectOption('spark', 'Sparks', '電火花', '电火花'),
+  _ParticleEffectOption('sky', 'Sky', '雲朵日月', '云朵日月'),
+  _ParticleEffectOption('firework', 'Fireworks', '煙花', '烟花'),
+  _ParticleEffectOption('emoji', 'Emoji', 'emoji 雨', 'emoji 雨'),
+];
+
+/// 一排三個，照 [_particleEffectOptions] 的順序排，名字才不會擠在一起。
+const _particleEffectsPerRow = 3;
+
+/// 粒子樣式按鍵的選中動畫時長；換粒子排在它跑完之後。
+const _particleTabAnimation = Duration(milliseconds: 180);
+
 extension _ThemeWorkshopParticleHeroMethods on _ThemeWorkshopScreenState {
   // ═══ 粒子特效區 ═══
   Widget _buildParticleSection() {
@@ -9,55 +28,123 @@ extension _ThemeWorkshopParticleHeroMethods on _ThemeWorkshopScreenState {
       (p) => p.id == _selectedId,
       orElse: () => presets.first,
     );
+    final selectedEffect = _particleEffectOptions.firstWhere(
+      (option) => option.id == _particleEffect,
+      orElse: () => _particleEffectOptions.first,
+    );
+    final selectedEffectLabel = L.pick(
+      en: selectedEffect.en,
+      zhTW: selectedEffect.zhTW,
+      zhCN: selectedEffect.zhCN,
+    );
+    final reduceMotion = MediaQuery.disableAnimationsOf(context);
 
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 12),
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(YanciTheme.radiusCard),
+        border: Border.all(
+          color: preset.accent.withValues(alpha: 0.15),
+          width: 0.8,
+        ),
+      ),
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
       child: Column(
         children: [
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
-            child: Row(
-              children: [
-                Icon(
-                  Icons.auto_awesome_outlined,
-                  size: 18,
-                  color: preset.textSecondary.withValues(alpha: 0.7),
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  L.pick(en: 'Particles', zhTW: '粒子特效'),
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w500,
-                    color: preset.textPrimary,
+          Row(
+            children: [
+              Expanded(
+                child: Semantics(
+                  button: true,
+                  expanded: _particleExpanded,
+                  label: L.pick(en: 'Particles', zhTW: '粒子特效'),
+                  child: InkWell(
+                    key: const ValueKey('theme-particle-section-toggle'),
+                    borderRadius: BorderRadius.circular(14),
+                    onTap: () =>
+                        setState(() => _particleExpanded = !_particleExpanded),
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(4, 6, 8, 6),
+                      child: Row(
+                        children: [
+                          Icon(
+                            Icons.auto_awesome_outlined,
+                            size: 18,
+                            color: preset.textSecondary.withValues(alpha: 0.7),
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            L.pick(en: 'Particles', zhTW: '粒子特效'),
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w500,
+                              color: preset.textPrimary,
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Flexible(
+                            child: Text(
+                              selectedEffectLabel,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 10.5,
+                                color: preset.textSecondary.withValues(
+                                  alpha: 0.58,
+                                ),
+                              ),
+                            ),
+                          ),
+                          const Spacer(),
+                          AnimatedRotation(
+                            turns: _particleExpanded ? 0.5 : 0,
+                            duration: reduceMotion
+                                ? Duration.zero
+                                : const Duration(milliseconds: 200),
+                            child: Icon(
+                              Icons.keyboard_arrow_down_rounded,
+                              size: 20,
+                              color: preset.textSecondary.withValues(
+                                alpha: 0.5,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
                   ),
                 ),
-                const Spacer(),
-                Transform.scale(
-                  scale: 0.78,
-                  alignment: Alignment.centerRight,
-                  child: Switch.adaptive(
-                    value: _starEnabled,
-                    activeThumbColor: preset.accent,
-                    onChanged: (v) {
-                      setState(() => _starEnabled = v);
-                      YanciTheme.starEnabled = v;
-                      ThemeSettings.saveStarEnabled(v);
-                      _notifyThemeChanged();
-                    },
-                  ),
+              ),
+              Transform.scale(
+                scale: 0.78,
+                alignment: Alignment.centerRight,
+                child: Switch.adaptive(
+                  value: _starEnabled,
+                  activeThumbColor: preset.accent,
+                  onChanged: (v) {
+                    setState(() {
+                      _starEnabled = v;
+                      if (v) _particleExpanded = true;
+                    });
+                    YanciTheme.starEnabled = v;
+                    ThemeSettings.saveStarEnabled(v);
+                    _notifyThemeChanged();
+                  },
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
           // 樣式 tabs 與密度 slider（只在啟用時顯示）
           AnimatedCrossFade(
+            key: const ValueKey('theme-particle-section-content'),
             firstChild: const SizedBox.shrink(),
             secondChild: Padding(
               padding: const EdgeInsets.only(left: 8, right: 4, top: 2),
               child: Column(
                 children: [
                   _buildParticleEffectTabs(preset),
+                  if (_particleEffect == 'emoji') _buildParticleEmojiField(preset),
+                  if (_particleEffect == 'sky') _buildCloudStyleField(preset),
                   const SizedBox(height: 6),
                   Row(
                     children: [
@@ -90,11 +177,13 @@ extension _ThemeWorkshopParticleHeroMethods on _ThemeWorkshopScreenState {
                             min: 1,
                             max: 50,
                             divisions: 49,
-                            onChanged: (v) {
-                              setState(() => _starDensity = v.round());
+                            // 拖動時只動數字；放手才重建粒子層，
+                            // 不然每一格都重建粒子＋整個 App，拖起來會卡。
+                            onChanged: (v) =>
+                                setState(() => _starDensity = v.round()),
+                            onChangeEnd: (v) {
                               YanciTheme.setStarDensity(v.round());
                               ThemeSettings.saveStarDensity(v.round());
-                              _notifyThemeChanged();
                             },
                           ),
                         ),
@@ -115,7 +204,7 @@ extension _ThemeWorkshopParticleHeroMethods on _ThemeWorkshopScreenState {
                 ],
               ),
             ),
-            crossFadeState: _starEnabled
+            crossFadeState: _starEnabled && _particleExpanded
                 ? CrossFadeState.showSecond
                 : CrossFadeState.showFirst,
             duration: const Duration(milliseconds: 200),
@@ -127,15 +216,6 @@ extension _ThemeWorkshopParticleHeroMethods on _ThemeWorkshopScreenState {
 
   Widget _buildParticleEffectTabs(ThemePreset preset) {
     final reduceMotion = MediaQuery.disableAnimationsOf(context);
-    const effects = <_ParticleEffectOption>[
-      _ParticleEffectOption('neural', 'Neural', '神經網路', '神经网络'),
-      _ParticleEffectOption('fog', 'Incense', '沉香煙霧', '沉香烟雾'),
-      _ParticleEffectOption('rain', 'Rain', '雨絲', '雨丝'),
-      _ParticleEffectOption('ripple', 'Ripples', '偶發漣漪', '偶发涟漪'),
-      _ParticleEffectOption('ember', 'Embers', '逆流餘燼', '逆流余烬'),
-      _ParticleEffectOption('dandelion', 'Petals', '落花吹雪', '落花吹雪'),
-    ];
-
     Widget buildTab(_ParticleEffectOption option) {
       final selected = option.id == _particleEffect;
       final label = L.pick(en: option.en, zhTW: option.zhTW, zhCN: option.zhCN);
@@ -149,14 +229,21 @@ extension _ThemeWorkshopParticleHeroMethods on _ThemeWorkshopScreenState {
           onTap: () {
             if (selected) return;
             setState(() => _particleEffect = option.id);
-            YanciTheme.setParticleEffect(option.id);
             ThemeSettings.saveParticleEffect(option.id);
-            _notifyThemeChanged();
+            // 換粒子要重建粒子層、烘圖（雲、emoji），跟按鍵動畫擠在同一幀
+            // 就會卡。先讓按鍵動畫跑完，再換粒子。粒子層只聽
+            // particleRevision，不需要重建整個 App 的主題。
+            _particleSwapTimer?.cancel();
+            _particleSwapTimer = Timer(
+              reduceMotion ? Duration.zero : _particleTabAnimation,
+              () {
+                if (!mounted) return;
+                YanciTheme.setParticleEffect(option.id);
+              },
+            );
           },
           child: AnimatedContainer(
-            duration: reduceMotion
-                ? Duration.zero
-                : const Duration(milliseconds: 180),
+            duration: reduceMotion ? Duration.zero : _particleTabAnimation,
             curve: Curves.easeOutCubic,
             height: 44,
             alignment: Alignment.center,
@@ -179,7 +266,7 @@ extension _ThemeWorkshopParticleHeroMethods on _ThemeWorkshopScreenState {
               overflow: TextOverflow.ellipsis,
               textAlign: TextAlign.center,
               style: TextStyle(
-                fontSize: 10.5,
+                fontSize: 12.5,
                 fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
                 color: selected
                     ? preset.accent
@@ -191,20 +278,36 @@ extension _ThemeWorkshopParticleHeroMethods on _ThemeWorkshopScreenState {
       );
     }
 
-    Widget buildRow(Iterable<_ParticleEffectOption> rowEffects) {
+    Widget buildRow(List<_ParticleEffectOption> rowEffects) {
       return Row(
-        children: rowEffects
-            .map(
-              (option) => Expanded(
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 3),
-                  child: buildTab(option),
-                ),
+        children: [
+          for (var i = 0; i < _particleEffectsPerRow; i++)
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 3),
+                // 最後一排不滿三個時留空位，寬度與上面對齊。
+                child: i < rowEffects.length
+                    ? buildTab(rowEffects[i])
+                    : const SizedBox.shrink(),
               ),
-            )
-            .toList(growable: false),
+            ),
+        ],
       );
     }
+
+    final rows = <List<_ParticleEffectOption>>[
+      for (
+        var start = 0;
+        start < _particleEffectOptions.length;
+        start += _particleEffectsPerRow
+      )
+        _particleEffectOptions.sublist(
+          start,
+          start + _particleEffectsPerRow < _particleEffectOptions.length
+              ? start + _particleEffectsPerRow
+              : _particleEffectOptions.length,
+        ),
+    ];
 
     return Semantics(
       container: true,
@@ -212,9 +315,157 @@ extension _ThemeWorkshopParticleHeroMethods on _ThemeWorkshopScreenState {
       child: Column(
         key: const ValueKey('particle-effect-tabs'),
         children: [
-          buildRow(effects.take(3)),
-          const SizedBox(height: 4),
-          buildRow(effects.skip(3)),
+          for (final (index, row) in rows.indexed) ...[
+            if (index > 0) const SizedBox(height: 4),
+            buildRow(row),
+          ],
+        ],
+      ),
+    );
+  }
+
+  /// 雲朵日月專屬：柔邊漸層雲 / 硬邊卡通雲。只動粒子層，不重建整個 App。
+  Widget _buildCloudStyleField(ThemePreset preset) {
+    Widget option(String id, String label) {
+      final selected = _cloudStyle == id;
+      return Expanded(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 3),
+          child: Semantics(
+            button: true,
+            selected: selected,
+            label: label,
+            child: InkWell(
+              key: ValueKey('cloud-style-$id'),
+              borderRadius: BorderRadius.circular(12),
+              onTap: () {
+                if (selected) return;
+                setState(() => _cloudStyle = id);
+                YanciTheme.setCloudStyle(id);
+                ThemeSettings.saveCloudStyle(id);
+              },
+              child: Container(
+                height: 34,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: selected
+                      ? preset.accent.withValues(alpha: 0.10)
+                      : Colors.transparent,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: selected
+                        ? preset.accent
+                        : preset.accent.withValues(alpha: 0.25),
+                  ),
+                ),
+                child: Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 12.5,
+                    fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+                    color: selected
+                        ? preset.accent
+                        : preset.textSecondary.withValues(alpha: 0.78),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(3, 8, 3, 0),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 56,
+            child: Text(
+              L.pick(en: 'Clouds', zhTW: '雲朵', zhCN: '云朵'),
+              style: TextStyle(
+                fontSize: 11,
+                color: preset.textSecondary.withValues(alpha: 0.7),
+              ),
+            ),
+          ),
+          option('soft', L.pick(en: 'Soft', zhTW: '柔邊', zhCN: '柔边')),
+          option('hard', L.pick(en: 'Crisp', zhTW: '硬邊', zhCN: '硬边')),
+        ],
+      ),
+    );
+  }
+
+  /// emoji 雨：自選最多 5 種，打字即時套用並保存。
+  Widget _buildParticleEmojiField(ThemePreset preset) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(3, 8, 3, 0),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 56,
+            child: Text(
+              L.pick(en: 'Emoji', zhTW: 'emoji', zhCN: 'emoji'),
+              style: TextStyle(
+                fontSize: 11,
+                color: preset.textSecondary.withValues(alpha: 0.7),
+              ),
+            ),
+          ),
+          Expanded(
+            child: TextField(
+              key: const ValueKey('particle-emoji-field'),
+              controller: _particleEmojiController,
+              style: TextStyle(fontSize: 18, color: preset.textPrimary),
+              decoration: InputDecoration(
+                isDense: true,
+                hintText: L.pick(
+                  en: 'Up to 5',
+                  zhTW: '最多 5 種',
+                  zhCN: '最多 5 种',
+                ),
+                hintStyle: TextStyle(
+                  fontSize: 12,
+                  color: preset.textSecondary.withValues(alpha: 0.5),
+                ),
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 8,
+                ),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide(
+                    color: preset.accent.withValues(alpha: 0.25),
+                  ),
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide(
+                    color: preset.accent.withValues(alpha: 0.25),
+                  ),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide(color: preset.accent),
+                ),
+              ),
+              onChanged: (value) {
+                final emojis = YanciTheme.normalizeParticleEmojis(value);
+                if (emojis.isEmpty) return; // 清空時先不動，保留上一組
+                // 只動粒子層（particleRevision），不觸發整個 App 的主題重建。
+                YanciTheme.setParticleEmojis(emojis);
+                ThemeSettings.saveParticleEmojis(emojis);
+              },
+              onSubmitted: (_) {
+                // 送出時把輸入框整理成實際生效的那幾個（去重、最多 5 個）。
+                final text = YanciTheme.particleEmojis.join();
+                _particleEmojiController.value = TextEditingValue(
+                  text: text,
+                  selection: TextSelection.collapsed(offset: text.length),
+                );
+              },
+            ),
+          ),
         ],
       ),
     );

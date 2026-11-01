@@ -1315,31 +1315,44 @@ function appendToolCard(container, msg, tool, index) {
   container.appendChild(card);
 }
 
+// Inline SVG icons for the message action row. Unicode glyphs (⧉ ☆ ♫ ↓) fall back
+// to device-specific system/emoji fonts and can render oversized on some phones.
+const MESSAGE_ACTION_ICONS = {
+  copy: '<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h8"/>',
+  star: '<path d="M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8-4.3-4.1 5.9-.9z"/>',
+  music: '<path d="M9 18V6l11-2v12"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="17.5" cy="16" r="2.5"/>',
+  download: '<path d="M12 4v11"/><path d="M7 11l5 5 5-5"/><path d="M5 20h14"/>',
+};
+
+function setMessageActionIcon(el, name, filled = false) {
+  el.innerHTML = `<svg class="message-action-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="${filled ? "currentColor" : "none"}" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${MESSAGE_ACTION_ICONS[name]}</svg>`;
+}
+
 async function appendMessageActions(container, msg) {
   if (msg.role !== "assistant" && !msg.audioDataUrl) return;
   const actions = document.createElement("div");
   actions.className = "message-actions";
   if (msg.role === "assistant") {
     const copy = document.createElement("button");
-    copy.type = "button"; copy.className = "message-action-btn"; copy.textContent = "⧉"; copy.setAttribute("aria-label", "複製訊息");
+    copy.type = "button"; copy.className = "message-action-btn"; setMessageActionIcon(copy, "copy"); copy.setAttribute("aria-label", "複製訊息");
     copy.addEventListener("click", async () => { await navigator.clipboard.writeText(stripCompanionTags(msg.content)); toast("已複製"); });
     const save = document.createElement("button");
-    save.type = "button"; save.className = "message-action-btn"; save.textContent = "☆"; save.setAttribute("aria-label", "收藏文字訊息");
+    save.type = "button"; save.className = "message-action-btn"; save.setAttribute("aria-label", "收藏文字訊息");
     const saved = await listFeatureRecords(state.selectedCharId, "saved_text");
     let active = saved.some((record) => record.value?.messageId === msg.id);
-    save.classList.toggle("is-active", active); save.textContent = active ? "★" : "☆";
+    save.classList.toggle("is-active", active); setMessageActionIcon(save, "star", active);
     save.addEventListener("click", async () => {
       active = await toggleSavedText(msg, state.selectedCharId, state.currentConvId);
-      save.classList.toggle("is-active", active); save.textContent = active ? "★" : "☆";
+      save.classList.toggle("is-active", active); setMessageActionIcon(save, "star", active);
       toast(active ? "已收藏文字" : "已取消收藏");
     });
     actions.append(copy, save);
   }
   if (msg.audioDataUrl) {
     const voice = document.createElement("button");
-    voice.type = "button"; voice.className = "message-action-btn"; voice.textContent = "♫"; voice.setAttribute("aria-label", "收藏聲音");
+    voice.type = "button"; voice.className = "message-action-btn"; setMessageActionIcon(voice, "music"); voice.setAttribute("aria-label", "收藏聲音");
     voice.addEventListener("click", async () => { await saveAudioResource({ characterId: state.selectedCharId, messageId: msg.id, conversationId: state.currentConvId, name: msg.audioName || "語音", dataUrl: msg.audioDataUrl, mimeType: msg.audioMime }); voice.classList.add("is-active"); toast("已收藏聲音"); });
-    const download = document.createElement("a"); download.className = "message-action-btn"; download.textContent = "↓"; download.setAttribute("aria-label", "下載聲音"); download.href = msg.audioDataUrl; download.download = msg.audioName || "holt-voice.webm";
+    const download = document.createElement("a"); download.className = "message-action-btn"; setMessageActionIcon(download, "download"); download.setAttribute("aria-label", "下載聲音"); download.href = msg.audioDataUrl; download.download = msg.audioName || "holt-voice.webm";
     actions.append(voice, download);
   }
   container.appendChild(actions);

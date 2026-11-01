@@ -22,7 +22,7 @@ class SpiderWebService {
     final sections = <String>[
       L.pick(
         en:
-            '''■ Spider-web Memory System
+            '''■ Advanced Memory System
   {"type":"memory.propose","arguments":{"category":"Preference | Promise | Important Event | Self-Disclosure","content":"third-person durable fact","triggers":["event trigger"]}}
   Write in third person using $charName and $name. Keep entries independent and non-repeating. Use at most 2 entries and 2 event-based triggers per entry. Self-Disclosure is a durable fact about who $name is, voluntarily shared by them; it is not a casual preference.
 
@@ -42,7 +42,7 @@ class SpiderWebService {
   {"type":"search.chat","arguments":{"scope":"daily","query":"specific event keyword"}}
   Search exact prior conversation only when needed. Never mention hidden records, ids, tools, or clarity scores in visible prose.''',
         zhTW:
-            '''■ 蛛網記憶系統
+            '''■ 進階記憶系統
   {"type":"memory.propose","arguments":{"category":"偏好｜約定｜重要事件｜自我揭露","content":"第三人稱耐久事實","triggers":["事件觸發詞"]}}
   使用第三人稱，以 $charName 與 $name 指稱雙方。每條獨立且不重複；每輪最多 2 條，每條最多 2 個事件型觸發詞。自我揭露只記 $name 主動說明、能描述其身分／經歷／價值觀的耐久事實，不等同一般偏好。
 
@@ -62,7 +62,7 @@ class SpiderWebService {
   {"type":"search.chat","arguments":{"scope":"daily","query":"具體事件關鍵詞"}}
   需要精確原文時才搜尋。可見正文不得提隱藏記錄、編號、工具或清晰度。''',
         zhCN:
-            '''■ 蛛网记忆系统
+            '''■ 进阶记忆系统
   {"type":"memory.propose","arguments":{"category":"偏好｜约定｜重要事件｜自我揭露","content":"第三人称耐久事实","triggers":["事件触发词"]}}
   使用第三人称，以 $charName 与 $name 指称双方。每条独立且不重复；每轮最多 2 条，每条最多 2 个事件型触发词。自我揭露只记 $name 主动说明、能描述其身份／经历／价值观的耐久事实，不等同一般偏好。
 

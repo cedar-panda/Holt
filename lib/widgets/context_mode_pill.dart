@@ -20,6 +20,43 @@ void showContextModeNotice(BuildContext context, String message) {
   showThemedPillNotice(context, message);
 }
 
+Future<bool> confirmDisableGlobalRp(BuildContext context) async {
+  final confirmed = await showDialog<bool>(
+    context: context,
+    builder: (dialogContext) => AlertDialog(
+      backgroundColor: YanciTheme.surfacePanel,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(YanciTheme.radiusMd),
+      ),
+      title: Text(
+        L.pick(
+          en: 'Turn off Global RP mode?',
+          zhTW: '關閉全域 RP 模式？',
+          zhCN: '关闭全局 RP 模式？',
+        ),
+      ),
+      content: Text(
+        L.pick(
+          en: 'Global RP mode is on. Turn it off and use Daily mode for this companion’s future windows? Existing RP windows will remain RP.',
+          zhTW: '目前開啟了全域 RP 模式。是否關閉全域 RP，並讓該夥伴之後的新窗口使用日常模式？現有 RP 窗口仍會保留為 RP。',
+          zhCN: '目前开启了全局 RP 模式。是否关闭全局 RP，并让该伙伴之后的新窗口使用日常模式？现有 RP 窗口仍会保留为 RP。',
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(dialogContext).pop(false),
+          child: Text(L.pick(en: 'Cancel', zhTW: '取消', zhCN: '取消')),
+        ),
+        TextButton(
+          onPressed: () => Navigator.of(dialogContext).pop(true),
+          child: Text(L.pick(en: 'Confirm', zhTW: '確定', zhCN: '确定')),
+        ),
+      ],
+    ),
+  );
+  return confirmed ?? false;
+}
+
 class ContextModeLabel extends StatelessWidget {
   const ContextModeLabel({super.key, required this.mode, this.compact = false});
 

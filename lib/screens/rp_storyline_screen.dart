@@ -186,12 +186,13 @@ class _RpStorylineScreenState extends State<RpStorylineScreen> {
           autofocus: true,
           maxLength: 30,
           textInputAction: TextInputAction.done,
-          decoration: InputDecoration(
+          decoration: YanciTheme.themedInputDecoration(
             hintText: L.pick(
               en: 'Storyline name',
               zhTW: '故事線名稱',
               zhCN: '故事线名称',
             ),
+            counterText: '',
           ),
           onSubmitted: (value) {
             if (value.trim().isNotEmpty) {
@@ -295,11 +296,33 @@ class _RpStorylineScreenState extends State<RpStorylineScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      floatingActionButton: FloatingActionButton.small(
+      floatingActionButton: Material(
         key: const ValueKey('rp-storyline-add'),
-        onPressed: _activeCount >= 3 ? null : _create,
-        backgroundColor: YanciTheme.accent,
-        child: const Icon(Icons.add_rounded),
+        color: YanciTheme.themedCardBackground(),
+        shape: StadiumBorder(
+          side: BorderSide(color: YanciTheme.themedCardBorder(), width: 0.7),
+        ),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(YanciTheme.radiusPill),
+          onTap: _activeCount >= 3 ? null : _create,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.add_rounded, size: 19, color: YanciTheme.accent),
+                const SizedBox(width: 5),
+                Text(
+                  L.pick(en: 'New', zhTW: '新建', zhCN: '新建'),
+                  style: YanciTheme.bodySmall.copyWith(
+                    color: YanciTheme.accent,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
       body: GradientBackground(
         child: SafeArea(
@@ -379,20 +402,37 @@ class _RpStorylineScreenState extends State<RpStorylineScreen> {
       fontSize: resourceFontSize,
       height: 1.2,
     );
-    final archiveLinkStyle = TextButton.styleFrom(
-      minimumSize: const Size(0, 44),
-      padding: const EdgeInsets.symmetric(horizontal: 4),
-      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-      alignment: Alignment.center,
-      textStyle: resourceTextStyle,
-    );
-    final archiveSeparator = Text(
-      '｜',
-      textScaler: const TextScaler.linear(1),
-      style: resourceTextStyle.copyWith(
-        color: YanciTheme.textSecondary.withValues(alpha: 0.52),
-      ),
-    );
+    Widget resourceButton({
+      required String keySuffix,
+      required String label,
+      required VoidCallback onTap,
+    }) {
+      return Material(
+        key: ValueKey<String>('rp-storyline-$id-$keySuffix'),
+        color: YanciTheme.accent.withValues(alpha: 0.06),
+        borderRadius: BorderRadius.circular(12),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(12),
+          onTap: onTap,
+          child: Center(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 9),
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Text(
+                  label,
+                  textAlign: TextAlign.center,
+                  textScaler: const TextScaler.linear(1),
+                  maxLines: 1,
+                  style: resourceTextStyle,
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
     return AnimatedOpacity(
       key: ValueKey<String>('storyline-$id'),
       duration: duration,
@@ -403,6 +443,7 @@ class _RpStorylineScreenState extends State<RpStorylineScreen> {
         curve: Curves.easeOutCubic,
         padding: const EdgeInsets.fromLTRB(14, 13, 8, 10),
         decoration: BoxDecoration(
+          color: YanciTheme.themedCardBackground(),
           borderRadius: BorderRadius.circular(16),
           border: Border.all(
             color: isDefault
@@ -478,107 +519,78 @@ class _RpStorylineScreenState extends State<RpStorylineScreen> {
               ],
             ),
             if (!archived) ...[
-              const SizedBox(height: 4),
-              Row(
+              const SizedBox(height: 8),
+              GridView.count(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                crossAxisCount: 2,
+                mainAxisSpacing: 6,
+                crossAxisSpacing: 6,
+                childAspectRatio: 3.4,
                 children: [
-                  Expanded(
-                    child: TextButton(
-                      style: archiveLinkStyle,
-                      onPressed: () => Navigator.of(context).push(
-                        CupertinoPageRoute<void>(
-                          builder: (_) => RpWorldbookScreen(
-                            characterId: widget.characterId,
-                            continuityId: id,
-                          ),
-                        ),
-                      ),
-                      child: FittedBox(
-                        fit: BoxFit.scaleDown,
-                        child: Text(
-                          L.pick(en: 'Worldbook', zhTW: '世界書', zhCN: '世界书'),
-                          textAlign: TextAlign.center,
-                          textScaler: const TextScaler.linear(1),
-                          maxLines: 1,
+                  resourceButton(
+                    keySuffix: 'worldbook',
+                    label: L.pick(en: 'Worldbook', zhTW: '世界書', zhCN: '世界书'),
+                    onTap: () => Navigator.of(context).push(
+                      CupertinoPageRoute<void>(
+                        builder: (_) => RpWorldbookScreen(
+                          characterId: widget.characterId,
+                          continuityId: id,
                         ),
                       ),
                     ),
                   ),
-                  archiveSeparator,
-                  Expanded(
-                    child: TextButton(
-                      style: archiveLinkStyle,
-                      onPressed: () => Navigator.of(context).push(
-                        CupertinoPageRoute<void>(
-                          builder: (_) => RpStoryRelationshipScreen(
-                            characterId: widget.characterId,
-                            continuityId: id,
-                          ),
-                        ),
-                      ),
-                      child: FittedBox(
-                        fit: BoxFit.scaleDown,
-                        child: Text(
-                          L.pick(
-                            en: 'Relationships',
-                            zhTW: '人物關係',
-                            zhCN: '人物关系',
-                          ),
-                          textAlign: TextAlign.center,
-                          textScaler: const TextScaler.linear(1),
-                          maxLines: 1,
+                  resourceButton(
+                    keySuffix: 'relationships',
+                    label: L.pick(
+                      en: 'Relationships',
+                      zhTW: '人物關係',
+                      zhCN: '人物关系',
+                    ),
+                    onTap: () => Navigator.of(context).push(
+                      CupertinoPageRoute<void>(
+                        builder: (_) => RpStoryRelationshipScreen(
+                          characterId: widget.characterId,
+                          continuityId: id,
                         ),
                       ),
                     ),
                   ),
-                  archiveSeparator,
-                  Expanded(
-                    child: TextButton(
-                      style: archiveLinkStyle,
-                      onPressed: () => Navigator.of(context).push(
-                        CupertinoPageRoute<void>(
-                          builder: (_) => RpStorylineTimelineScreen(
-                            characterId: widget.characterId,
-                            continuityId: id,
-                            storylineLabel: rpStorylineDisplayName(
-                              row,
-                              index + 1,
-                            ),
+                  resourceButton(
+                    keySuffix: 'timeline',
+                    label: L.pick(en: 'Timeline', zhTW: '時間線', zhCN: '时间线'),
+                    onTap: () => Navigator.of(context).push(
+                      CupertinoPageRoute<void>(
+                        builder: (_) => RpStorylineTimelineScreen(
+                          characterId: widget.characterId,
+                          continuityId: id,
+                          storylineLabel: rpStorylineDisplayName(
+                            row,
+                            index + 1,
                           ),
                         ),
                       ),
-                      child: FittedBox(
-                        fit: BoxFit.scaleDown,
-                        child: Text(
-                          L.pick(en: 'Timeline', zhTW: '時間線', zhCN: '时间线'),
-                          textAlign: TextAlign.center,
-                          textScaler: const TextScaler.linear(1),
-                          maxLines: 1,
+                    ),
+                  ),
+                  resourceButton(
+                    keySuffix: 'memory',
+                    label: L.pick(
+                      en: 'Memories & summaries',
+                      zhTW: '記憶與摘要',
+                      zhCN: '记忆与摘要',
+                    ),
+                    onTap: () => Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) => MemoryScreen(
+                          characterId: widget.characterId,
+                          contextMode: ContextMode.rp,
+                          continuityId: id,
+                          scopeLabel: rpStorylineDisplayName(row, index + 1),
                         ),
                       ),
                     ),
                   ),
                 ],
-              ),
-              Center(
-                child: TextButton(
-                  onPressed: () => Navigator.of(context).push(
-                    MaterialPageRoute<void>(
-                      builder: (_) => MemoryScreen(
-                        characterId: widget.characterId,
-                        contextMode: ContextMode.rp,
-                        continuityId: id,
-                        scopeLabel: rpStorylineDisplayName(row, index + 1),
-                      ),
-                    ),
-                  ),
-                  child: Text(
-                    L.pick(
-                      en: 'Memories & summaries',
-                      zhTW: '記憶與摘要',
-                      zhCN: '记忆与摘要',
-                    ),
-                  ),
-                ),
               ),
             ],
           ],

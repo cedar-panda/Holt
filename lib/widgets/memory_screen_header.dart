@@ -105,7 +105,11 @@ class MemoryScreenHeader extends StatelessWidget {
                     ),
                     tooltip: isGraphView
                         ? L.pick(en: 'List View', zhTW: '切換條目記憶')
-                        : L.pick(en: 'Spider Web', zhTW: '切換蛛網記憶'),
+                        : L.pick(
+                            en: 'Advanced Memory',
+                            zhTW: '切換進階記憶',
+                            zhCN: '切换进阶记忆',
+                          ),
                     onPressed: onToggleGraph,
                   ),
                 IconButton(

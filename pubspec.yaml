@@ -38,6 +38,8 @@ dependencies:
   cupertino_icons: ^1.0.8
   shared_preferences: ^2.5.5
   http: ^1.6.0
+  # 通話常用詞彙：辨識結果按模糊拼音校正成角色常用稱呼。
+  lpinyin: ^2.0.3
   sqflite: ^2.4.2+1
   sqflite_common_ffi: ^2.4.0
   path: ^1.9.1
@@ -76,6 +78,8 @@ dependencies:
   gal: ^2.3.2
   share_plus: ^12.0.2
   uuid: ^4.5.3
+  # 雨絲跟著手機傾斜：只讀加速度計（重力方向），僅 Android／iOS。
+  sensors_plus: ^7.1.1
 dev_dependencies:
   flutter_test:
     sdk: flutter

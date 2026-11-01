@@ -1,15 +1,14 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:math';
 import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:flutter_soloud/flutter_soloud.dart';
-import 'package:http/http.dart' as http;
 import '../memory/database.dart';
+import 'call_audio_route_service.dart';
 import 'call_tts_failure_policy.dart';
-import 'settings_manager.dart';
 import 'tts_service.dart';
+import 'tts_synthesizer.dart';
 
 /// ═══════════════════════════════════════════════════════════
 ///  通話音頻管線 — 句子級 TTS 流水線 + SoLoud 播放（真實振幅）
@@ -40,6 +39,10 @@ class CallAudio {
       await SoLoud.instance.init();
       SoLoud.instance.setVisualizationEnabled(true);
       SoLoud.instance.setFftSmoothing(0.85);
+      // SoLoud/miniaudio may override iOS AVAudioSession category.
+      // Re-apply playAndRecord + allowBluetooth after init so TTS playback
+      // routes through Bluetooth when connected.
+      await CallAudioRouteService.configureCallAudioSession();
     } catch (_) {
       _initFuture = null; // 允許重試
       rethrow;
@@ -50,6 +53,7 @@ class CallAudio {
     if (_initFuture == null) return;
     _initFuture = null;
     SoLoud.instance.deinit();
+    await CallAudioRouteService.resetAudioSession();
   }
 }
 
@@ -145,25 +149,20 @@ class SentenceTtsPipeline {
   final String? conversationId;
   final String? conversationTitle;
 
+  /// 通話語言（右上角）。目前只用來給 ElevenLabs v3／v4 粵語提示。
+  final String? sttLocale;
+
   SentenceTtsPipeline({
     this.characterId,
     this.conversationId,
     this.conversationTitle,
+    this.sttLocale,
   });
 
-  // TTS 配置（start() 時解析一次）
-  String _provider = 'openai';
-  String _elModel = 'eleven_multilingual_v2';
-  String _elVoiceId = '';
-  String _elKey = '';
-  double _elStability = 0.5;
-  double _elSimilarity = 0.75;
-  String _oaVoice = 'nova';
-  String _oaKey = '';
+  // TTS 配置（start() 時解析一次，整輪每句共用；請求本身在 TtsSynthesizer）
+  TtsVoiceConfig? _voice;
 
-  bool get keepsAudioTags =>
-      _provider == 'elevenlabs' &&
-      (_elModel == 'eleven_v3' || _elModel == 'eleven_v4');
+  bool get keepsAudioTags => _voice?.keepsAudioTags ?? false;
 
   // 切句緩衝
   String _buf = '';
@@ -182,9 +181,20 @@ class SentenceTtsPipeline {
   int _inFlight = 0;
   // ElevenLabs free tier 併發上限 2；OpenAI TTS 放 3。
   // 播第 N 句時後面的句子已在合成，句間不等 HTTP。
-  int get _maxConcurrent => _provider == 'elevenlabs' ? 2 : 3;
+  // stitching 要求上一句「完全合成完」才能被接，所以開著時一次只合成一句；
+  // 合成通常比播放快，播第 N 句時第 N+1 句仍來得及。
+  int get _maxConcurrent => _stitching
+      ? 1
+      : _voice?.provider == TtsProviders.elevenlabs
+      ? 2
+      : 3;
+
+  /// 本輪是否用 ElevenLabs request stitching（v4）。被拒一次就整輪關掉。
+  bool _stitching = false;
+
+  /// 已合成成功句子的 request id（按句序；失敗的句子不進來）。
+  final List<String> _stitchIds = [];
   final List<int> _pendingGenerate = [];
-  String _prevSentence = '';
 
   /// 完整音頻（存語音庫用，mp3 分段直接串接可播）
   final BytesBuilder _fullAudio = BytesBuilder(copy: false);
@@ -196,6 +206,10 @@ class SentenceTtsPipeline {
 
   /// 首句音頻開播回調（call_screen 切狀態用）
   VoidCallback? onFirstAudio;
+
+  /// 每一句真正開始出聲時回調：[text] 為該句送 TTS 的文字，
+  /// [duration] 為該段音頻長度（取不到時為 null）。字幕跟著語音走用。
+  void Function(String text, Duration? duration)? onSentencePlaying;
   bool _firstAudioFired = false;
   VoidCallback? onAudioFailure;
   bool _audioFailureFired = false;
@@ -211,17 +225,9 @@ class SentenceTtsPipeline {
 
   Future<void> start() async {
     await CallAudio.ensureInit();
-    _provider = await TtsSettings.getTtsProvider();
-    if (_provider == 'elevenlabs') {
-      _elKey = await TtsSettings.getTtsElevenlabsKey();
-      _elModel = await TtsSettings.getTtsElevenlabsModel();
-      _elVoiceId = await TtsService.resolveElevenVoiceId(characterId);
-      _elStability = await TtsSettings.getTtsElevenlabsStability();
-      _elSimilarity = await TtsSettings.getTtsElevenlabsSimilarity();
-    } else {
-      _oaKey = await TtsSettings.getTtsOpenaiKey();
-      _oaVoice = await TtsService.resolveOpenaiVoice(characterId);
-    }
+    _voice = await TtsSynthesizer.resolve(characterId: characterId);
+    _stitching = _voice!.supportsStitching;
+    _stitchIds.clear();
     _buf = '';
     _sentenceIndex = 0;
     _nextToPlay = 0;
@@ -238,7 +244,6 @@ class SentenceTtsPipeline {
     _pendingGenerate.clear();
     _fullAudio.clear();
     _spokenText = '';
-    _prevSentence = '';
     _allDone = Completer<void>();
   }
 
@@ -258,6 +263,24 @@ class SentenceTtsPipeline {
   ];
   static const _softBreak = ['，', ','];
 
+  @visibleForTesting
+  static int sentenceThresholdForIndex(int sentenceIndex) =>
+      switch (sentenceIndex) {
+        0 => 4,
+        1 => 12,
+        _ => 26,
+      };
+
+  /// 英文句號只在後面跟空白時才算句尾：「3.5」「...」中間的點不切。
+  /// 流式時句號剛好落在緩衝末尾先不切，等下一個字到了再判斷；
+  /// 整段結束時 finish() 會把剩下的全部送出。
+  bool _isSentenceEnd(int i) {
+    final ch = _buf[i];
+    if (_sentenceEnd.contains(ch)) return true;
+    if (ch != '.') return false;
+    return i + 1 < _buf.length && _buf[i + 1].trim().isEmpty;
+  }
+
   void pushText(String delta) {
     if (_cancelled || _finished) return;
     _buf += delta;
@@ -266,16 +289,18 @@ class SentenceTtsPipeline {
 
   void _trySplit() {
     while (true) {
-      // 首句 4 字即切搶首音；後續句湊滿 30 字再切——
-      // 之前「首句之後全部等 finish() 整段轉」會在首句播完後空窗一大段
-      // （等整段 LLM + 整段 TTS），流暢度就是死在這裡。
-      // 湊長 + 邊流邊切 + 併發預合成 = 首音快、句間不空窗、請求數也少。
-      final first = _sentenceIndex == 0;
-      final minLen = first ? 4 : 30;
+      final trimmedLeft = _buf.trimLeft();
+      if (trimmedLeft.length != _buf.length) _buf = trimmedLeft;
+      if (_buf.isEmpty) return;
+      final minLen = sentenceThresholdForIndex(_sentenceIndex);
       int cut = -1;
       for (int i = 0; i < _buf.length; i++) {
-        final ch = _buf[i];
-        if (_sentenceEnd.contains(ch) && i + 1 >= minLen) {
+        final candidate = _buf.substring(0, i + 1);
+        final speechLength = TtsService.extractSpeechContent(
+          candidate,
+          keepAudioTags: keepsAudioTags,
+        ).trim().runes.length;
+        if (_isSentenceEnd(i) && speechLength >= minLen) {
           // 連續標點（如「……」「！？」）一起帶走
           int j = i;
           while (j + 1 < _buf.length &&
@@ -288,7 +313,12 @@ class SentenceTtsPipeline {
         }
       }
       // 太長沒句號 → 逗號斷
-      if (cut == -1 && _buf.length > (first ? 60 : 100)) {
+      final bufferedSpeechLength = TtsService.extractSpeechContent(
+        _buf,
+        keepAudioTags: keepsAudioTags,
+      ).trim().runes.length;
+      if (cut == -1 &&
+          bufferedSpeechLength > (_sentenceIndex == 0 ? 60 : 100)) {
         for (int i = _buf.length - 1; i >= 20; i--) {
           if (_softBreak.contains(_buf[i])) {
             cut = i;
@@ -335,15 +365,24 @@ class SentenceTtsPipeline {
       return;
     }
     final text = _textBySentence[idx]!;
-    final prev = _prevSentence;
-    _prevSentence = text;
     try {
-      Uint8List bytes;
-      if (_provider == 'elevenlabs') {
-        bytes = await _elevenGenerate(text, previousText: prev);
-      } else {
-        bytes = await _openaiGenerate(text);
-      }
+      final locale = sttLocale;
+      final bytes = await TtsSynthesizer.synthesize(
+        _voice!,
+        text,
+        languageCode: locale == null
+            ? null
+            : TtsSynthesizer.elevenlabsLanguageFor(locale),
+        previousRequestIds: _stitching
+            ? List<String>.of(_stitchIds)
+            : const <String>[],
+        onRequestId: _stitching ? _stitchIds.add : null,
+        onStitchRejected: () {
+          debugPrint('通話 TTS：stitching 被拒，本輪改回獨立合成');
+          _stitching = false;
+          _stitchIds.clear();
+        },
+      );
       _audioBySentence[idx] = _cancelled ? null : bytes;
       _consecutiveFailures = 0;
     } catch (e) {
@@ -378,81 +417,6 @@ class SentenceTtsPipeline {
     onConfigurationFailure?.call(reason);
   }
 
-  Future<Uint8List> _elevenGenerate(
-    String text, {
-    String previousText = '',
-  }) async {
-    if (_elKey.isEmpty) {
-      throw const CallTtsConfigurationException('ElevenLabs API Key 未設定');
-    }
-    if (_elVoiceId.isEmpty) {
-      throw const CallTtsConfigurationException('ElevenLabs Voice ID 未設定');
-    }
-    final resp = await http
-        .post(
-          Uri.parse(
-            'https://api.elevenlabs.io/v1/text-to-speech/$_elVoiceId'
-            '?output_format=mp3_44100_128',
-          ),
-          headers: {
-            'Content-Type': 'application/json',
-            'Accept': 'audio/mpeg',
-            'xi-api-key': _elKey,
-          },
-          body: jsonEncode({
-            'text': text,
-            'model_id': _elModel.isEmpty ? 'eleven_multilingual_v2' : _elModel,
-            // previous_text 拼接會讓部分模型直接回 400——正是「第一句有聲、
-            // 第二句起 400」的元兇（首句沒 prev 才活）。語氣連貫是小事、能出聲
-            // 才是大事，整個拿掉，不再賭型號。
-            'voice_settings': {
-              'stability': _elStability,
-              'similarity_boost': _elSimilarity,
-            },
-          }),
-        )
-        .timeout(const Duration(seconds: 30));
-    if (resp.statusCode != 200) {
-      // 帶上 body——ElevenLabs 的 400 會在 body 裡寫明真正原因，
-      // 別只丟個裸狀態碼，下次還得猜。
-      if (CallTtsFailurePolicy.isConfigurationStatus(resp.statusCode)) {
-        throw CallTtsConfigurationException(
-          'ElevenLabs ${resp.statusCode}: ${resp.body}',
-        );
-      }
-      throw Exception('ElevenLabs ${resp.statusCode}: ${resp.body}');
-    }
-    return resp.bodyBytes;
-  }
-
-  Future<Uint8List> _openaiGenerate(String text) async {
-    if (_oaKey.isEmpty) {
-      throw const CallTtsConfigurationException('OpenAI TTS API Key 未設定');
-    }
-    final resp = await http
-        .post(
-          Uri.parse('https://api.openai.com/v1/audio/speech'),
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': 'Bearer $_oaKey',
-          },
-          body: jsonEncode({
-            'model': 'tts-1',
-            'voice': _oaVoice.isEmpty ? 'nova' : _oaVoice,
-            'input': text.length > 4096 ? text.substring(0, 4096) : text,
-            'response_format': 'mp3',
-          }),
-        )
-        .timeout(const Duration(seconds: 30));
-    if (resp.statusCode != 200) {
-      if (CallTtsFailurePolicy.isConfigurationStatus(resp.statusCode)) {
-        throw CallTtsConfigurationException('OpenAI TTS ${resp.statusCode}');
-      }
-      throw Exception('OpenAI TTS ${resp.statusCode}');
-    }
-    return resp.bodyBytes;
-  }
-
   // ═══ 按序播放 ═══
   Future<void> _pumpPlayback() async {
     if (_playLoopRunning || _cancelled) return;
@@ -478,7 +442,7 @@ class SentenceTtsPipeline {
         }
         speaking.value = true;
         amplitude.start();
-        await _playBytes(bytes);
+        await _playBytes(bytes, text);
       }
     } finally {
       _playLoopRunning = false;
@@ -495,7 +459,7 @@ class SentenceTtsPipeline {
   SoundHandle? _currentHandle;
   AudioSource? _currentSource;
 
-  Future<void> _playBytes(Uint8List bytes) async {
+  Future<void> _playBytes(Uint8List bytes, String text) async {
     AudioSource? source;
     var registered = false; // source 是否已掛到 _currentSource（cancel 可見）
     try {
@@ -510,6 +474,13 @@ class SentenceTtsPipeline {
       _currentSource = source;
       registered = true;
       _currentHandle = SoLoud.instance.play(source);
+      Duration? length;
+      try {
+        length = SoLoud.instance.getLength(source);
+      } catch (_) {
+        length = null;
+      }
+      onSentencePlaying?.call(text, length);
       _anyAudioOk = true;
       _consecutiveFailures = 0;
       amplitude.playing = true;

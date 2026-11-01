@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:share_plus/share_plus.dart';
 
 import '../services/app_error_log_service.dart';
 import '../services/locale_strings.dart';
@@ -31,6 +32,23 @@ class _ErrorDiagnosticsScreenState extends State<ErrorDiagnosticsScreen> {
     if (mounted) setState(() => _entries = const []);
   }
 
+  Future<void> _export() async {
+    final file = await AppErrorLogService.exportLogFile();
+    if (!mounted) return;
+    await SharePlus.instance.share(
+      ShareParams(
+        files: <XFile>[XFile(file.path, mimeType: 'text/plain')],
+        fileNameOverrides: <String>[file.uri.pathSegments.last],
+        title: L.pick(
+          en: 'Share Holt error log',
+          zhTW: '分享 Holt 報錯日誌',
+          zhCN: '分享 Holt 报错日志',
+        ),
+        sharePositionOrigin: const Rect.fromLTWH(0, 0, 1, 1),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -56,6 +74,11 @@ class _ErrorDiagnosticsScreenState extends State<ErrorDiagnosticsScreen> {
                       textAlign: TextAlign.center,
                       style: YanciTheme.headingMedium,
                     ),
+                  ),
+                  IconButton(
+                    tooltip: L.pick(en: 'Export', zhTW: '匯出', zhCN: '导出'),
+                    onPressed: _export,
+                    icon: const Icon(Icons.ios_share_rounded, size: 20),
                   ),
                   IconButton(
                     tooltip: L.pick(en: 'Clear', zhTW: '清除', zhCN: '清除'),

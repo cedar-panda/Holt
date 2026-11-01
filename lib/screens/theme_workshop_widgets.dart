@@ -179,7 +179,7 @@ class _HexColorInputState extends State<_HexColorInput> {
       autocorrect: false,
       enableSuggestions: false,
       textCapitalization: TextCapitalization.characters,
-      decoration: InputDecoration(
+      decoration: YanciTheme.themedInputDecoration(
         labelText: 'HEX',
         hintText: '#RRGGBB',
         errorText: widget.valid
@@ -189,8 +189,7 @@ class _HexColorInputState extends State<_HexColorInput> {
                 zhTW: '請輸入 6 位 HEX 色碼',
                 zhCN: '请输入 6 位 HEX 色码',
               ),
-        isDense: true,
-        border: const OutlineInputBorder(),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
       ),
       onChanged: widget.onChanged,
     );

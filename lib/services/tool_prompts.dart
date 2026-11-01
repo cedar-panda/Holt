@@ -38,8 +38,8 @@ class ToolPrompts {
   );
 
   static String voiceCall() => _pick(
-    '■ Voice Call\n  {"type":"call.start","arguments":{"opening":"the first thing you will say when they pick up"}}\n  Call them. They will see an incoming-call screen and can answer or decline. If they answer, your opening line is spoken first. Use when text is not enough; do not overuse it.\n  Hidden history events such as [call_action:*] and [call_event:*] describe what happened. React as yourself; those markers are invisible to them.',
-    '■ 語音通話\n  {"type":"call.start","arguments":{"opening":"接通後你要說的第一句話"}}\n  給對方打電話。對方會看到來電界面，可以接聽或掛斷；接通後你的開場白會先說出來。文字不足以表達時再使用，不要頻繁。\n  歷史中的 [call_action:*] 與 [call_event:*] 是已發生的隱藏事件。照你自己的性子反應，標記對方看不到。',
+    '■ Voice Call\n  Preferred: {"type":"call.start","arguments":{"opening":"the first thing you will say when they pick up"}}\n  Compatibility form for models without reliable structured JSON: <call>the first thing you will say when they pick up</call>\n  Use exactly one form to call them. They will see an incoming-call screen and can answer or decline. If they answer, your opening line is spoken first. Use when text is not enough; do not overuse it.\n  Hidden history events such as [call_action:*] and [call_event:*] describe what happened. React as yourself; those markers are invisible to them.',
+    '■ 語音通話\n  優先格式：{"type":"call.start","arguments":{"opening":"接通後你要說的第一句話"}}\n  無法穩定輸出結構化 JSON 的模型可用相容格式：<call>接通後你要說的第一句話</call>\n  只使用其中一種格式給對方打電話。對方會看到來電界面，可以接聽或掛斷；接通後你的開場白會先說出來。文字不足以表達時再使用，不要頻繁。\n  歷史中的 [call_action:*] 與 [call_event:*] 是已發生的隱藏事件。照你自己的性子反應，標記對方看不到。',
   );
 
   static String shop() => _pick(

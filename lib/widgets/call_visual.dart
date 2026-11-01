@@ -38,7 +38,12 @@ class CallCenterVisual extends StatefulWidget {
 
   /// ringing = 來電響鈴（頭像輕微擺動）
   final bool ringing;
+  final bool thinking;
   final double avatarSize;
+
+  /// 頭像邊緣流光的顏色；null 時用主題 accent。換色時會在
+  /// [_glowTransition] 內從舊色平滑滑到新色（預留給「心情顏色」）。
+  final Color? glowColor;
 
   const CallCenterVisual({
     super.key,
@@ -46,7 +51,9 @@ class CallCenterVisual extends StatefulWidget {
     required this.fallbackName,
     required this.level,
     this.ringing = false,
+    this.thinking = false,
     this.avatarSize = 132,
+    this.glowColor,
   });
 
   @override
@@ -58,15 +65,24 @@ class _CallCenterVisualState extends State<CallCenterVisual>
   late final Ticker _ticker;
   double _t = 0;
   int _lastFrameMicros = -20000;
+  bool _reduceMotion = false;
   // growable: true —— 下面每幀 removeLast + insert(0) 滾動，定長 list 會崩。
-  final List<double> _history = List.filled(24, 0.0, growable: true);
+  // 只取最近幾幀做平滑，讓邊緣起伏不抖。
+  final List<double> _history = List.filled(6, 0.0, growable: true);
+
+  static const Duration _glowTransition = Duration(milliseconds: 1400);
+  Color? _glowFrom;
+  Color? _glowTo;
+  double _glowStartedAt = 0;
 
   @override
   void initState() {
     super.initState();
     _ticker = createTicker((elapsed) {
       final micros = elapsed.inMicroseconds;
-      if (micros - _lastFrameMicros < 16000) return;
+      final activeAudio = widget.ringing || widget.level.value > 0.035;
+      final interval = activeAudio ? 16667 : 33333;
+      if (micros - _lastFrameMicros < interval) return;
       _lastFrameMicros = micros;
       _t = elapsed.inMilliseconds / 1000.0;
       // 波形歷史：新值從中心湧出
@@ -77,6 +93,40 @@ class _CallCenterVisualState extends State<CallCenterVisual>
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _reduceMotion = MediaQuery.disableAnimationsOf(context);
+  }
+
+  @override
+  void didUpdateWidget(covariant CallCenterVisual oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.glowColor != widget.glowColor) {
+      // 從「此刻畫面上的顏色」出發，換色中途再換也不會跳。
+      _glowFrom = _currentGlowColor();
+      _glowTo = widget.glowColor;
+      _glowStartedAt = _t;
+    }
+  }
+
+  Color _currentGlowColor() {
+    final target = _glowTo ?? widget.glowColor ?? YanciTheme.accent;
+    final from = _glowFrom;
+    if (from == null || _reduceMotion) return target;
+    final progress =
+        ((_t - _glowStartedAt) * 1000 / _glowTransition.inMilliseconds)
+            .clamp(0.0, 1.0);
+    if (progress >= 1) {
+      _glowFrom = null;
+      return target;
+    }
+    return Color.lerp(from, target, Curves.easeInOutCubic.transform(progress))!;
+  }
+
+  double get _smoothedLevel =>
+      _history.fold<double>(0, (sum, v) => sum + v) / _history.length;
+
+  @override
   void dispose() {
     _ticker.dispose();
     super.dispose();
@@ -85,14 +135,22 @@ class _CallCenterVisualState extends State<CallCenterVisual>
   @override
   Widget build(BuildContext context) {
     final accent = YanciTheme.accent;
+    final glowColor = _currentGlowColor();
     final lv = widget.level.value;
     // 響鈴擺動角度
-    final wiggle = widget.ringing
+    final wiggle = widget.ringing && !_reduceMotion
         ? sin(_t * 18) * 0.035 * (0.6 + 0.4 * sin(_t * 2.2))
         : 0.0;
+    final thinkingBreath = widget.thinking && !_reduceMotion
+        ? (sin((_t / 1.8) * 2 * pi) + 1) / 2
+        : 0.0;
     final glow =
-        0.10 + lv * 0.35 + (widget.ringing ? 0.08 + 0.06 * sin(_t * 6) : 0.0);
-    final ringScale = 1.0 + lv * 0.06 + 0.012 * sin(_t * 1.8);
+        0.10 +
+        lv * 0.35 +
+        thinkingBreath * 0.23 +
+        (widget.ringing ? 0.08 + 0.06 * sin(_t * 6) : 0.0);
+    final ringScale =
+        1.0 + lv * 0.06 + thinkingBreath * 0.025 + 0.008 * sin(_t * 1.8);
 
     return RepaintBoundary(
       child: Column(
@@ -106,6 +164,8 @@ class _CallCenterVisualState extends State<CallCenterVisual>
               height: widget.avatarSize * 1.55,
               child: Stack(
                 alignment: Alignment.center,
+                // 流光起伏放大後會超出這個方框；不裁切，讓光自然溢出。
+                clipBehavior: Clip.none,
                 children: [
                   // 外層光暈（跟振幅呼吸）
                   Transform.scale(
@@ -117,27 +177,26 @@ class _CallCenterVisualState extends State<CallCenterVisual>
                         shape: BoxShape.circle,
                         gradient: RadialGradient(
                           colors: [
-                            accent.withValues(alpha: glow * 0.55),
-                            accent.withValues(alpha: glow * 0.18),
-                            accent.withValues(alpha: 0),
+                            glowColor.withValues(alpha: glow * 0.55),
+                            glowColor.withValues(alpha: glow * 0.18),
+                            glowColor.withValues(alpha: 0),
                           ],
                           stops: const [0.55, 0.78, 1.0],
                         ),
                       ),
                     ),
                   ),
-                  // 細環
-                  Transform.scale(
-                    scale: ringScale,
-                    child: Container(
-                      width: widget.avatarSize + 14,
-                      height: widget.avatarSize + 14,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        border: Border.all(
-                          color: accent.withValues(alpha: 0.25 + lv * 0.35),
-                          width: 1.5,
-                        ),
+                  // 頭像邊緣流光：聲音就從頭像本身發出來。輪廓隨振幅像水一樣
+                  // 起伏、光帶緩慢繞圈；取代以前頭像下方那排聲波條。
+                  ExcludeSemantics(
+                    child: CustomPaint(
+                      size: Size.square(widget.avatarSize * 1.55),
+                      painter: _EdgeFlowPainter(
+                        radius: widget.avatarSize / 2 + 3,
+                        level: _smoothedLevel,
+                        breath: thinkingBreath,
+                        time: _reduceMotion ? 0 : _t,
+                        color: glowColor,
                       ),
                     ),
                   ),
@@ -145,23 +204,6 @@ class _CallCenterVisualState extends State<CallCenterVisual>
                 ],
               ),
             ),
-          ),
-          const SizedBox(height: 18),
-          // ── 聲波（真實振幅驅動）──
-          SizedBox(
-            height: 44,
-            child: widget.ringing
-                ? null
-                : ExcludeSemantics(
-                    child: CustomPaint(
-                      size: const Size(230, 44),
-                      painter: _WaveBarsPainter(
-                        history: _history,
-                        accent: accent,
-                        time: _t,
-                      ),
-                    ),
-                  ),
           ),
         ],
       ),
@@ -222,47 +264,92 @@ class _CallCenterVisualState extends State<CallCenterVisual>
   }
 }
 
-/// 中心對稱聲波條：最新振幅在中央、往兩側衰減湧開
-class _WaveBarsPainter extends CustomPainter {
-  final List<double> history;
-  final Color accent;
-  final double time;
-
-  _WaveBarsPainter({
-    required this.history,
-    required this.accent,
+/// 頭像邊緣流光：貼著頭像外圈的一圈柔光輪廓。
+///
+/// 半徑由幾組不同頻率、緩慢漂移的正弦波疊加，振幅越大起伏越明顯；
+/// 光帶用旋轉的 SweepGradient 做出「繞圈流動」的感覺。只畫一條 path
+/// 兩次（柔光＋細芯），跟原本的聲波條同一個 ticker，不增加額外動畫源。
+class _EdgeFlowPainter extends CustomPainter {
+  _EdgeFlowPainter({
+    required this.radius,
+    required this.level,
+    required this.breath,
     required this.time,
+    required this.color,
   });
+
+  final double radius;
+  final double level;
+  final double breath;
+  final double time;
+  final Color color;
+
+  static const int _segments = 96;
 
   @override
   void paint(Canvas canvas, Size size) {
-    final n = history.length; // 單側條數
-    final totalBars = n * 2 - 1;
-    final gap = size.width / totalBars;
-    final barW = gap * 0.52;
-    final cy = size.height / 2;
-    final minH = size.height * 0.10;
+    final center = size.center(Offset.zero);
+    final shaped = pow(level.clamp(0.0, 1.0), 0.75).toDouble();
+    // 起伏幅度：2026-10-27 調為原本的 3 倍，2026-10-28 再 ×2.2（昭昭要求）。
+    const amplitudeBoost = 3.0 * 2.2;
+    final amplitude =
+        radius * (0.012 + shaped * 0.075 + breath * 0.018) * amplitudeBoost;
 
-    for (int i = 0; i < totalBars; i++) {
-      final dist = (i - (n - 1)).abs(); // 距中心
-      var v = history[dist];
-      // 每根加一點相位微擾，避免完全鏡像的機械感
-      v *= 0.82 + 0.18 * sin(time * 7 + i * 1.7);
-      // 非線性提亮：小振幅也要看得見起伏（0.3 → 0.38）
-      final shaped = pow(v.clamp(0.0, 1.0), 0.8).toDouble();
-      final h = max(minH, shaped * size.height * 0.92);
-      final alpha = (0.72 - dist / n * 0.45).clamp(0.18, 0.85).toDouble();
-      final paint = Paint()
-        ..color = accent.withValues(alpha: alpha)
-        ..strokeCap = StrokeCap.round
-        ..strokeWidth = barW;
-      final x = gap * i + gap / 2;
-      canvas.drawLine(Offset(x, cy - h / 2), Offset(x, cy + h / 2), paint);
+    final path = Path();
+    for (var i = 0; i <= _segments; i++) {
+      final theta = 2 * pi * i / _segments;
+      final wobble =
+          sin(3 * theta + time * 1.3) * 0.55 +
+          sin(5 * theta - time * 1.9) * 0.30 +
+          sin(2 * theta + time * 0.7) * 0.15;
+      final r = radius + amplitude * (1.15 + wobble);
+      final point = center + Offset(cos(theta) * r, sin(theta) * r);
+      if (i == 0) {
+        path.moveTo(point.dx, point.dy);
+      } else {
+        path.lineTo(point.dx, point.dy);
+      }
     }
+    path.close();
+
+    final bounds = Rect.fromCircle(center: center, radius: radius * 1.3);
+    Shader sweep(double alphaScale) => SweepGradient(
+      colors: <Color>[
+        color.withValues(alpha: 0.95 * alphaScale),
+        color.withValues(alpha: 0.35 * alphaScale),
+        color.withValues(alpha: 0.80 * alphaScale),
+        color.withValues(alpha: 0.25 * alphaScale),
+        color.withValues(alpha: 0.95 * alphaScale),
+      ],
+      transform: GradientRotation(time * 0.55),
+    ).createShader(bounds);
+
+    final glowStrength = (0.35 + shaped * 0.55 + breath * 0.2).clamp(0.0, 1.0);
+    canvas.drawPath(
+      path,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 5 + shaped * 9
+        ..shader = sweep(glowStrength * 0.55)
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 7),
+    );
+    canvas.drawPath(
+      path,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.4
+        ..shader = sweep(0.45 + shaped * 0.5)
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 0.8),
+    );
   }
 
   @override
-  bool shouldRepaint(covariant _WaveBarsPainter old) => true;
+  bool shouldRepaint(covariant _EdgeFlowPainter old) =>
+      old.level != level ||
+      old.time != time ||
+      old.breath != breath ||
+      old.color != color ||
+      old.radius != radius;
 }
 
 /// 通話圓形操作鍵 — 實底、白圖標、≥56dp 觸控目標
@@ -289,25 +376,48 @@ class CallActionButton extends StatelessWidget {
     return Semantics(
       button: true,
       label: semanticLabel,
-      child: Material(
-        color: outlined ? color.withValues(alpha: 0.12) : color,
-        shape: CircleBorder(
-          side: outlined
-              ? BorderSide(color: color.withValues(alpha: 0.55), width: 1.4)
-              : BorderSide.none,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: outlined
+                ? [color.withValues(alpha: 0.17), color.withValues(alpha: 0.09)]
+                : [
+                    Color.lerp(color, Colors.white, 0.08)!,
+                    Color.lerp(color, Colors.black, 0.06)!,
+                  ],
+          ),
+          border: Border.all(
+            color: (outlined ? color : Colors.white).withValues(alpha: 0.42),
+            width: 0.65,
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: color.withValues(alpha: outlined ? 0.10 : 0.18),
+              blurRadius: 10,
+              spreadRadius: -2,
+              offset: const Offset(0, 3),
+            ),
+          ],
         ),
-        elevation: outlined ? 0 : 3,
-        shadowColor: color.withValues(alpha: 0.4),
-        child: InkWell(
-          customBorder: const CircleBorder(),
-          onTap: onTap,
-          child: SizedBox(
-            width: size,
-            height: size,
-            child: Icon(
-              icon,
-              size: size * 0.44,
-              color: outlined ? color : Colors.white,
+        child: Material(
+          color: Colors.transparent,
+          shape: const CircleBorder(),
+          child: InkWell(
+            customBorder: const CircleBorder(),
+            splashColor: color.withValues(alpha: 0.10),
+            highlightColor: color.withValues(alpha: 0.05),
+            onTap: onTap,
+            child: SizedBox(
+              width: size,
+              height: size,
+              child: Icon(
+                icon,
+                size: size * 0.44,
+                color: outlined ? color : Colors.white,
+              ),
             ),
           ),
         ),

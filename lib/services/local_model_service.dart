@@ -7,13 +7,13 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_gemma/flutter_gemma.dart' as gemma;
 import 'package:http/http.dart' as http;
 import 'package:llamadart/llamadart.dart' as llama;
-import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'api_adapter.dart';
 import 'settings/api_settings.dart';
 import 'locale_strings.dart';
 import 'token_estimator.dart';
 import 'system_context_debug.dart';
+import '../utils/app_directories.dart';
 
 /// ═══════════════════════════════════════════════
 /// 本地模型服務
@@ -211,7 +211,7 @@ class LocalModelService implements ApiAdapter {
         }
       }
       // iOS / fallback
-      await getApplicationDocumentsDirectory();
+      await getAppDocumentsDirectory();
       // dart:io FileStat 不給磁盤空間，回退保守值
       return 10 * 1024 * 1024 * 1024;
     } catch (_) {
@@ -472,7 +472,7 @@ class LocalModelService implements ApiAdapter {
 
   /// 獲取模型存儲目錄
   static Future<Directory> _modelDir() async {
-    final appDir = await getApplicationDocumentsDirectory();
+    final appDir = await getAppDocumentsDirectory();
     final dir = Directory('${appDir.path}/local_models');
     if (!await dir.exists()) await dir.create(recursive: true);
     return dir;

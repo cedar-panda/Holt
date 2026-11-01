@@ -23,6 +23,16 @@ extension _ChatScreenWebSearchFollowUp on _ChatScreenState {
         resolvedFailureContext.isEmpty) {
       return '';
     }
+    if (WebSearchFollowUp.hasNoVerifiedEvidence(
+      result: result,
+      failureContext: resolvedFailureContext,
+    )) {
+      return L.pick(
+        en: 'I could not find reliable results just now. Let us try again later.',
+        zhTW: '剛才沒有查到可靠的結果，晚一點再試試吧。',
+        zhCN: '刚才没有查到可靠的结果，晚一点再试试吧。',
+      );
+    }
     final fallback = result == null
         ? ''
         : WebSearchFollowUp.fallbackReply(result);

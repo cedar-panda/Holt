@@ -12,7 +12,7 @@ test("v90 static resource versions and app shell stay atomic", () => {
   const worker = read("service-worker.js");
   assert.match(index, /styles\.css\?v=90/);
   assert.match(index, /app\.js\?v=90/);
-  assert.match(worker, /holt-pwa-shell-v90/);
+  assert.match(worker, /holt-pwa-shell-v91/);
   assert.match(worker, /styles\.css\?v=90/);
   assert.match(worker, /app\.js\?v=90/);
   assert.match(worker, /\.\/companion-features\.js/);

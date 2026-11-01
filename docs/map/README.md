@@ -30,7 +30,7 @@ flowchart LR
 | 文件 | 範圍 |
 |---|---|
 | [memory_entries.md](memory_entries.md) | 觸發詞、FTS5/BM25、向量、永久記憶、歸檔 |
-| [spider_web_memory.md](spider_web_memory.md) | 蛛網記憶與關聯 |
+| [spider_web_memory.md](spider_web_memory.md) | 進階記憶（底層蛛網）與記憶關聯 |
 | [emotion_coordinates.md](emotion_coordinates.md) | 情緒座標與 RP scope |
 | [bio_clock.md](bio_clock.md) | 生物鐘與習慣 |
 | [timeline.md](timeline.md) | 日常／RP 時間線 |
@@ -44,7 +44,9 @@ flowchart LR
 | [backup_import.md](backup_import.md) | 完整備份、可攜包、加密包、外部聊天匯入 |
 | [ambient_motion.md](ambient_motion.md) | 主題背景粒子、幀率調度、可見性與省電邊界 |
 | [app_startup.md](app_startup.md) | App 首幀、開屏、啟動補載與 iOS Debug 邊界 |
-| [chat_composer.md](chat_composer.md) | 輸入框、發送鍵樣式與回覆前等待計時 |
+| [chat_composer.md](chat_composer.md) | 輸入框、發送鍵、等待狀態與多氣泡拆分／工具列語義 |
+| [voice_tts.md](voice_tts.md) | 聲音模型、角色 Voice ID、播放解析與語音通話 |
+| [error_diagnostics.md](error_diagnostics.md) | 本地報錯、可捕捉閃退、嚮導預覽與日誌匯出 |
 | [notifications.md](notifications.md) | 回覆完成通知、鎖屏隱私、點擊導航與平台限制 |
 | [sidebar_settings.md](sidebar_settings.md) | 設定側邊欄、群組展開與鍵盤收起協調 |
 | [ui_operability.md](ui_operability.md) | 觸控熱區、大字體、多角色指示、語意與 reduced motion |

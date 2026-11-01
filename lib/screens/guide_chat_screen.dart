@@ -5,6 +5,7 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:flutter/services.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:uuid/uuid.dart';
 
 import '../memory/database.dart';
@@ -315,6 +316,41 @@ class _GuideChatScreenState extends State<GuideChatScreen> {
     );
   }
 
+  Future<void> _exportErrorLog() async {
+    try {
+      final file = await AppErrorLogService.exportLogFile();
+      await SharePlus.instance.share(
+        ShareParams(
+          files: <XFile>[XFile(file.path, mimeType: 'text/plain')],
+          fileNameOverrides: <String>[
+            file.uri.pathSegments.isEmpty
+                ? 'holt-error-log.txt'
+                : file.uri.pathSegments.last,
+          ],
+          title: L.pick(
+            en: 'Share Holt error log',
+            zhTW: '分享 Holt 報錯日誌',
+            zhCN: '分享 Holt 报错日志',
+          ),
+          sharePositionOrigin: const Rect.fromLTWH(0, 0, 1, 1),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            L.pick(
+              en: 'Could not export the error log: $error',
+              zhTW: '無法匯出報錯日誌：$error',
+              zhCN: '无法导出报错日志：$error',
+            ),
+          ),
+        ),
+      );
+    }
+  }
+
   Future<List<_GuideReferenceOption>> _loadReferenceOptions() async {
     final characters = await DatabaseHelper.getCharacters();
     final options = <_GuideReferenceOption>[];
@@ -366,7 +402,7 @@ class _GuideChatScreenState extends State<GuideChatScreen> {
           builder: (context, setSheetState) => FractionallySizedBox(
             heightFactor: .78,
             child: Material(
-              color: YanciTheme.isDark ? const Color(0xFF242128) : Colors.white,
+              color: YanciTheme.surfacePanel,
               borderRadius: const BorderRadius.vertical(
                 top: Radius.circular(24),
               ),
@@ -616,7 +652,7 @@ class _GuideChatScreenState extends State<GuideChatScreen> {
       builder: (sheetContext) => FractionallySizedBox(
         heightFactor: .78,
         child: Material(
-          color: YanciTheme.isDark ? const Color(0xFF242128) : Colors.white,
+          color: YanciTheme.surfacePanel,
           borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
           child: SafeArea(
             top: false,
@@ -715,7 +751,7 @@ class _GuideChatScreenState extends State<GuideChatScreen> {
       context: context,
       backgroundColor: Colors.transparent,
       builder: (context) => Material(
-        color: YanciTheme.isDark ? const Color(0xFF242128) : Colors.white,
+        color: YanciTheme.surfacePanel,
         borderRadius: const BorderRadius.vertical(top: Radius.circular(22)),
         child: SafeArea(
           top: false,
@@ -969,13 +1005,14 @@ class _GuideChatScreenState extends State<GuideChatScreen> {
                     zhTW: '嚮導選項',
                     zhCN: '向导选项',
                   ),
-                  color: YanciTheme.isDark
-                      ? const Color(0xFF242128)
-                      : Colors.white,
+                  color: YanciTheme.surfacePanel,
                   onSelected: (value) {
                     if (value == 'hide') unawaited(_hideGuide());
                     if (value == 'errors') {
                       Navigator.of(context).pushNamed('/error_diagnostics');
+                    }
+                    if (value == 'export_errors') {
+                      unawaited(_exportErrorLog());
                     }
                   },
                   itemBuilder: (_) => <PopupMenuEntry<String>>[
@@ -983,6 +1020,16 @@ class _GuideChatScreenState extends State<GuideChatScreen> {
                       value: 'errors',
                       child: Text(
                         L.pick(en: 'Error records', zhTW: '報錯記錄', zhCN: '报错记录'),
+                      ),
+                    ),
+                    PopupMenuItem<String>(
+                      value: 'export_errors',
+                      child: Text(
+                        L.pick(
+                          en: 'Export error log',
+                          zhTW: '匯出報錯日誌',
+                          zhCN: '导出报错日志',
+                        ),
                       ),
                     ),
                     PopupMenuItem<String>(
@@ -1100,10 +1147,27 @@ class _GuideChatScreenState extends State<GuideChatScreen> {
             button: true,
             label: suggestion,
             child: InkWell(
-              borderRadius: BorderRadius.circular(10),
+              borderRadius: BorderRadius.circular(
+                suggestion.runes.length > 18 ? 16 : YanciTheme.radiusPill,
+              ),
               onTap: _sending ? null : () => unawaited(_send(suggestion)),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 5),
+              child: Container(
+                constraints: const BoxConstraints(minHeight: 44),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 6,
+                ),
+                decoration: BoxDecoration(
+                  color: YanciTheme.accent.withValues(alpha: 0.08),
+                  borderRadius: BorderRadius.circular(
+                    suggestion.runes.length > 18 ? 16 : YanciTheme.radiusPill,
+                  ),
+                  border: Border.all(
+                    color: YanciTheme.accent.withValues(alpha: 0.20),
+                    width: 0.6,
+                  ),
+                ),
+                alignment: Alignment.center,
                 child: Text(
                   suggestion,
                   style: YanciTheme.bodySmall.copyWith(
@@ -1285,22 +1349,41 @@ class _GuideChatScreenState extends State<GuideChatScreen> {
           if (_hasRecentError) ...[
             Align(
               alignment: Alignment.centerLeft,
-              child: TextButton.icon(
-                onPressed: _showErrorEmailDraft,
-                icon: const Icon(Icons.mail_outline_rounded, size: 16),
-                label: Text(
-                  L.pick(
-                    en: 'Draft a Holt error report',
-                    zhTW: '幫我擬回報 Holt 錯誤郵件',
-                    zhCN: '帮我拟回报 Holt 错误邮件',
+              child: Wrap(
+                spacing: 4,
+                runSpacing: 0,
+                children: [
+                  TextButton.icon(
+                    onPressed: _showErrorEmailDraft,
+                    icon: const Icon(Icons.mail_outline_rounded, size: 16),
+                    label: Text(
+                      L.pick(
+                        en: 'Draft error report',
+                        zhTW: '幫我擬錯誤郵件',
+                        zhCN: '帮我拟错误邮件',
+                      ),
+                    ),
+                    style: TextButton.styleFrom(
+                      foregroundColor: YanciTheme.accent,
+                      padding: const EdgeInsets.symmetric(horizontal: 6),
+                      minimumSize: const Size(0, 36),
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
                   ),
-                ),
-                style: TextButton.styleFrom(
-                  foregroundColor: YanciTheme.accent,
-                  padding: const EdgeInsets.symmetric(horizontal: 6),
-                  minimumSize: const Size(0, 36),
-                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                ),
+                  TextButton.icon(
+                    onPressed: _exportErrorLog,
+                    icon: const Icon(Icons.ios_share_rounded, size: 16),
+                    label: Text(
+                      L.pick(en: 'Export log', zhTW: '匯出日誌', zhCN: '导出日志'),
+                    ),
+                    style: TextButton.styleFrom(
+                      foregroundColor: YanciTheme.accent,
+                      padding: const EdgeInsets.symmetric(horizontal: 6),
+                      minimumSize: const Size(0, 36),
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                  ),
+                ],
               ),
             ),
           ],
@@ -1641,7 +1724,7 @@ class _GuideDraftEditorState extends State<_GuideDraftEditor> {
     return Padding(
       padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
       child: Material(
-        color: YanciTheme.isDark ? const Color(0xFF242128) : Colors.white,
+        color: YanciTheme.surfacePanel,
         borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
         child: SafeArea(
           top: false,

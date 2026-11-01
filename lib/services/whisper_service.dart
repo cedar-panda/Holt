@@ -101,19 +101,34 @@ class WhisperService {
   /// Request-only nudge. The tag syntax remains in the stable tool prompt;
   /// current text and the decision to refresh it stay dynamic so changing a
   /// whisper never invalidates the provider's static prompt cache.
-  static String runtimeInstruction(CharacterWhisperState state) {
+  static String runtimeInstruction(
+    CharacterWhisperState state, {
+    required String characterName,
+    required String userName,
+  }) {
+    final character = sanitize(characterName).replaceAll('\n', ' ').trim();
+    final user = sanitize(userName).replaceAll('\n', ' ').trim();
+    final resolvedCharacter = character.isEmpty
+        ? L.pick(en: 'the character', zhTW: '角色', zhCN: '角色')
+        : character;
+    final resolvedUser = user.isEmpty
+        ? L.pick(en: 'the user', zhTW: 'user', zhCN: 'user')
+        : user;
     return L.pick(
       en:
           '### Composer Whisper\n'
           'Current line: “${state.displayText}”\n'
+          'This line is exclusively something $resolvedCharacter says to $resolvedUser in $resolvedCharacter\'s own voice. It is never narration, a system hint, or words spoken by $resolvedUser.\n'
           'Independently consider whether a different short note fits the current mood or moment. If it does, append one <whisper>note</whisper> tag (at most $maxLines lines; CJK text up to $maxCjkLength characters total, English text up to $maxLatinLength characters total). Otherwise leave it unchanged. This changes only the empty composer placeholder and must never overwrite text they already typed.',
       zhTW:
           '### 輸入框悄悄話\n'
           '目前顯示：「${state.displayText}」\n'
+          '這句話只可以是「$resolvedCharacter」以自己的口吻對「$resolvedUser」說的短話；不是旁白、系統提示，也不是「$resolvedUser」說的話。\n'
           '請自主判斷此刻的氣氛或關係是否適合換一則短話。適合時在回覆末尾附上一組 <whisper>短話</whisper>（最多 $maxLines 行；中日韓文字合計不超過 $maxCjkLength 字，英文合計不超過 $maxLatinLength 字）；不適合就維持原樣。它只會改變空輸入框的提示，不得覆寫對方已輸入的文字。',
       zhCN:
           '### 输入框悄悄话\n'
           '当前显示：“${state.displayText}”\n'
+          '这句话只可以是“$resolvedCharacter”以自己的口吻对“$resolvedUser”说的短话；不是旁白、系统提示，也不是“$resolvedUser”说的话。\n'
           '请自主判断此刻的气氛或关系是否适合换一则短话。适合时在回复末尾附上一组 <whisper>短话</whisper>（最多 $maxLines 行；中日韩文字合计不超过 $maxCjkLength 字，英文合计不超过 $maxLatinLength 字）；不适合就维持原样。它只会改变空输入框的提示，不得覆盖对方已输入的文字。',
     );
   }

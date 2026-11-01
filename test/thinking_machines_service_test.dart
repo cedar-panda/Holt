@@ -59,6 +59,21 @@ void main() {
     expect(body.containsKey('thinking'), isFalse);
   });
 
+  test('uses the shared low effort when selected in chat', () async {
+    final service = ThinkingMachinesService(
+      apiKey: 'tml-key',
+      thinkingEnabled: true,
+      thinkingEffort: 'low',
+    );
+    final body = await service.debugBuildBodyForTesting(
+      messages: const <Map<String, String>>[
+        <String, String>{'role': 'user', 'content': 'Hello'},
+      ],
+      model: ThinkingMachinesService.defaultModel,
+    );
+    expect(body['output_config'], <String, dynamic>{'effort': 'low'});
+  });
+
   test('converts data URL images to Anthropic image blocks', () async {
     final service = ThinkingMachinesService(apiKey: 'tml-key');
 

@@ -32,22 +32,53 @@ void main() {
     },
   );
 
-  test('custom send button accepts only square PNG data', () {
-    final square = img.encodePng(img.Image(width: 24, height: 24));
-    final rectangle = img.encodePng(img.Image(width: 32, height: 20));
+  test(
+    'custom send button requires square white line PNG with transparency',
+    () {
+      final validImage = img.Image(width: 24, height: 24, numChannels: 4)
+        ..setPixelRgba(12, 12, 255, 255, 255, 255);
+      final square = img.encodePng(validImage);
+      final rectangle = img.encodePng(
+        img.Image(width: 32, height: 20, numChannels: 4),
+      );
+      final solid = img.Image(width: 24, height: 24, numChannels: 4);
+      img.fill(solid, color: img.ColorRgba8(255, 255, 255, 255));
+      final colored = img.Image(width: 24, height: 24, numChannels: 4)
+        ..setPixelRgba(12, 12, 255, 0, 0, 255);
 
-    expect(
-      ImageService.validateSendButtonPngBytes(square),
-      SendButtonImageValidation.valid,
-    );
-    expect(
-      ImageService.validateSendButtonPngBytes(rectangle),
-      SendButtonImageValidation.notSquare,
-    );
-    expect(
-      ImageService.validateSendButtonPngBytes(<int>[0xFF, 0xD8, 0xFF]),
-      SendButtonImageValidation.notPng,
-    );
+      expect(
+        ImageService.validateSendButtonPngBytes(square),
+        SendButtonImageValidation.valid,
+      );
+      expect(
+        ImageService.validateSendButtonPngBytes(rectangle),
+        SendButtonImageValidation.notSquare,
+      );
+      expect(
+        ImageService.validateSendButtonPngBytes(<int>[0xFF, 0xD8, 0xFF]),
+        SendButtonImageValidation.notPng,
+      );
+      expect(
+        ImageService.validateSendButtonPngBytes(img.encodePng(solid)),
+        SendButtonImageValidation.noTransparentBackground,
+      );
+      expect(
+        ImageService.validateSendButtonPngBytes(img.encodePng(colored)),
+        SendButtonImageValidation.notWhiteLineArt,
+      );
+    },
+  );
+
+  test('bundled maple leaf and paper boat satisfy custom icon contract', () {
+    for (final path in <String>[
+      'assets/images/send_maple_leaf.png',
+      'assets/images/send_paper_boat.png',
+    ]) {
+      expect(
+        ImageService.validateSendButtonPngBytes(File(path).readAsBytesSync()),
+        SendButtonImageValidation.valid,
+      );
+    }
   });
 
   testWidgets('missing custom send button path falls back to leaf', (
@@ -119,6 +150,68 @@ void main() {
     final idleFilter = tester.widget<ColorFiltered>(
       find.ancestor(
         of: find.byKey(const ValueKey('send-button-image-paw')),
+        matching: find.byType(ColorFiltered),
+      ),
+    );
+    expect(
+      idleFilter.colorFilter,
+      ColorFilter.mode(YanciTheme.accent, BlendMode.modulate),
+    );
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('maple leaf and paper boat use the paw theme tint rules', (
+    tester,
+  ) async {
+    final originalPreset = YanciTheme.presetId;
+    addTearDown(() => YanciTheme.setPreset(originalPreset));
+    final controller = TextEditingController(text: 'hello');
+    addTearDown(controller.dispose);
+    YanciTheme.setPreset('nightlamp');
+
+    for (final style in <SendButtonStyle>[
+      SendButtonStyle.leaf,
+      SendButtonStyle.shell,
+    ]) {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: InputBar(
+              key: ValueKey(style.name),
+              externalController: controller,
+              sendStyle: style,
+              onSend: (_) {},
+            ),
+          ),
+        ),
+      );
+      final imageKey = ValueKey(
+        style == SendButtonStyle.leaf
+            ? 'send-button-image-leaf'
+            : 'send-button-image-shell',
+      );
+      final filter = tester.widget<ColorFiltered>(
+        find.ancestor(
+          of: find.byKey(imageKey),
+          matching: find.byType(ColorFiltered),
+        ),
+      );
+      expect(
+        filter.colorFilter,
+        ColorFilter.mode(
+          YanciTheme.accent.computeLuminance() > 0.179
+              ? Colors.black
+              : Colors.white,
+          BlendMode.modulate,
+        ),
+      );
+    }
+
+    controller.clear();
+    await tester.pump();
+    final idleFilter = tester.widget<ColorFiltered>(
+      find.ancestor(
+        of: find.byKey(const ValueKey('send-button-image-shell')),
         matching: find.byType(ColorFiltered),
       ),
     );

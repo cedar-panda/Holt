@@ -13,6 +13,26 @@ import 'package:project_yanci/theme/app_theme.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  test('call background scope survives JSON and rejects unknown values', () {
+    final chat = BackgroundPreset.fromJson(
+      const BackgroundPreset(
+        slot: 4,
+        homePath: '/home.png',
+        chatPath: '/chat.png',
+        callBackgroundScope: 'chat',
+      ).toJson(),
+      fallbackSlot: 1,
+    );
+    expect(chat.slot, 4);
+    expect(chat.callBackgroundScope, 'chat');
+
+    final invalid = BackgroundPreset.fromJson(<String, Object?>{
+      'slot': 2,
+      'call_background_scope': 'both',
+    }, fallbackSlot: 1);
+    expect(invalid.callBackgroundScope, 'none');
+  });
+
   test('legacy background migrates once into slot 1', () async {
     SharedPreferences.setMockInitialValues(<String, Object>{
       'bg_image_home_path': '/legacy/home.jpg',

@@ -14,7 +14,8 @@ class CoinAmountText extends StatelessWidget {
       fontSize: 15,
       fontFamily: YanciTheme.fontFamily,
       fontWeight: FontWeight.w500,
-      color: const Color(0xFFF2C96D),
+      // 跟主題 accent 走，和貝殼圖示一致（原本固定燈黃）。
+      color: YanciTheme.accent,
       fontFeatures: const [
         FontFeature.liningFigures(),
         FontFeature.tabularFigures(),

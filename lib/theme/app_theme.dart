@@ -1,3 +1,5 @@
+import 'dart:math';
+
 import 'package:flutter/material.dart';
 import 'theme_presets.dart';
 
@@ -164,20 +166,60 @@ class YanciTheme {
   static String? get bgEffect => _preset.bgEffect;
   static String get particleEffect {
     var candidate = particleEffectOverride ?? bgEffect ?? 'neural';
-    // 星光已由霧氣取代；舊設定的 'stars' 自動改用霧氣。
-    if (candidate == 'stars') candidate = 'fog';
+    // 星光、流螢光斑都已移除；舊設定一律回到預設的神經網路。
+    if (candidate == 'stars' || candidate == 'fog') candidate = 'neural';
     return particleEffectIds.contains(candidate) ? candidate : 'neural';
   }
 
   static const Set<String> particleEffectIds = {
     'neural',
     'stars',
-    'fog',
     'rain',
     'ripple',
     'ember',
     'dandelion',
+    'gold',
+    'spark',
+    'sky',
+    'firework',
+    'emoji',
   };
+
+  /// emoji 雨：使用者自選，最多 5 種同時落下。
+  static const List<String> defaultParticleEmojis = <String>['🦦', '🐾', '🍃', '🌙', '✨'];
+  static const int maxParticleEmojis = 5;
+  static List<String> particleEmojis = defaultParticleEmojis;
+
+  /// 雲朵日月的雲：soft = 柔邊漸層，hard = 硬邊卡通雲（遠層仍保留柔邊）。
+  static const List<String> cloudStyleIds = <String>['soft', 'hard'];
+  static String cloudStyle = 'soft';
+
+  static void setCloudStyle(String style) {
+    if (!cloudStyleIds.contains(style) || style == cloudStyle) return;
+    cloudStyle = style;
+    particleRevision.value++;
+  }
+
+  /// 依字素（grapheme）切開，去掉空白與重複，最多取 [maxParticleEmojis] 個。
+  /// 組合 emoji（膚色、家庭、旗幟）算一個。
+  static List<String> normalizeParticleEmojis(String raw) {
+    final seen = <String>{};
+    for (final glyph in raw.characters) {
+      if (glyph.trim().isEmpty) continue;
+      seen.add(glyph);
+      if (seen.length >= maxParticleEmojis) break;
+    }
+    return List<String>.unmodifiable(seen);
+  }
+
+  static void setParticleEmojis(List<String> emojis) {
+    final next = emojis.isEmpty
+        ? defaultParticleEmojis
+        : List<String>.unmodifiable(emojis.take(maxParticleEmojis));
+    if (next.join() == particleEmojis.join()) return;
+    particleEmojis = next;
+    particleRevision.value++;
+  }
 
   static void setParticleEffect(String effect) {
     if (!particleEffectIds.contains(effect)) return;
@@ -253,8 +295,103 @@ class YanciTheme {
   static Color get navActive => accent;
   static Color get navInactive => _preset.navInactive;
 
-  static Color get starColor => _preset.starColor;
-  static Color get starGlow => _preset.starGlow;
+  /// 粒子色。任何主題都保證和背景拉得開：淺色主題（尤其長安這類暖灰底）
+  /// 的預設粒子色跟底色太近，會融在一起；這裡沿主題色調深或調亮到夠對比。
+  static Color get starColor {
+    _refreshParticleTones();
+    return _starTone!;
+  }
+
+  static Color get starGlow {
+    _refreshParticleTones();
+    return _glowTone!;
+  }
+
+  /// 粒子主色對底色的最低對比（不透明比較；粒子本身半透明，所以要高一點）。
+  static const double particleMinContrast = 3.0;
+
+  /// 淺色主題粒子的最低不透明度，避免整片太淡。
+  static const double _lightParticleMinAlpha = 0.5;
+
+  static ThemePreset? _toneCachePreset;
+  static Color? _starTone;
+  static Color? _glowTone;
+  static Color? _backdropTone;
+
+  static void _refreshParticleBackdrop() {
+    if (identical(_toneCachePreset, _preset) && _backdropTone != null) return;
+    final bg = _preset.gradient;
+    _backdropTone = Color.fromRGBO(
+      (bg.map((c) => c.r).reduce((a, b) => a + b) / bg.length * 255).round(),
+      (bg.map((c) => c.g).reduce((a, b) => a + b) / bg.length * 255).round(),
+      (bg.map((c) => c.b).reduce((a, b) => a + b) / bg.length * 255).round(),
+      1,
+    );
+    _toneCachePreset = _preset;
+    _starTone = null;
+    _glowTone = null;
+  }
+
+  static void _refreshParticleTones() {
+    _refreshParticleBackdrop();
+    if (_starTone != null && _glowTone != null) return;
+    final star = particleTone(_preset.starColor);
+    _starTone = isDark
+        ? star
+        : star.withValues(alpha: max(star.a, _lightParticleMinAlpha));
+    _glowTone = particleTone(
+      _preset.starGlow,
+      minContrast: particleMinContrast * 0.8,
+    );
+  }
+
+  /// 粒子背後的主題底色（漸層四色平均）。自訂背景圖不在計算內。
+  static Color get particleBackdrop {
+    _refreshParticleBackdrop();
+    return _backdropTone!;
+  }
+
+  static double _contrast(Color a, Color b) {
+    final la = a.computeLuminance();
+    final lb = b.computeLuminance();
+    return (max(la, lb) + 0.05) / (min(la, lb) + 0.05);
+  }
+
+  /// 把 [color] 調到和主題底色至少有 [minContrast] 對比，保留原本透明度。
+  /// 比底色亮就先往白推；推到白還不夠，改往深處走（主題強調色 → 正文色），
+  /// 所以顏色一路都帶著主題色調，不會變成死黑死白。
+  static Color particleTone(Color color, {double? minContrast}) {
+    final target = minContrast ?? particleMinContrast;
+    final bg = particleBackdrop;
+    final solid = color.withValues(alpha: 1);
+    if (_contrast(solid, bg) >= target) return color;
+
+    final accentSolid = _preset.accent.withValues(alpha: 1);
+    final inkSolid = _preset.textPrimary.withValues(alpha: 1);
+    final lighterFirst = solid.computeLuminance() >= bg.computeLuminance();
+    final lightChain = <Color>[solid, Colors.white];
+    final darkChain = <Color>[solid, accentSolid, inkSolid];
+    final chains = lighterFirst
+        ? [lightChain, darkChain]
+        : [darkChain, lightChain];
+
+    Color best = solid;
+    var bestContrast = _contrast(solid, bg);
+    for (final chain in chains) {
+      for (var i = 0; i < chain.length - 1; i++) {
+        for (var step = 1; step <= 10; step++) {
+          final c = Color.lerp(chain[i], chain[i + 1], step / 10)!;
+          final k = _contrast(c, bg);
+          if (k >= target) return c.withValues(alpha: color.a);
+          if (k > bestContrast) {
+            best = c;
+            bestContrast = k;
+          }
+        }
+      }
+    }
+    return best.withValues(alpha: color.a);
+  }
 
   // 氣泡裝飾 PNG（特色主題用）
   static String? get bubbleAiAsset => _preset.bubbleAiAsset;
@@ -311,6 +448,35 @@ class YanciTheme {
   static const double radiusPill = 999.0;
   static double get radiusBubble => bubbleRadius;
 
+  /// Shared low-cost translucent surface. It deliberately does not use a
+  /// BackdropFilter, so stacked settings cards do not force the animated
+  /// background to be blurred again every frame.
+  static Color themedCardBackground({bool? isDark}) {
+    final dark = isDark ?? YanciTheme.isDark;
+    return surfacePanel.withValues(alpha: dark ? 0.66 : 0.74);
+  }
+
+  /// 彈窗／選單／底部面板共用底色：面板色帶一點主題色調，
+  /// 不再是跟主題無關的純白或純灰。
+  static Color get themedOverlaySurface => Color.lerp(
+    surfacePanel,
+    accent,
+    isDark ? 0.08 : 0.05,
+  )!.withValues(alpha: 0.98);
+
+  /// 彈窗／選單細邊：主題色淡線，取代 Material 預設陰影與色調。
+  static Color get themedOverlayBorder =>
+      accent.withValues(alpha: isDark ? 0.26 : 0.20);
+
+  static Color themedCardBorder({bool? isDark}) {
+    final dark = isDark ?? YanciTheme.isDark;
+    return Color.lerp(
+      glassBorder,
+      accent,
+      dark ? 0.12 : 0.08,
+    )!.withValues(alpha: dark ? 0.38 : 0.30);
+  }
+
   /// Shared filled-field treatment for secondary pages and sheets.
   /// This creates a themed surface only; callers must not add BackdropFilter.
   static InputDecoration themedInputDecoration({
@@ -318,6 +484,8 @@ class YanciTheme {
     String? hintText,
     Widget? prefixIcon,
     Widget? suffixIcon,
+    String? errorText,
+    String? counterText,
     EdgeInsetsGeometry contentPadding = const EdgeInsets.symmetric(
       horizontal: 14,
       vertical: 11,
@@ -334,6 +502,8 @@ class YanciTheme {
       hintText: hintText,
       prefixIcon: prefixIcon,
       suffixIcon: suffixIcon,
+      errorText: errorText,
+      counterText: counterText,
       filled: true,
       fillColor: glassInputBg.withValues(alpha: isDark ? 0.45 : 0.65),
       contentPadding: contentPadding,
@@ -417,12 +587,18 @@ class YanciTheme {
   };
 
   static double _s(double base) => base * _fontScale;
+
+  /// 字級滑桿每格 0.1；標題最多跟著放大兩格（1.2 倍），再大就不跟了，
+  /// 避免「超級無敵大」的標題擠爆頁首。縮小方向照常跟隨。
+  static const double _titleMaxScale = 1.2;
+  static double _title(double base) =>
+      base * (_fontScale < _titleMaxScale ? _fontScale : _titleMaxScale);
   static double _ui(double base) => base;
 
   static TextStyle get headingLarge => TextStyle(
     fontFamily: fontFamily,
     fontFamilyFallback: _fontFallback,
-    fontSize: _s(24),
+    fontSize: _title(24),
     fontWeight: FontWeight.w300,
     color: textAccent,
     letterSpacing: 2.0,
@@ -431,7 +607,7 @@ class YanciTheme {
   static TextStyle get headingMedium => TextStyle(
     fontFamily: fontFamily,
     fontFamilyFallback: _fontFallback,
-    fontSize: _s(18),
+    fontSize: _title(18),
     fontWeight: FontWeight.w400,
     color: textPrimary,
   );
@@ -476,6 +652,9 @@ class YanciTheme {
         brightness: isDark ? Brightness.dark : Brightness.light,
       ).copyWith(primary: accent, secondary: accentLight),
       scaffoldBackgroundColor: bgMint,
+      // Material 3 在 Android 預設用 InkSparkle：著色器第一次用要即時編譯，
+      // 每幀又比較重，按鍵水波會一頓一頓。改用輕量的 InkRipple，全 App 通用。
+      splashFactory: InkRipple.splashFactory,
       textTheme: base.textTheme.apply(
         fontFamily: fontFamily,
         fontFamilyFallback: _fontFallback,

@@ -155,14 +155,17 @@ extension _ChatGenerationMethods on _ChatScreenState {
     ),
   );
 
+  /// 文字與圖片共用的唯一發送路徑。[sourceImagePaths] 是本輪新選的圖
+  /// （首次發送才複製進 app）；重試時沿用 [retryUserMessage] 已入庫的圖。
   Future<void> _sendMessageLocked(
     String text, {
     required String composerDraft,
     required bool clearComposerOnAccept,
     Message? retryUserMessage,
+    List<String> sourceImagePaths = const <String>[],
   }) async {
     if (!_isChatReady) return;
-    if (retryUserMessage == null) {
+    if (retryUserMessage == null && sourceImagePaths.isEmpty) {
       final protocolProbe = Message(
         conversationId: widget.conversationId,
         characterId: _activeCharacterId,
@@ -203,14 +206,12 @@ extension _ChatGenerationMethods on _ChatScreenState {
     // 有待發圖片 → 圖文一起送
     if (retryUserMessage == null && _pendingImagePaths.isNotEmpty) {
       final imagePaths = List<String>.from(_pendingImagePaths);
-      final imgPath = imagePaths.first;
       _refreshChatState(() => _pendingImagePaths.clear());
-      return _sendImageLocked(
-        imgPath,
-        imagePaths: imagePaths,
-        caption: text,
+      return _sendMessageLocked(
+        text,
         composerDraft: composerDraft,
         clearComposerOnAccept: clearComposerOnAccept,
+        sourceImagePaths: imagePaths,
       );
     }
 
@@ -225,6 +226,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
         combined,
         composerDraft: composerDraft,
         clearComposerOnAccept: clearComposerOnAccept,
+        sourceImagePaths: sourceImagePaths,
       );
     }
 
@@ -235,6 +237,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
         text.isNotEmpty ? '$text$giftTag' : giftTag.trim(),
         composerDraft: composerDraft,
         clearComposerOnAccept: clearComposerOnAccept,
+        sourceImagePaths: sourceImagePaths,
       );
     }
 
@@ -246,9 +249,20 @@ extension _ChatGenerationMethods on _ChatScreenState {
         text.isNotEmpty ? '$text$certTag' : certTag.trim(),
         composerDraft: composerDraft,
         clearComposerOnAccept: clearComposerOnAccept,
+        sourceImagePaths: sourceImagePaths,
       );
     }
 
+    final savedImagePaths = retryUserMessage != null
+        ? retryUserMessage.imagePaths
+        : (await Future.wait(
+            sourceImagePaths.map(ImageService.copyToAppDir),
+          )).where((value) => value.isNotEmpty).toList(growable: false);
+    if (sourceImagePaths.isNotEmpty && savedImagePaths.isEmpty) return;
+    final hasImages = savedImagePaths.isNotEmpty;
+    final titleSeedText = text.trim().isEmpty && hasImages
+        ? L.pick(en: 'Photo', zhTW: '圖片', zhCN: '图片')
+        : text;
     final pendingTransfer = retryUserMessage == null
         ? _pendingUserTransfer
         : null;
@@ -265,7 +279,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
     if (retryUserMessage == null) {
       outboundText = _appendScratchGiftTag(outboundText, pendingScratchGift);
     }
-    if (outboundText.isEmpty) return;
+    if (outboundText.isEmpty && !hasImages) return;
     if (pendingTransfer != null) {
       if (mounted) {
         _refreshChatState(() => _pendingUserTransfer = null);
@@ -291,6 +305,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
         characterId: _activeCharacterId,
         text: outboundText,
         isUser: true,
+        imagePaths: savedImagePaths,
       );
       final userId = await DatabaseHelper.insertMessage(userMsg);
       unawaited(MarriageService.scanMessage(userMsg.text, _activeCharacterId));
@@ -318,6 +333,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
         characterId: userMsg.characterId,
         text: userMsg.text,
         isUser: true,
+        imagePaths: userMsg.imagePaths,
         createdAt: userMsg.createdAt,
       );
     }
@@ -356,7 +372,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
             visibleUserMessageCount == 1)) {
       // 先用前 20 字佔位
       final titleText = _titleTextForFirstMessage(
-        text,
+        titleSeedText,
         pendingTransfer,
         pendingScratchGift,
       );
@@ -387,6 +403,28 @@ extension _ChatGenerationMethods on _ChatScreenState {
           contextMode: sessionIdentity.contextMode,
           continuityId: sessionIdentity.continuityId,
         );
+    final previousVisibleMessageAtF =
+        sessionIdentity.contextMode == ContextMode.daily &&
+            retryUserMessage == null
+        ? previousWindowTurnsF.then<DateTime?>((previousWindowTurns) {
+            final candidates = <Message>[
+              ...previousWindowTurns,
+              ...workingMessages,
+            ];
+            for (final message in candidates.reversed) {
+              if (message.id == userMsgWithId.id ||
+                  message.isIncomplete ||
+                  message.isRpChapterContinuation) {
+                continue;
+              }
+              if (message.promptVisibleText.trim().isNotEmpty ||
+                  message.imagePaths.isNotEmpty) {
+                return message.createdAt;
+              }
+            }
+            return null;
+          })
+        : Future<DateTime?>.value(null);
     final systemPromptF = Future<String>.value(
       _userPersona?.promptContent ?? '',
     );
@@ -414,9 +452,10 @@ extension _ChatGenerationMethods on _ChatScreenState {
     final providerNameF = ApiSettings.getApiProviderName();
     final conciseOnF = ApiSettings.getConciseMode();
     final freeformOnF = ApiSettings.getFreeformMode();
-    final thinkingEnabledF = ApiSettings.getThinkingChain();
+    final thinkingEnabledF = ApiSettings.getThinkingChain(
+      conversationId: widget.conversationId,
+    );
     final webSearchEnabledF = WebSearchSettings.getEnabled();
-    final toolFeaturesF = ToolFeatureSettings.load();
     final enableVibrationF = UserSettings.getEnableVibration();
     final charDataF = DatabaseHelper.getCharacter(charId);
     final isSpiderWebEnabledF = charDataF.then(
@@ -508,7 +547,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
     _generationThinkingEnabled = thinkingEnabled;
     final webSearchEnabled = await webSearchEnabledF;
     // RP 平行時空：日常生活類工具依設定過濾（整條文字路徑共用此狀態）
-    final toolFeatures = (await toolFeaturesF).forContext(
+    final toolFeatures = await ToolFeatureSettings.loadForContext(
       sessionIdentity.contextMode,
     );
 
@@ -519,6 +558,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
       systemPrompt: systemPrompt,
       charDesc: charDesc,
       characterName: charName,
+      characterRemark: charData?['remark'] as String? ?? '',
       userProfile: userProfile,
       selfNotes: selfNotes,
       userNickname: userNicknameStr,
@@ -563,7 +603,9 @@ extension _ChatGenerationMethods on _ChatScreenState {
       conversationId: widget.conversationId,
       sourceMessageId: userMsgWithId.id!,
       userName: userNicknameStr,
-      currentUserContent: promptVisibleOutboundText,
+      currentUserContent: promptVisibleOutboundText.isEmpty && hasImages
+          ? '（用戶發送了一張圖片）'
+          : promptVisibleOutboundText,
       contextMode: sessionIdentity.contextMode,
       enabled: toolFeatures.toolPromptsEnabled && toolFeatures.diaryEnabled,
       now: now,
@@ -775,7 +817,13 @@ extension _ChatGenerationMethods on _ChatScreenState {
     }
     final whisperState = CharacterWhisperState.fromCharacter(charData);
     if (toolFeatures.toolPromptsEnabled && whisperState.modelOverrideEnabled) {
-      dynamicParts.add(WhisperService.runtimeInstruction(whisperState));
+      dynamicParts.add(
+        WhisperService.runtimeInstruction(
+          whisperState,
+          characterName: charName,
+          userName: userNicknameStr,
+        ),
+      );
     }
 
     // 情緒狀態（已提前發射）
@@ -880,6 +928,26 @@ extension _ChatGenerationMethods on _ChatScreenState {
         ),
       );
     }
+    if (!isRpContext) {
+      final previousMessageAt = await previousVisibleMessageAtF;
+      if (previousMessageAt != null) {
+        final gapPrompt = ConversationTimeContext.buildGapPrompt(
+          previousMessageAt: previousMessageAt,
+          currentMessageAt: userMsgWithId.createdAt,
+          locale: L.locale,
+        );
+        if (gapPrompt.isNotEmpty) {
+          dynamicParts.add(
+            SystemContextMarkdown.section(
+              enTitle: 'Conversation Gap',
+              zhTWTitle: '對話間隔',
+              zhCNTitle: '对话间隔',
+              content: gapPrompt,
+            ),
+          );
+        }
+      }
+    }
 
     // Thinking 是本輪展示策略，不得進入可快取 control prefix。Thinking
     // Machines 使用原生 request 參數，其餘 provider 走 request-only sidecar。
@@ -889,17 +957,46 @@ extension _ChatGenerationMethods on _ChatScreenState {
       );
     }
 
-    // 拆分回覆模式
+    // 心情流光：規則進 control（只在範圍設定改變時變），冷卻狀態進動態層。
+    if (await MoodGlowService.isEnabledFor(sessionIdentity.contextMode)) {
+      controlParts.add(MoodGlowService.abilityPrompt());
+      dynamicParts.add(
+        await MoodGlowService.statusPrompt(widget.conversationId),
+      );
+    }
+
+    // 拆分回覆模式：放 request-only 動態層，不進可快取的 control 前綴，
+    // 開關多氣泡不會讓緩存重建（文字、圖片兩條路徑相同）。
     if (_splitReply) {
-      controlParts.add(
+      // 子開關「自然發言」：關掉時只交代怎麼拆，不要求模型像聊天軟體打字。
+      // 拆法規則兩種模式共用，對應 split_reply_parser 的實際行為。
+      final splitNatural = await MemorySettings.getSplitReplyNatural();
+      final splitRule = L.pick(
+        en: 'How to split: an empty line (two line breaks) starts a new bubble. A single line break stays inside the same bubble. Do not put empty lines inside one bubble.\nExample:\nfirst bubble\n\nsecond bubble, line one\nsecond bubble, line two\n\nthird bubble',
+        zhTW:
+            '拆法：空一行（連續兩個換行）＝下一顆氣泡；只換一行不空行＝同一顆氣泡裡換行。同一顆氣泡內不要出現空行。\n示例：\n第一顆氣泡\n\n第二顆氣泡的第一行\n第二顆氣泡的第二行\n\n第三顆氣泡',
+        zhCN:
+            '拆法：空一行（连续两个换行）＝下一颗气泡；只换一行不空行＝同一颗气泡里换行。同一颗气泡内不要出现空行。\n示例：\n第一颗气泡\n\n第二颗气泡的第一行\n第二颗气泡的第二行\n\n第三颗气泡',
+      );
+      final splitIntro = splitNatural
+          ? L.pick(
+              en: '【Multi-Bubble Messaging Mode】You are texting in a messaging app, and the system splits your reply by blank lines into separate chat bubbles. Write entirely in the spoken words you actually type and send in the input box, weaving emotion and tone naturally into your word choice, phrasing, and punctuation. Separate bubbles with blank lines and keep each bubble concise and natural.',
+              zhTW:
+                  '【多氣泡訊息模式】你正在用聊天軟體傳訊息，系統會將你的回覆按空行拆成多顆獨立的聊天氣泡。請全部使用你在輸入框裡實際打字送出的口語文字，把情緒與語氣自然融進用詞、斷句和標點裡。不同氣泡之間用空行隔開，每顆氣泡簡短自然。',
+              zhCN:
+                  '【多气泡消息模式】你正在用聊天软件发消息，系统会将你的回复按空行拆成多颗独立的聊天气泡。请全部使用你在输入框里实际打字发出的口语文字，把情绪与语气自然融进用词、断句和标点里。不同气泡之间用空行隔开，每颗气泡简短自然。',
+            )
+          : L.pick(
+              en: '【Multi-Bubble Format】The system splits your reply by blank lines into separate chat bubbles.',
+              zhTW: '【多氣泡格式】系統會將你的回覆按空行拆成多顆獨立的聊天氣泡。',
+              zhCN: '【多气泡格式】系统会将你的回复按空行拆成多颗独立的聊天气泡。',
+            );
+      dynamicParts.add(
         SystemContextMarkdown.section(
           enTitle: 'Reply Format',
           zhTWTitle: '回覆格式',
           zhCNTitle: '回复格式',
-          content: L.pick(
-            en: '【Split Reply Mode】Reply using speech only — no action descriptions, no narration, no *asterisk actions*. Use line breaks between separate thoughts. Keep each paragraph concise.',
-            zhTW: '【拆分回覆模式】只用說話內容回覆，不要使用動作描述、旁白敘事、*星號動作*。不同的話之間用換行分段。每段簡短自然。',
-          ),
+          content: '$splitIntro\n$splitRule',
         ),
       );
     }
@@ -937,6 +1034,7 @@ extension _ChatGenerationMethods on _ChatScreenState {
     );
 
     var preflightSearchExecuted = false;
+    var preflightSearchHasNoEvidence = false;
     String? preflightExplicitQuery =
         webSearchEnabled && userMsgWithId.id != null
         ? WebSearchIntentParser.explicitUserQuery(userMsgWithId.text)
@@ -987,12 +1085,16 @@ extension _ChatGenerationMethods on _ChatScreenState {
           ]),
         );
       }
+      preflightSearchHasNoEvidence = WebSearchFollowUp.hasNoVerifiedEvidence(
+        result: preSearchResult,
+        failureContext: _pendingWebSearchFailureContext,
+      );
     }
 
     // Keep the first pass visible. Search intent is parsed after the stream,
     // while protocol tags are already hidden by the shared display sanitizer.
     // Deferring this pass made every provider look like a static loader.
-    const deferInitialStreamForSearchDecision = false;
+    final deferInitialStreamForSearchDecision = preflightSearchHasNoEvidence;
 
     if (mounted) {
       _refreshChatState(() {
@@ -1013,13 +1115,21 @@ extension _ChatGenerationMethods on _ChatScreenState {
       final enableVibration = await enableVibrationF;
 
       final nonEmpty = workingMessages
-          .where((m) => m.text.isNotEmpty && !m.isUserFirstContinuation)
+          .where(
+            (m) =>
+                !m.isUserFirstContinuation &&
+                (m.text.isNotEmpty || m.imagePaths.isNotEmpty),
+          )
           .toList();
       final previousWindowTurns = await previousWindowTurnsF;
       var history = <Map<String, String>>[
         ...previousWindowTurns.map((m) => m.toPromptHistoryEntry()),
-        ...nonEmpty.map((m) => m.toPromptHistoryEntry()),
       ];
+      for (final m in nonEmpty) {
+        history.add(
+          await _promptHistoryEntry(m, uploadImages: m.id == userMsgWithId.id),
+        );
+      }
 
       // ═══ B4 滯後截斷（保護前綴緩存）═══
       final keepFrom = await _hysteresisKeepFrom(
@@ -1071,31 +1181,44 @@ extension _ChatGenerationMethods on _ChatScreenState {
           if (_isCurrentGeneration(generationSerial)) _stopActiveGeneration();
         },
       );
-      await for (final chunk in adapter.sendMessageStream(
-        messages: history,
-        model: model,
-        structuredPrompt: structured,
-        onUsage: (usage) => requestUsage = usage,
-      )) {
-        if (!_isCurrentGeneration(generationSerial)) return;
-        await turnEffects.commit();
-        rawReply.write(chunk);
-        if (backgroundReply != null) {
-          await backgroundReply.record(
-            ThinkingModePolicy.sanitizeVisibleReply(
-              ThinkingModePolicy.moveProtocolTagsOutsideThinking(
-                _cleanIncompleteReply(rawReply.toString()),
+      if (preflightSearchHasNoEvidence) {
+        // The technical reason remains in the Thinking/diagnostic surface.
+        // Do not pay for a model pass that could blend stale provider errors
+        // from chat history into a false account of the current attempt.
+        rawReply.write(
+          L.pick(
+            en: 'I could not find reliable results just now. Let us try again later.',
+            zhTW: '剛才沒有查到可靠的結果，晚一點再試試吧。',
+            zhCN: '刚才没有查到可靠的结果，晚一点再试试吧。',
+          ),
+        );
+      } else {
+        await for (final chunk in adapter.sendMessageStream(
+          messages: history,
+          model: model,
+          structuredPrompt: structured,
+          onUsage: (usage) => requestUsage = usage,
+        )) {
+          if (!_isCurrentGeneration(generationSerial)) return;
+          await turnEffects.commit();
+          rawReply.write(chunk);
+          if (backgroundReply != null) {
+            await backgroundReply.record(
+              ThinkingModePolicy.sanitizeVisibleReply(
+                ThinkingModePolicy.moveProtocolTagsOutsideThinking(
+                  _cleanIncompleteReply(rawReply.toString()),
+                ),
+                enabled: thinkingEnabled,
               ),
-              enabled: thinkingEnabled,
-            ),
-          );
+            );
+          }
+          if (mounted && !deferInitialStreamForSearchDecision) {
+            _onStreamChunk(chunk);
+          }
         }
         if (mounted && !deferInitialStreamForSearchDecision) {
-          _onStreamChunk(chunk);
+          _closeModelStreamInput();
         }
-      }
-      if (mounted && !deferInitialStreamForSearchDecision) {
-        _closeModelStreamInput();
       }
       streamCompleted = true;
       if (_stopGenerationRequested) {
@@ -1220,6 +1343,12 @@ extension _ChatGenerationMethods on _ChatScreenState {
               ),
             )
           : EmotionCoordinates.stripReply(processedText);
+      // ═══ 心情流光：<mood_color> 計輪、冷卻允許時換色並剝離 ═══
+      processedText = await MoodGlowService.processReply(
+        processedText,
+        conversationId: widget.conversationId,
+        mode: sessionIdentity.contextMode,
+      );
       // ═══ 生物鐘：<clock> 標籤入庫並剝離 ═══
       if (sessionIdentity.contextMode == ContextMode.daily &&
           await MemorySettings.isAbilityEnabled('bioclock')) {
@@ -1467,9 +1596,13 @@ extension _ChatGenerationMethods on _ChatScreenState {
                     ? nick
                     : L.pick(en: 'you', zhTW: '你');
                 final rawDate = r['created_at']?.toString() ?? '';
-                final date = rawDate.length >= 10
-                    ? rawDate.substring(0, 10)
-                    : rawDate;
+                final parsedDate = DateTime.tryParse(rawDate);
+                final date = parsedDate == null
+                    ? rawDate
+                    : ConversationTimeContext.formatAbsoluteTimestamp(
+                        parsedDate,
+                        locale: L.locale,
+                      );
                 var t = r['text']?.toString() ?? '';
                 if (t.length > 200) t = '${t.substring(0, 200)}…';
                 final rowMode = ContextMode.fromStorage(r['context_mode']);
@@ -1562,6 +1695,8 @@ extension _ChatGenerationMethods on _ChatScreenState {
                   ),
                 )
               : EmotionCoordinates.stripReply(followUp);
+          // 二段回覆不計輪、不換色，只剝標籤。
+          followUp = MoodGlowService.strip(followUp);
           followUp = HomeNoteService.strip(
             followUp,
           ).replaceAll(RegExp(r'<draw>[\s\S]*?</draw>'), '').trim();
@@ -1646,6 +1781,8 @@ extension _ChatGenerationMethods on _ChatScreenState {
                   memoryId: null,
                 )
               : EmotionCoordinates.stripReply(followUp);
+          // 二段回覆不計輪、不換色，只剝標籤。
+          followUp = MoodGlowService.strip(followUp);
           followUp = followUp
               .replaceAll(RegExp(r'<home>[\s\S]*?</home>'), '')
               .trim();
@@ -1701,6 +1838,15 @@ extension _ChatGenerationMethods on _ChatScreenState {
         }
       }
 
+      final groundedSearchResult = _pendingWebSearchResult;
+      if (groundedSearchResult != null &&
+          groundedSearchResult.successes.isNotEmpty) {
+        processedText = WebSearchFollowUp.ensureGroundedReply(
+          reply: processedText,
+          batch: groundedSearchResult,
+        );
+      }
+
       await _markVisibleReplyComplete();
       if (!_isCurrentGeneration(generationSerial) || _stopGenerationRequested) {
         _finishFailedGeneration();
@@ -1744,6 +1890,14 @@ extension _ChatGenerationMethods on _ChatScreenState {
         processedText,
         thinkingEnabled: thinkingEnabled,
       );
+      if (processedText.trim().isEmpty && drawPrompt == null) {
+        _reportEmptyVisibleReply(
+          rawReply: rawReply.toString(),
+          provider: providerName,
+          model: model,
+          usage: requestUsage,
+        );
+      }
       final aiMsg = Message(
         conversationId: conversationId,
         characterId: _activeCharacterId,
@@ -1894,7 +2048,9 @@ extension _ChatGenerationMethods on _ChatScreenState {
 
       await _recordCompletedRound(
         conversationId: conversationId,
-        userText: promptVisibleOutboundText,
+        userText: promptVisibleOutboundText.isEmpty && hasImages
+            ? '（圖片）'
+            : promptVisibleOutboundText,
         assistantText: aiMsgWithId.text,
         heartbeatHistory: history,
         structuredPrompt: structured,
@@ -1907,7 +2063,11 @@ extension _ChatGenerationMethods on _ChatScreenState {
       if (_shouldAutoName) {
         _shouldAutoName = false;
         _autoNameConversation(
-          _titleTextForFirstMessage(text, pendingTransfer, pendingScratchGift),
+          _titleTextForFirstMessage(
+            titleSeedText,
+            pendingTransfer,
+            pendingScratchGift,
+          ),
           aiMsg.text,
           conversationId: conversationId,
         );
@@ -1957,1252 +2117,36 @@ extension _ChatGenerationMethods on _ChatScreenState {
     if (mounted) _scrollToBottom();
   }
 
-  /// 發送圖片（相冊 or 表情包）
-  Future<void> _sendImageLocked(
-    String path, {
-    List<String>? imagePaths,
-    String caption = '',
-    required String composerDraft,
-    required bool clearComposerOnAccept,
-    Message? retryUserMessage,
+  /// 歷史消息轉 API 格式。帶圖消息只有本輪那一則真實上傳 base64，
+  /// 更早的圖降級為文字佔位（內容靠記憶系統承接），避免每輪重傳圖片。
+  /// 本輪的圖壞掉時 [ImageService.toBase64DataUrl] 的 FormatException
+  /// 會往上拋，讓使用者知道；舊圖不上傳，所以不會拖累之後每一輪。
+  Future<Map<String, String>> _promptHistoryEntry(
+    Message m, {
+    required bool uploadImages,
   }) async {
-    if (!_isChatReady) return;
-    final conversationId = widget.conversationId;
-    if (_messages
-        .where((m) => m.isUser && !m.isRpChapterContinuation)
-        .isEmpty) {
-      await _stopKeepAliveBeforeFirstMessage();
-      if (!mounted) return;
-      CacheSession.bind(_requiredSessionIdentity);
-    }
-    if (_isGenerating) return;
-    if (_isGeneratingImage) return;
-    if (_localModelLoading) {
-      _showChatNotice(
-        L.pick(
-          en: 'Local model is loading, please wait...',
-          zhTW: '本地模型加載中，請稍候……',
-        ),
-        duration: const Duration(milliseconds: 1200),
-      );
-      return;
-    }
-
-    // 首次發送才複製圖片；重試沿用已入庫的原消息與 app 內路徑。
-    final sourcePaths = imagePaths ?? <String>[path];
-    final savedPaths = retryUserMessage != null
-        ? retryUserMessage.imagePaths
-        : (await Future.wait(
-            sourcePaths.map(ImageService.copyToAppDir),
-          )).where((value) => value.isNotEmpty).toList(growable: false);
-    if (savedPaths.isEmpty) return;
-    final saved = savedPaths.first;
-    final pendingTransfer = retryUserMessage == null
-        ? _pendingUserTransfer
-        : null;
-    final pendingScratchGiftWho = retryUserMessage == null
-        ? _pendingScratchGiftWho
-        : null;
-    final pendingScratchGift = pendingScratchGiftWho == null
-        ? null
-        : await _createScratchGiftData(pendingScratchGiftWho);
-    if (pendingScratchGiftWho != null && pendingScratchGift == null) return;
-
-    var outboundCaption =
-        retryUserMessage?.text ?? _appendTransferTag(caption, pendingTransfer);
-    if (retryUserMessage == null) {
-      outboundCaption = _appendScratchGiftTag(
-        outboundCaption,
-        pendingScratchGift,
-      );
-    }
-    if (pendingTransfer != null) {
-      if (mounted) {
-        _refreshChatState(() => _pendingUserTransfer = null);
-      } else {
-        _pendingUserTransfer = null;
+    if (m.imagePaths.isEmpty) return m.toPromptHistoryEntry();
+    final text = m.promptVisibleText;
+    final count = m.imagePaths.length;
+    if (uploadImages && m.isUser) {
+      final dataUrls = <String>[];
+      for (final path in m.imagePaths) {
+        final dataUrl = await ImageService.toBase64DataUrl(path);
+        if (dataUrl != null) dataUrls.add(dataUrl);
+      }
+      if (dataUrls.isNotEmpty) {
+        return <String, String>{
+          'role': 'user',
+          'content': text.isNotEmpty ? text : '（$count張圖片）',
+          'image_data_url': dataUrls.first,
+          'image_data_urls': jsonEncode(dataUrls),
+        };
       }
     }
-    if (pendingScratchGift != null) {
-      if (mounted) {
-        _refreshChatState(() => _pendingScratchGiftWho = null);
-      } else {
-        _pendingScratchGiftWho = null;
-      }
-    }
-
-    late final Message userMsgWithId;
-    if (retryUserMessage != null) {
-      userMsgWithId = retryUserMessage;
-    } else {
-      final userMsg = Message(
-        conversationId: conversationId,
-        characterId: _activeCharacterId,
-        text: outboundCaption,
-        isUser: true,
-        imagePath: saved,
-        imagePaths: savedPaths,
-      );
-      final imgUserId = await DatabaseHelper.insertMessage(userMsg);
-      unawaited(MarriageService.scanMessage(userMsg.text, _activeCharacterId));
-      _markMessageSentInSession();
-      if (clearComposerOnAccept) {
-        _clearComposerIfUnchanged(composerDraft);
-      }
-      if (pendingTransfer != null) {
-        final msgKey = 'msg_$imgUserId';
-        await TransferService.saveData(msgKey, pendingTransfer);
-        _transferDataMap[msgKey] = pendingTransfer;
-      }
-      if (pendingScratchGift != null) {
-        final msgKey = 'msg_$imgUserId';
-        await ScratchService.saveData(msgKey, pendingScratchGift);
-        _scratchDataMap[msgKey] = pendingScratchGift;
-      }
-      userMsgWithId = Message(
-        id: imgUserId,
-        conversationId: userMsg.conversationId,
-        characterId: userMsg.characterId,
-        text: userMsg.text,
-        isUser: true,
-        imagePath: userMsg.imagePath,
-        imagePaths: userMsg.imagePaths,
-        createdAt: userMsg.createdAt,
-      );
-    }
-    final workingMessages = retryUserMessage == null
-        ? <Message>[..._messages, userMsgWithId]
-        : <Message>[..._messages];
-    final generationSerial = _beginGeneration();
-    if (mounted) {
-      _refreshChatState(() {
-        if (retryUserMessage == null) _messages.add(userMsgWithId);
-        _setGenerating(true);
-        _streamingText = '';
-      });
-      _releaseSubmissionLockAfterAcceptance();
-      _scrollToBottom();
-    } else {
-      _setGenerating(true);
-      _streamingText = '';
-      _releaseSubmissionLockAfterAcceptance();
-    }
-
-    final adapter = await _prepareAdapterForGeneration(
-      generationSerial: generationSerial,
-      sourceMessageId: userMsgWithId.id!,
-    );
-    if (adapter == null) {
-      MemoryActions.clearSearchQuery(widget.conversationId);
-      if (mounted) _scrollToBottom();
-      return;
-    }
-    _activeGenerationAdapter = adapter;
-
-    // ── 構建 API 消息 ──
-    final sessionIdentity = _requiredSessionIdentity;
-    final previousWindowTurnsF = _previousWindowTurnsFuture ??=
-        DatabaseHelper.getPreviousConversationTurns(
-          currentConversationId: widget.conversationId,
-          characterId: _activeCharacterId,
-          contextMode: sessionIdentity.contextMode,
-          continuityId: sessionIdentity.continuityId,
-        );
-    final systemPrompt = _userPersona?.promptContent ?? '';
-    final model = await ApiSettings.getModel();
-    _currentModel = model;
-    final imgMemoryWriteEnabled = await MemorySettings.getMemoryWriteEnabled();
-    final emotionEnabled = await MemorySettings.isAbilityEnabled('emotion');
-
-    final imageMemoryMessage = outboundCaption.isNotEmpty
-        ? outboundCaption
-        : '（用戶發送了一張圖片）';
-    // 顯示文案不是圖片的語義。無配文時不用「用戶／發送／圖片」
-    // 這些假關鍵詞撞記憶、時間線、人物與世界書。
-    final imageRecallQuery = outboundCaption.trim();
-    final imgTimelineEnabled = await MemorySettings.getTimelineEnabled();
-    var imgRecallPrompt =
-        imgTimelineEnabled && sessionIdentity.contextMode == ContextMode.daily
-        ? await CharacterTimelineService.recallPrompt(
-            _activeCharacterId,
-            imageRecallQuery,
-          )
-        : '';
-    final imgRpStoryContextParts = sessionIdentity.contextMode == ContextMode.rp
-        ? await Future.wait<String>(<Future<String>>[
-            RpStoryService.recallPrompt(
-              _activeCharacterId,
-              imageRecallQuery,
-              continuityId: sessionIdentity.continuityId,
-              recentMessages: _messages,
-            ),
-            RpStoryStateService.recallPrompt(
-              _activeCharacterId,
-              continuityId: sessionIdentity.continuityId,
-              recentMessages: _messages,
-            ),
-            RpWorldbookService.recallTriggeredPrompt(
-              characterId: _activeCharacterId,
-              continuityId: sessionIdentity.continuityId,
-              query: imageRecallQuery,
-            ),
-          ])
-        : const <String>[];
-    final imgMemoryBucket = await _memoryBucket();
-    var memoryPrompt = sessionIdentity.contextMode == ContextMode.rp
-        ? DeferredPrompt.empty()
-        : await Retriever.buildMemoryPrompt(
-            mode: imgMemoryBucket,
-            currentMessage: imageRecallQuery,
-            characterId: _activeCharacterId,
-            windowId: widget.conversationId,
-            emotionEnabled: emotionEnabled,
-            contextMode: ContextMode.daily,
-            continuityId: sessionIdentity.continuityId,
-          );
-    final imgUserProfile = await _buildUserProfilePrompt();
-    final imgSelfNotesEnabled =
-        sessionIdentity.contextMode == ContextMode.daily &&
-        await MemorySettings.getSelfNotesEnabled();
-    final imgSelfNotes = imgSelfNotesEnabled
-        ? await DatabaseHelper.getSelfNotesForPrompt(
-            _activeCharacterId,
-            limit: await MemorySettings.getSelfNotesInjectionLimit(),
-          )
-        : '';
-    final userNickname = _userPersonaName;
-    final charDataImg = await DatabaseHelper.getCharacter(_activeCharacterId);
-    final imgCharDesc = charDataImg?['description'] as String? ?? '';
-    final imgCharName = charDataImg?['name'] as String? ?? '';
-    final isSpiderWebEnabledImg =
-        sessionIdentity.contextMode == ContextMode.daily &&
-        (charDataImg?['is_spider_web_enabled'] as int? ?? 0) == 1;
-    final imgBioclockEnabled =
-        sessionIdentity.contextMode == ContextMode.daily &&
-        await MemorySettings.isAbilityEnabled('bioclock');
-    final imgImagegenEnabled = await MemorySettings.isAbilityEnabled(
-      'imagegen',
-    );
-    final imgToolFeatures = (await ToolFeatureSettings.load()).forContext(
-      sessionIdentity.contextMode,
-    );
-    final imgProviderName = await ApiSettings.getApiProviderName();
-    _configureStreamPresentation(imgProviderName);
-    // Keep the image path's stable prompt prefix identical to the text path.
-    // The image request itself still does not execute web.search here; this
-    // flag only keeps the cacheable capability contract from drifting.
-    final imgWebSearchEnabled = await WebSearchSettings.getEnabled();
-    final imgStaticWindowSummary = await _buildStaticWindowSummaryPrompt(
-      _activeCharacterId,
-    );
-    final staticBundle = await _buildCommonStaticParts(
-      characterId: _activeCharacterId,
-      continuityId: sessionIdentity.continuityId,
-      systemPrompt: systemPrompt,
-      charDesc: imgCharDesc,
-      characterName: imgCharName,
-      userProfile: imgUserProfile,
-      selfNotes: imgSelfNotes,
-      userNickname: userNickname,
-      isSpiderWebEnabled: isSpiderWebEnabledImg,
-      memoryWriteEnabled: imgMemoryWriteEnabled,
-      emotionEnabled: emotionEnabled,
-      bioclockEnabled: imgBioclockEnabled,
-      imagegenEnabled: imgImagegenEnabled,
-      webSearchEnabled: imgWebSearchEnabled,
-      whisperModelOverrideEnabled:
-          (charDataImg?['whisper_model_override'] as int? ?? 1) == 1,
-      providerName: imgProviderName,
-      staticWindowSummary: imgStaticWindowSummary,
-      contextMode: sessionIdentity.contextMode,
-      toolFeatures: imgToolFeatures,
-    );
-
-    final now = DateTime.now();
-    final dynamicParts = <String>[];
-    if (imgToolFeatures.toolPromptsEnabled &&
-        imgToolFeatures.emailDraftEnabled) {
-      dynamicParts.add(EmailDraftTool.runtimeInstruction());
-    }
-    final imgWhisperState = CharacterWhisperState.fromCharacter(charDataImg);
-    if (imgToolFeatures.toolPromptsEnabled &&
-        imgWhisperState.modelOverrideEnabled) {
-      dynamicParts.add(WhisperService.runtimeInstruction(imgWhisperState));
-    }
-    final controlParts = <String>[];
-    final isImgRpContext = sessionIdentity.contextMode == ContextMode.rp;
-    final turnEffects = DeferredPromptBatch();
-    if (!isImgRpContext) turnEffects.add(memoryPrompt);
-    if (isImgRpContext &&
-        imgMemoryWriteEnabled &&
-        imgToolFeatures.toolPromptsEnabled &&
-        MemoryActions.isRpCorrectionIntent(outboundCaption)) {
-      dynamicParts.add(
-        SystemContextMarkdown.section(
-          enTitle: 'RP Correction',
-          zhTWTitle: 'RP 修正',
-          zhCNTitle: 'RP 修正',
-          content: MemoryActions.rpCorrectionRuntimeInstruction(),
-        ),
-      );
-    }
-    final imgDiaryPrompt = await CharacterDiaryService.buildNightPrompt(
-      characterId: _activeCharacterId,
-      conversationId: widget.conversationId,
-      sourceMessageId: userMsgWithId.id!,
-      userName: userNickname,
-      currentUserContent: imageMemoryMessage,
-      contextMode: sessionIdentity.contextMode,
-      enabled:
-          imgToolFeatures.toolPromptsEnabled && imgToolFeatures.diaryEnabled,
-      now: now,
-    );
-    if (imgDiaryPrompt.isNotEmpty) {
-      dynamicParts.add(
-        SystemContextMarkdown.section(
-          enTitle: 'Evening Diary',
-          zhTWTitle: '晚間日記',
-          zhCNTitle: '晚间日记',
-          content: imgDiaryPrompt.text,
-        ),
-      );
-      turnEffects.add(imgDiaryPrompt);
-    }
-    if (!isImgRpContext && memoryPrompt.isNotEmpty) {
-      dynamicParts.add(
-        SystemContextMarkdown.section(
-          enTitle: 'Memory',
-          zhTWTitle: '記憶',
-          zhCNTitle: '记忆',
-          content: memoryPrompt.text,
-        ),
-      );
-    }
-    final imgContextSummary = await _buildDynamicWindowSummaryPrompt(
-      _activeCharacterId,
-      currentMessage: imageRecallQuery,
-    );
-    final imgContinuationBudget = max(
-      0,
-      ContextCompressor.rpLiveContinuityMaxChars -
-          ContextCompressor.rpStoryReferenceReserveChars -
-          imgStaticWindowSummary.length -
-          imgContextSummary.length,
-    );
-    final imgContinuationSummary = isImgRpContext
-        ? ContextCompressor.fitRpSummaryToCharacterBudget(
-            _rpContinuationSummaryPrompt,
-            imgContinuationBudget,
-            preferLatest: true,
-          )
-        : _rpContinuationSummaryPrompt;
-    if (isImgRpContext) {
-      final alreadyInjected = <String>[
-        imgStaticWindowSummary,
-        imgContextSummary,
-        imgContinuationSummary,
-      ].where((part) => part.trim().isNotEmpty).toList(growable: false);
-      final rpMemoryPromptF = RpMemoryService.buildPrompt(
-        mode: imgMemoryBucket,
-        currentMessage: imageRecallQuery,
-        characterId: _activeCharacterId,
-        windowId: widget.conversationId,
-        continuityId: sessionIdentity.continuityId,
-        emotionEnabled: emotionEnabled,
-        alreadyInjected: alreadyInjected,
-      );
-      final rpTimelinePromptF = imgTimelineEnabled
-          ? RpCharacterTimelineService.recallPrompt(
-              _activeCharacterId,
-              imageRecallQuery,
-              continuityId: sessionIdentity.continuityId,
-              alreadyInjected: alreadyInjected,
-            )
-          : Future<String>.value('');
-      memoryPrompt = await rpMemoryPromptF;
-      imgRecallPrompt = await rpTimelinePromptF;
-      turnEffects.add(memoryPrompt);
-    }
-    final imgStoryBudget = min(
-      ContextCompressor.rpStoryContextMaxChars,
-      max(
-        0,
-        ContextCompressor.rpLiveContinuityMaxChars -
-            imgStaticWindowSummary.length -
-            imgContextSummary.length -
-            imgContinuationSummary.length,
-      ),
-    );
-    final imgRpStoryContext = isImgRpContext
-        ? ContextCompressor.fitPrioritizedRpReferencePartsToCharacterBudget(
-            storyState: imgRpStoryContextParts.length > 1
-                ? imgRpStoryContextParts[1]
-                : '',
-            story: imgRpStoryContextParts.isNotEmpty
-                ? imgRpStoryContextParts[0]
-                : '',
-            worldbook: imgRpStoryContextParts.length > 2
-                ? imgRpStoryContextParts[2]
-                : '',
-            memory: memoryPrompt.text.isEmpty
-                ? ''
-                : SystemContextMarkdown.section(
-                    enTitle: 'Memory',
-                    zhTWTitle: '記憶',
-                    zhCNTitle: '记忆',
-                    content: memoryPrompt.text,
-                  ),
-            timeline: imgRecallPrompt.isEmpty
-                ? ''
-                : SystemContextMarkdown.section(
-                    enTitle: 'Timeline Recall',
-                    zhTWTitle: '時間線召回',
-                    zhCNTitle: '时间线召回',
-                    content: imgRecallPrompt,
-                  ),
-            maxCharacters: imgStoryBudget,
-          )
-        : '';
-    if (imgContextSummary.isNotEmpty) {
-      dynamicParts.add(
-        SystemContextMarkdown.section(
-          enTitle: 'Conversation Summary',
-          zhTWTitle: '對話摘要',
-          zhCNTitle: '对话摘要',
-          content: imgContextSummary,
-        ),
-      );
-    }
-    if (imgContinuationSummary.isNotEmpty) {
-      final isRpContinuation = isImgRpContext;
-      dynamicParts.add(
-        SystemContextMarkdown.section(
-          enTitle: isRpContinuation
-              ? 'Selected Chapter Summary'
-              : 'Selected Window Summaries',
-          zhTWTitle: isRpContinuation ? '所選篇章摘要' : '所選窗口摘要',
-          zhCNTitle: isRpContinuation ? '所选篇章摘要' : '所选窗口摘要',
-          content: imgContinuationSummary,
-        ),
-      );
-    }
-    if (imgRpStoryContext.isNotEmpty) {
-      dynamicParts.add(
-        SystemContextMarkdown.section(
-          enTitle: 'Story Reference',
-          zhTWTitle: '劇情參考',
-          zhCNTitle: '剧情参考',
-          content: imgRpStoryContext,
-        ),
-      );
-    }
-    if (!isImgRpContext && imgRecallPrompt.isNotEmpty) {
-      dynamicParts.add(
-        SystemContextMarkdown.section(
-          enTitle: 'Recall',
-          zhTWTitle: '回憶觸發',
-          zhCNTitle: '回忆触发',
-          content: imgRecallPrompt,
-        ),
-      );
-    }
-    if (imgToolFeatures.toolPromptsEnabled &&
-        imgToolFeatures.shellEconomyEnabled &&
-        imgToolFeatures.coinSnapshotEnabled) {
-      final imgCoinDelta = await _coinDeltaPrompt(_activeCharacterId);
-      if (imgCoinDelta.isNotEmpty) dynamicParts.add(imgCoinDelta);
-    }
-    // 背包窗內變動（與 text path 同步）
-    if (imgToolFeatures.toolPromptsEnabled &&
-        imgToolFeatures.shopEnabled &&
-        _packQtySnapshot != null) {
-      final imgPackDelta = await ShopService.buildPackDelta(
-        _activeCharacterId,
-        _packQtySnapshot!,
-      );
-      if (imgPackDelta.isNotEmpty) {
-        dynamicParts.add(
-          '${L.pick(en: '【Backpack Changes】', zhTW: '【背包變動】')}$imgPackDelta',
-        );
-      }
-    }
-    if (imgToolFeatures.toolPromptsEnabled && imgToolFeatures.scratchEnabled) {
-      final imgScratchGiftPrompt = _scratchGiftDynamicPrompt(
-        pendingScratchGift,
-      );
-      if (imgScratchGiftPrompt.isNotEmpty) {
-        dynamicParts.add(imgScratchGiftPrompt);
-      }
-    }
-    // 上輪購買失敗回饋（與 text path 同步）
-    final imgBuyFailPrompt =
-        imgToolFeatures.toolPromptsEnabled && imgToolFeatures.shopEnabled
-        ? _pendingBuyFailurePrompt()
-        : DeferredPrompt.empty();
-    if (imgBuyFailPrompt.isNotEmpty) {
-      dynamicParts.add(imgBuyFailPrompt.text);
-      turnEffects.add(imgBuyFailPrompt);
-    }
-    // 同逛商店清單跟隨（與 text path 同步）
-    final imgBrowsePrompt =
-        imgToolFeatures.toolPromptsEnabled && imgToolFeatures.shopEnabled
-        ? await _shopBrowsePrompt()
-        : DeferredPrompt.empty();
-    if (imgBrowsePrompt.isNotEmpty) {
-      dynamicParts.add(imgBrowsePrompt.text);
-      turnEffects.add(imgBrowsePrompt);
-    }
-    // 結婚證主動遞提示（與 text path 同步）
-    final imgDailyLifeTools = imgToolFeatures.dailyLifeToolsAllowed(
-      sessionIdentity.contextMode,
-    );
-    if (imgToolFeatures.toolPromptsEnabled && imgDailyLifeTools) {
-      final imgProposeHint = await MarriageService.proposeHintPrompt(
-        _activeCharacterId,
-      );
-      if (imgProposeHint.isNotEmpty) dynamicParts.add(imgProposeHint);
-    }
-    // X 發文動態狀態（與 text path 同步）
-    if (imgToolFeatures.toolPromptsEnabled && imgDailyLifeTools) {
-      final imgXHint = await XPostSettings.promptHint(_activeCharacterId);
-      if (imgXHint.isNotEmpty) {
-        dynamicParts.add(
-          '${L.pick(en: '【X Posting Status】', zhTW: '【X 發文狀態】')}$imgXHint',
-        );
-      }
-    }
-    // 情緒狀態回饋（餵狀態不餵機制，空狀態零開銷）
-    if (imgToolFeatures.toolPromptsEnabled && emotionEnabled) {
-      final emoState = await EmotionCoordinates.statePrompt(_emotionScopeId);
-      if (emoState.isNotEmpty) dynamicParts.add(emoState);
-    }
-
-    // 生物鐘：與文字路徑使用相同優先級與送達後提交機制。
-    if (imgToolFeatures.toolPromptsEnabled && imgBioclockEnabled) {
-      final imgClockPrompt = await BioClockService.turnPrompt(
-        _activeCharacterId,
-      );
-      if (imgClockPrompt.isNotEmpty) {
-        dynamicParts.add(
-          SystemContextMarkdown.section(
-            enTitle: 'Bio Clock',
-            zhTWTitle: '生物鐘',
-            zhCNTitle: '生物钟',
-            content: imgClockPrompt.text,
-          ),
-        );
-        turnEffects.add(imgClockPrompt);
-      }
-
-      final fatigueP = await BioClockService.fatiguePrompt(_activeCharacterId);
-      if (fatigueP.isNotEmpty) {
-        dynamicParts.add(
-          SystemContextMarkdown.section(
-            enTitle: 'Bio Clock',
-            zhTWTitle: '生物鐘',
-            zhCNTitle: '生物钟',
-            content: fatigueP,
-          ),
-        );
-      }
-
-      if (_habitSnapshotIds != null) {
-        final habitDelta = await BioClockService.habitDeltaPrompt(
-          _activeCharacterId,
-          _habitSnapshotIds!,
-        );
-        if (habitDelta.isNotEmpty) {
-          dynamicParts.add(
-            SystemContextMarkdown.section(
-              enTitle: 'Bio Clock Changes',
-              zhTWTitle: '生物鐘變動',
-              zhCNTitle: '生物钟变动',
-              content: habitDelta,
-            ),
-          );
-        }
-      }
-    }
-
-    final selfNotesDelta = _selfNotesDeltaPrompt(imgSelfNotes);
-    if (selfNotesDelta.isNotEmpty) {
-      dynamicParts.add(
-        SystemContextMarkdown.section(
-          enTitle: 'Self Notes',
-          zhTWTitle: '自我註記',
-          zhCNTitle: '自我注记',
-          content: selfNotesDelta,
-        ),
-      );
-    }
-
-    // 首輪狀態快照：與文字路徑同一個 helper。用圖片開窗時也要注入，
-    // 否則 _isFirstRoundInWindow 被設為 false 後，本窗口永遠拿不到快照。
-    dynamicParts.addAll(
-      await _firstRoundSnapshotParts(
-        characterId: _activeCharacterId,
-        toolFeatures: imgToolFeatures,
-        timelineEnabled: imgTimelineEnabled,
-        contextMode: sessionIdentity.contextMode,
-      ),
-    );
-
-    // 時間變動最頻繁，與文字路徑一致放在動態區塊後段。
-    if (!isImgRpContext || imgToolFeatures.rpDailyLifeToolsEnabled) {
-      dynamicParts.add(
-        SystemContextMarkdown.section(
-          enTitle: 'Current Time',
-          zhTWTitle: '當前時間',
-          zhCNTitle: '当前时间',
-          content: _timePrompt(now),
-        ),
-      );
-    }
-
-    // Thinking 是 request-only 動態策略，切換時不改可快取前綴。
-    final thinkingOn = await ApiSettings.getThinkingChain();
-    _generationThinkingEnabled = thinkingOn;
-    if (imgProviderName != 'thinking_machines') {
-      dynamicParts.add(
-        ThinkingModePolicy.runtimeInstruction(enabled: thinkingOn),
-      );
-    }
-
-    // 拆分回覆模式
-    if (_splitReply) {
-      controlParts.add(
-        SystemContextMarkdown.section(
-          enTitle: 'Reply Format',
-          zhTWTitle: '回覆格式',
-          zhCNTitle: '回复格式',
-          content: L.pick(
-            en: '【Split Reply Mode】Reply using speech only — no action descriptions, no narration, no *asterisk actions*. Use line breaks between separate thoughts. Keep each paragraph concise.',
-            zhTW: '【拆分回覆模式】只用說話內容回覆，不要使用動作描述、旁白敘事、*星號動作*。不同的話之間用換行分段。每段簡短自然。',
-          ),
-        ),
-      );
-    }
-
-    // Keep the same stable control prompt as text messages. If this is
-    // omitted, concise/freeform settings change the cacheable prefix only
-    // when the user sends an image.
-    final imgConciseOn = await ApiSettings.getConciseMode();
-    final imgFreeformOn = await ApiSettings.getFreeformMode();
-    final imgReplyStyle = ToolPrompts.selectedReplyStyle(
-      conciseOn: imgConciseOn,
-      freeformOn: imgFreeformOn,
-      emotionEnabled: emotionEnabled,
-      maxLines: imgFreeformOn ? await ApiSettings.getFreeformMaxLines() : 0,
-    );
-    if (imgReplyStyle.isNotEmpty) {
-      controlParts.add(
-        SystemContextMarkdown.section(
-          enTitle: 'Reply Style',
-          zhTWTitle: '回覆風格',
-          zhCNTitle: '回复风格',
-          content: imgReplyStyle,
-        ),
-      );
-    }
-
-    final imgMemoLinkNotice = _memoLinkNotice(isSpiderWebEnabledImg);
-    if (imgMemoLinkNotice.isNotEmpty) dynamicParts.add(imgMemoLinkNotice);
-
-    final liveDynamicPart = SystemContextMarkdown.join(dynamicParts);
-    final structured = StructuredPrompt(
-      sessionIdentity: _requiredSessionIdentity,
-      staticPart: staticBundle.staticPart,
-      profilePart: staticBundle.profilePart,
-      windowPart: staticBundle.windowPart,
-      controlPart: SystemContextMarkdown.join(controlParts),
-      liveStatePart: liveDynamicPart,
-      cacheChannel: PromptCacheChannel.text,
-    );
-
-    if (mounted) {
-      _refreshChatState(() {
-        _setGenerating(true);
-        _streamingText = '';
-      });
-    } else {
-      _setGenerating(true);
-      _streamingText = '';
-    }
-
-    final rawReply = StringBuffer();
-    var streamCompleted = false;
-    IosReplyBackgroundTask? backgroundReply;
-    var replyPersisted = false;
-    try {
-      // 構建歷史消息（文字部分）
-      // ═══ 歷史圖片降級：只有最新一則 user 圖片消息真實上傳 ═══
-      // 舊版每輪把全部歷史圖片重新 base64 上傳，
-      // token 成本隨圖片數量線性暴漲（一張圖 ≈ 上千 tokens × 每輪）。
-      // 更早的圖片降級為文字佔位，內容靠記憶系統承接。
-      final filtered = workingMessages
-          .where(
-            (m) =>
-                !m.isUserFirstContinuation &&
-                (m.text.isNotEmpty || m.imagePaths.isNotEmpty),
-          )
-          .toList();
-      final previousWindowTurns = await previousWindowTurnsF;
-      int lastImageIdx = -1;
-      for (int i = filtered.length - 1; i >= 0; i--) {
-        if (filtered[i].isUser && filtered[i].imagePaths.isNotEmpty) {
-          lastImageIdx = i;
-          break;
-        }
-      }
-      var history = <Map<String, dynamic>>[
-        for (final message in previousWindowTurns)
-          <String, dynamic>{
-            'role': message.isUser ? 'user' : 'assistant',
-            'content': message.text,
-          },
-      ];
-      for (int i = 0; i < filtered.length; i++) {
-        final m = filtered[i];
-        final degraded = m.imagePaths.isNotEmpty && i != lastImageIdx;
-        final imageCount = m.imagePaths.length;
-        history.add(<String, dynamic>{
-          'role': m.isUser ? 'user' : 'assistant',
-          'content': degraded
-              ? '（這裡曾發送$imageCount張圖片${m.text.isNotEmpty ? '：${m.text}' : ''}）'
-              : (m.text.isNotEmpty ? m.text : '（$imageCount張圖片）'),
-          if (m.imagePaths.isNotEmpty && i == lastImageIdx)
-            'imagePaths': List<String>.from(m.imagePaths),
-        });
-      }
-
-      // ═══ B4 滯後截斷（保護前綴緩存）═══
-      final keepFrom2 = await _hysteresisKeepFrom(
-        history.map((m) => (m['content'] ?? '').toString()).toList(),
-      );
-      if (keepFrom2 > 0 && keepFrom2 < history.length) {
-        var start2 = keepFrom2;
-        history = history.sublist(keepFrom2);
-        while (history.length > 1 && history.first['role'] != 'user') {
-          history.removeAt(0);
-          start2++;
-        }
-        // 砍頭點同步窗口錨點（同 text path）
-        final currentWindowStart = start2 - previousWindowTurns.length;
-        final anchorMsgId2 =
-            currentWindowStart >= 0 && currentWindowStart < filtered.length
-            ? filtered[currentWindowStart].id
-            : null;
-        if (anchorMsgId2 != null) {
-          unawaited(_persistContextAnchor(anchorMsgId2));
-        }
-      }
-
-      // 轉換為 API 格式（含 base64 圖片）
-      final apiMessages = <Map<String, String>>[];
-      for (final m in history) {
-        final role = m['role'] as String;
-        final content = m['content'] as String;
-        final imagePaths =
-            (m['imagePaths'] as List<dynamic>?)?.whereType<String>().toList(
-              growable: false,
-            ) ??
-            const <String>[];
-
-        if (imagePaths.isNotEmpty && role == 'user') {
-          final dataUrls = <String>[];
-          for (final imagePath in imagePaths) {
-            final dataUrl = await ImageService.toBase64DataUrl(imagePath);
-            if (dataUrl != null) dataUrls.add(dataUrl);
-          }
-          if (dataUrls.isNotEmpty) {
-            // 用特殊標記讓 adapter 識別多模態
-            apiMessages.add({
-              'role': role,
-              'content': content,
-              'image_data_url': dataUrls.first,
-              'image_data_urls': jsonEncode(dataUrls),
-            });
-            continue;
-          }
-        }
-        apiMessages.add({'role': role, 'content': content});
-      }
-
-      var requestUsage = const ApiUsage();
-      if (!_isCurrentGeneration(generationSerial) || _stopGenerationRequested) {
-        _finishFailedGeneration();
-        return;
-      }
-      _activeRequestThinkingEnabled = thinkingOn;
-      _activeRequestThinkingGeneration = generationSerial;
-      final imgCostStrategy = await ModelCostPolicy.resolveEffectiveStrategy(
-        provider: imgProviderName,
-        model: model,
-      );
-      if (imgCostStrategy.promptCacheEnabled) {
-        await ApiSettings.recordSentThinkingState(
-          conversationId: widget.conversationId,
-          provider: imgProviderName,
-          model: model,
-          cacheChannel: PromptCacheChannel.text,
-          enabled: thinkingOn,
-        );
-      }
-      backgroundReply = await IosReplyBackgroundTask.begin(
-        source: userMsgWithId,
-        onExpire: () {
-          if (_isCurrentGeneration(generationSerial)) _stopActiveGeneration();
-        },
-      );
-      await for (final chunk in adapter.sendMessageStream(
-        messages: apiMessages,
-        model: model,
-        structuredPrompt: structured,
-        onUsage: (usage) => requestUsage = usage,
-      )) {
-        if (!_isCurrentGeneration(generationSerial)) return;
-        await turnEffects.commit();
-        rawReply.write(chunk);
-        if (backgroundReply != null) {
-          await backgroundReply.record(
-            ThinkingModePolicy.sanitizeVisibleReply(
-              ThinkingModePolicy.moveProtocolTagsOutsideThinking(
-                _cleanIncompleteReply(rawReply.toString()),
-              ),
-              enabled: thinkingOn,
-            ),
-          );
-        }
-        if (mounted) _onStreamChunk(chunk);
-      }
-      if (mounted) _closeModelStreamInput();
-      streamCompleted = true;
-      if (_stopGenerationRequested) {
-        replyPersisted =
-            await _persistIncompleteReply(rawReply.toString()) != null;
-        _finishFailedGeneration();
-        return;
-      }
-      await turnEffects.commit();
-      final replyText = ThinkingModePolicy.sanitizeVisibleReply(
-        ThinkingModePolicy.moveProtocolTagsOutsideThinking(rawReply.toString()),
-        enabled: thinkingOn,
-      );
-      if (!_isCurrentGeneration(generationSerial) || _stopGenerationRequested) {
-        _finishFailedGeneration();
-        return;
-      }
-
-      // ═══ 記錄真實 API 用量 ═══
-      await _tokenTracker.recordRealUsage(
-        provider: imgProviderName,
-        model: model,
-        usage: requestUsage,
-        characterId: _activeCharacterId,
-        conversationId: widget.conversationId,
-        requestKind: ApiRequestKind.chat,
-      );
-
-      final imgCacheRead = requestUsage.cacheReadTokens;
-      if (imgCacheRead > 0) {
-        CacheSession.markCacheHit(widget.conversationId);
-      }
-
-      // ═══ 模型自主記憶：開啟時才執行 <memo>/<persona_note> 落庫 ═══
-      final normalizedActionReply =
-          ModelActionProtocol.normalizeForLegacyProcessors(replyText);
-      await _markVisibleReplyComplete();
-      if (!_isCurrentGeneration(generationSerial) || _stopGenerationRequested) {
-        _finishFailedGeneration();
-        return;
-      }
-      var processedText = (imgMemoryWriteEnabled || isSpiderWebEnabledImg)
-          ? await _processScopedMemoryReply(
-              normalizedActionReply,
-              emotionEnabled: emotionEnabled,
-              provider: imgProviderName,
-              modelId: model,
-              sourceMessageId: userMsgWithId.id,
-            )
-          : MemoryActions.stripReply(
-              normalizedActionReply,
-              windowId: widget.conversationId,
-              captureSearchQuery: true,
-            );
-      // ═══ 蛛網專屬標籤：<memo_link> 與 <force_recall> 處理 ═══
-      if (isSpiderWebEnabledImg) {
-        processedText = await SpiderWebCore.processReply(
-          processedText,
-          characterId: _activeCharacterId,
-          windowId: widget.conversationId,
-        );
-      }
-      processedText = await ShopService.processReply(
-        processedText,
-        characterName: _characterName,
-        characterId: _activeCharacterId,
-        conversationId: widget.conversationId,
-      );
-      // ═══ 情緒座標：<emo> 打點入庫並剝離 ═══
-      // 同輪有 <memo> 時，點綁定那條記憶（同一輪 = 同一情緒時刻），
-      // 翻舊帳由此能撈回「點 + 原記憶」
-      processedText = emotionEnabled
-          ? await EmotionCoordinates.processReply(
-              processedText,
-              characterId: _emotionScopeId,
-              memoryId: MemoryActions.lastInsertedMemoryIdFor(
-                widget.conversationId,
-              ),
-            )
-          : EmotionCoordinates.stripReply(processedText);
-      // ═══ 生物鐘：<clock> 標籤入庫並剝離 ═══
-      if (sessionIdentity.contextMode == ContextMode.daily &&
-          await MemorySettings.isAbilityEnabled('bioclock')) {
-        processedText = await BioClockService.processReply(
-          processedText,
-          characterId: _activeCharacterId,
-        );
-      }
-      // ═══ 角色生活化：只處理明確 <life_fix>；時間線事件不掃關鍵詞。═══
-      if (await MemorySettings.getTimelineEnabled()) {
-        processedText = sessionIdentity.contextMode == ContextMode.daily
-            ? await CharacterTimelineService.processLifeFix(
-                _activeCharacterId,
-                processedText,
-              )
-            : CharacterTimelineService.stripLifeFix(processedText);
-      }
-      if (sessionIdentity.contextMode == ContextMode.daily &&
-          await MemorySettings.isAbilityEnabled('bioclock')) {
-        await BioClockService.recordLastChatTime(_activeCharacterId);
-      }
-      _isFirstRoundInWindow = false;
-      processedText = await HomeNoteService.processReply(
-        processedText,
-        characterId: _activeCharacterId,
-        enabled: imgToolFeatures.modelGreetingEnabled,
-      );
-      // ═══ 悄悄話（圖片路徑）═══
-      final whisperResult = await WhisperService.processReply(
-        processedText,
-        characterId: _activeCharacterId,
-      );
-      processedText = whisperResult.text;
-      if (whisperResult.updated && mounted) {
-        _refreshChatState(
-          () => _composerHint = whisperResult.state.displayText,
-        );
-      }
-      // 圖片路徑無 two-pass：<shop_view/> 僅剝離（下條文字消息她可再逛）
-      processedText = processedText
-          .replaceAll(_ChatScreenState._shopViewTagRe, '')
-          .trim();
-      // ═══ 刮刮樂：<scratch> 標籤處理（圖片路徑）═══
-      ScratchData? pendingScratch;
-      final scratchMatch = RegExp(
-        r'<scratch\s+who="(\w+)"\s*/>',
-      ).firstMatch(processedText);
-      if (scratchMatch != null) {
-        processedText = processedText
-            .replaceAll(RegExp(r'<scratch\s+[^>]*/>'), '')
-            .trim();
-        if (imgToolFeatures.scratchEnabled) {
-          final who = scratchMatch.group(1) ?? 'char';
-          // AI 觸發 → 扣角色的幣
-          final ok = await ScratchService.spend(
-            _activeCharacterId,
-            ScratchService.ticketCost,
-          );
-          if (ok) {
-            pendingScratch = ScratchData(
-              cost: ScratchService.ticketCost,
-              who: who,
-              prizes: ScratchService.rollPrizes(),
-              scratched: false,
-            );
-          } else if (mounted) {
-            _showChatNotice(
-              L.pick(
-                en: '$_characterName does not have enough shells to send a scratch card.',
-                zhTW: '【$_characterName】貝殼不足，無法送出刮刮樂',
-              ),
-              duration: const Duration(seconds: 2),
-            );
-          }
-        }
-      }
-      // ═══ 轉帳：<transfer> 標籤處理（圖片路徑）═══
-      TransferData? pendingTransfer;
-      final transferMatch = RegExp(
-        r'<transfer\s+amount="(\d+)"\s*/>',
-      ).firstMatch(processedText);
-      if (transferMatch != null) {
-        processedText = processedText
-            .replaceAll(RegExp(r'<transfer\s+[^>]*/>'), '')
-            .trim();
-        final amount = int.tryParse(transferMatch.group(1) ?? '') ?? 0;
-        if (imgToolFeatures.transferEnabled && amount > 0) {
-          pendingTransfer = TransferData(amount: amount, direction: 'toUser');
-        }
-      }
-      // ═══ 轉帳回應（圖片路徑）═══
-      final hasAcceptImg = RegExp(
-        r'<transfer_accept\s*/>',
-      ).hasMatch(processedText);
-      final hasDeclineImg = RegExp(
-        r'<transfer_decline\s*/>',
-      ).hasMatch(processedText);
-      if (hasAcceptImg || hasDeclineImg) {
-        processedText = processedText
-            .replaceAll(RegExp(r'<transfer_accept\s*/>'), '')
-            .replaceAll(RegExp(r'<transfer_decline\s*/>'), '')
-            .trim();
-      }
-      if (imgToolFeatures.transferEnabled && (hasAcceptImg || hasDeclineImg)) {
-        final pendingKey = _findPendingToCharTransfer();
-        if (pendingKey != null) {
-          if (hasAcceptImg) {
-            final accepted = await TransferService.acceptTransfer(
-              pendingKey,
-              _activeCharacterId,
-            );
-            if (accepted) _walletChanged = true;
-          } else {
-            await TransferService.declineTransfer(pendingKey);
-          }
-          final updated = await TransferService.getData(pendingKey);
-          if (updated != null) _transferDataMap[pendingKey] = updated;
-        }
-      }
-      // ═══ 結婚證簽署：<sign_marriage/>（text/image 雙路徑同款）═══
-      if (_ChatScreenState._signMarriageRe.hasMatch(processedText)) {
-        processedText = processedText
-            .replaceAll(_ChatScreenState._signMarriageRe, '')
-            .trim();
-        await MarriageService.sign(_activeCharacterId);
-        unawaited(_refreshMarriageState());
-      }
-      // ═══ 結婚證主動遞出：<propose_marriage/> → 她的消息尾掛可簽證書 ═══
-      if (_ChatScreenState._proposeMarriageRe.hasMatch(processedText)) {
-        processedText = processedText
-            .replaceAll(_ChatScreenState._proposeMarriageRe, '')
-            .trim();
-        processedText =
-            '$processedText\n$_ChatScreenState._marriageCertCharTag';
-        await MarriageService.markCharProposed(_activeCharacterId);
-        unawaited(_refreshMarriageState());
-      }
-      // ═══ 模型發起通話：<call>開場白</call> / <call/> ═══
-      String? pendingCallOpening;
-      final callMatch = RegExp(
-        r'<call>([\s\S]*?)</call>|<call\s*/>',
-      ).firstMatch(processedText);
-      if (callMatch != null) {
-        if (sessionIdentity.contextMode == ContextMode.daily) {
-          pendingCallOpening = (callMatch.group(1) ?? '').trim();
-        }
-        processedText = processedText
-            .replaceAll(RegExp(r'<call>[\s\S]*?</call>'), '')
-            .replaceAll(RegExp(r'<call\s*/>'), '')
-            .trim();
-      }
-      // ═══ 模型畫畫：先出字後出圖（圖在後台生成，好了自己掛上）═══
-      String? drawPrompt;
-      final drawMatch = RegExp(
-        r'<draw>([\s\S]*?)</draw>',
-      ).firstMatch(processedText);
-      if (drawMatch != null) {
-        processedText = processedText
-            .replaceAll(RegExp(r'<draw>[\s\S]*?</draw>'), '')
-            .trim();
-        if (imgToolFeatures.imageGenerationEnabled) {
-          drawPrompt = drawMatch.group(1)!.trim();
-        }
-      }
-
-      processedText = await _extractDiaryAndStore(
-        processedText,
-        sourceMessageId: userMsgWithId.id,
-        diaryEnabled: imgToolFeatures.diaryEnabled,
-      );
-      final emailDraftExtraction = EmailDraftTool.extract(processedText);
-      final pendingEmailDraft = emailDraftExtraction.draft;
-      processedText = emailDraftExtraction.visibleText;
-      processedText = _extractXPostAndStrip(processedText);
-
-      // ═══ 記憶過程日誌：只記寫入本地的操作 ═══
-      // （注入給模型的內容不顯示——那是給她看的，不是給你看的）
-      final memLogLines = <String>[
-        ...MemoryActions.lastActionLogFor(widget.conversationId),
-        ...EmotionCoordinates.lastPointLog,
-        ...BioClockService.consumeLastActionLog(),
-        if (drawPrompt != null) '🎨 生成中…',
-      ];
-      final memLog = memLogLines.isEmpty
-          ? ''
-          : '${memLogLines.join('\n')}\nDone';
-      if (!_isCurrentGeneration(generationSerial)) return;
-      // Image conversations share the same reveal queue as text replies.
-      // Drain every provider mode before replacing the stream with the final
-      // canonical body, otherwise Thinking completion can still flash here.
-      await _finishStreamPresentation();
-      if (!_isCurrentGeneration(generationSerial) || _stopGenerationRequested) {
-        _finishFailedGeneration();
-        return;
-      }
-      processedText = VisibleModelOutput.reply(
-        processedText,
-        thinkingEnabled: thinkingOn,
-      );
-      final aiMsg = Message(
-        conversationId: conversationId,
-        characterId: _activeCharacterId,
-        text: processedText,
-        isUser: false,
-        splitMode: _splitReply,
-        cacheHit: imgCacheRead > 0,
-        memoryLog: memLog,
-        emailDraft: pendingEmailDraft,
-      );
-      final imgAiId = await DatabaseHelper.insertMessage(aiMsg);
-      replyPersisted = true;
-      await _clearChatDiagnosticForSource(userMsgWithId.id!);
-      await _bindMemoryProposalsToMessage(imgAiId);
-      await MemoryActions.bindSelfNotesToMessage(
-        widget.conversationId,
-        imgAiId,
-      );
-      unawaited(
-        MarriageService.scanMessage(
-          aiMsg.text,
-          _activeCharacterId,
-        ).then((_) => _refreshMarriageState()),
-      );
-      final aiMsgWithId = Message(
-        id: imgAiId,
-        conversationId: aiMsg.conversationId,
-        characterId: aiMsg.characterId,
-        text: aiMsg.text,
-        isUser: false,
-        splitMode: aiMsg.splitMode,
-        cacheHit: aiMsg.cacheHit,
-        status: aiMsg.status,
-        createdAt: aiMsg.createdAt,
-        imagePath: aiMsg.imagePath,
-        memoryLog: aiMsg.memoryLog,
-        emailDraft: aiMsg.emailDraft,
-      );
-
-      if (imgCacheRead > 0 && mounted) {
-        _cacheHitIndices.add(_messages.length);
-      }
-
-      if (mounted) {
-        _refreshChatState(() {
-          _markFreshAssistantContext(imgAiId);
-          _messages.add(aiMsgWithId);
-          _clearStreamQueue();
-          _setGenerating(false);
-        });
-      } else {
-        _clearStreamQueue();
-        _setGenerating(false);
-      }
-      if (drawPrompt != null && aiMsgWithId.id != null) {
-        _runDrawAsync(aiMsgWithId.id!, drawPrompt, memLog, _activeCharacterId);
-      }
-
-      // ═══ 商店：消費本輪 <buy> 結果（送禮系統訊息即時上屏 + 失敗提示）═══
-      await _consumeBuyResults(widget.conversationId);
-
-      // ═══ X 發文：確認卡 → 發送 ═══
-      await _handleXPost();
-
-      // ═══ 模型來電：停 2.5 秒再響鈴（像她想了想才撥）═══
-      if (pendingCallOpening != null) {
-        _scheduleIncomingCall(pendingCallOpening);
-      }
-
-      // ═══ 刮刮樂：存數據 + 彈出刮卡（圖片路徑）═══
-      if (pendingScratch != null && aiMsgWithId.id != null) {
-        final msgId = 'msg_${aiMsgWithId.id}';
-        await ScratchService.saveData(msgId, pendingScratch);
-        _scratchDataMap[msgId] = pendingScratch;
-        if (mounted) {
-          Future.delayed(const Duration(milliseconds: 500), () {
-            if (!mounted) return;
-            showScratchDialog(
-              context,
-              messageId: msgId,
-              data: pendingScratch!,
-              characterId: _activeCharacterId,
-            ).then((_) async {
-              final updated = await ScratchService.getData(msgId);
-              if (updated != null) _scratchDataMap[msgId] = updated;
-              if (mounted) _refreshChatState(() {});
-            });
-          });
-        }
-      }
-
-      // ═══ 轉帳：存數據（圖片路徑）═══
-      if (pendingTransfer != null && aiMsgWithId.id != null) {
-        final msgId = 'msg_${aiMsgWithId.id}';
-        await TransferService.saveData(msgId, pendingTransfer);
-        _transferDataMap[msgId] = pendingTransfer;
-        if (mounted) _refreshChatState(() {});
-      }
-
-      await _recordCompletedRound(
-        conversationId: conversationId,
-        userText: outboundCaption.isNotEmpty ? outboundCaption : '（圖片）',
-        assistantText: aiMsgWithId.text,
-        heartbeatHistory: apiMessages,
-        structuredPrompt: structured,
-        adapter: adapter,
-        model: model,
-        provider: imgProviderName,
-      );
-    } on ApiConfigException catch (e) {
-      if (!_isCurrentGeneration(generationSerial)) return;
-      _finishFailedGeneration();
-      await _persistApiFailure(
-        e,
-        sourceMessageId: userMsgWithId.id!,
-        provider: imgProviderName,
-        model: model,
-      );
-    } catch (e) {
-      if (!_isCurrentGeneration(generationSerial)) return;
-      final incomplete = streamCompleted
-          ? null
-          : await _persistIncompleteReply(rawReply.toString());
-      replyPersisted = replyPersisted || incomplete != null;
-      _finishFailedGeneration();
-      if (_stopGenerationRequested) return;
-      await _persistApiFailure(
-        e,
-        sourceMessageId: userMsgWithId.id!,
-        anchorMessageId: incomplete?.id,
-        provider: imgProviderName,
-        model: model,
-      );
-    } finally {
-      await backgroundReply?.finish(
-        discard: replyPersisted,
-        completed:
-            replyPersisted && streamCompleted && !_stopGenerationRequested,
-      );
-      if (_activeRequestThinkingGeneration == generationSerial) {
-        _activeRequestThinkingEnabled = null;
-        _activeRequestThinkingGeneration = null;
-      }
-      if (identical(_activeGenerationAdapter, adapter)) {
-        _activeGenerationAdapter = null;
-      }
-      MemoryActions.clearSearchQuery(widget.conversationId);
-    }
-    if (mounted) _scrollToBottom();
+    return <String, String>{
+      'role': m.isUser ? 'user' : 'assistant',
+      'content': '（這裡曾發送$count張圖片${text.isNotEmpty ? '：$text' : ''}）',
+    };
   }
 
   /// 構建用戶檔案 prompt

@@ -18,6 +18,8 @@ class ThemeSettings {
   static const String _keyStarEnabled = 'star_enabled';
   static const String _keyStarDensity = 'star_density';
   static const String _keyParticleEffect = 'particle_effect';
+  static const String _keyParticleEmojis = 'particle_emojis';
+  static const String _keyCloudStyle = 'particle_cloud_style';
   static const String _keyAiBubbleFlat = 'ai_bubble_flat';
   static const String _keySendButtonStyle = 'send_button_style';
   static const String _keySendButtonCustomPath = 'send_button_custom_path';
@@ -179,6 +181,34 @@ class ThemeSettings {
     final p = await SharedPreferences.getInstance();
     final effect = p.getString(_keyParticleEffect);
     return YanciTheme.particleEffectIds.contains(effect) ? effect : null;
+  }
+
+  static Future<void> saveCloudStyle(String style) async {
+    if (!YanciTheme.cloudStyleIds.contains(style)) return;
+    final p = await SharedPreferences.getInstance();
+    await p.setString(_keyCloudStyle, style);
+  }
+
+  static Future<String> getCloudStyle() async {
+    final p = await SharedPreferences.getInstance();
+    final style = p.getString(_keyCloudStyle);
+    return YanciTheme.cloudStyleIds.contains(style) ? style! : 'soft';
+  }
+
+  static Future<void> saveParticleEmojis(List<String> emojis) async {
+    final p = await SharedPreferences.getInstance();
+    await p.setStringList(
+      _keyParticleEmojis,
+      emojis.take(YanciTheme.maxParticleEmojis).toList(growable: false),
+    );
+  }
+
+  static Future<List<String>> getParticleEmojis() async {
+    final p = await SharedPreferences.getInstance();
+    final stored = p.getStringList(_keyParticleEmojis);
+    if (stored == null || stored.isEmpty) return YanciTheme.defaultParticleEmojis;
+    final normalized = YanciTheme.normalizeParticleEmojis(stored.join());
+    return normalized.isEmpty ? YanciTheme.defaultParticleEmojis : normalized;
   }
 
   /// AI 氣泡平鋪模式（true = 無氣泡，false = 正常氣泡）

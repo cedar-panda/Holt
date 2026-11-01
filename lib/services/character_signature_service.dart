@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:sqflite/sqflite.dart';
 
 import '../memory/database.dart';
@@ -76,6 +77,15 @@ abstract final class CharacterSignatureService {
     return operation;
   }
 
+  /// 角色卡上「顯示中的簽名」變了就廣播（首頁、角色頁都聽）。
+  /// 兩頁同時活在 IndexedStack 裡，不廣播的話只有操作那頁會更新。
+  static final ValueNotifier<({String characterId, String signature})?>
+  displayedChanges = ValueNotifier(null);
+
+  static void _announce(String characterId, String signature) {
+    displayedChanges.value = (characterId: characterId, signature: signature);
+  }
+
   static Future<String?> _generateForWindow({
     required String characterId,
     required String conversationId,
@@ -111,6 +121,7 @@ abstract final class CharacterSignatureService {
     if (signature == null || signature.isEmpty) return null;
 
     final now = DateTime.now().toIso8601String();
+    var displayed = false;
     await db.transaction((txn) async {
       await txn.insert('character_signatures', <String, Object?>{
         'character_id': characterId,
@@ -137,8 +148,10 @@ abstract final class CharacterSignatureService {
           where: 'id = ?',
           whereArgs: <Object?>[characterId],
         );
+        displayed = true;
       }
     });
+    if (displayed) _announce(characterId, signature);
     return signature;
   }
 
@@ -179,7 +192,7 @@ abstract final class CharacterSignatureService {
     required int signatureId,
   }) async {
     final db = await DatabaseHelper.database;
-    return db.transaction((txn) async {
+    final selected = await db.transaction((txn) async {
       final rows = await txn.query(
         'character_signatures',
         columns: const <String>['signature'],
@@ -216,12 +229,14 @@ abstract final class CharacterSignatureService {
       );
       return signature;
     });
+    _announce(characterId, selected);
+    return selected;
   }
 
   /// Clears a manual selection and resumes showing the newest signature.
   static Future<String> followLatestSignature(String characterId) async {
     final db = await DatabaseHelper.database;
-    return db.transaction((txn) async {
+    final latestSignature = await db.transaction((txn) async {
       final latest = await txn.query(
         'character_signatures',
         columns: const <String>['signature'],
@@ -253,6 +268,8 @@ abstract final class CharacterSignatureService {
       );
       return signature;
     });
+    _announce(characterId, latestSignature);
+    return latestSignature;
   }
 
   static Future<String?> generateAndSave({
@@ -277,6 +294,7 @@ abstract final class CharacterSignatureService {
               characterId,
               signature,
             );
+            _announce(characterId, signature);
           }
           return signature;
         });
@@ -388,6 +406,17 @@ abstract final class CharacterSignatureService {
       value = value.replaceFirst(RegExp(r'\n?```$'), '').trim();
     }
     value = _extractFinalOnlySignature(value);
+    // 有些模型會把結果包在 <reply>…</reply>（或 answer／final／signature／
+    // output）裡，甚至忘了收尾標籤。只拆這幾種外包裝，正文不動。
+    value = value
+        .replaceAll(
+          RegExp(
+            r'</?\s*(?:reply|answer|final|signature|output)\s*/?>',
+            caseSensitive: false,
+          ),
+          '',
+        )
+        .trim();
     if (value.isEmpty) return '';
     value = value.replaceFirst(
       RegExp(

@@ -265,6 +265,16 @@ class L {
       'zh_CN': 'AI 回复按段落拆成多个气泡',
       'en': 'Split into paragraph bubbles',
     },
+    'settings_split_natural': {
+      'zh_TW': '自然發言',
+      'zh_CN': '自然发言',
+      'en': 'Natural texting',
+    },
+    'settings_split_natural_desc': {
+      'zh_TW': '開啟：像真的在聊天軟體打字，每顆氣泡簡短口語。關閉：只告訴模型用空行分氣泡，說話方式不變',
+      'zh_CN': '开启：像真的在聊天软件打字，每颗气泡简短口语。关闭：只告诉模型用空行分气泡，说话方式不变',
+      'en': 'On: text like a real messaging app, short casual bubbles. Off: only tells the model to split bubbles with blank lines',
+    },
     'settings_split_hint': {
       'zh_TW': '開啟後建議關閉思考鏈',
       'zh_CN': '开启后建议关闭思考链',
@@ -559,23 +569,47 @@ class L {
     },
     'theme_bubble': {'zh_TW': '氣泡', 'zh_CN': '气泡', 'en': 'Bubble'},
     'theme_send_button': {'zh_TW': '發送鍵', 'zh_CN': '发送键', 'en': 'Send button'},
-    'theme_send_button_leaf': {'zh_TW': '葉子', 'zh_CN': '叶子', 'en': 'Leaf'},
+    'theme_send_button_leaf': {
+      'zh_TW': '楓葉',
+      'zh_CN': '枫叶',
+      'en': 'Maple leaf',
+    },
     'theme_send_button_paw': {'zh_TW': '爪印', 'zh_CN': '爪印', 'en': 'Paw'},
-    'theme_send_button_shell': {'zh_TW': '貝殼', 'zh_CN': '贝壳', 'en': 'Shell'},
+    'theme_send_button_shell': {
+      'zh_TW': '紙船',
+      'zh_CN': '纸船',
+      'en': 'Paper boat',
+    },
     'theme_send_button_custom': {
       'zh_TW': '自訂圖片',
       'zh_CN': '自定义图片',
       'en': 'Custom image',
     },
     'theme_send_button_square_error': {
-      'zh_TW': '請使用 1:1 正方形圖片',
-      'zh_CN': '请使用 1:1 正方形图片',
-      'en': 'Please use a square 1:1 image',
+      'zh_TW': '請使用 1:1 尺寸的正方形圖片',
+      'zh_CN': '请使用 1:1 尺寸的正方形图片',
+      'en': 'Please use a square 1:1 image.',
     },
     'theme_send_button_png_error': {
       'zh_TW': '請使用 PNG 圖片',
       'zh_CN': '请使用 PNG 图片',
       'en': 'Please use a PNG image',
+    },
+    'theme_send_button_transparent_error': {
+      'zh_TW': '圖片必須使用透明底',
+      'zh_CN': '图片必须使用透明底',
+      'en': 'The image must have a transparent background.',
+    },
+    'theme_send_button_white_line_error': {
+      'zh_TW': '圖片線條必須為白色，才能跟隨主題色',
+      'zh_CN': '图片线条必须为白色，才能跟随主题色',
+      'en': 'Use white line art so the icon can follow the theme color.',
+    },
+    'theme_send_button_custom_hint': {
+      'zh_TW': '請導入 1:1 畫幅、PNG 透明格式、白色線條的圖片。',
+      'zh_CN': '请导入 1:1 画幅、PNG 透明格式、白色线条的图片。',
+      'en':
+          'Import a 1:1 image with white line art and a transparent PNG background.',
     },
     'theme_send_button_import_error': {
       'zh_TW': '圖片匯入失敗，請再試一次',

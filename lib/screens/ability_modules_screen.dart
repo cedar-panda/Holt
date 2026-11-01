@@ -255,8 +255,9 @@ class _AbilityModulesScreenState extends State<AbilityModulesScreen> {
                                 const SizedBox(width: 6),
                                 Text(
                                   L.pick(
-                                    en: 'Spider Web (Rec.)',
-                                    zhTW: '蛛網記憶 (推薦)',
+                                    en: 'Advanced Memory (Rec.)',
+                                    zhTW: '進階記憶 (推薦)',
+                                    zhCN: '进阶记忆 (推荐)',
                                   ),
                                   style: TextStyle(
                                     color: spiderSelected
@@ -342,9 +343,9 @@ class _AbilityModulesScreenState extends State<AbilityModulesScreen> {
               Expanded(
                 child: Text(
                   L.pick(
-                    en: 'Spider Web memory is active. Feature modules can be configured on the Switches page.',
-                    zhTW: '已啟動蛛網記憶。其他功能模組可在「開關」主頁調整。',
-                    zhCN: '已启用蛛网记忆。其他功能模块可在“开关”主页调整。',
+                    en: 'Advanced Memory is active. Feature modules can be configured on the Switches page.',
+                    zhTW: '已啟動進階記憶。其他功能模組可在「開關」主頁調整。',
+                    zhCN: '已启用进阶记忆。其他功能模块可在“开关”主页调整。',
                   ),
                   style: TextStyle(
                     color: YanciTheme.accent,

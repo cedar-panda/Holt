@@ -253,9 +253,12 @@ extension _HomeSheetMethods on _HomeScreenState {
 
         return StatefulBuilder(
           builder: (ctx, setDialogState) {
-            final historySurface = YanciTheme.isDark
-                ? const Color(0xF5201D24)
-                : Colors.white.withValues(alpha: 0.97);
+            final historySurface = YanciTheme.surfacePanel;
+            final historyPreset = _boundBackgroundPreset;
+            final hasHistoryBackground =
+                historyPreset != null &&
+                historyPreset.homePath.trim().isNotEmpty &&
+                File(historyPreset.homePath).existsSync();
             return Padding(
               padding: EdgeInsets.only(
                 top: topInset,
@@ -267,7 +270,9 @@ extension _HomeSheetMethods on _HomeScreenState {
                 color: Colors.transparent,
                 child: Container(
                   decoration: BoxDecoration(
-                    color: historySurface,
+                    color: hasHistoryBackground
+                        ? Colors.transparent
+                        : historySurface,
                     borderRadius: BorderRadius.circular(20),
                     border: Border.all(
                       color: YanciTheme.isDark
@@ -287,360 +292,392 @@ extension _HomeSheetMethods on _HomeScreenState {
                   ),
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(20),
-                    child: Column(
+                    child: Stack(
+                      fit: StackFit.expand,
                       children: [
-                        // ── 頂部：退出 + 標題 ──
-                        Padding(
-                          padding: const EdgeInsets.fromLTRB(6, 10, 16, 0),
-                          child: Row(
-                            children: [
-                              IconButton(
-                                onPressed: () => Navigator.pop(dialogCtx),
-                                icon: Icon(
-                                  Icons.close_rounded,
-                                  size: 20,
-                                  color: YanciTheme.textSecondary.withValues(
-                                    alpha: 0.6,
-                                  ),
-                                ),
-                                padding: const EdgeInsets.all(8),
-                                constraints: const BoxConstraints(
-                                  minWidth: 36,
-                                  minHeight: 36,
-                                ),
-                              ),
-                              const Spacer(),
-                              Text(
-                                L.get('history_title'),
-                                style: YanciTheme.headingMedium.copyWith(
-                                  fontSize: 15,
-                                ),
-                              ),
-                              const Spacer(),
-                              HistoryModePill(
-                                value: historyFilter.name,
-                                backgroundColor: historySurface,
-                                onChanged: (raw) {
-                                  final next = ConversationHistoryFilter.values
-                                      .firstWhere((value) => value.name == raw);
-                                  setDialogState(() {
-                                    historyFilter = next;
-                                    conversations =
-                                        ContextModeSettings.filterConversations(
-                                          searchResults,
-                                          next,
-                                        );
-                                  });
-                                  unawaited(
-                                    ContextModeSettings.setHistoryFilter(
-                                      charId,
-                                      next,
+                        if (hasHistoryBackground)
+                          _HomeHistoryBakedSurface(preset: historyPreset),
+                        Column(
+                          children: [
+                            // ── 頂部：篩選 + 標題 + 退出 ──
+                            Padding(
+                              padding: const EdgeInsets.fromLTRB(6, 10, 16, 0),
+                              child: SizedBox(
+                                height: 40,
+                                child: Stack(
+                                  alignment: Alignment.center,
+                                  children: [
+                                    Align(
+                                      alignment: Alignment.centerLeft,
+                                      child: HistoryModePill(
+                                        value: historyFilter.name,
+                                        backgroundColor: historySurface,
+                                        onChanged: (raw) {
+                                          final next = ConversationHistoryFilter
+                                              .values
+                                              .firstWhere(
+                                                (value) => value.name == raw,
+                                              );
+                                          setDialogState(() {
+                                            historyFilter = next;
+                                            conversations =
+                                                ContextModeSettings.filterConversations(
+                                                  searchResults,
+                                                  next,
+                                                );
+                                          });
+                                          unawaited(
+                                            ContextModeSettings.setHistoryFilter(
+                                              charId,
+                                              next,
+                                            ),
+                                          );
+                                        },
+                                      ),
                                     ),
-                                  );
-                                },
+                                    Text(
+                                      L.pick(
+                                        en: 'History',
+                                        zhTW: '歷史',
+                                        zhCN: '历史',
+                                      ),
+                                      style: YanciTheme.headingMedium.copyWith(
+                                        fontSize: 15,
+                                        fontWeight: FontWeight.w400,
+                                      ),
+                                    ),
+                                    Align(
+                                      alignment: Alignment.centerRight,
+                                      child: IconButton(
+                                        onPressed: () =>
+                                            Navigator.pop(dialogCtx),
+                                        icon: Icon(
+                                          Icons.close_rounded,
+                                          size: 20,
+                                          color: YanciTheme.textSecondary
+                                              .withValues(alpha: 0.6),
+                                        ),
+                                        padding: const EdgeInsets.all(8),
+                                        constraints: const BoxConstraints(
+                                          minWidth: 36,
+                                          minHeight: 36,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
                               ),
-                            ],
-                          ),
-                        ),
+                            ),
 
-                        // ── 搜索框 ──
-                        Padding(
-                          padding: const EdgeInsets.fromLTRB(14, 8, 14, 6),
-                          child: Container(
-                            height: 38,
-                            decoration: BoxDecoration(
-                              color: YanciTheme.isDark
-                                  ? Colors.white.withValues(alpha: 0.06)
-                                  : Colors.grey.withValues(alpha: 0.08),
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            child: TextField(
-                              controller: searchCtrl,
-                              style: YanciTheme.bodyText.copyWith(fontSize: 13),
-                              decoration: InputDecoration(
-                                hintText: L.pick(en: 'Search…', zhTW: '搜索……'),
-                                hintStyle: YanciTheme.bodySmall.copyWith(
-                                  color: YanciTheme.textSecondary.withValues(
-                                    alpha: 0.35,
-                                  ),
-                                  fontSize: 13,
-                                ),
-                                prefixIcon: Icon(
-                                  Icons.search_rounded,
-                                  size: 18,
-                                  color: YanciTheme.textSecondary.withValues(
-                                    alpha: 0.4,
-                                  ),
-                                ),
-                                border: InputBorder.none,
-                                isDense: true,
-                                contentPadding: const EdgeInsets.symmetric(
-                                  vertical: 9,
-                                ),
-                              ),
-                              onChanged: (query) async {
-                                final gen = ++searchGeneration;
-                                final q = query.trim();
-                                final results = q.isEmpty
-                                    ? await DatabaseHelper.getConversations(
-                                        characterId: charId,
-                                      )
-                                    : await DatabaseHelper.searchConversations(
-                                        q,
-                                        characterId: charId,
-                                      );
-                                // 已有更新的輸入 → 這批結果過期，丟棄
-                                if (gen != searchGeneration) return;
-                                setDialogState(() {
-                                  searchResults = List.from(results);
-                                  conversations =
-                                      ContextModeSettings.filterConversations(
-                                        searchResults,
-                                        historyFilter,
-                                      );
-                                });
-                              },
-                            ),
-                          ),
-                        ),
-
-                        // ── 對話列表 ──
-                        if (conversations.isEmpty)
-                          Expanded(
-                            child: Center(
-                              child: Text(
-                                L.get('history_empty'),
-                                textAlign: TextAlign.center,
-                                style: YanciTheme.bodySmall.copyWith(
-                                  color: YanciTheme.textSecondary.withValues(
-                                    alpha: 0.5,
-                                  ),
-                                ),
-                              ),
-                            ),
-                          )
-                        else
-                          Expanded(
-                            child: ListView.builder(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 6,
-                                vertical: 4,
-                              ),
-                              itemCount: conversations.length,
-                              itemBuilder: (listCtx, i) {
-                                final conv = conversations[i];
-                                final dateStr = conv.updatedAt
-                                    .toIso8601String()
-                                    .substring(0, 16)
-                                    .replaceAll('T', ' ');
-                                return InkWell(
+                            // ── 搜索框 ──
+                            Padding(
+                              padding: const EdgeInsets.fromLTRB(14, 8, 14, 6),
+                              child: Container(
+                                height: 38,
+                                decoration: BoxDecoration(
+                                  color: YanciTheme.isDark
+                                      ? Colors.white.withValues(alpha: 0.06)
+                                      : Colors.grey.withValues(alpha: 0.08),
                                   borderRadius: BorderRadius.circular(12),
-                                  onTap: () async {
-                                    Navigator.pop(dialogCtx);
-                                    await _pushChatRoute(
-                                      arguments: conv.id,
-                                      restoreCharacterId: charId,
-                                    );
-                                    await _refreshAfterChatReturn();
-                                  },
-                                  child: Padding(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 10,
-                                      vertical: 10,
+                                ),
+                                child: TextField(
+                                  controller: searchCtrl,
+                                  style: YanciTheme.bodyText.copyWith(
+                                    fontSize: 13,
+                                  ),
+                                  decoration: InputDecoration(
+                                    hintText: L.pick(
+                                      en: 'Search…',
+                                      zhTW: '搜索……',
                                     ),
-                                    child: Row(
-                                      children: [
-                                        // 星標指示
-                                        if (conv.isStarred)
-                                          Padding(
-                                            padding: const EdgeInsets.only(
-                                              right: 8,
-                                            ),
-                                            child: Icon(
-                                              Icons.star_rounded,
-                                              size: 14,
-                                              color: YanciTheme.accent
-                                                  .withValues(alpha: 0.7),
-                                            ),
-                                          ),
-                                        // 標題+日期
-                                        Expanded(
-                                          child: Column(
-                                            crossAxisAlignment:
-                                                CrossAxisAlignment.start,
-                                            children: [
-                                              Row(
+                                    hintStyle: YanciTheme.bodySmall.copyWith(
+                                      color: YanciTheme.textSecondary
+                                          .withValues(alpha: 0.35),
+                                      fontSize: 13,
+                                    ),
+                                    prefixIcon: Icon(
+                                      Icons.search_rounded,
+                                      size: 18,
+                                      color: YanciTheme.textSecondary
+                                          .withValues(alpha: 0.4),
+                                    ),
+                                    border: InputBorder.none,
+                                    isDense: true,
+                                    contentPadding: const EdgeInsets.symmetric(
+                                      vertical: 9,
+                                    ),
+                                  ),
+                                  onChanged: (query) async {
+                                    final gen = ++searchGeneration;
+                                    final q = query.trim();
+                                    final results = q.isEmpty
+                                        ? await DatabaseHelper.getConversations(
+                                            characterId: charId,
+                                          )
+                                        : await DatabaseHelper.searchConversations(
+                                            q,
+                                            characterId: charId,
+                                          );
+                                    // 已有更新的輸入 → 這批結果過期，丟棄
+                                    if (gen != searchGeneration) return;
+                                    setDialogState(() {
+                                      searchResults = List.from(results);
+                                      conversations =
+                                          ContextModeSettings.filterConversations(
+                                            searchResults,
+                                            historyFilter,
+                                          );
+                                    });
+                                  },
+                                ),
+                              ),
+                            ),
+
+                            // ── 對話列表 ──
+                            if (conversations.isEmpty)
+                              Expanded(
+                                child: Center(
+                                  child: Text(
+                                    L.get('history_empty'),
+                                    textAlign: TextAlign.center,
+                                    style: YanciTheme.bodySmall.copyWith(
+                                      color: YanciTheme.textSecondary
+                                          .withValues(alpha: 0.5),
+                                    ),
+                                  ),
+                                ),
+                              )
+                            else
+                              Expanded(
+                                child: ListView.builder(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 6,
+                                    vertical: 4,
+                                  ),
+                                  itemCount: conversations.length,
+                                  itemBuilder: (listCtx, i) {
+                                    final conv = conversations[i];
+                                    final dateStr = conv.updatedAt
+                                        .toIso8601String()
+                                        .substring(0, 16)
+                                        .replaceAll('T', ' ');
+                                    return InkWell(
+                                      borderRadius: BorderRadius.circular(12),
+                                      onTap: () async {
+                                        Navigator.pop(dialogCtx);
+                                        await _pushChatRoute(
+                                          arguments: conv.id,
+                                          restoreCharacterId: charId,
+                                        );
+                                        await _refreshAfterChatReturn();
+                                      },
+                                      child: Padding(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 10,
+                                          vertical: 10,
+                                        ),
+                                        child: Row(
+                                          children: [
+                                            // 星標指示
+                                            if (conv.isStarred)
+                                              Padding(
+                                                padding: const EdgeInsets.only(
+                                                  right: 8,
+                                                ),
+                                                child: Icon(
+                                                  Icons.star_rounded,
+                                                  size: 14,
+                                                  color: YanciTheme.accent
+                                                      .withValues(alpha: 0.7),
+                                                ),
+                                              ),
+                                            // 標題+日期
+                                            Expanded(
+                                              child: Column(
+                                                crossAxisAlignment:
+                                                    CrossAxisAlignment.start,
                                                 children: [
-                                                  ContextModeLabel(
-                                                    mode: conv.contextMode,
-                                                    compact: true,
+                                                  Row(
+                                                    children: [
+                                                      ContextModeLabel(
+                                                        mode: conv.contextMode,
+                                                        compact: true,
+                                                      ),
+                                                      const SizedBox(width: 6),
+                                                      Expanded(
+                                                        child: Text(
+                                                          conv.title ??
+                                                              L.pick(
+                                                                en: 'New chat',
+                                                                zhTW: '新對話',
+                                                              ),
+                                                          maxLines: 1,
+                                                          overflow: TextOverflow
+                                                              .ellipsis,
+                                                          style: YanciTheme
+                                                              .bodyText
+                                                              .copyWith(
+                                                                fontSize: 14,
+                                                              ),
+                                                        ),
+                                                      ),
+                                                    ],
                                                   ),
-                                                  const SizedBox(width: 6),
-                                                  Expanded(
-                                                    child: Text(
-                                                      conv.title ??
-                                                          L.pick(
-                                                            en: 'New chat',
-                                                            zhTW: '新對話',
+                                                  const SizedBox(height: 2),
+                                                  Text(
+                                                    dateStr,
+                                                    style: YanciTheme.bodySmall
+                                                        .copyWith(
+                                                          color: YanciTheme
+                                                              .textSecondary
+                                                              .withValues(
+                                                                alpha: 0.45,
+                                                              ),
+                                                          fontSize: 11,
+                                                        ),
+                                                  ),
+                                                ],
+                                              ),
+                                            ),
+                                            // ── 操作按鈕（加大點擊範圍 44×44）──
+                                            _historyAction(
+                                              icon: Icons.edit_outlined,
+                                              color: YanciTheme.textSecondary
+                                                  .withValues(alpha: 0.4),
+                                              onTap: () =>
+                                                  _editConversationTitle(conv),
+                                            ),
+                                            _historyAction(
+                                              icon: conv.isStarred
+                                                  ? Icons.star_rounded
+                                                  : Icons.star_border_rounded,
+                                              color: conv.isStarred
+                                                  ? YanciTheme.accent
+                                                  : YanciTheme.textSecondary
+                                                        .withValues(alpha: 0.4),
+                                              onTap: () async {
+                                                await DatabaseHelper.toggleStarConversation(
+                                                  conv.id,
+                                                  !conv.isStarred,
+                                                );
+                                                final updated =
+                                                    await DatabaseHelper.getConversations(
+                                                      characterId: charId,
+                                                    );
+                                                setDialogState(() {
+                                                  searchResults = List.from(
+                                                    updated,
+                                                  );
+                                                  conversations =
+                                                      ContextModeSettings.filterConversations(
+                                                        searchResults,
+                                                        historyFilter,
+                                                      );
+                                                });
+                                              },
+                                            ),
+                                            _historyAction(
+                                              icon:
+                                                  Icons.delete_outline_rounded,
+                                              color: Colors.red.withValues(
+                                                alpha: 0.4,
+                                              ),
+                                              onTap: () async {
+                                                final confirm = await showDialog<bool>(
+                                                  context: listCtx,
+                                                  builder: (dlgCtx) => AlertDialog(
+                                                    shape: RoundedRectangleBorder(
+                                                      borderRadius:
+                                                          BorderRadius.circular(
+                                                            YanciTheme.radiusMd,
                                                           ),
-                                                      maxLines: 1,
-                                                      overflow:
-                                                          TextOverflow.ellipsis,
+                                                    ),
+                                                    backgroundColor:
+                                                        YanciTheme.surfacePanel,
+                                                    content: Text(
+                                                      L.pick(
+                                                        en: 'Delete this conversation?',
+                                                        zhTW: '確認刪除這段對話？',
+                                                      ),
                                                       style: YanciTheme.bodyText
                                                           .copyWith(
                                                             fontSize: 14,
                                                           ),
                                                     ),
-                                                  ),
-                                                ],
-                                              ),
-                                              const SizedBox(height: 2),
-                                              Text(
-                                                dateStr,
-                                                style: YanciTheme.bodySmall
-                                                    .copyWith(
-                                                      color: YanciTheme
-                                                          .textSecondary
-                                                          .withValues(
-                                                            alpha: 0.45,
-                                                          ),
-                                                      fontSize: 11,
-                                                    ),
-                                              ),
-                                            ],
-                                          ),
-                                        ),
-                                        // ── 操作按鈕（加大點擊範圍 44×44）──
-                                        _historyAction(
-                                          icon: Icons.edit_outlined,
-                                          color: YanciTheme.textSecondary
-                                              .withValues(alpha: 0.4),
-                                          onTap: () =>
-                                              _editConversationTitle(conv),
-                                        ),
-                                        _historyAction(
-                                          icon: conv.isStarred
-                                              ? Icons.star_rounded
-                                              : Icons.star_border_rounded,
-                                          color: conv.isStarred
-                                              ? YanciTheme.accent
-                                              : YanciTheme.textSecondary
-                                                    .withValues(alpha: 0.4),
-                                          onTap: () async {
-                                            await DatabaseHelper.toggleStarConversation(
-                                              conv.id,
-                                              !conv.isStarred,
-                                            );
-                                            final updated =
-                                                await DatabaseHelper.getConversations(
-                                                  characterId: charId,
-                                                );
-                                            setDialogState(() {
-                                              searchResults = List.from(
-                                                updated,
-                                              );
-                                              conversations =
-                                                  ContextModeSettings.filterConversations(
-                                                    searchResults,
-                                                    historyFilter,
-                                                  );
-                                            });
-                                          },
-                                        ),
-                                        _historyAction(
-                                          icon: Icons.delete_outline_rounded,
-                                          color: Colors.red.withValues(
-                                            alpha: 0.4,
-                                          ),
-                                          onTap: () async {
-                                            final confirm = await showDialog<bool>(
-                                              context: listCtx,
-                                              builder: (dlgCtx) => AlertDialog(
-                                                shape: RoundedRectangleBorder(
-                                                  borderRadius:
-                                                      BorderRadius.circular(
-                                                        YanciTheme.radiusMd,
-                                                      ),
-                                                ),
-                                                backgroundColor:
-                                                    YanciTheme.surfacePanel,
-                                                content: Text(
-                                                  L.pick(
-                                                    en: 'Delete this conversation?',
-                                                    zhTW: '確認刪除這段對話？',
-                                                  ),
-                                                  style: YanciTheme.bodyText
-                                                      .copyWith(fontSize: 14),
-                                                ),
-                                                actions: [
-                                                  TextButton(
-                                                    onPressed: () =>
-                                                        Navigator.pop(
-                                                          dlgCtx,
-                                                          false,
-                                                        ),
-                                                    child: Text(
-                                                      L.get('cancel'),
-                                                      style: TextStyle(
-                                                        color: YanciTheme
-                                                            .textSecondary,
-                                                      ),
-                                                    ),
-                                                  ),
-                                                  TextButton(
-                                                    onPressed: () =>
-                                                        Navigator.pop(
-                                                          dlgCtx,
-                                                          true,
-                                                        ),
-                                                    child: Text(
-                                                      L.get('confirm_delete'),
-                                                      style: TextStyle(
-                                                        color: Colors.red
-                                                            .withValues(
-                                                              alpha: 0.7,
+                                                    actions: [
+                                                      TextButton(
+                                                        onPressed: () =>
+                                                            Navigator.pop(
+                                                              dlgCtx,
+                                                              false,
                                                             ),
+                                                        child: Text(
+                                                          L.get('cancel'),
+                                                          style: TextStyle(
+                                                            color: YanciTheme
+                                                                .textSecondary,
+                                                          ),
+                                                        ),
                                                       ),
-                                                    ),
+                                                      TextButton(
+                                                        onPressed: () =>
+                                                            Navigator.pop(
+                                                              dlgCtx,
+                                                              true,
+                                                            ),
+                                                        child: Text(
+                                                          L.get(
+                                                            'confirm_delete',
+                                                          ),
+                                                          style: TextStyle(
+                                                            color: Colors.red
+                                                                .withValues(
+                                                                  alpha: 0.7,
+                                                                ),
+                                                          ),
+                                                        ),
+                                                      ),
+                                                    ],
                                                   ),
-                                                ],
-                                              ),
-                                            );
-                                            if (confirm == true) {
-                                              if (KeepAliveService
-                                                      .instance
-                                                      .activeConversationId ==
-                                                  conv.id) {
-                                                await KeepAliveService.instance
-                                                    .stop();
-                                              }
-                                              await DatabaseHelper.deleteConversation(
-                                                conv.id,
-                                              );
-                                              final updated =
-                                                  await DatabaseHelper.getConversations(
-                                                    characterId: charId,
-                                                  );
-                                              setDialogState(() {
-                                                searchResults = List.from(
-                                                  updated,
                                                 );
-                                                conversations =
-                                                    ContextModeSettings.filterConversations(
-                                                      searchResults,
-                                                      historyFilter,
+                                                if (confirm == true) {
+                                                  if (KeepAliveService
+                                                          .instance
+                                                          .activeConversationId ==
+                                                      conv.id) {
+                                                    await KeepAliveService
+                                                        .instance
+                                                        .stop();
+                                                  }
+                                                  await DatabaseHelper.deleteConversation(
+                                                    conv.id,
+                                                  );
+                                                  final updated =
+                                                      await DatabaseHelper.getConversations(
+                                                        characterId: charId,
+                                                      );
+                                                  setDialogState(() {
+                                                    searchResults = List.from(
+                                                      updated,
                                                     );
-                                              });
-                                            }
-                                          },
+                                                    conversations =
+                                                        ContextModeSettings.filterConversations(
+                                                          searchResults,
+                                                          historyFilter,
+                                                        );
+                                                  });
+                                                }
+                                              },
+                                            ),
+                                          ],
                                         ),
-                                      ],
-                                    ),
-                                  ),
-                                );
-                              },
-                            ),
-                          ),
+                                      ),
+                                    );
+                                  },
+                                ),
+                              ),
+                          ],
+                        ),
                       ],
                     ),
                   ),
@@ -725,6 +762,67 @@ extension _HomeSheetMethods on _HomeScreenState {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _HomeHistoryBakedSurface extends StatefulWidget {
+  const _HomeHistoryBakedSurface({required this.preset});
+
+  final BackgroundPreset preset;
+
+  @override
+  State<_HomeHistoryBakedSurface> createState() =>
+      _HomeHistoryBakedSurfaceState();
+}
+
+class _HomeHistoryBakedSurfaceState extends State<_HomeHistoryBakedSurface> {
+  Offset? _offset;
+  Size? _viewport;
+  bool _scheduled = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _scheduleMeasure();
+  }
+
+  void _scheduleMeasure() {
+    if (_scheduled) return;
+    _scheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _scheduled = false;
+      if (!mounted) return;
+      final box = context.findRenderObject();
+      if (box is! RenderBox || !box.hasSize) return;
+      final offset = box.localToGlobal(Offset.zero);
+      final viewport = MediaQuery.sizeOf(context);
+      if (_offset == offset && _viewport == viewport) return;
+      setState(() {
+        _offset = offset;
+        _viewport = viewport;
+      });
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    _scheduleMeasure();
+    if (_offset == null || _viewport == null) {
+      return ColoredBox(color: YanciTheme.surfacePanel);
+    }
+    return BakedCardRegionBlur(
+      file: File(widget.preset.homePath),
+      scale: widget.preset.homeScale,
+      offsetX: widget.preset.homeOffsetX,
+      offsetY: widget.preset.homeOffsetY,
+      blur: widget.preset.homeBlur.clamp(18.0, 36.0).toDouble(),
+      viewportSize: _viewport!,
+      regionOffset: _offset!,
+      devicePixelRatio: MediaQuery.devicePixelRatioOf(context),
+      overlayColor: YanciTheme.surfacePanel.withValues(
+        alpha: YanciTheme.isDark ? 0.78 : 0.84,
       ),
     );
   }

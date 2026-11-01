@@ -227,7 +227,9 @@ extension _ChatStreamMethods on _ChatScreenState {
     required int sourceMessageId,
   }) async {
     try {
-      return await ApiSettings.buildAdapter();
+      return await ApiSettings.buildAdapter(
+        conversationId: widget.conversationId,
+      );
     } on ApiConfigException catch (error) {
       if (!_isCurrentGeneration(generationSerial)) return null;
       _finishFailedGeneration();
@@ -259,5 +261,50 @@ extension _ChatStreamMethods on _ChatScreenState {
     _webSearchActivity = null;
     _pendingWebSearchResult = null;
     _pendingWebSearchFailureContext = '';
+  }
+
+  /// 回覆的可見文字是空的（模型只回了思考或隱藏標籤）：不帶任何對話內容，
+  /// 只記錄長度、輸出 token 與出現過的標籤名，方便定位「回覆不顯示」。
+  void _reportEmptyVisibleReply({
+    required String rawReply,
+    required String provider,
+    required String model,
+    required ApiUsage usage,
+  }) {
+    final tags =
+        RegExp(r'</?([A-Za-z_]{2,32})')
+            .allMatches(rawReply)
+            .map((match) => match.group(1)!.toLowerCase())
+            .toSet()
+            .toList()
+          ..sort();
+    final brackets =
+        RegExp(r'\[([a-z_]{2,32})[:\]]')
+            .allMatches(rawReply)
+            .map((match) => match.group(1)!)
+            .toSet()
+            .toList()
+          ..sort();
+    unawaited(
+      AppErrorLogService.record(
+        error: StateError('empty_visible_reply'),
+        trigger:
+            'empty_visible_reply raw_len=${rawReply.length} '
+            'out_tokens=${usage.completionTokens} '
+            'tags=${tags.join(',')} brackets=${brackets.join(',')}',
+        source: 'chat',
+        provider: provider,
+        model: model,
+      ),
+    );
+    _showChatNotice(
+      L.pick(
+        en: 'The model replied with hidden content only. Please try again.',
+        zhTW: '模型這次只回了隱藏內容，沒有可顯示的文字，請再試一次。',
+        zhCN: '模型这次只回了隐藏内容，没有可显示的文字，请再试一次。',
+      ),
+      tone: ThemedNoticeTone.error,
+      duration: const Duration(seconds: 3),
+    );
   }
 }

@@ -19,6 +19,7 @@ import 'keep_alive_service.dart';
 import 'user_persona_service.dart';
 import 'model_cost_policy.dart';
 import 'portable_backup_bundle.dart';
+import '../utils/app_directories.dart';
 
 class LegacyExportStats {
   final int fileCount;
@@ -267,7 +268,7 @@ class BackupService {
         .split('.')
         .first;
     final exportDir = await _prepareExportDir();
-    final documents = await getApplicationDocumentsDirectory();
+    final documents = await getAppDocumentsDirectory();
     final temporary = await getTemporaryDirectory();
     final snapshotDir = Directory(
       p.join(
@@ -288,6 +289,7 @@ class BackupService {
         backupData: data,
         databaseSnapshot: databaseSnapshot,
         ownedRoot: documents,
+        extraOwnedRoots: <Directory>[await getApplicationSupportDirectory()],
         workingRoot: temporary,
         outputFile: plainBundle,
       );
@@ -416,17 +418,128 @@ class BackupService {
   }
 
   static Future<String> _importPortableBundleUnlocked(String path) async {
-    final documents = await getApplicationDocumentsDirectory();
+    final documents = await getAppDocumentsDirectory();
     final extracted = await PortableBackupBundle.extract(
       bundle: File(path),
       destinationRoot: documents,
     );
+    final String summary;
     try {
-      return await _importFromJsonUnlocked(extracted.data);
+      summary = await _importFromJsonUnlocked(extracted.data);
     } catch (_) {
       await extracted.discard();
       rethrow;
     }
+    await _purgeOlderImportedMedia(keep: extracted.mediaDirectory);
+    return summary;
+  }
+
+  /// 可攜備份還原是整個覆蓋：成功後資料只指向這次解出的
+  /// HoltImportedMedia/<時間戳>/，更早還原留下的資料夾已沒人在用。
+  /// 失敗不影響還原結果。
+  static Future<void> _purgeOlderImportedMedia({required Directory keep}) async {
+    try {
+      final root = keep.parent;
+      if (p.basename(root.path) != 'HoltImportedMedia' || !await root.exists()) {
+        return;
+      }
+      await for (final entity in root.list(followLinks: false)) {
+        if (entity is Directory && !p.equals(entity.path, keep.path)) {
+          await entity.delete(recursive: true);
+        }
+      }
+    } catch (error) {
+      debugPrint('Imported media cleanup failed (${error.runtimeType})');
+    }
+  }
+
+  /// 自動本地備份（最新一份與上一份）的時間；不存在就是 null。
+  static Future<({DateTime? current, DateTime? previous})>
+  localBackupTimes() async {
+    Future<DateTime?> read(Directory dir) async {
+      try {
+        final meta = File(p.join(dir.path, 'backup_meta.json'));
+        if (!await meta.exists() ||
+            !await File(p.join(dir.path, 'yanci.db')).exists()) {
+          return null;
+        }
+        final decoded = jsonDecode(await meta.readAsString());
+        if (decoded is! Map) return null;
+        return DateTime.tryParse(decoded['backed_up_at']?.toString() ?? '');
+      } catch (_) {
+        return null;
+      }
+    }
+
+    final current = await _getBackupDir(create: false);
+    return (
+      current: await read(current),
+      previous: await read(Directory('${current.path}.prev')),
+    );
+  }
+
+  /// 從自動本地備份還原。媒體檔一直在本機，所以只還原資料庫內容與偏好；
+  /// 走跟匯入備份同一條「先驗證、單一交易整個覆蓋、失敗全數回滾」流程，
+  /// 舊 schema 的快照也由同一套升級邏輯處理。
+  static Future<String> restoreLocalBackup({bool previous = false}) {
+    return _operationLock.synchronized(() async {
+      final current = await _getBackupDir(create: false);
+      final dir = previous ? Directory('${current.path}.prev') : current;
+      final snapshot = File(p.join(dir.path, 'yanci.db'));
+      if (!await snapshot.exists()) {
+        throw StateError('找不到自動備份');
+      }
+      final temporary = await getTemporaryDirectory();
+      final copy = File(
+        p.join(
+          temporary.path,
+          'holt_local_restore_${DateTime.now().microsecondsSinceEpoch}.db',
+        ),
+      );
+      await snapshot.copy(copy.path);
+      Database? source;
+      try {
+        source = await openDatabase(
+          copy.path,
+          readOnly: true,
+          singleInstance: false,
+        );
+        final dbVersion = _pragmaInt(
+          await source.rawQuery('PRAGMA user_version'),
+          'user_version',
+        );
+        final existingTables = (await source.rawQuery(
+          "SELECT name FROM sqlite_master WHERE type = 'table'",
+        )).map((row) => row['name'].toString()).toSet();
+        final data = <String, dynamic>{
+          'version': exportVersion,
+          'type': 'holt_full_export',
+          'app': 'Holt',
+          'exported_at': DateTime.now().toIso8601String(),
+          'schema': <String, Object?>{
+            'database_version': dbVersion,
+            'tables': appTables,
+          },
+        };
+        for (final table in appTables) {
+          data[table] = existingTables.contains(table)
+              ? (await source.query(table))
+                    .map((row) => Map<String, Object?>.from(row))
+                    .toList(growable: false)
+              : <Map<String, Object?>>[];
+        }
+        final preferencesFile = File(p.join(dir.path, 'preferences.json'));
+        data['preferences'] = await preferencesFile.exists()
+            ? jsonDecode(await preferencesFile.readAsString())
+            : <String, Object?>{};
+        await source.close();
+        source = null;
+        return await _importFromJsonUnlocked(data);
+      } finally {
+        await source?.close();
+        if (await copy.exists()) await copy.delete();
+      }
+    });
   }
 
   static Future<String> _importFromJsonUnlocked(
@@ -2885,7 +2998,7 @@ class BackupService {
   }
 
   static Future<Directory> _getBackupDir({bool create = true}) async {
-    final documents = await getApplicationDocumentsDirectory();
+    final documents = await getAppDocumentsDirectory();
     final dir = Directory(p.join(documents.path, 'HoltBackup'));
     if (create && !await dir.exists()) await dir.create(recursive: true);
     return dir;

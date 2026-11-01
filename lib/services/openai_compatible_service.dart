@@ -13,6 +13,7 @@ import 'stream_transport.dart';
 import 'system_context_debug.dart';
 import 'token_estimator.dart';
 import 'provider_content_parser.dart';
+import 'reasoning_effort.dart';
 import 'cache/deepinfra_cache_policy.dart';
 
 /// OpenAI 兼容 API（支持任何中轉站 / 自建端點）
@@ -22,6 +23,7 @@ class OpenAICompatibleService implements ApiAdapter {
   final String baseUrl; // 例：https://api.openai.com/v1
   final String modelPrefixToStrip;
   final bool thinkingEnabled;
+  final String reasoningEffort;
   final String providerId;
   final String providerLabel;
   final OpenAICompatibleCapabilities? capabilities;
@@ -33,6 +35,7 @@ class OpenAICompatibleService implements ApiAdapter {
     required this.baseUrl,
     this.modelPrefixToStrip = '',
     this.thinkingEnabled = false,
+    this.reasoningEffort = ReasoningEffort.auto,
     this.providerId = 'openai_compatible',
     this.providerLabel = 'OpenAI-compatible API',
     this.capabilities,
@@ -416,6 +419,7 @@ class OpenAICompatibleService implements ApiAdapter {
 
         try {
           final json = jsonDecode(data);
+          StreamPayloadException.throwIfPresent(json, provider: providerLabel);
           if (json['usage'] != null) requestStats = _extractUsage(json);
           final finishReason = json['choices']?[0]?['finish_reason']
               ?.toString();
@@ -443,6 +447,8 @@ class OpenAICompatibleService implements ApiAdapter {
             }
             yield delta;
           }
+        } on StreamPayloadException {
+          rethrow;
         } catch (_) {}
       }
       if (reasoningOpen) yield '</think>';
@@ -692,11 +698,17 @@ class OpenAICompatibleService implements ApiAdapter {
       }
     }
 
+    final deepInfraReasoningEffort = providerId.toLowerCase() == 'deepinfra'
+        ? _deepInfraReasoningEffort(model)
+        : null;
     final body = <String, dynamic>{
       'model': _modelForRequest(model),
       'messages': allMessages,
       'stream': stream,
     };
+    if (deepInfraReasoningEffort case final effort?) {
+      body['reasoning_effort'] = effort;
+    }
     if (providerId.toLowerCase() == 'deepinfra') {
       final deepInfraBreakpointIndex = deepInfraStableBoundary == null
           ? -1
@@ -770,6 +782,9 @@ class OpenAICompatibleService implements ApiAdapter {
     if (explicitlyUnsupported && error.contains('cache_control')) {
       changed = _removeKeyRecursively(downgraded, 'cache_control') || changed;
     }
+    if (explicitlyUnsupported && error.contains('reasoning_effort')) {
+      changed = downgraded.remove('reasoning_effort') != null || changed;
+    }
     if (explicitlyUnsupported &&
         (error.contains('tool_choice') || error.contains('tools'))) {
       changed = downgraded.remove('tools') != null || changed;
@@ -779,6 +794,21 @@ class OpenAICompatibleService implements ApiAdapter {
       changed = _collapseMidConversationSystems(messages) || changed;
     }
     return changed ? downgraded : null;
+  }
+
+  Object? _deepInfraReasoningEffort(String model) {
+    final effort = ReasoningEffort.normalize(reasoningEffort);
+    if (effort == ReasoningEffort.auto) return null;
+    final lower = model.toLowerCase();
+    if (lower.contains('deepseek-v4.1')) {
+      return switch (effort) {
+        ReasoningEffort.low => 25,
+        ReasoningEffort.medium => 60,
+        ReasoningEffort.high => 90,
+        _ => null,
+      };
+    }
+    return effort;
   }
 
   static bool _removeKeyRecursively(dynamic value, String key) {

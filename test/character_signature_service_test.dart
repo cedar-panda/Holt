@@ -73,6 +73,17 @@ void main() {
     );
   });
 
+  test('normalizer removes reply wrapper tags, even unclosed ones', () {
+    expect(
+      CharacterSignatureService.normalizeResponse('<reply>今天也想你。</reply>'),
+      '今天也想你。',
+    );
+    expect(
+      CharacterSignatureService.normalizeResponse('<reply>今天也想你。'),
+      '今天也想你。',
+    );
+  });
+
   test('normalizer never persists visible thinking content', () {
     expect(
       CharacterSignatureService.normalizeResponse(

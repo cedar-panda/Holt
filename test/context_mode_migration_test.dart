@@ -67,7 +67,12 @@ void main() {
   test('fresh schema enforces context values and creates RP indexes', () async {
     await DatabaseHelper.createSchemaForTesting(db);
 
-    expect(DatabaseHelper.schemaVersionForTesting, 84);
+    expect(DatabaseHelper.schemaVersionForTesting, 86);
+    expect(await _columnNames(db, 'characters'), contains('remark'));
+    expect(
+      await _columnNames(db, 'characters'),
+      contains('tts_voice_ids_json'),
+    );
     expect(
       await _columnNames(db, 'conversations'),
       containsAll(<String>[

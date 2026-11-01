@@ -10,6 +10,7 @@ import '../theme/app_theme.dart';
 import '../services/sticker_service.dart';
 import '../services/locale_strings.dart';
 import '../services/tts_service.dart';
+import '../services/api_adapter.dart';
 import '../services/settings_manager.dart';
 import '../services/memory_guard_service.dart';
 import '../memory/database.dart';
@@ -33,6 +34,7 @@ import 'thinking_context_widgets.dart';
 import 'themed_notice.dart';
 import 'gradient_background.dart';
 import 'message_image_grid.dart';
+import '../utils/thinking_blocks.dart';
 
 /// 聊天氣泡 — 思考鏈 + markdown + 表情包圖片 + 長按菜單
 class ChatBubble extends StatefulWidget {
@@ -52,7 +54,11 @@ class ChatBubble extends StatefulWidget {
   final bool showAvatarImage;
   final bool groupedWithPrevious;
   final bool groupedWithNext;
+  final bool tightGroupWithPrevious;
+  final bool tightGroupWithNext;
   final bool showToolbar;
+  final String? toolbarText;
+  final String? toolbarMessageId;
   final bool cacheHit;
   final bool incomplete;
   final VoidCallback? onRetryIncomplete;
@@ -98,6 +104,9 @@ class ChatBubble extends StatefulWidget {
   /// 對方已回覆 → 禮物卡片顯示「已收下」
   final bool giftAccepted;
 
+  /// 角色從商店送給 user；顯示「已收到」而不是「禮物已送出」。
+  final bool giftReceivedFromCharacter;
+
   /// 結婚證書（非 null 時在氣泡下方顯示證書卡）
   final MarriageCertDisplay? marriageCert;
 
@@ -122,7 +131,11 @@ class ChatBubble extends StatefulWidget {
     this.showAvatarImage = true,
     this.groupedWithPrevious = false,
     this.groupedWithNext = false,
+    this.tightGroupWithPrevious = false,
+    this.tightGroupWithNext = false,
     this.showToolbar = true,
+    this.toolbarText,
+    this.toolbarMessageId,
     this.cacheHit = false,
     this.incomplete = false,
     this.onRetryIncomplete,
@@ -149,6 +162,7 @@ class ChatBubble extends StatefulWidget {
     this.onTransferUpdated,
     this.giftName,
     this.giftAccepted = false,
+    this.giftReceivedFromCharacter = false,
     this.marriageCert,
     this.onCertSignTap,
   });
@@ -323,23 +337,26 @@ class _ChatBubbleState extends State<ChatBubble>
   }
 
   Future<void> _checkSaved() async {
-    if (widget.isUser || widget.messageId == null) return;
+    final messageId = widget.toolbarMessageId ?? widget.messageId;
+    if (widget.isUser || messageId == null) return;
     try {
-      final saved = await DatabaseHelper.isMessageSaved(widget.messageId!);
+      final saved = await DatabaseHelper.isMessageSaved(messageId);
       if (mounted) setState(() => _isSaved = saved);
     } catch (_) {}
   }
 
   Future<void> _toggleSave() async {
-    if (widget.messageId == null) return;
+    final messageId = widget.toolbarMessageId ?? widget.messageId;
+    final text = widget.toolbarText ?? widget.text;
+    if (messageId == null) return;
     HapticFeedback.lightImpact();
     try {
       if (_isSaved) {
-        await DatabaseHelper.unsaveMessage(widget.messageId!);
+        await DatabaseHelper.unsaveMessage(messageId);
       } else {
         await DatabaseHelper.saveMessage(
-          messageId: widget.messageId!,
-          content: widget.text
+          messageId: messageId,
+          content: text
               .replaceAll(TtsService.audioTagRe, '')
               .replaceAll(RegExp(r'\[call_event:[^\]]*\]'), '')
               .trim(),
@@ -368,6 +385,8 @@ class _ChatBubbleState extends State<ChatBubble>
 
   @override
   void dispose() {
+    _cacheHitPopover?.remove();
+    _cacheHitPopover = null;
     _thinkingSheet.dispose();
     _entryCtrl.dispose();
     super.dispose();
@@ -489,14 +508,17 @@ class _ChatBubbleState extends State<ChatBubble>
     if (clean.isEmpty) return;
     TtsService.speak(
       clean,
-      messageId: widget.messageId,
+      // 必須和 TtsPlayButton 監聽的 id 一致：拆分回覆的最後一段
+      // messageId 是 msg_X_N、工具列用 msg_X，不一致時有聲音但沒動畫。
+      messageId: widget.toolbarMessageId ?? widget.messageId,
       conversationId: widget.conversationId,
       conversationTitle: widget.conversationTitle,
       characterId: widget.characterId,
     );
   }
 
-  (String?, String) _parseThinking(String text) {
+  (String?, String) _parseThinking(String rawText) {
+    final text = collapseRepeatedThinking(rawText);
     final patterns = [
       RegExp(r'<think>(.*?)</think>', dotAll: true),
       RegExp(r'<thinking>(.*?)</thinking>', dotAll: true),
@@ -537,12 +559,16 @@ class _ChatBubbleState extends State<ChatBubble>
           children: [
             BubbleActionGlyph(
               type: BubbleActionGlyphType.copy,
-              color: YanciTheme.textSecondary,
+              color: YanciTheme.accent.withValues(alpha: 0.8),
             ),
             const SizedBox(width: 8),
             Text(
               L.get('chat_copy'),
-              style: TextStyle(fontSize: 13, color: YanciTheme.textPrimary),
+              style: TextStyle(
+                fontSize: 13,
+                color: YanciTheme.textPrimary,
+                fontFamily: YanciTheme.fontFamily,
+              ),
             ),
           ],
         ),
@@ -559,12 +585,16 @@ class _ChatBubbleState extends State<ChatBubble>
               Icon(
                 Icons.edit_outlined,
                 size: 16,
-                color: YanciTheme.textSecondary,
+                color: YanciTheme.accent.withValues(alpha: 0.8),
               ),
               const SizedBox(width: 8),
               Text(
                 L.pick(en: 'Edit and resend', zhTW: '編輯重發'),
-                style: TextStyle(fontSize: 13, color: YanciTheme.textPrimary),
+                style: TextStyle(
+                  fontSize: 13,
+                  color: YanciTheme.textPrimary,
+                  fontFamily: YanciTheme.fontFamily,
+                ),
               ),
             ],
           ),
@@ -574,8 +604,15 @@ class _ChatBubbleState extends State<ChatBubble>
     showMenu<String>(
       context: ctx,
       position: RelativeRect.fromLTRB(pos.dx, pos.dy, pos.dx, pos.dy),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      color: YanciTheme.surfacePanel.withValues(alpha: 0.98),
+      // 跟主題走：主題色調面板＋細邊，不用 Material 預設陰影與色調層。
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(14),
+        side: BorderSide(color: YanciTheme.themedOverlayBorder, width: 0.6),
+      ),
+      color: YanciTheme.themedOverlaySurface,
+      elevation: 0,
+      shadowColor: Colors.transparent,
+      surfaceTintColor: Colors.transparent,
       items: items,
     ).then((v) {
       if (v == 'copy') {
@@ -627,20 +664,25 @@ class _ChatBubbleState extends State<ChatBubble>
     required double radius,
   }) {
     final outer = Radius.circular(singleLine ? YanciTheme.radiusPill : radius);
-    final joined = Radius.circular(
+    final softJoined = Radius.circular(
       singleLine ? 14.0 : (radius * 0.70).clamp(8.0, 22.0),
     );
+    final tightJoined = Radius.circular((radius * 0.32).clamp(5.5, 7.5));
+    final previousJoined = widget.tightGroupWithPrevious
+        ? tightJoined
+        : softJoined;
+    final nextJoined = widget.tightGroupWithNext ? tightJoined : softJoined;
     if (widget.isUser) {
       return BorderRadius.only(
         topLeft: outer,
         bottomLeft: outer,
-        topRight: widget.groupedWithPrevious ? joined : outer,
-        bottomRight: widget.groupedWithNext ? joined : outer,
+        topRight: widget.groupedWithPrevious ? previousJoined : outer,
+        bottomRight: widget.groupedWithNext ? nextJoined : outer,
       );
     }
     return BorderRadius.only(
-      topLeft: widget.groupedWithPrevious ? joined : outer,
-      bottomLeft: widget.groupedWithNext ? joined : outer,
+      topLeft: widget.groupedWithPrevious ? previousJoined : outer,
+      bottomLeft: widget.groupedWithNext ? nextJoined : outer,
       topRight: outer,
       bottomRight: outer,
     );
@@ -666,6 +708,10 @@ class _ChatBubbleState extends State<ChatBubble>
         .replaceAll(RegExp(r'\[call_action:[^\]]*\]'), '') // 通話操作隱藏
         .replaceAll(RegExp(r'\[transfer:\d+\]'), '') // 轉帳標記隱藏（卡片顯示）
         .replaceAll(RegExp(r'\[gift:[^\]\n]{1,40}\]'), '') // 送禮標記隱藏
+        .replaceAll(
+          RegExp(r'\[gift_received:[^\]\n]{1,40}\]'),
+          '',
+        ) // 角色送達禮物標記隱藏
         .replaceAll(RegExp(r'\[scratch_gift:\w+\]'), '') // 刮刮卡禮物標記隱藏
         .trim();
     if (widget.isUser && displayText.startsWith('[shop_invite]')) {
@@ -676,17 +722,8 @@ class _ChatBubbleState extends State<ChatBubble>
       );
     }
     if (!widget.isUser) {
-      displayText = displayText
-          .replaceAll(RegExp(r'<memo>[\s\S]*?(</memo>|$)'), '')
-          .replaceAll(RegExp(r'<memo_del>[\s\S]*?(</memo_del>|$)'), '')
-          .replaceAll(RegExp(r'<memo_merge>[\s\S]*?(</memo_merge>|$)'), '')
-          .replaceAll(RegExp(r'<memo_update>[\s\S]*?(</memo_update>|$)'), '')
-          .replaceAll(RegExp(r'<persona_note>[\s\S]*?(</persona_note>|$)'), '')
-          .replaceAll(RegExp(r'<tool_calls?>[\s\S]*?(</tool_calls?>|$)'), '')
-          .replaceAll(RegExp(r'<draw>[\s\S]*?(</draw>|$)'), '')
-          .replaceAll(RegExp(r'<emo>[\s\S]*?(</emo>|$)'), '')
-          .replaceAll(RegExp(r'<emo_resolve>[\s\S]*?(</emo_resolve>|$)'), '')
-          .trim();
+      // 協議標籤清單統一在 ProtocolTags（含殘缺標籤），這裡只是保險層。
+      displayText = VisibleModelOutput.protocolStripped(displayText);
     }
     final imagePaths = widget.imagePaths.isNotEmpty
         ? widget.imagePaths
@@ -705,9 +742,13 @@ class _ChatBubbleState extends State<ChatBubble>
         widget.scratchData != null &&
         (widget.scratchData!.who == 'user' ? widget.isUser : !widget.isUser);
 
-    final shouldShowTransfer = widget.transferData != null;
+    final transferData = widget.transferData;
+    final shouldShowTransfer =
+        transferData != null &&
+        ((transferData.direction == 'toChar' && widget.isUser) ||
+            (transferData.direction == 'toUser' && !widget.isUser));
 
-    final shouldShowGift = widget.giftName != null && widget.isUser;
+    final shouldShowGift = widget.giftName != null;
 
     final shouldShowMarriageCert = widget.marriageCert != null;
 
@@ -752,8 +793,12 @@ class _ChatBubbleState extends State<ChatBubble>
                 : aiFlatMode
                 ? math.max(40.0, sw * 0.115)
                 : sw * (widget.showAvatar ? 0.15 : 0.2),
-            top: widget.groupedWithPrevious ? 2 : YanciTheme.spacingSm,
-            bottom: widget.groupedWithNext ? 2 : YanciTheme.spacingSm,
+            top: widget.groupedWithPrevious
+                ? (widget.tightGroupWithPrevious ? 1.5 : 2)
+                : YanciTheme.spacingSm,
+            bottom: widget.groupedWithNext
+                ? (widget.tightGroupWithNext ? 1.5 : 2)
+                : YanciTheme.spacingSm,
           ),
           child: Align(
             alignment: widget.isUser
@@ -868,220 +913,255 @@ class _ChatBubbleState extends State<ChatBubble>
                                       CrossAxisAlignment.stretch,
                                   children: [
                                     if (hasImageContent)
-                                      MessageImageGrid(
-                                        paths: imagePaths,
-                                        onTap: (path) {
-                                          final viewable = imagePaths
-                                              .where((p) => p != 'generating')
-                                              .toList();
-                                          _openFullScreenImage(
-                                            context,
-                                            viewable,
-                                            viewable.indexOf(path),
-                                          );
-                                        },
-                                        onLongPress: (path) =>
-                                            _showImageMenu(context, path),
+                                      // 外層 Column 是 stretch：不包 Align 的話，
+                                      // 配文比縮略圖寬時圖會被硬拉到配文寬度。
+                                      Align(
+                                        alignment: widget.isUser
+                                            ? Alignment.centerRight
+                                            : Alignment.centerLeft,
+                                        child: MessageImageGrid(
+                                          paths: imagePaths,
+                                          onTap: (path) {
+                                            final viewable = imagePaths
+                                                .where((p) => p != 'generating')
+                                                .toList();
+                                            _openFullScreenImage(
+                                              context,
+                                              viewable,
+                                              viewable.indexOf(path),
+                                            );
+                                          },
+                                          onLongPress: (path) =>
+                                              _showImageMenu(context, path),
+                                        ),
                                       ),
+                                    if (hasImageContent && hasBubbleContent)
+                                      const SizedBox(height: 6),
                                     if (hasBubbleContent)
-                                      Builder(
-                                        builder: (context) {
-                                          final overlayAsset = widget.isUser
-                                              ? YanciTheme.bubbleUserAsset
-                                              : YanciTheme.bubbleAiAsset;
-                                          final imageBackgroundBubbleColor =
-                                              hasCustomChatBackground
-                                              ? (widget.isUser
-                                                    ? _chatBackgroundUserBubbleColor()
-                                                    : _chatBackgroundAiBubbleColor())
-                                              : null;
-                                          final imageBackgroundBubbleOpacity =
-                                              hasCustomChatBackground
-                                              ? _chatBackgroundBubbleOpacity()
-                                              : 1.0;
-                                          final isSingleLinePill =
-                                              _usesSingleLinePill(
-                                                context,
-                                                displayText,
-                                                sw,
-                                              );
-                                          final bubbleRadius =
-                                              _bubbleBorderRadius(
-                                                singleLine: isSingleLinePill,
-                                                radius: r,
-                                              );
-                                          final baseBubbleColor =
-                                              imageBackgroundBubbleColor ??
-                                              (widget.isUser
-                                                  ? YanciTheme.userBubble
-                                                  : YanciTheme.aiBubble);
-                                          final presetAiGradient =
-                                              imageBackgroundBubbleColor ==
-                                                      null &&
-                                                  !widget.isUser
-                                              ? YanciTheme.aiBubbleGradient
-                                              : null;
-                                          final baseBorderColor = widget.isUser
-                                              ? YanciTheme.userBubbleBorder
-                                              : YanciTheme.aiBubbleBorder;
-                                          final bubble = Container(
-                                            key: const ValueKey(
-                                              'chat-bubble-surface',
-                                            ),
-                                            padding: EdgeInsets.symmetric(
-                                              horizontal: aiFlatMode
-                                                  ? 4.0
-                                                  : 15.0,
-                                              vertical: aiFlatMode ? 6.0 : 12,
-                                            ),
-                                            decoration: aiFlatMode
-                                                ? null
-                                                : BoxDecoration(
-                                                    color: baseBubbleColor,
-                                                    gradient:
-                                                        presetAiGradient ??
-                                                        YanciTheme.bubbleGlazeGradient(
-                                                          baseBubbleColor,
-                                                          isDark:
-                                                              YanciTheme.isDark,
-                                                        ),
-                                                    borderRadius: bubbleRadius,
-                                                    border: overlayAsset == null
-                                                        ? Border.all(
-                                                            color: YanciTheme.bubbleGlazeBorderColor(
-                                                              baseBorderColor
-                                                                  .withValues(
-                                                                    alpha:
-                                                                        baseBorderColor
-                                                                            .a *
-                                                                        imageBackgroundBubbleOpacity,
-                                                                  ),
-                                                              isDark: YanciTheme
-                                                                  .isDark,
-                                                            ),
-                                                            width: 0.65,
-                                                          )
-                                                        : null,
-                                                    boxShadow:
-                                                        YanciTheme.bubbleGlazeShadows(
-                                                              isDark: YanciTheme
-                                                                  .isDark,
-                                                            )
-                                                            .map(
-                                                              (
-                                                                shadow,
-                                                              ) => BoxShadow(
-                                                                color: shadow
-                                                                    .color
+                                      _alignBesideImages(
+                                        hasImages: hasImageContent,
+                                        child: Builder(
+                                          builder: (context) {
+                                            final overlayAsset = widget.isUser
+                                                ? YanciTheme.bubbleUserAsset
+                                                : YanciTheme.bubbleAiAsset;
+                                            final imageBackgroundBubbleColor =
+                                                hasCustomChatBackground
+                                                ? (widget.isUser
+                                                      ? _chatBackgroundUserBubbleColor()
+                                                      : _chatBackgroundAiBubbleColor())
+                                                : null;
+                                            final imageBackgroundBubbleOpacity =
+                                                hasCustomChatBackground
+                                                ? _chatBackgroundBubbleOpacity()
+                                                : 1.0;
+                                            final isSingleLinePill =
+                                                _usesSingleLinePill(
+                                                  context,
+                                                  displayText,
+                                                  sw,
+                                                );
+                                            final bubbleRadius =
+                                                _bubbleBorderRadius(
+                                                  singleLine: isSingleLinePill,
+                                                  radius: r,
+                                                );
+                                            final baseBubbleColor =
+                                                imageBackgroundBubbleColor ??
+                                                (widget.isUser
+                                                    ? YanciTheme.userBubble
+                                                    : YanciTheme.aiBubble);
+                                            final presetAiGradient =
+                                                imageBackgroundBubbleColor ==
+                                                        null &&
+                                                    !widget.isUser
+                                                ? YanciTheme.aiBubbleGradient
+                                                : null;
+                                            final baseBorderColor =
+                                                widget.isUser
+                                                ? YanciTheme.userBubbleBorder
+                                                : YanciTheme.aiBubbleBorder;
+                                            final bubble = Container(
+                                              key: const ValueKey(
+                                                'chat-bubble-surface',
+                                              ),
+                                              padding: EdgeInsets.symmetric(
+                                                horizontal: aiFlatMode
+                                                    ? 4.0
+                                                    : 15.0,
+                                                vertical: aiFlatMode ? 6.0 : 12,
+                                              ),
+                                              decoration: aiFlatMode
+                                                  ? null
+                                                  : BoxDecoration(
+                                                      color: baseBubbleColor,
+                                                      gradient:
+                                                          presetAiGradient ??
+                                                          YanciTheme.bubbleGlazeGradient(
+                                                            baseBubbleColor,
+                                                            isDark: YanciTheme
+                                                                .isDark,
+                                                          ),
+                                                      borderRadius:
+                                                          bubbleRadius,
+                                                      border:
+                                                          overlayAsset == null
+                                                          ? Border.all(
+                                                              color: YanciTheme.bubbleGlazeBorderColor(
+                                                                baseBorderColor
                                                                     .withValues(
                                                                       alpha:
-                                                                          shadow
-                                                                              .color
+                                                                          baseBorderColor
                                                                               .a *
                                                                           imageBackgroundBubbleOpacity,
                                                                     ),
-                                                                blurRadius: shadow
-                                                                    .blurRadius,
-                                                                spreadRadius: shadow
-                                                                    .spreadRadius,
-                                                                offset: shadow
-                                                                    .offset,
+                                                                isDark:
+                                                                    YanciTheme
+                                                                        .isDark,
                                                               ),
+                                                              width: 0.65,
                                                             )
-                                                            .toList(),
-                                                  ),
-                                            child: Opacity(
-                                              opacity: _contentOpacity.value,
-                                              child: Column(
-                                                mainAxisSize: MainAxisSize.min,
-                                                crossAxisAlignment:
-                                                    widget.isUser
-                                                    ? CrossAxisAlignment.end
-                                                    : CrossAxisAlignment.start,
-                                                children: [
-                                                  if (displayText.isNotEmpty)
-                                                    Row(
-                                                      mainAxisSize:
-                                                          MainAxisSize.min,
-                                                      crossAxisAlignment:
-                                                          CrossAxisAlignment
-                                                              .end,
-                                                      children: [
-                                                        Flexible(
-                                                          child: _MixedContent(
-                                                            text: displayText,
-                                                            characterId: widget
-                                                                .characterId,
-                                                            color:
-                                                                hasCustomChatBackground
-                                                                ? _chatBackgroundBubbleTextColor()
-                                                                : YanciTheme
-                                                                      .textOnBubble,
-                                                            selectable:
-                                                                !widget.isUser,
-                                                          ),
-                                                        ),
-                                                      ],
-                                                    ),
-                                                  if (displayText.isEmpty &&
-                                                      widget.isStreaming)
-                                                    const _TypingIndicator(),
-                                                ],
-                                              ),
-                                            ),
-                                          );
-
-                                          final bubbleWithOverlay =
-                                              overlayAsset != null
-                                              ? Stack(
-                                                  children: [
-                                                    bubble,
-                                                    Positioned.fill(
-                                                      child: IgnorePointer(
-                                                        child: Opacity(
-                                                          opacity:
-                                                              imageBackgroundBubbleOpacity,
-                                                          child: Image.asset(
-                                                            overlayAsset,
-                                                            key: const ValueKey(
-                                                              'themed-bubble-frame',
-                                                            ),
-                                                            scale: 16,
-                                                            fit: BoxFit.fill,
-                                                            centerSlice:
-                                                                const Rect.fromLTRB(
-                                                                  20,
-                                                                  20,
-                                                                  60,
-                                                                  60,
+                                                          : null,
+                                                      boxShadow:
+                                                          YanciTheme.bubbleGlazeShadows(
+                                                                isDark:
+                                                                    YanciTheme
+                                                                        .isDark,
+                                                              )
+                                                              .map(
+                                                                (
+                                                                  shadow,
+                                                                ) => BoxShadow(
+                                                                  color: shadow.color.withValues(
+                                                                    alpha:
+                                                                        shadow
+                                                                            .color
+                                                                            .a *
+                                                                        imageBackgroundBubbleOpacity *
+                                                                        (widget.tightGroupWithNext
+                                                                            ? 0.45
+                                                                            : 1.0),
+                                                                  ),
+                                                                  blurRadius:
+                                                                      shadow
+                                                                          .blurRadius *
+                                                                      (widget.tightGroupWithNext
+                                                                          ? 0.5
+                                                                          : 1.0),
+                                                                  spreadRadius:
+                                                                      shadow
+                                                                          .spreadRadius,
+                                                                  offset: Offset(
+                                                                    shadow
+                                                                        .offset
+                                                                        .dx,
+                                                                    shadow
+                                                                            .offset
+                                                                            .dy *
+                                                                        (widget.tightGroupWithNext
+                                                                            ? 0.35
+                                                                            : 1.0),
+                                                                  ),
                                                                 ),
-                                                            filterQuality:
-                                                                FilterQuality
-                                                                    .high,
-                                                            errorBuilder:
-                                                                (_, _, _) =>
-                                                                    const SizedBox.shrink(),
+                                                              )
+                                                              .toList(),
+                                                    ),
+                                              child: Opacity(
+                                                opacity: _contentOpacity.value,
+                                                child: Column(
+                                                  mainAxisSize:
+                                                      MainAxisSize.min,
+                                                  crossAxisAlignment:
+                                                      widget.isUser
+                                                      ? CrossAxisAlignment.end
+                                                      : CrossAxisAlignment
+                                                            .start,
+                                                  children: [
+                                                    if (displayText.isNotEmpty)
+                                                      Row(
+                                                        mainAxisSize:
+                                                            MainAxisSize.min,
+                                                        crossAxisAlignment:
+                                                            CrossAxisAlignment
+                                                                .end,
+                                                        children: [
+                                                          Flexible(
+                                                            child: _MixedContent(
+                                                              text: displayText,
+                                                              characterId: widget
+                                                                  .characterId,
+                                                              color:
+                                                                  hasCustomChatBackground
+                                                                  ? _chatBackgroundBubbleTextColor()
+                                                                  : YanciTheme
+                                                                        .textOnBubble,
+                                                              selectable:
+                                                                  !widget
+                                                                      .isUser,
+                                                            ),
+                                                          ),
+                                                        ],
+                                                      ),
+                                                    if (displayText.isEmpty &&
+                                                        widget.isStreaming)
+                                                      const _TypingIndicator(),
+                                                  ],
+                                                ),
+                                              ),
+                                            );
+
+                                            final bubbleWithOverlay =
+                                                overlayAsset != null
+                                                ? Stack(
+                                                    children: [
+                                                      bubble,
+                                                      Positioned.fill(
+                                                        child: IgnorePointer(
+                                                          child: Opacity(
+                                                            opacity:
+                                                                imageBackgroundBubbleOpacity,
+                                                            child: Image.asset(
+                                                              overlayAsset,
+                                                              key: const ValueKey(
+                                                                'themed-bubble-frame',
+                                                              ),
+                                                              scale: 16,
+                                                              fit: BoxFit.fill,
+                                                              centerSlice:
+                                                                  const Rect.fromLTRB(
+                                                                    20,
+                                                                    20,
+                                                                    60,
+                                                                    60,
+                                                                  ),
+                                                              filterQuality:
+                                                                  FilterQuality
+                                                                      .high,
+                                                              errorBuilder:
+                                                                  (_, _, _) =>
+                                                                      const SizedBox.shrink(),
+                                                            ),
                                                           ),
                                                         ),
                                                       ),
-                                                    ),
-                                                  ],
-                                                )
-                                              : bubble;
+                                                    ],
+                                                  )
+                                                : bubble;
 
-                                          if (!widget.isUser ||
-                                              widget.captureMode) {
-                                            return bubbleWithOverlay;
-                                          }
-                                          return GestureDetector(
-                                            onLongPressStart: (d) =>
-                                                _showContextMenu(
-                                                  context,
-                                                  d.globalPosition,
-                                                ),
-                                            child: bubbleWithOverlay,
-                                          );
-                                        },
+                                            if (!widget.isUser ||
+                                                widget.captureMode) {
+                                              return bubbleWithOverlay;
+                                            }
+                                            return GestureDetector(
+                                              onLongPressStart: (d) =>
+                                                  _showContextMenu(
+                                                    context,
+                                                    d.globalPosition,
+                                                  ),
+                                              child: bubbleWithOverlay,
+                                            );
+                                          },
+                                        ),
                                       ),
                                     if ((hasBubbleContent || hasImageContent) &&
                                         widget.timestamp != null &&
@@ -1118,14 +1198,17 @@ class _ChatBubbleState extends State<ChatBubble>
                                               ),
                                               if (!widget.isUser &&
                                                   widget.showToolbar) ...[
-                                                const SizedBox(width: 10),
+                                                const SizedBox(width: 5),
                                                 _buildToolbarTapTarget(
                                                   label: L.get('chat_copy'),
                                                   onTap: () {
                                                     HapticFeedback.lightImpact();
                                                     Clipboard.setData(
                                                       ClipboardData(
-                                                        text: displayText,
+                                                        text:
+                                                            widget
+                                                                .toolbarText ??
+                                                            displayText,
                                                       ),
                                                     );
                                                     showThemedPillNotice(
@@ -1163,8 +1246,10 @@ class _ChatBubbleState extends State<ChatBubble>
                                                     zhTW: '朗讀',
                                                     zhCN: '朗读',
                                                   ),
-                                                  onTap: () =>
-                                                      _speakText(widget.text),
+                                                  onTap: () => _speakText(
+                                                    widget.toolbarText ??
+                                                        widget.text,
+                                                  ),
                                                   child: _buildActionIconSlot(
                                                     key: const ValueKey(
                                                       'bubble-action-tts',
@@ -1172,65 +1257,63 @@ class _ChatBubbleState extends State<ChatBubble>
                                                     child: IgnorePointer(
                                                       child: TtsPlayButton(
                                                         messageId:
+                                                            widget
+                                                                .toolbarMessageId ??
                                                             widget.messageId,
                                                         idleColor:
                                                             _chatBackgroundScope
                                                                 ?.foreground
                                                                 ?.secondary,
                                                         onTap: () => _speakText(
-                                                          widget.text,
+                                                          widget.toolbarText ??
+                                                              widget.text,
                                                         ),
-                                                        size: 15,
+                                                        size:
+                                                            _kToolbarSideIconSize *
+                                                            _toolbarGlyphScale(),
                                                       ),
                                                     ),
                                                   ),
                                                 ),
                                               ],
                                               if (widget.cacheHit) ...[
-                                                const SizedBox(width: 6),
-                                                Tooltip(
-                                                  message: L.pick(
+                                                const SizedBox(width: 0),
+                                                Semantics(
+                                                  button: true,
+                                                  label: L.pick(
                                                     en: 'Context cache hit',
                                                     zhTW: '命中上下文緩存',
                                                     zhCN: '命中上下文缓存',
                                                   ),
-                                                  child: Semantics(
-                                                    button: true,
-                                                    label: L.pick(
-                                                      en: 'Context cache hit',
-                                                      zhTW: '命中上下文緩存',
-                                                      zhCN: '命中上下文缓存',
-                                                    ),
-                                                    child: GestureDetector(
-                                                      behavior: HitTestBehavior
-                                                          .translucent,
-                                                      onTap: () {
-                                                        showThemedPillNotice(
-                                                          context,
-                                                          L.pick(
-                                                            en: '⚡ Context cache hit',
-                                                            zhTW: '⚡ 命中上下文緩存',
-                                                            zhCN: '⚡ 命中上下文缓存',
+                                                  child: Builder(
+                                                    builder: (anchorContext) =>
+                                                        GestureDetector(
+                                                          key: const ValueKey(
+                                                            'bubble-cache-hit',
                                                           ),
-                                                          duration:
-                                                              const Duration(
-                                                                milliseconds:
-                                                                    800,
+                                                          behavior:
+                                                              HitTestBehavior
+                                                                  .opaque,
+                                                          onTap: () =>
+                                                              _showCacheHitPopover(
+                                                                anchorContext,
                                                               ),
-                                                        );
-                                                      },
-                                                      child: SizedBox.square(
-                                                        dimension: 18,
-                                                        child: Center(
-                                                          child: Icon(
-                                                            Icons.bolt_rounded,
-                                                            size: 16,
-                                                            color:
-                                                                _cacheHitColor(),
+                                                          child: SizedBox(
+                                                            width: 28,
+                                                            height: 44,
+                                                            child: Center(
+                                                              child: Icon(
+                                                                Icons
+                                                                    .bolt_rounded,
+                                                                size:
+                                                                    16 *
+                                                                    _toolbarGlyphScale(),
+                                                                color:
+                                                                    _cacheHitColor(),
+                                                              ),
+                                                            ),
                                                           ),
                                                         ),
-                                                      ),
-                                                    ),
                                                   ),
                                                 ),
                                               ],
@@ -1346,6 +1429,8 @@ class _ChatBubbleState extends State<ChatBubble>
                             GiftMiniCard(
                               giftName: widget.giftName!,
                               accepted: widget.giftAccepted,
+                              receivedFromCharacter:
+                                  widget.giftReceivedFromCharacter,
                             ),
                           if (shouldShowMarriageCert)
                             MarriageCertCard(
@@ -2479,6 +2564,113 @@ class _ChatBubbleState extends State<ChatBubble>
     );
   }
 
+  /// 書籤、朗讀比複製再大一些（15→21，昭昭依真機視覺調整）。
+  static const double _kToolbarSideIconSize = 21;
+
+  /// 工具列 icon 跟旁邊時間文字（fontSize 10，吃系統字體縮放）同比例。
+  /// 寫死 dp 的話，系統字體調小的手機上字縮了 icon 沒縮，看起來就巨大。
+  /// 夾在 [0.75, 1.3]：太小點不中、太大擠爆一行；點擊槽固定 44 不跟著縮。
+  static const double _kToolbarScaleMin = 0.75;
+  static const double _kToolbarScaleMax = 1.3;
+  double _toolbarScale() => (MediaQuery.textScalerOf(context).scale(10) / 10)
+      .clamp(_kToolbarScaleMin, _kToolbarScaleMax);
+
+  /// 工具列圖標的視覺大小。真機回饋將 1.2 縮小三分之一回到 0.8；
+  /// 橫向操作槽與 44pt 高度、語意標籤維持不變，不犧牲點擊命中。
+  static const double _kToolbarGlyphFactor = 0.8;
+
+  double _toolbarGlyphScale() => _toolbarScale() * _kToolbarGlyphFactor;
+
+  OverlayEntry? _cacheHitPopover;
+
+  void _dismissCacheHitPopover() {
+    _cacheHitPopover?.remove();
+    _cacheHitPopover = null;
+  }
+
+  /// 點閃電：閃電正上方冒出一顆小提示，點任何空白處收起。
+  void _showCacheHitPopover(BuildContext anchorContext) {
+    HapticFeedback.selectionClick();
+    _dismissCacheHitPopover();
+    final overlay = Overlay.of(context, rootOverlay: true);
+    final anchorBox = anchorContext.findRenderObject() as RenderBox?;
+    final overlayBox = overlay.context.findRenderObject() as RenderBox?;
+    if (anchorBox == null ||
+        overlayBox == null ||
+        !anchorBox.hasSize ||
+        !overlayBox.hasSize) {
+      return;
+    }
+    final anchorTopCenter = anchorBox.localToGlobal(
+      Offset(anchorBox.size.width / 2, 8),
+      ancestor: overlayBox,
+    );
+    // 提示泡泡跟主題走（閃電本身仍用與主題色區隔的琥珀／青綠）。
+    final accent = YanciTheme.accent;
+    final entry = OverlayEntry(
+      builder: (overlayContext) => Stack(
+        children: [
+          Positioned.fill(
+            child: GestureDetector(
+              key: const ValueKey('cache-hit-popover-barrier'),
+              behavior: HitTestBehavior.opaque,
+              onTap: _dismissCacheHitPopover,
+            ),
+          ),
+          Positioned(
+            left: anchorTopCenter.dx,
+            top: anchorTopCenter.dy,
+            child: FractionalTranslation(
+              translation: const Offset(-0.5, -1),
+              child: Material(
+                type: MaterialType.transparency,
+                child: Container(
+                  key: const ValueKey('cache-hit-popover'),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 5,
+                  ),
+                  decoration: BoxDecoration(
+                    color: YanciTheme.themedOverlaySurface,
+                    borderRadius: BorderRadius.circular(999),
+                    border: Border.all(
+                      color: YanciTheme.themedOverlayBorder,
+                      width: 0.6,
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.12),
+                        blurRadius: 10,
+                        offset: const Offset(0, 3),
+                      ),
+                    ],
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.bolt_rounded, size: 12, color: accent),
+                      const SizedBox(width: 3),
+                      Text(
+                        L.pick(en: 'Cache hit', zhTW: '已命中緩存', zhCN: '已命中缓存'),
+                        style: YanciTheme.bodySmall.copyWith(
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w500,
+                          color: accent,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+    _cacheHitPopover = entry;
+    overlay.insert(entry);
+  }
+
   Color _cacheHitColor() {
     final hue = HSLColor.fromColor(YanciTheme.accent).hue;
     if (hue >= 90 && hue <= 210) {
@@ -2497,7 +2689,7 @@ class _ChatBubbleState extends State<ChatBubble>
       child: BubbleActionGlyph(
         type: BubbleActionGlyphType.copy,
         color: c,
-        size: 15,
+        size: 15 * _toolbarGlyphScale(),
       ),
     );
   }
@@ -2513,6 +2705,7 @@ class _ChatBubbleState extends State<ChatBubble>
         type: BubbleActionGlyphType.bookmark,
         color: c,
         selected: _isSaved,
+        size: _kToolbarSideIconSize * _toolbarGlyphScale(),
       ),
     );
   }
@@ -2520,7 +2713,7 @@ class _ChatBubbleState extends State<ChatBubble>
   Widget _buildActionIconSlot({required Key key, required Widget child}) {
     return SizedBox.square(
       key: key,
-      dimension: 22,
+      dimension: 22 * _toolbarScale(),
       child: Center(child: child),
     );
   }
@@ -2538,9 +2731,19 @@ class _ChatBubbleState extends State<ChatBubble>
         child: GestureDetector(
           behavior: HitTestBehavior.opaque,
           onTap: onTap,
-          child: SizedBox.square(dimension: 44, child: Center(child: child)),
+          child: SizedBox(width: 38, height: 44, child: Center(child: child)),
         ),
       ),
+    );
+  }
+
+  /// 有圖時文字氣泡貼邊、按文字長短決定寬度；外層 Column 是 stretch，
+  /// 不包的話短配文會被拉成跟縮略圖一樣寬。沒圖時維持原本行為。
+  Widget _alignBesideImages({required bool hasImages, required Widget child}) {
+    if (!hasImages) return child;
+    return Align(
+      alignment: widget.isUser ? Alignment.centerRight : Alignment.centerLeft,
+      child: child,
     );
   }
 

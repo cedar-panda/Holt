@@ -52,6 +52,15 @@ app.*.map.json
 android/key.properties
 *.jks
 *.keystore
+*.pem
+*.p12
+*.pfx
+*.key
+.env
+.env.*
+!.env.example
+!.env.sample
+.fuse_hidden*
 _archive_dev/
 *.apk
 

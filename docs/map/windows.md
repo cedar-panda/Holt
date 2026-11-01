@@ -5,9 +5,11 @@
 
 ## 資料存在哪（資料表 / SharedPreferences key）
 - `conversations`：角色、`context_mode`、`continuity_id`、窗口摘要、游標、標題等。
-- `messages`、`message_revisions`：正文、編輯與回覆版本。
+- `messages`、`message_revisions`：正文、編輯與回覆版本；`messages.created_at` 是每條消息的本地時間來源。
 - keep-alive 使用 SharedPreferences 的 `keepalive_*` 鍵，包含窗口、角色、模式、故事線、模型、提示快照與租約資訊。
 - `ChatSessionIdentity` 將 conversation、character、mode、continuity、user persona、worldbook set 綁成快取身分。
+- SharedPreferences 的 `reasoning_effort_v1` 保存全域思考強度，`conversation_reasoning_efforts_v1` 保存窗口覆寫；獨立的 `thinking_chain_enabled` 與 `conversation_thinking_enabled_v1` 保存全域／窗口思考鏈開關。強度不再自動切換開關，舊窗口強度可作一次性開關相容回退。
+- 新窗口把當下解析出的 User persona ID 與快照寫入 `conversations`；角色未明確綁定 persona 時，使用「我的」目前選中的 persona，而不是隨機或沿用另一角色綁定。
 
 ## 誰寫入（檔案：函式）
 - 建立／更新窗口：`lib/memory/database_conversations.dart:DatabaseHelper.createConversation`、`updateConversation`
@@ -18,10 +20,13 @@
 
 ## 誰讀取、怎麼注入（檔案：函式；注入 prompt 的哪一層）
 - 窗口與歷史：`DatabaseHelper.getConversation`、`getPreviousConversationTurns`，進入訊息歷史。
+- 日常新訊息的時間感知：`lib/screens/chat_screen_generation.dart:_sendMessageLocked` 讀取同窗口最後一條可見消息；若窗口尚空，再用 `getPreviousConversationTurns` 的最後一條。間隔至少 5 分鐘才把簡短時長放入 request-only `liveStatePart`。
 - 續章來源：`lib/screens/chat_screen_rp_continuation.dart:_applyRpContinuationSource`，將選定的來源摘要與舊窗口尾部加入本次窗口內容。
 - 固定窗口摘要／自我註記／貝殼快照：`chat_screen_prompt_parts.dart:_buildCommonStaticParts`，進 `windowPart`。
 - keep-alive 恢復快照：`KeepAliveService.restore`、`claimVisibleWindow`，恢復已有的結構化提示與訊息。
 - 回覆版本：`lib/screens/chat_screen_reply_variants.dart` 與 `database_reply_variants.dart` 綁定 user message revision。
+- 模型與思考強度：`lib/widgets/chat_window_status.dart:ChatWindowStatusSheet.build` 在窗口狀態面板原地展開模型清單、獨立思考鏈開關與四檔強度；`lib/screens/chat_screen_actions.dart:_setWindowThinkingEnabled` 與 `_setWindowReasoningEffort` 分別寫入該 conversation 的覆寫，不改頂部模型名稱既有自動收合。
+- 模型選擇器：`lib/widgets/chat_model_picker.dart:_scrollToSelectedModel` 展開後定位到目前 provider／model，不固定回到清單頂部。
 
 ## 檢索方式（字面 / BM25 / 向量 / 名字觸發 / 無）
 - 窗口列表：角色、故事線、模式與更新時間等資料庫條件。
@@ -33,12 +38,14 @@
 - 日常窗口綁 `context_mode=daily`。
 - RP 窗口綁 `context_mode=rp`，另有 `continuity_id`／故事線與世界書範圍。
 - RP 續章可選時間線／來源摘要；日常沒有 RP 故事投影。
+- 只有日常窗口使用 5 分鐘對話間隔提示；RP 模式維持原本的時間注入邊界。
 
 ## 相關開關
 - 日常／RP 模式。
 - keep-alive。
 - 上下文限制、緩存命中與摘要設定。
 - 回覆重生成／編輯流程。
+- 思考強度：自動／低／中／高；「自動」省略 provider 強度欄位，讓來源／模型沿用自身預設。它是請求設定，不是 Prompt 文字，不會改 `StructuredPrompt` 各層內容與排列。
 
 ## 量大時的風險
 - `conversations` 與 `messages` 長大後，窗口列表、歷史載入與續接候選都會變慢。
@@ -52,6 +59,10 @@
 - `test/database_reply_variants_test.dart`
 - `test/chat_session_identity_test.dart`
 - `test/keep_alive_service_test.dart`
+- `test/chat_model_picker_test.dart`
+- `test/chat_window_status_test.dart`
+- `test/api_settings_selection_test.dart`
+- `test/conversation_time_context_test.dart`
 
 ## ❓ 不確定的地方
 - iOS 背景 keep-alive 的實際系統喚醒頻率不是由這些 Dart 服務單獨決定；目前代碼可確認 iOS 不註冊 Android WorkManager 背景任務，恢復時再處理。

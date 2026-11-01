@@ -1,9 +1,9 @@
 import 'locale_strings.dart';
 
-/// RP-only identity boundary placed at the very beginning of the stable
-/// system prompt. Keeping this separate from character/persona prose prevents
-/// long role cards, summaries, or recalled state from blurring who the model
-/// plays and who the user controls.
+/// RP identity boundary placed at the very beginning of the stable system
+/// prompt. Keeping this separate from character/persona prose prevents long
+/// role cards, summaries, or recalled state from blurring who the model plays
+/// and who the user controls.
 class RpIdentityLockPrompt {
   const RpIdentityLockPrompt._();
 

@@ -33,7 +33,12 @@ void main() {
     () async {
       await DatabaseHelper.createSchemaForTesting(db);
 
-      expect(DatabaseHelper.schemaVersionForTesting, 84);
+      expect(DatabaseHelper.schemaVersionForTesting, 86);
+      expect(await _columnNames(db, 'characters'), contains('remark'));
+      expect(
+        await _columnNames(db, 'characters'),
+        contains('tts_voice_ids_json'),
+      );
       expect(await _columnNames(db, 'memories'), contains('is_pinned'));
       expect(
         await _columnNames(db, 'rp_worldbook_entries'),

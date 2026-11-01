@@ -1258,8 +1258,13 @@ extension _ChatActionMethods on _ChatScreenState {
       final selfNotesEnabled =
           sessionIdentity.contextMode == ContextMode.daily &&
           await MemorySettings.getSelfNotesEnabled();
+      // 必須和文字聊天 `_sendMessageLocked` 的靜態前綴逐字一致，通話才能
+      // 吃到文字聊天已建的緩存：自我註記用同一個格式化函式與注入上限。
       final selfNotes = selfNotesEnabled
-          ? await DatabaseHelper.getSelfNotes(charId)
+          ? await DatabaseHelper.getSelfNotesForPrompt(
+              charId,
+              limit: await MemorySettings.getSelfNotesInjectionLimit(),
+            )
           : '';
       final userNickname = _userPersonaName;
       final emotionEnabled = await MemorySettings.isAbilityEnabled('emotion');
@@ -1274,13 +1279,19 @@ extension _ChatActionMethods on _ChatScreenState {
           sessionIdentity.contextMode == ContextMode.daily &&
           (charData?['is_spider_web_enabled'] as int? ?? 0) == 1;
       final staticWindowSummary = await _buildStaticWindowSummaryPrompt(charId);
-      final toolFeatures = await ToolFeatureSettings.load();
+      final toolFeatures = await ToolFeatureSettings.loadForContext(
+        sessionIdentity.contextMode,
+      );
+      // 聯網搜尋說明也要跟文字聊天一致（否則靜態前綴不同、緩存不共用）；
+      // 通話中不執行搜尋，由通話規則另行說明。
+      final webSearchEnabled = await WebSearchSettings.getEnabled();
       final bundle = await _buildCommonStaticParts(
         characterId: charId,
         continuityId: sessionIdentity.continuityId,
         systemPrompt: systemPrompt,
         charDesc: charData?['description'] as String? ?? '',
         characterName: charData?['name'] as String? ?? '',
+        characterRemark: charData?['remark'] as String? ?? '',
         userProfile: userProfile,
         selfNotes: selfNotes,
         userNickname: userNickname,
@@ -1289,7 +1300,7 @@ extension _ChatActionMethods on _ChatScreenState {
         emotionEnabled: emotionEnabled,
         bioclockEnabled: bioclockEnabled,
         imagegenEnabled: imagegenEnabled,
-        webSearchEnabled: false,
+        webSearchEnabled: webSearchEnabled,
         whisperModelOverrideEnabled:
             (charData?['whisper_model_override'] as int? ?? 1) == 1,
         providerName: providerName,
@@ -1308,9 +1319,9 @@ extension _ChatActionMethods on _ChatScreenState {
       context,
       MaterialPageRoute(
         builder: (_) => CallScreen(
-          characterName: _characterName.isEmpty
+          characterName: _characterDisplayName.isEmpty
               ? L.pick(en: 'Character', zhTW: '角色')
-              : _characterName,
+              : _characterDisplayName,
           conversationId: widget.conversationId,
           incoming: incoming,
           openingLine: openingLine,
@@ -1524,11 +1535,17 @@ extension _ChatActionMethods on _ChatScreenState {
       };
     }
 
-    var preview = MarriageService.stripHiddenCertMetadata(message.text)
-        .replaceAll(RegExp(r'<think(?:ing)?>([\s\S]*?)</think(?:ing)?>'), '')
-        .replaceAll(RegExp(r'\[[^\]\n]+:[^\]\n]*\]'), '')
-        .replaceAll(RegExp(r'\s+'), ' ')
-        .trim();
+    var preview =
+        collapseRepeatedThinking(
+              MarriageService.stripHiddenCertMetadata(message.text),
+            )
+            .replaceAll(
+              RegExp(r'<think(?:ing)?>([\s\S]*?)</think(?:ing)?>'),
+              '',
+            )
+            .replaceAll(RegExp(r'\[[^\]\n]+:[^\]\n]*\]'), '')
+            .replaceAll(RegExp(r'\s+'), ' ')
+            .trim();
     if (preview.isEmpty && message.imagePath != null) {
       preview = L.pick(en: 'Image', zhTW: '圖片');
     }
@@ -1639,14 +1656,11 @@ extension _ChatActionMethods on _ChatScreenState {
         continue;
       }
 
-      if (_splitReply &&
-          !message.isUser &&
-          message.splitMode &&
-          message.text.contains('\n\n')) {
-        final parts = message.text
-            .split('\n\n')
-            .where((part) => part.trim().isNotEmpty)
-            .toList(growable: false);
+      final splitParts = _splitReply && !message.isUser && message.splitMode
+          ? splitReplyParagraphs(message.text)
+          : const <String>[];
+      if (splitParts.length > 1) {
+        final parts = splitParts;
         for (var partIndex = 0; partIndex < parts.length; partIndex++) {
           items.add(
             _buildLongScreenshotBubble(
@@ -1667,9 +1681,13 @@ extension _ChatActionMethods on _ChatScreenState {
         continue;
       }
 
-      final giftMatch = message.isUser
+      final sentGiftMatch = message.isUser
           ? _ChatScreenState._giftTagRe.firstMatch(message.text)
           : null;
+      final receivedGiftMatch = message.isUser
+          ? null
+          : _ChatScreenState._receivedGiftTagRe.firstMatch(message.text);
+      final giftMatch = sentGiftMatch ?? receivedGiftMatch;
       items.add(
         _buildLongScreenshotBubble(
           message: message,
@@ -1678,7 +1696,10 @@ extension _ChatActionMethods on _ChatScreenState {
           imagePath: message.imagePath,
           messageKey: 'longshot_${message.id}',
           giftName: giftMatch?.group(1)?.trim(),
-          giftAccepted: giftMatch != null && charReplyAfter[i],
+          giftAccepted:
+              receivedGiftMatch != null ||
+              (sentGiftMatch != null && charReplyAfter[i]),
+          giftReceivedFromCharacter: receivedGiftMatch != null,
           includeCards: true,
           expandThinking: expandThinking,
           includeMemory: includeMemory,
@@ -1697,6 +1718,7 @@ extension _ChatActionMethods on _ChatScreenState {
     required String messageKey,
     String? giftName,
     bool giftAccepted = false,
+    bool giftReceivedFromCharacter = false,
     bool includeCards = false,
     bool includeMetadataLog = true,
     required bool expandThinking,
@@ -1740,6 +1762,7 @@ extension _ChatActionMethods on _ChatScreenState {
       transferData: includeCards ? _transferDataMap[persistedMessageKey] : null,
       giftName: giftName,
       giftAccepted: giftAccepted,
+      giftReceivedFromCharacter: giftReceivedFromCharacter,
       marriageCert: includeCards && hasMarriageCert
           ? MarriageCertDisplay(
               userName: _userNameCache,
@@ -2049,9 +2072,158 @@ extension _ChatActionMethods on _ChatScreenState {
     );
   }
 
+  Future<List<ChatModelPickerEntry>> _loadChatModelPickerEntries() async {
+    final starred = await ApiSettings.getRankedStarredModelEntries();
+    final uniqueProviders = starred.map((entry) => entry.provider).toSet();
+    final configuredEntries = await Future.wait(
+      uniqueProviders.map(
+        (provider) async => MapEntry(
+          provider,
+          await ApiSettings.hasUsableProviderConfiguration(provider),
+        ),
+      ),
+    );
+    final providerConfigured = Map<String, bool>.fromEntries(configuredEntries);
+    return List<ChatModelPickerEntry>.generate(starred.length, (index) {
+      final favorite = starred[index];
+      final modelId = favorite.modelId;
+      final provider = favorite.provider;
+      return ChatModelPickerEntry(
+        id: modelId,
+        label: _fullModelName(modelId),
+        provider: provider,
+        providerLabel: _chatModelProviderLabel(provider),
+        isLocal:
+            LocalModelService.isLocalModelId(modelId) ||
+            ApiSettings.isLocalApiModelId(modelId),
+        isProviderConfigured: providerConfigured[provider] ?? false,
+      );
+    }, growable: false);
+  }
+
+  Future<void> _setWindowReasoningEffort(
+    String effort, {
+    required String provider,
+  }) async {
+    final normalized = ReasoningEffort.normalize(effort);
+    final enabled = await ApiSettings.getThinkingChain(
+      conversationId: widget.conversationId,
+    );
+    final contextLimitEnabled = await MemorySettings.getContextLimitEnabled();
+    final interruptsCache = contextLimitEnabled
+        ? false
+        : await _thinkingChangeWillInterruptCache(
+            nextValue: enabled,
+            provider: provider,
+            model: _currentModel,
+          );
+    await ApiSettings.setReasoningEffort(
+      normalized,
+      conversationId: widget.conversationId,
+    );
+    if (!mounted || contextLimitEnabled) return;
+    final requestAlreadyRunning = _isGenerating;
+    if (!interruptsCache && !requestAlreadyRunning) return;
+    _showChatNotice(
+      _thinkingChangedNotice(
+        interruptsCache: interruptsCache,
+        requestAlreadyRunning: requestAlreadyRunning,
+      ),
+      duration: const Duration(seconds: 2),
+    );
+  }
+
+  Future<void> _setWindowThinkingEnabled(
+    bool enabled, {
+    required String provider,
+  }) async {
+    final contextLimitEnabled = await MemorySettings.getContextLimitEnabled();
+    final interruptsCache = contextLimitEnabled
+        ? false
+        : await _thinkingChangeWillInterruptCache(
+            nextValue: enabled,
+            provider: provider,
+            model: _currentModel,
+          );
+    await ApiSettings.setThinkingChain(
+      enabled,
+      conversationId: widget.conversationId,
+    );
+    if (mounted) _refreshChatState(() => _generationThinkingEnabled = enabled);
+    if (!mounted || contextLimitEnabled) return;
+    final requestAlreadyRunning = _isGenerating;
+    if (!interruptsCache && !requestAlreadyRunning) return;
+    _showChatNotice(
+      _thinkingChangedNotice(
+        interruptsCache: interruptsCache,
+        requestAlreadyRunning: requestAlreadyRunning,
+      ),
+      duration: const Duration(seconds: 2),
+    );
+  }
+
+  void _showUnavailableModelNotice(ChatModelPickerEntry entry) {
+    _showChatNotice(
+      L.pick(
+        en: 'Finish setting up ${entry.providerLabel} before switching to this model.',
+        zhTW: '請先完成 ${entry.providerLabel} 的來源設定，再切換到這個模型。',
+        zhCN: '请先完成 ${entry.providerLabel} 的来源设置，再切换到这个模型。',
+      ),
+      duration: const Duration(seconds: 2),
+    );
+  }
+
+  Future<void> _applySelectedChatModel(ChatModelPickerEntry entry) async {
+    final modelId = entry.id;
+    final provider = entry.provider;
+    await ApiSettings.saveProviderModelSelection(provider, modelId);
+    final policyResult = await ModelCostPolicy.applySelection(
+      provider: provider,
+      model: modelId,
+      apiKey: provider == 'thinking_machines'
+          ? await ApiSettings.getThinkingMachinesApiKey()
+          : '',
+    );
+    final recommendation =
+        policyResult.recommendation ??
+        await ModelCostPolicy.recommendationForSelection(
+          provider: provider,
+          model: modelId,
+        );
+    final supportsRenewal = TokenEstimator.supportsCloseWindowKeepAlive(
+      provider: provider,
+      model: modelId,
+    );
+    if (!supportsRenewal) {
+      await MemorySettings.saveKeepAliveEnabled(false);
+    }
+    if (!mounted) return;
+    _refreshChatState(() => _currentModel = modelId);
+    _showHeaderModelConfirmation();
+    _showCostModeRecommendation(recommendation);
+    if (recommendation == null &&
+        policyResult.notice != ModelCostPolicyNotice.none) {
+      _showNonBlockingModelHint(_modelCostPolicyMessage(policyResult.notice));
+    } else if (recommendation == null && !supportsRenewal) {
+      _showNonBlockingModelHint(
+        L.pick(
+          en: 'This model has no confirmed one-hour cache TTL, so automatic renewal remains off.',
+          zhTW: '此模型沒有已確認的 1 小時緩存 TTL，自動延續命中已保持關閉。',
+        ),
+      );
+    }
+  }
+
   /// 收藏模型快速切換
   Future<void> _showWindowStatus() async {
     final provider = await ApiSettings.getApiProvider();
+    final entries = await _loadChatModelPickerEntries();
+    final reasoningEffort = await ApiSettings.getReasoningEffort(
+      conversationId: widget.conversationId,
+    );
+    final thinkingEnabled = await ApiSettings.getThinkingChain(
+      conversationId: widget.conversationId,
+    );
     Future<ChatWindowStatsSnapshot> loadSnapshot() =>
         ChatWindowStatsService.load(
           conversationId: widget.conversationId,
@@ -2072,12 +2244,18 @@ extension _ChatActionMethods on _ChatScreenState {
         initialSnapshot: snapshot,
         loadSnapshot: loadSnapshot,
         accentColor: YanciTheme.accent,
-        onChooseModel: () {
-          Navigator.pop(sheetContext);
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (mounted) _showModelPicker();
-          });
-        },
+        modelEntries: entries,
+        currentModelId: _currentModel,
+        currentProvider: provider,
+        initialReasoningEffort: reasoningEffort,
+        initialThinkingEnabled: thinkingEnabled,
+        backgroundPalette: _boundChatForeground,
+        onReasoningEffortChanged: (effort, activeProvider) =>
+            _setWindowReasoningEffort(effort, provider: activeProvider),
+        onThinkingEnabledChanged: (enabled, activeProvider) =>
+            _setWindowThinkingEnabled(enabled, provider: activeProvider),
+        onModelSelected: _applySelectedChatModel,
+        onUnavailableProviderSelected: _showUnavailableModelNotice,
         longScreenshotBusy: !_isChatReady || _isCapturingLongScreenshot,
         onLongScreenshot: () {
           Navigator.pop(sheetContext);
@@ -2103,36 +2281,14 @@ extension _ChatActionMethods on _ChatScreenState {
   }
 
   void _showModelPicker() async {
-    final starred = await ApiSettings.getRankedStarredModelEntries();
-    final thinkingEnabled = await ApiSettings.getThinkingChain();
-    final currentProvider = await ApiSettings.getApiProvider();
-    final uniqueProviders = starred.map((entry) => entry.provider).toSet();
-    final configuredEntries = await Future.wait(
-      uniqueProviders.map(
-        (provider) async => MapEntry(
-          provider,
-          await ApiSettings.hasUsableProviderConfiguration(provider),
-        ),
-      ),
+    final entries = await _loadChatModelPickerEntries();
+    final reasoningEffort = await ApiSettings.getReasoningEffort(
+      conversationId: widget.conversationId,
     );
-    final providerConfigured = Map<String, bool>.fromEntries(configuredEntries);
-    final entries = List<ChatModelPickerEntry>.generate(starred.length, (
-      index,
-    ) {
-      final favorite = starred[index];
-      final modelId = favorite.modelId;
-      final provider = favorite.provider;
-      return ChatModelPickerEntry(
-        id: modelId,
-        label: _fullModelName(modelId),
-        provider: provider,
-        providerLabel: _chatModelProviderLabel(provider),
-        isLocal:
-            LocalModelService.isLocalModelId(modelId) ||
-            ApiSettings.isLocalApiModelId(modelId),
-        isProviderConfigured: providerConfigured[provider] ?? false,
-      );
-    }, growable: false);
+    final thinkingEnabled = await ApiSettings.getThinkingChain(
+      conversationId: widget.conversationId,
+    );
+    final currentProvider = await ApiSettings.getApiProvider();
     final pickerAccent =
         _savedThemeColor(await ThemeSettings.getCustomColor('accent')) ??
         YanciTheme.accent;
@@ -2146,7 +2302,7 @@ extension _ChatActionMethods on _ChatScreenState {
               anchorRenderObject.size
         : null;
 
-    if (starred.isEmpty) {
+    if (entries.isEmpty) {
       _showChatNotice(
         L.get('chat_api_star_hint'),
         duration: const Duration(milliseconds: 1200),
@@ -2197,103 +2353,25 @@ extension _ChatActionMethods on _ChatScreenState {
                         entries: entries,
                         currentModelId: _currentModel,
                         currentProvider: currentProvider,
-                        initialThinking: thinkingEnabled,
+                        initialReasoningEffort: reasoningEffort,
+                        initialThinkingEnabled: thinkingEnabled,
                         accentColor: pickerAccent,
                         backgroundPalette: _boundChatForeground,
-                        onThinkingChanged: (value) async {
-                          final contextLimitEnabled =
-                              await MemorySettings.getContextLimitEnabled();
-                          final interruptsCache = contextLimitEnabled
-                              ? false
-                              : await _thinkingChangeWillInterruptCache(
-                                  nextValue: value,
-                                  provider: currentProvider,
-                                  model: _currentModel,
-                                );
-                          await ApiSettings.saveThinkingChain(value);
-                          if (mounted) {
-                            _refreshChatState(
-                              () => _generationThinkingEnabled = value,
-                            );
-                          }
-                          if (!mounted || contextLimitEnabled) return;
-                          final requestAlreadyRunning = _isGenerating;
-                          if (!interruptsCache && !requestAlreadyRunning) {
-                            return;
-                          }
-                          _showChatNotice(
-                            _thinkingChangedNotice(
-                              interruptsCache: interruptsCache,
-                              requestAlreadyRunning: requestAlreadyRunning,
+                        onReasoningEffortChanged: (effort) =>
+                            _setWindowReasoningEffort(
+                              effort,
+                              provider: currentProvider,
                             ),
-                            duration: const Duration(seconds: 2),
-                          );
-                        },
-                        onUnavailableProviderSelected: (entry) {
-                          _showChatNotice(
-                            L.pick(
-                              en: 'Finish setting up ${entry.providerLabel} before switching to this model.',
-                              zhTW:
-                                  '請先完成 ${entry.providerLabel} 的來源設定，再切換到這個模型。',
-                              zhCN:
-                                  '请先完成 ${entry.providerLabel} 的来源设置，再切换到这个模型。',
+                        onThinkingEnabledChanged: (enabled) =>
+                            _setWindowThinkingEnabled(
+                              enabled,
+                              provider: currentProvider,
                             ),
-                            duration: const Duration(seconds: 2),
-                          );
-                        },
+                        onUnavailableProviderSelected:
+                            _showUnavailableModelNotice,
                         onModelSelected: (entry) async {
-                          final modelId = entry.id;
-                          final provider = entry.provider;
-                          await ApiSettings.saveProviderModelSelection(
-                            provider,
-                            modelId,
-                          );
-                          final policyResult =
-                              await ModelCostPolicy.applySelection(
-                                provider: provider,
-                                model: modelId,
-                                apiKey: provider == 'thinking_machines'
-                                    ? await ApiSettings.getThinkingMachinesApiKey()
-                                    : '',
-                              );
-                          final recommendation =
-                              policyResult.recommendation ??
-                              await ModelCostPolicy.recommendationForSelection(
-                                provider: provider,
-                                model: modelId,
-                              );
-                          final supportsRenewal =
-                              TokenEstimator.supportsCloseWindowKeepAlive(
-                                provider: provider,
-                                model: modelId,
-                              );
-                          if (!supportsRenewal) {
-                            await MemorySettings.saveKeepAliveEnabled(false);
-                          }
-                          if (!mounted) return;
-                          _refreshChatState(() => _currentModel = modelId);
+                          await _applySelectedChatModel(entry);
                           if (ctx.mounted) Navigator.pop(ctx);
-                          _showHeaderModelConfirmation();
-                          if (recommendation != null) {
-                            _showCostModeRecommendation(recommendation);
-                          } else {
-                            _showCostModeRecommendation(null);
-                          }
-                          if (recommendation == null &&
-                              policyResult.notice !=
-                                  ModelCostPolicyNotice.none) {
-                            _showNonBlockingModelHint(
-                              _modelCostPolicyMessage(policyResult.notice),
-                            );
-                          } else if (recommendation == null &&
-                              !supportsRenewal) {
-                            _showNonBlockingModelHint(
-                              L.pick(
-                                en: 'This model has no confirmed one-hour cache TTL, so automatic renewal remains off.',
-                                zhTW: '此模型沒有已確認的 1 小時緩存 TTL，自動延續命中已保持關閉。',
-                              ),
-                            );
-                          }
                         },
                       ),
                     ),

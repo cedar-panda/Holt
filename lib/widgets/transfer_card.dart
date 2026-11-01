@@ -3,6 +3,7 @@ import '../theme/app_theme.dart';
 import '../services/transfer_service.dart';
 import '../services/locale_strings.dart';
 import 'themed_notice.dart';
+import 'shell_coin_icon.dart';
 
 /// 轉帳迷你卡片 — 嵌在氣泡下方，類似 ScratchMiniCard
 class TransferMiniCard extends StatefulWidget {
@@ -121,16 +122,20 @@ class _TransferMiniCardState extends State<TransferMiniCard>
     final String titleText;
     final String statusText;
 
+    // 跟主題走：待收款＝主題色調較濃的卡；已收＝淡主題色；已退＝中性。
+    // 以前寫死綠色（給你）／粉紅（你發出）與紫灰，換主題就很出戲。
+    final accent = YanciTheme.accent;
+    final panel = YanciTheme.surfacePanel;
+    final strong = YanciTheme.isDark
+        ? Color.lerp(accent, Colors.white, 0.28)!
+        : Color.lerp(accent, Colors.black, 0.30)!;
     if (isAccepted) {
-      // 收款後變成半透明深色質感 (類似 WeChat)
       bgGradient = [
-        YanciTheme.isDark ? const Color(0xFF2C2433) : const Color(0xFFF3EDF5),
-        YanciTheme.isDark ? const Color(0xFF201A25) : const Color(0xFFE8E0EC),
+        Color.lerp(panel, accent, 0.10)!,
+        Color.lerp(panel, accent, 0.05)!,
       ];
-      iconBoxColor = YanciTheme.isDark
-          ? const Color(0xFF3C3145)
-          : const Color(0xFFD6C8DE);
-      iconColor = const Color(0xFF8B799A);
+      iconBoxColor = accent.withValues(alpha: 0.14);
+      iconColor = accent.withValues(alpha: 0.8);
       titleText = L.pick(
         en: isToUser ? 'Received' : 'Received by the other side',
         zhTW: isToUser ? '已收錢' : '對方已收錢',
@@ -138,37 +143,31 @@ class _TransferMiniCardState extends State<TransferMiniCard>
       statusText = L.pick(en: 'Added to balance', zhTW: '已存入餘額');
     } else if (isDeclined) {
       bgGradient = [
-        YanciTheme.isDark ? const Color(0xFF2A2424) : const Color(0xFFF5EDED),
-        YanciTheme.isDark ? const Color(0xFF201A1A) : const Color(0xFFECE0E0),
+        Color.lerp(panel, YanciTheme.textSecondary, 0.06)!,
+        Color.lerp(panel, YanciTheme.textSecondary, 0.02)!,
       ];
-      iconBoxColor = YanciTheme.isDark
-          ? const Color(0xFF3D2D2D)
-          : const Color(0xFFDFCDCD);
-      iconColor = const Color(0xFF9A7979);
+      iconBoxColor = YanciTheme.textSecondary.withValues(alpha: 0.12);
+      iconColor = YanciTheme.textSecondary.withValues(alpha: 0.75);
       titleText = L.pick(
         en: isToUser ? 'Returned' : 'Returned by the other side',
         zhTW: isToUser ? '已退還' : '對方已退還',
       );
       statusText = L.pick(en: 'Returned to balance', zhTW: '已退回餘額');
     } else {
-      if (isToUser) {
-        bgGradient = YanciTheme.isDark
-            ? const [Color(0xFF2A4D35), Color(0xFF365E43)]
-            : const [Color(0xFF88D49E), Color(0xFFB1E8C1)];
-        iconColor = YanciTheme.isDark
-            ? const Color(0xFF88D49E)
-            : const Color(0xFF67B57F);
-      } else {
-        bgGradient = YanciTheme.isDark
-            ? const [Color(0xFF682840), Color(0xFF8B3A5A)]
-            : const [Color(0xFFFF9A9E), Color(0xFFFECFEF)];
-        iconColor = YanciTheme.isDark
-            ? const Color(0xFFFF9A9E)
-            : const Color(0xFFE58085);
-      }
+      // 給你的轉帳顏色更濃一點，你發出的淡一點，方向一眼看得出來。
+      bgGradient = isToUser
+          ? [
+              Color.lerp(panel, accent, 0.34)!,
+              Color.lerp(panel, accent, 0.20)!,
+            ]
+          : [
+              Color.lerp(panel, accent, 0.22)!,
+              Color.lerp(panel, accent, 0.12)!,
+            ];
       iconBoxColor = YanciTheme.isDark
-          ? Colors.white.withValues(alpha: 0.1)
-          : Colors.white;
+          ? Colors.white.withValues(alpha: 0.12)
+          : Colors.white.withValues(alpha: 0.85);
+      iconColor = strong;
       titleText = L.pick(
         en: isToUser ? 'Transfer to you' : 'Transfer sent',
         zhTW: isToUser ? '轉帳給你' : '發起轉帳',
@@ -191,7 +190,7 @@ class _TransferMiniCardState extends State<TransferMiniCard>
           boxShadow: isPending
               ? [
                   BoxShadow(
-                    color: const Color(0xFFFF9A9E).withValues(alpha: 0.3),
+                    color: accent.withValues(alpha: 0.28),
                     blurRadius: 10,
                     offset: const Offset(0, 4),
                   ),
@@ -226,12 +225,7 @@ class _TransferMiniCardState extends State<TransferMiniCard>
                             ),
                             child: isPending
                                 ? Center(
-                                    child: Image.asset(
-                                      'assets/images/shell_coin.png',
-                                      width: 18,
-                                      height: 18,
-                                      filterQuality: FilterQuality.none,
-                                    ),
+                                    child: ShellCoinIcon(size: 18),
                                   )
                                 : Icon(
                                     Icons.check_rounded,
@@ -258,13 +252,7 @@ class _TransferMiniCardState extends State<TransferMiniCard>
                                 style: TextStyle(
                                   fontSize: 16,
                                   fontWeight: FontWeight.bold,
-                                  color: isPending
-                                      ? (isToUser
-                                            ? (YanciTheme.isDark
-                                                  ? const Color(0xFF88D49E)
-                                                  : const Color(0xFF388E3C))
-                                            : const Color(0xFF8B2C4F))
-                                      : YanciTheme.textPrimary,
+                                  color: isPending ? strong : YanciTheme.textPrimary,
                                   fontFamily: YanciTheme.fontFamily,
                                 ),
                               ),
@@ -276,17 +264,7 @@ class _TransferMiniCardState extends State<TransferMiniCard>
                             style: TextStyle(
                               fontSize: 12,
                               color: isPending
-                                  ? (isToUser
-                                        ? (YanciTheme.isDark
-                                              ? const Color(
-                                                  0xFF88D49E,
-                                                ).withValues(alpha: 0.8)
-                                              : const Color(
-                                                  0xFF388E3C,
-                                                ).withValues(alpha: 0.8))
-                                        : const Color(
-                                            0xFF8B2C4F,
-                                          ).withValues(alpha: 0.7))
+                                  ? strong.withValues(alpha: 0.75)
                                   : YanciTheme.textSecondary,
                               fontFamily: YanciTheme.fontFamily,
                             ),
@@ -317,13 +295,7 @@ class _TransferMiniCardState extends State<TransferMiniCard>
                               child: Center(
                                 child: CircularProgressIndicator(
                                   strokeWidth: 2,
-                                  valueColor: AlwaysStoppedAnimation(
-                                    isToUser
-                                        ? (YanciTheme.isDark
-                                              ? const Color(0xFF88D49E)
-                                              : const Color(0xFF388E3C))
-                                        : const Color(0xFF8B2C4F),
-                                  ),
+                                  valueColor: AlwaysStoppedAnimation(strong),
                                 ),
                               ),
                             )
@@ -336,11 +308,7 @@ class _TransferMiniCardState extends State<TransferMiniCard>
                                     L.pick(en: 'Accept', zhTW: '收下'),
                                     style: TextStyle(
                                       fontSize: 13,
-                                      color: isToUser
-                                          ? (YanciTheme.isDark
-                                                ? const Color(0xFF88D49E)
-                                                : const Color(0xFF388E3C))
-                                          : const Color(0xFF8B2C4F),
+                                      color: strong,
                                       fontWeight: FontWeight.bold,
                                       fontFamily: YanciTheme.fontFamily,
                                     ),
@@ -349,7 +317,7 @@ class _TransferMiniCardState extends State<TransferMiniCard>
                                 Container(
                                   width: 1,
                                   height: 12,
-                                  color: Colors.black12,
+                                  color: strong.withValues(alpha: 0.2),
                                 ),
                                 GestureDetector(
                                   onTap: _decline,
@@ -357,17 +325,7 @@ class _TransferMiniCardState extends State<TransferMiniCard>
                                     L.pick(en: 'Return', zhTW: '退還'),
                                     style: TextStyle(
                                       fontSize: 13,
-                                      color: isToUser
-                                          ? (YanciTheme.isDark
-                                                ? const Color(
-                                                    0xFF88D49E,
-                                                  ).withValues(alpha: 0.8)
-                                                : const Color(
-                                                    0xFF388E3C,
-                                                  ).withValues(alpha: 0.8))
-                                          : const Color(
-                                              0xFF8B2C4F,
-                                            ).withValues(alpha: 0.7),
+                                      color: strong.withValues(alpha: 0.7),
                                       fontFamily: YanciTheme.fontFamily,
                                     ),
                                   ),
@@ -379,7 +337,7 @@ class _TransferMiniCardState extends State<TransferMiniCard>
                         style: TextStyle(
                           fontSize: 12,
                           color: isPending
-                              ? const Color(0xFF8B2C4F).withValues(alpha: 0.5)
+                              ? strong.withValues(alpha: 0.5)
                               : YanciTheme.textSecondary.withValues(alpha: 0.5),
                         ),
                       ),

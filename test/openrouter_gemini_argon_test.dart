@@ -33,7 +33,7 @@ void main() {
           <String, String>{'role': 'user', 'content': 'latest turn'},
         ],
         model: 'google/gemini-4-argon',
-      structuredPrompt: StructuredPrompt(
+        structuredPrompt: StructuredPrompt(
           staticPart: 'stable role and world rules',
           windowPart: 'stable rolling summary',
           liveStatePart: 'current live state',
@@ -42,10 +42,7 @@ void main() {
 
       expect(body['session_id'], 'yanci_argon-openrouter-window');
       expect(body['max_tokens'], 32768);
-      expect(body['reasoning'], <String, dynamic>{
-        'effort': 'low',
-        'exclude': true,
-      });
+      expect(body.containsKey('reasoning'), isFalse);
       expect(_containsCacheControl(body), isFalse);
       expect(body['messages'], hasLength(greaterThanOrEqualTo(6)));
       expect(
@@ -65,7 +62,7 @@ void main() {
           <String, String>{'role': 'user', 'content': 'hello'},
         ],
         model: 'google/gemini-4-argon',
-      structuredPrompt: StructuredPrompt(staticPart: 'stable role'),
+        structuredPrompt: StructuredPrompt(staticPart: 'stable role'),
       );
 
       expect(body['reasoning'], <String, dynamic>{

@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:project_yanci/models/background_preset.dart';
@@ -164,5 +166,47 @@ void main() {
     expect(find.byType(ImageFiltered), findsOneWidget);
     await tester.pump(const Duration(milliseconds: 250));
     expect(find.byType(ImageFiltered), findsNothing);
+  });
+
+  testWidgets('card region blur uses a baked image without live blur filters', (
+    tester,
+  ) async {
+    final file = File('assets/images/holt_logo.png');
+    expect(file.existsSync(), isTrue);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Align(
+            alignment: Alignment.topLeft,
+            child: SizedBox(
+              width: 180,
+              height: 108,
+              child: BakedCardRegionBlur(
+                file: file,
+                scale: 1,
+                offsetX: 0,
+                offsetY: 0,
+                blur: 12,
+                viewportSize: const Size(390, 844),
+                regionOffset: const Offset(24, 120),
+                devicePixelRatio: 1,
+                overlayColor: Colors.black.withValues(alpha: .12),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(find.byType(BackdropFilter), findsNothing);
+    expect(find.byType(ImageFiltered), findsNothing);
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 120)),
+    );
+    await tester.pump();
+    expect(find.byType(BackdropFilter), findsNothing);
+    expect(find.byType(ImageFiltered), findsNothing);
+    expect(tester.takeException(), isNull);
   });
 }

@@ -1,6 +1,5 @@
 import 'dart:io';
 
-import 'package:path_provider/path_provider.dart';
 
 import 'image_generation/image_generation_client.dart';
 import 'image_generation/image_generation_provider.dart';
@@ -9,6 +8,7 @@ import 'model_info.dart';
 import 'settings/api_settings.dart';
 import 'token_estimator.dart';
 import 'token_tracker.dart';
+import '../utils/app_directories.dart';
 
 /// 模型畫畫：`<draw>prompt</draw>` 標籤 → 使用者獨立選定的圖片來源。
 /// 生成的圖片落到本地，掛在角色消息的 imagePath 上，與普通圖片同渠道渲染。
@@ -69,7 +69,7 @@ class ImageGenService {
       estimatedCost: ImageGenerationPricing.estimateUsd(config),
       requestKind: ApiRequestKind.image,
     );
-    final dir = await getApplicationDocumentsDirectory();
+    final dir = await getAppDocumentsDirectory();
     final genDir = Directory('${dir.path}/generated_images');
     if (!await genDir.exists()) await genDir.create(recursive: true);
     final path =

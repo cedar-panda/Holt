@@ -1,9 +1,9 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:uuid/uuid.dart';
 import '../theme/app_theme.dart';
@@ -13,6 +13,8 @@ import '../widgets/ambient_particles.dart';
 import '../widgets/avatar_cropper.dart';
 import '../memory/database.dart';
 import '../services/settings_manager.dart';
+import '../services/tts_service.dart';
+import '../services/tts_synthesizer.dart';
 import '../services/token_estimator.dart';
 import '../services/sticker_service.dart';
 import '../services/spider_web_state_service.dart';
@@ -22,6 +24,7 @@ import '../widgets/x_post_panel.dart';
 import '../widgets/character_signature_history_sheet.dart';
 import '../widgets/emotion_panel.dart';
 import '../utils/latest_request_gate.dart';
+import '../utils/app_directories.dart';
 
 /// 人設卡 — 創建/編輯（存 DB，無行數限制）
 class CharacterCardScreen extends StatefulWidget {
@@ -46,6 +49,7 @@ class _CharacterCardScreenState extends State<CharacterCardScreen> {
   final _drawAnchorCharCtrl = TextEditingController();
   final _drawStyleCtrl = TextEditingController();
   final _whisperController = TextEditingController();
+  final _newVoiceIdController = TextEditingController();
 
   // ═══ Token 計數（緩存門檻提示）═══
   int _descTokens = 0;
@@ -54,7 +58,12 @@ class _CharacterCardScreenState extends State<CharacterCardScreen> {
       const CacheThresholdInfo.unavailable();
   String _fixedStaticText = ''; // 用戶檔案 + 表情包（本頁不變的部分）
   String? _avatarPath;
+  /// 角色卡上顯示／編輯的是「目前 TTS 來源」那一家的綁定。
   String _ttsVoiceId = '';
+  String _ttsProvider = TtsProviders.elevenlabs;
+  Map<String, String> _ttsVoiceBindings = const <String, String>{};
+  List<String> _ttsVoiceIds = const <String>[];
+  Map<String, String> _ttsVoiceLabels = const <String, String>{};
   bool _isLoading = true;
   bool _showExtras = false;
   bool _isEditing = false;
@@ -86,6 +95,12 @@ class _CharacterCardScreenState extends State<CharacterCardScreen> {
     if (characterId != null) {
       char = await DatabaseHelper.getCharacter(characterId);
     }
+    final voiceIds = await TtsSettings.getVoiceIdList();
+    final voiceLabels = await TtsSettings.getVoiceIdLabels();
+    final ttsProvider =
+        await TtsSettings.getTtsProvider() == TtsProviders.elevenlabs
+        ? TtsProviders.elevenlabs
+        : TtsProviders.openai;
     if (!mounted ||
         characterId != widget.characterId ||
         !_loadGate.isCurrent(generation)) {
@@ -105,7 +120,8 @@ class _CharacterCardScreenState extends State<CharacterCardScreen> {
       _ageController.text = char['age'] ?? '';
       _heightController.text = char['height'] ?? '';
       _avatarPath = char['avatar_path'];
-      _ttsVoiceId = char['tts_voice_id'] ?? '';
+      _ttsVoiceBindings = CharacterVoiceBindings.bindingsOf(char);
+      _ttsVoiceId = _ttsVoiceBindings[ttsProvider] ?? '';
       _drawAnchorUserCtrl.text = char['draw_anchor_user'] ?? '';
       _drawAnchorCharCtrl.text = char['draw_anchor_char'] ?? '';
       _drawStyleCtrl.text = char['draw_style'] ?? '';
@@ -115,6 +131,17 @@ class _CharacterCardScreenState extends State<CharacterCardScreen> {
       // 已保存的更多屬性仍完整載入，但編輯頁初始保持收合。
       _showExtras = false;
     }
+    _ttsProvider = ttsProvider;
+    _ttsVoiceIds = ttsProvider == TtsProviders.openai
+        ? <String>{
+            ...TtsService.openaiVoices,
+            if (_ttsVoiceId.isNotEmpty) _ttsVoiceId,
+          }.toList()
+        : TtsSettings.normalizeVoiceIdOptions(
+            voiceIds,
+            boundVoiceId: _ttsVoiceId,
+          );
+    _ttsVoiceLabels = voiceLabels;
     _suppressDirtyTracking = false;
     setState(() {
       _dirty = false;
@@ -159,6 +186,7 @@ class _CharacterCardScreenState extends State<CharacterCardScreen> {
     _whisperController.clear();
     _avatarPath = null;
     _ttsVoiceId = '';
+    _ttsVoiceBindings = const <String, String>{};
     _whisperModelOverride = true;
     _whisperResetRequested = false;
     _loadedWhisperState = null;
@@ -269,6 +297,7 @@ class _CharacterCardScreenState extends State<CharacterCardScreen> {
     _drawStyleCtrl.dispose();
     _whisperController.dispose();
     _relationController.dispose();
+    _newVoiceIdController.dispose();
     super.dispose();
   }
 
@@ -669,9 +698,13 @@ class _CharacterCardScreenState extends State<CharacterCardScreen> {
                                   _heightController,
                                   '',
                                 ),
-                                const SizedBox(height: YanciTheme.spacingSm),
-                                _buildVoiceIdField(),
                               ],
+                              const SizedBox(height: YanciTheme.spacingMd),
+
+                              // Character voice is a primary binding, not an
+                              // optional biography field. Keep it visible even
+                              // when the extra profile fields are collapsed.
+                              _buildVoiceIdField(),
                               const SizedBox(height: YanciTheme.spacingMd),
 
                               // ═══ 畫畫設定：次要入口，錨點在底部面板編輯 ═══
@@ -1015,7 +1048,7 @@ class _CharacterCardScreenState extends State<CharacterCardScreen> {
     );
     if (picked == null) return;
 
-    final appDir = await getApplicationDocumentsDirectory();
+    final appDir = await getAppDocumentsDirectory();
     final avatarDir = Directory('${appDir.path}/avatars');
     if (!avatarDir.existsSync()) avatarDir.createSync(recursive: true);
 
@@ -1310,70 +1343,122 @@ class _CharacterCardScreenState extends State<CharacterCardScreen> {
   }
 
   Widget _buildVoiceIdField() {
-    return FutureBuilder<List<String>>(
-      future: TtsSettings.getVoiceIdList(),
-      builder: (ctx, snap) {
-        final voiceIds = snap.data ?? [];
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              L.pick(en: 'TTS Voice', zhTW: 'TTS 聲音'),
-              style: YanciTheme.bodySmall.copyWith(
-                color: YanciTheme.textSecondary,
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          '${L.pick(en: 'TTS Voice', zhTW: 'TTS 聲音', zhCN: 'TTS 声音')}'
+          ' · ${_ttsProvider == TtsProviders.openai ? 'OpenAI' : 'ElevenLabs'}',
+          style: YanciTheme.bodySmall.copyWith(color: YanciTheme.textSecondary),
+        ),
+        const SizedBox(height: 6),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+          decoration: BoxDecoration(
+            color: YanciTheme.glassInputBg,
+            borderRadius: BorderRadius.circular(YanciTheme.radiusMd),
+          ),
+          child: DropdownButton<String>(
+            value: _ttsVoiceId.isEmpty ? '' : _ttsVoiceId,
+            isExpanded: true,
+            underline: const SizedBox(),
+            dropdownColor: YanciTheme.isDark
+                ? const Color(0xF0302830)
+                : Colors.white,
+            style: YanciTheme.bodyText.copyWith(fontSize: 13),
+            items: [
+              DropdownMenuItem(
+                value: '',
+                child: Text(
+                  L.pick(en: 'Use global', zhTW: '使用全局'),
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: YanciTheme.textSecondary,
+                  ),
+                ),
+              ),
+              ..._ttsVoiceIds.map(
+                (id) => DropdownMenuItem(
+                  value: id,
+                  child: Text(
+                    TtsSettings.voiceIdDisplayName(id, _ttsVoiceLabels),
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: YanciTheme.isDark
+                          ? Colors.white.withValues(alpha: 0.85)
+                          : YanciTheme.textPrimary,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+            onChanged: (v) => setState(() {
+              _ttsVoiceId = v ?? '';
+              _dirty = true;
+            }),
+          ),
+        ),
+        if (_ttsProvider == TtsProviders.elevenlabs) ...[
+        const SizedBox(height: 6),
+        Row(
+          children: <Widget>[
+            Expanded(
+              child: TextField(
+                key: const ValueKey('character_tts_voice_id_input'),
+                controller: _newVoiceIdController,
+                style: YanciTheme.bodyText.copyWith(fontSize: 13),
+                textInputAction: TextInputAction.done,
+                onSubmitted: (_) => unawaited(_addCharacterVoiceId()),
+                decoration: YanciTheme.themedInputDecoration(
+                  hintText: L.pick(
+                    en: 'Paste a new Voice ID',
+                    zhTW: '貼上新的 Voice ID',
+                    zhCN: '粘贴新的 Voice ID',
+                  ),
+                ),
               ),
             ),
-            const SizedBox(height: 6),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
-              decoration: BoxDecoration(
-                color: YanciTheme.glassInputBg,
-                borderRadius: BorderRadius.circular(YanciTheme.radiusMd),
-              ),
-              child: DropdownButton<String>(
-                value: _ttsVoiceId.isEmpty ? '' : _ttsVoiceId,
-                isExpanded: true,
-                underline: const SizedBox(),
-                dropdownColor: YanciTheme.isDark
-                    ? const Color(0xF0302830)
-                    : Colors.white,
-                style: YanciTheme.bodyText.copyWith(fontSize: 13),
-                items: [
-                  DropdownMenuItem(
-                    value: '',
-                    child: Text(
-                      L.pick(en: 'Use global', zhTW: '使用全局'),
-                      style: TextStyle(
-                        fontSize: 13,
-                        color: YanciTheme.textSecondary,
-                      ),
-                    ),
-                  ),
-                  ...voiceIds.map(
-                    (id) => DropdownMenuItem(
-                      value: id,
-                      child: Text(
-                        id.length > 20 ? '${id.substring(0, 20)}…' : id,
-                        style: TextStyle(
-                          fontSize: 13,
-                          color: YanciTheme.isDark
-                              ? Colors.white.withValues(alpha: 0.85)
-                              : YanciTheme.textPrimary,
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-                onChanged: (v) => setState(() {
-                  _ttsVoiceId = v ?? '';
-                  _dirty = true;
-                }),
-              ),
+            const SizedBox(width: 6),
+            IconButton(
+              key: const ValueKey('character_tts_voice_id_add'),
+              tooltip: L.pick(en: 'Add and bind', zhTW: '新增並綁定', zhCN: '新增并绑定'),
+              onPressed: () => unawaited(_addCharacterVoiceId()),
+              icon: const Icon(Icons.add_circle_outline_rounded, size: 20),
             ),
           ],
-        );
-      },
+        ),
+        ],
+        Text(
+          L.pick(
+            en: 'Bound for the current voice source only; other sources keep their own binding. Leave blank to follow the global default.',
+            zhTW: '只綁定目前的聲音來源，切換來源時各自保留；留空則跟隨全域預設。',
+            zhCN: '只绑定当前的声音来源，切换来源时各自保留；留空则跟随全局默认。',
+          ),
+          style: YanciTheme.bodySmall.copyWith(
+            color: YanciTheme.textSecondary.withValues(alpha: 0.65),
+            fontSize: 10.5,
+          ),
+        ),
+      ],
     );
+  }
+
+  Future<void> _addCharacterVoiceId() async {
+    final voiceId = _newVoiceIdController.text.trim();
+    if (voiceId.isEmpty) return;
+    final voiceIds = await TtsSettings.addVoiceId(
+      voiceId,
+    ).then((_) => TtsSettings.getVoiceIdList());
+    if (!mounted) return;
+    setState(() {
+      _ttsVoiceIds = TtsSettings.normalizeVoiceIdOptions(
+        voiceIds,
+        boundVoiceId: voiceId,
+      );
+      _ttsVoiceId = voiceId;
+      _newVoiceIdController.clear();
+      _dirty = true;
+    });
   }
 
   Widget _buildWhisperSection() {
@@ -1554,6 +1639,14 @@ class _CharacterCardScreenState extends State<CharacterCardScreen> {
       'age': _ageController.text.trim(),
       'height': _heightController.text.trim(),
       'avatar_path': _avatarPath ?? '',
+      // 新欄位按供應商存；舊欄位鏡像目前這一家的值，給舊備份／舊版讀。
+      CharacterVoiceBindings.column: CharacterVoiceBindings.encode(
+        CharacterVoiceBindings.withVoice(
+          _ttsVoiceBindings,
+          _ttsProvider,
+          _ttsVoiceId,
+        ),
+      ),
       'tts_voice_id': _ttsVoiceId,
       'draw_anchor_user': _drawAnchorUserCtrl.text.trim(),
       'draw_anchor_char': _drawAnchorCharCtrl.text.trim(),

@@ -43,6 +43,11 @@ class _SidebarModelSettingsState extends State<SidebarModelSettings> {
   String _stickerModel = '';
   String _ttsProvider = 'openai';
   String _ttsElevenlabsModel = 'eleven_multilingual_v2';
+  String _ttsOpenaiVoice = 'nova';
+  String _ttsElevenlabsVoiceId = '';
+  List<String> _ttsVoiceIds = const <String>[];
+  Map<String, String> _ttsVoiceLabels = const <String, String>{};
+  final TextEditingController _ttsVoiceIdController = TextEditingController();
   WebSearchMode _webSearchMode = WebSearchMode.auto;
   String _webSearchModel = '';
   bool _loaded = false;
@@ -90,6 +95,13 @@ class _SidebarModelSettingsState extends State<SidebarModelSettings> {
     final webModel = await _loadWebSearchModel(webMode);
     final ttsProvider = await TtsSettings.getTtsProvider();
     final ttsElevenlabsModel = await TtsSettings.getTtsElevenlabsModel();
+    final ttsOpenaiVoice = await TtsSettings.getTtsVoice();
+    final ttsElevenlabsVoiceId = await TtsSettings.getTtsElevenlabsVoiceId();
+    final ttsVoiceIds = TtsSettings.normalizeVoiceIdOptions(
+      await TtsSettings.getVoiceIdList(),
+      boundVoiceId: ttsElevenlabsVoiceId,
+    );
+    final ttsVoiceLabels = await TtsSettings.getVoiceIdLabels();
     if (!mounted) return;
     setState(() {
       _starred = selectableModels;
@@ -101,11 +113,106 @@ class _SidebarModelSettingsState extends State<SidebarModelSettings> {
       _stickerModel = stickerModel;
       _ttsProvider = ttsProvider;
       _ttsElevenlabsModel = ttsElevenlabsModel;
+      _ttsOpenaiVoice = TtsService.openaiVoices.contains(ttsOpenaiVoice)
+          ? ttsOpenaiVoice
+          : 'nova';
+      _ttsElevenlabsVoiceId = ttsElevenlabsVoiceId;
+      _ttsVoiceIds = ttsVoiceIds;
+      _ttsVoiceLabels = ttsVoiceLabels;
       _webSearchMode = webMode;
       _webSearchModel = webModel;
       _loaded = true;
     });
     unawaited(_discoverEmbeddingModels());
+  }
+
+  @override
+  void dispose() {
+    _ttsVoiceIdController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _addTtsVoiceId() async {
+    final value = _ttsVoiceIdController.text.trim();
+    if (value.isEmpty) return;
+    final voiceIds = await TtsSettings.addAndSelectVoiceId(value);
+    if (!mounted) return;
+    setState(() {
+      _ttsVoiceIds = voiceIds;
+      _ttsElevenlabsVoiceId = value;
+      _ttsVoiceIdController.clear();
+    });
+    ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+      SnackBar(
+        duration: const Duration(milliseconds: 1200),
+        content: Text(
+          L.pick(
+            en: 'Voice ID saved and selected',
+            zhTW: 'Voice ID 已儲存並設為預設',
+            zhCN: 'Voice ID 已保存并设为默认',
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _removeTtsVoiceId(String voiceId) async {
+    await TtsSettings.removeVoiceId(voiceId);
+    final voiceIds = await TtsSettings.getVoiceIdList();
+    final selected = await TtsSettings.getTtsElevenlabsVoiceId();
+    if (!mounted) return;
+    setState(() {
+      _ttsVoiceIds = voiceIds;
+      _ttsElevenlabsVoiceId = selected;
+      _ttsVoiceLabels = Map<String, String>.from(_ttsVoiceLabels)
+        ..remove(voiceId);
+    });
+  }
+
+  Future<void> _renameTtsVoiceId(String voiceId) async {
+    final controller = TextEditingController(
+      text: _ttsVoiceLabels[voiceId] ?? '',
+    );
+    final value = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: YanciTheme.surfacePanel,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(YanciTheme.radiusMd),
+        ),
+        title: Text(
+          L.pick(en: 'Voice name', zhTW: '聲音名稱', zhCN: '声音名称'),
+        ),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          textInputAction: TextInputAction.done,
+          decoration: YanciTheme.themedInputDecoration(
+            hintText: L.pick(
+              en: 'For example: soft Cantonese',
+              zhTW: '例如：溫柔粵語',
+              zhCN: '例如：温柔粤语',
+            ),
+          ),
+          onSubmitted: (text) => Navigator.of(dialogContext).pop(text),
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: Text(L.pick(en: 'Cancel', zhTW: '取消', zhCN: '取消')),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(controller.text),
+            child: Text(L.pick(en: 'Save', zhTW: '儲存', zhCN: '保存')),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (value == null) return;
+    await TtsSettings.saveVoiceIdLabel(voiceId, value);
+    final labels = await TtsSettings.getVoiceIdLabels();
+    if (mounted) setState(() => _ttsVoiceLabels = labels);
   }
 
   Future<void> _discoverEmbeddingModels() async {
@@ -451,6 +558,173 @@ class _SidebarModelSettingsState extends State<SidebarModelSettings> {
                 }
               : null,
         ),
+        const SizedBox(height: 8),
+        if (_ttsProvider == 'openai')
+          DropdownButton<String>(
+            key: const ValueKey('functional_tts_openai_voice'),
+            value: _ttsOpenaiVoice,
+            isExpanded: true,
+            underline: const SizedBox.shrink(),
+            dropdownColor: YanciTheme.surfacePanel,
+            style: YanciTheme.bodySmall.copyWith(
+              color: SidebarVisualTokens.secondary,
+              fontSize: 11.5,
+            ),
+            items: TtsService.openaiVoices
+                .map(
+                  (voice) => DropdownMenuItem<String>(
+                    value: voice,
+                    child: Text(voice),
+                  ),
+                )
+                .toList(growable: false),
+            onChanged: (voice) {
+              if (voice == null) return;
+              setState(() => _ttsOpenaiVoice = voice);
+              unawaited(TtsSettings.saveTtsVoice(voice));
+            },
+          )
+        else ...<Widget>[
+          DropdownButton<String>(
+            key: const ValueKey('functional_tts_elevenlabs_voice'),
+            value:
+                _ttsElevenlabsVoiceId.isEmpty ||
+                    !_ttsVoiceIds.contains(_ttsElevenlabsVoiceId)
+                ? ''
+                : _ttsElevenlabsVoiceId,
+            isExpanded: true,
+            underline: const SizedBox.shrink(),
+            dropdownColor: YanciTheme.surfacePanel,
+            style: YanciTheme.bodySmall.copyWith(
+              color: SidebarVisualTokens.secondary,
+              fontSize: 11.5,
+            ),
+            items: <DropdownMenuItem<String>>[
+              DropdownMenuItem<String>(
+                value: '',
+                child: Text(
+                  L.pick(
+                    en: 'Select a default Voice ID',
+                    zhTW: '選擇預設 Voice ID',
+                    zhCN: '选择默认 Voice ID',
+                  ),
+                ),
+              ),
+              ..._ttsVoiceIds.map(
+                (voiceId) => DropdownMenuItem<String>(
+                  value: voiceId,
+                  child: Text(
+                    TtsSettings.voiceIdDisplayName(
+                      voiceId,
+                      _ttsVoiceLabels,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ),
+            ],
+            onChanged: (voiceId) {
+              if (voiceId == null) return;
+              setState(() => _ttsElevenlabsVoiceId = voiceId);
+              unawaited(TtsSettings.saveTtsElevenlabsVoiceId(voiceId));
+            },
+          ),
+          const SizedBox(height: 6),
+          Row(
+            children: <Widget>[
+              Expanded(
+                child: TextField(
+                  key: const ValueKey('functional_tts_voice_id_input'),
+                  controller: _ttsVoiceIdController,
+                  style: YanciTheme.bodySmall.copyWith(
+                    color: SidebarVisualTokens.primary,
+                    fontSize: 11.5,
+                  ),
+                  textInputAction: TextInputAction.done,
+                  onSubmitted: (_) => unawaited(_addTtsVoiceId()),
+                  decoration: InputDecoration(
+                    isDense: true,
+                    hintText: L.pick(
+                      en: 'Paste a new Voice ID',
+                      zhTW: '貼上新的 Voice ID',
+                      zhCN: '粘贴新的 Voice ID',
+                    ),
+                    hintStyle: YanciTheme.bodySmall.copyWith(
+                      color: SidebarVisualTokens.secondary.withValues(
+                        alpha: 0.62,
+                      ),
+                      fontSize: 11,
+                    ),
+                    border: InputBorder.none,
+                  ),
+                ),
+              ),
+              IconButton(
+                key: const ValueKey('functional_tts_voice_id_add'),
+                tooltip: L.pick(
+                  en: 'Add Voice ID',
+                  zhTW: '新增 Voice ID',
+                  zhCN: '新增 Voice ID',
+                ),
+                onPressed: () => unawaited(_addTtsVoiceId()),
+                icon: const Icon(Icons.add_rounded, size: 19),
+              ),
+            ],
+          ),
+          if (_ttsVoiceIds.isNotEmpty)
+            Wrap(
+              spacing: 6,
+              runSpacing: 4,
+              children: _ttsVoiceIds
+                  .map(
+                    (voiceId) => InputChip(
+                      avatar: IconButton(
+                        tooltip: L.pick(
+                          en: 'Rename voice',
+                          zhTW: '命名聲音',
+                          zhCN: '命名声音',
+                        ),
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints.tightFor(
+                          width: 24,
+                          height: 24,
+                        ),
+                        icon: const Icon(Icons.edit_rounded, size: 13),
+                        onPressed: () => unawaited(_renameTtsVoiceId(voiceId)),
+                      ),
+                      label: Text(
+                        TtsSettings.voiceIdDisplayName(
+                          voiceId,
+                          _ttsVoiceLabels,
+                          compact: true,
+                        ),
+                      ),
+                      labelStyle: YanciTheme.bodySmall.copyWith(fontSize: 10.5),
+                      backgroundColor: YanciTheme.glassInputBg,
+                      side: BorderSide(
+                        color: YanciTheme.glassBorder.withValues(alpha: 0.7),
+                        width: 0.5,
+                      ),
+                      deleteIcon: const Icon(Icons.close_rounded, size: 14),
+                      onDeleted: () => unawaited(_removeTtsVoiceId(voiceId)),
+                    ),
+                  )
+                  .toList(growable: false),
+            ),
+          const SizedBox(height: 4),
+          Text(
+            L.pick(
+              en: 'Characters can bind their own Voice ID in the character card. Unbound characters use this default.',
+              zhTW: '角色可在人設卡綁定專屬 Voice ID；未綁定時使用這個預設聲音。',
+              zhCN: '角色可在人设卡绑定专属 Voice ID；未绑定时使用这个默认声音。',
+            ),
+            style: YanciTheme.bodySmall.copyWith(
+              color: SidebarVisualTokens.secondary.withValues(alpha: 0.62),
+              fontSize: 10.5,
+            ),
+          ),
+        ],
       ],
     );
   }

@@ -38,9 +38,7 @@ class StaticTokenEstimator {
       contextMode: contextMode,
     )).persona;
     final nickname = persona.displayName;
-    final toolFeatures = (await ToolFeatureSettings.load()).forContext(
-      contextMode,
-    );
+    final toolFeatures = await ToolFeatureSettings.loadForContext(contextMode);
 
     final parts = <String>[];
 
@@ -129,10 +127,7 @@ class StaticTokenEstimator {
     }
     if (toolFeatures.toolPromptsEnabled && whisperModelOverride) {
       tools.add(
-        ToolPrompts.whisper(
-          characterName: charName,
-          userNickname: nickname,
-        ),
+        ToolPrompts.whisper(characterName: charName, userNickname: nickname),
       );
     }
     if (toolFeatures.toolPromptsEnabled && toolFeatures.scratchEnabled) {

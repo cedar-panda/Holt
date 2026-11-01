@@ -163,6 +163,7 @@ class _TtsPlayButtonState extends State<TtsPlayButton>
     return Center(
       child: BubbleActionGlyph(
         type: BubbleActionGlyphType.soundWave,
+        size: widget.size,
         color:
             widget.idleColor ??
             YanciTheme.textSecondary.withValues(alpha: 0.45),
@@ -204,7 +205,8 @@ class _TtsPlayButtonState extends State<TtsPlayButton>
 
             return Container(
               margin: const EdgeInsets.symmetric(horizontal: 0.6),
-              width: 1.5,
+              // 音波粗細跟著按鈕尺寸走（15 → 1.5、17 → 1.7）。
+              width: widget.size / 10,
               height: h,
               decoration: BoxDecoration(
                 color: YanciTheme.accent.withValues(

@@ -258,6 +258,12 @@ void main() {
     await tester.pump(const Duration(milliseconds: 500));
     expect(find.text('這段正文預設不應直接顯示。'), findsOneWidget);
 
+    // The visually blank area above the sheet is the modal barrier, so a tap
+    // there returns to the diary list without requiring a swipe gesture.
+    await tester.tapAt(const Offset(400, 40));
+    await tester.pumpAndSettle();
+    expect(find.text('這段正文預設不應直接顯示。'), findsNothing);
+
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump();
   });

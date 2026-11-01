@@ -136,6 +136,12 @@ extension _ThemeWorkshopBackgroundPage on _ThemeWorkshopScreenState {
                             ),
                           ),
 
+                          _buildCallBackgroundSelection(
+                            selectedScope: selectedScope,
+                            selectedPath: isHome ? _homeBgPath : _chatBgPath,
+                            setPageState: setPageState,
+                          ),
+
                           Expanded(
                             flex: 2,
                             child: Stack(

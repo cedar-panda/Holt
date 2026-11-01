@@ -1806,9 +1806,18 @@ class _ApiSettingsScreenState extends State<ApiSettingsScreen> {
   @override
   Widget build(BuildContext context) {
     return PopScope(
-      canPop: false,
+      // 允許右滑返回：頁面已經 500ms debounce 自動存，右滑時再補存一次
+      // 尚未落盤的修改（錯誤進 _reportSaveError，頁面已卸載時會略過提示）。
+      canPop: true,
       onPopInvokedWithResult: (didPop, _) {
-        if (!didPop) unawaited(_handleBack());
+        if (didPop) {
+          if (!_isPopping) {
+            _isPopping = true;
+            unawaited(_flushPendingSave().catchError(_reportSaveError));
+          }
+        } else {
+          unawaited(_handleBack());
+        }
       },
       child: Scaffold(
         body: GradientBackground(

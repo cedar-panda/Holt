@@ -19,6 +19,71 @@ void main() {
 
   tearDown(() => secureStorage.uninstall());
 
+  test('a fresh install leaves Thinking off and strength automatic', () async {
+    expect(await ApiSettings.getThinkingChain(), isFalse);
+    expect(await ApiSettings.getReasoningEffort(), 'auto');
+    await ApiSettings.setReasoningEffort('high');
+    expect(await ApiSettings.getThinkingChain(), isFalse);
+  });
+
+  test('reasoning effort migrates and supports window overrides', () async {
+    await ApiSettings.saveThinkingChain(true);
+    expect(await ApiSettings.getReasoningEffort(), 'medium');
+
+    await ApiSettings.setReasoningEffort('high', conversationId: 'window-a');
+    await ApiSettings.setReasoningEffort('auto', conversationId: 'window-b');
+
+    expect(
+      await ApiSettings.getReasoningEffort(conversationId: 'window-a'),
+      'high',
+    );
+    expect(
+      await ApiSettings.getReasoningEffort(conversationId: 'window-b'),
+      'auto',
+    );
+    expect(await ApiSettings.getReasoningEffort(), 'medium');
+    expect(await ApiSettings.getThinkingMachinesEffort(), 'high');
+  });
+
+  test('thinking switch is independent of selected strength', () async {
+    await ApiSettings.setThinkingChain(true, conversationId: 'window-a');
+    await ApiSettings.setReasoningEffort('high', conversationId: 'window-a');
+    await ApiSettings.setThinkingChain(false, conversationId: 'window-a');
+    expect(
+      await ApiSettings.getThinkingChain(conversationId: 'window-a'),
+      isFalse,
+    );
+    expect(
+      await ApiSettings.getReasoningEffort(conversationId: 'window-a'),
+      'high',
+    );
+    await ApiSettings.setReasoningEffort('low', conversationId: 'window-a');
+    expect(
+      await ApiSettings.getThinkingChain(conversationId: 'window-a'),
+      isFalse,
+    );
+    await ApiSettings.setThinkingChain(true, conversationId: 'window-a');
+    expect(
+      await ApiSettings.getReasoningEffort(conversationId: 'window-a'),
+      'low',
+    );
+  });
+
+  test(
+    'Thinking Machines card follows shared effort without overriding auto',
+    () async {
+      await ApiSettings.setReasoningEffort('auto');
+      await ApiSettings.saveThinkingMachinesEffort('xhigh');
+      expect(await ApiSettings.getReasoningEffort(), 'auto');
+      expect(await ApiSettings.getThinkingMachinesEffort(), 'xhigh');
+
+      await ApiSettings.setReasoningEffort('medium');
+      await ApiSettings.saveThinkingMachinesEffort('low');
+      expect(await ApiSettings.getReasoningEffort(), 'low');
+      expect(await ApiSettings.getThinkingMachinesEffort(), 'low');
+    },
+  );
+
   test(
     'provider readiness follows each adapter minimum configuration',
     () async {

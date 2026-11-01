@@ -322,7 +322,9 @@ class _MemoryScreenState extends State<MemoryScreen>
   @override
   Widget build(BuildContext context) {
     return PopScope(
-      canPop: _allowResultPop,
+      // 永遠允許 iOS 右滑返回；返回鍵仍帶 _summaryModified 結果。
+      // （目前呼叫端都不讀這個結果，右滑拿到 null 不影響。）
+      canPop: true,
       onPopInvokedWithResult: (didPop, _) {
         if (!didPop) _popWithSummaryResult();
       },
@@ -357,8 +359,9 @@ class _MemoryScreenState extends State<MemoryScreen>
                           SnackBar(
                             content: Text(
                               L.pick(
-                                en: 'Manual additions are disabled while Spider Web Memory is on. Let AI nodes expand it.',
-                                zhTW: '開啟蛛網記憶時禁止手動新增，請交由 AI 節點自行擴展',
+                                en: 'Manual additions are disabled while Advanced Memory is on. Let AI expand and connect it automatically.',
+                                zhTW: '開啟進階記憶時禁止手動新增，請交由 AI 自動擴展與關聯',
+                                zhCN: '开启进阶记忆时禁止手动新增，请交由 AI 自动扩展与关联',
                               ),
                             ),
                             backgroundColor: Colors.red.shade400,

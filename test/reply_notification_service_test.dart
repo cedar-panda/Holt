@@ -37,7 +37,8 @@ void main() {
       character: const <String, dynamic>{'id': 'char-1', 'name': '顧遠'},
       reply:
           '<think>內部推理</think>正文 [sticker:3] '
-          '<memo>[偏好] 不應外露 @測試</memo> [transfer:8]',
+          '<memo>[偏好] 不應外露 @測試</memo> [transfer:8] '
+          '[gift_received:熱茶]',
       conversationId: 'window-1',
     );
 

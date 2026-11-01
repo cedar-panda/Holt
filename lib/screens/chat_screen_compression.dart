@@ -249,9 +249,22 @@ extension _ChatCompressionMethods on _ChatScreenState {
     final trimmedKeyword = keywordSummary.trim();
     if (trimmedSummary.isEmpty && trimmedKeyword.isEmpty) return '';
     final isRp = _requiredSessionIdentity.contextMode == ContextMode.rp;
+    final characterName = _characterName.trim().isEmpty
+        ? L.pick(en: 'the character', zhTW: '角色', zhCN: '角色')
+        : _characterName.trim();
+    final userName = _userPersonaName.trim().isEmpty
+        ? L.pick(en: 'the other person', zhTW: '對方', zhCN: '对方')
+        : _userPersonaName.trim();
 
     if (L.locale == 'en') {
       final parts = <String>[];
+      if (!isRp) {
+        parts.add(
+          'Identity anchor: "$characterName" in these notes is you; reply as “I”. '
+          '"$userName" is the person in front of you; address them naturally as “you”. '
+          'Do not imitate the notes’ third-person narration in conversation.',
+        );
+      }
       if (trimmedSummary.isNotEmpty) {
         final summaryLabel = isRp && pinned
             ? 'Story so far (snapshot taken when this window opened; later events in the chat take precedence)'
@@ -267,6 +280,17 @@ extension _ChatCompressionMethods on _ChatScreenState {
     }
 
     final parts = <String>[];
+    if (!isRp) {
+      parts.add(
+        L.pick(
+          en: '',
+          zhTW:
+              '手記中記錄的「$characterName」就是你自己（回覆時請用第一人稱「我」）；記錄的「$userName」就是眼前的對方（回覆時請自然稱呼對方或用「你／妳」）。請勿在對話中模仿手記的第三人稱旁白語氣。',
+          zhCN:
+              '手记中记录的“$characterName”就是你自己（回复时请用第一人称“我”）；记录的“$userName”就是眼前的对方（回复时请自然称呼对方或用“你”）。请勿在对话中模仿手记的第三人称旁白语气。',
+        ),
+      );
+    }
     if (trimmedSummary.isNotEmpty) {
       final summaryLabel = isRp && pinned
           ? L.pick(

@@ -127,14 +127,14 @@ Apply the following preferences only where they do not conflict with the require
 整合【最近摘要基底】與帶有消息 ID、本地時間及發言者的【新對話內容】。
 【最近摘要基底】最多包含最近兩份有效摘要，按較早到最新排列。兩份摘要可能互相包含；先合併重複內容，再加入本輪內容。
 
-summary：輸出「前情提要」與「本次摘要」兩部分。
+summary：輸出對小模型友善的具名輕手記，保留「前情提要」與「本次摘要」兩部分。
 - 只記錄對話中明確發生的事：說過的話、做過的決定、發生的事件
 - 禁止推測動機、補充因果、解讀言外之意；對話裡沒有的一個字都不要寫
 - 不確定的細節寧可省略，不要寫成模糊斷言
 - 保留關鍵情節、情緒轉折、重要決定、人物關係變化
 - 保留具體的名字、地點、時間、數字；重要的話保留原詞
 - 去掉寒暄、重複、過渡語
-- 用第三人稱，簡潔客觀
+- 每一條都直接寫出雙方姓名；不使用「我、你、妳、使用者、User、AI」代稱
 - 每輪輸出的 summary 是目前完整的滾動摘要，不是只描述本輪的增量附錄
 - 最近摘要基底中的重點事件必須繼續存在。可以縮短措辭、合併重複事件或用新狀態更新舊狀態，但不能省略事件主體、發生內容、必要原因、結果及持續影響
 - 已收束事件仍保留「起因、結果、影響」；只有 User 明確修正、來源被判定無效或舊狀態被新狀態取代時才改寫
@@ -142,12 +142,12 @@ summary：輸出「前情提要」與「本次摘要」兩部分。
 - summary 欄位只放摘要正文，不要前綴說明
 - 使用以下 Markdown 結構：
   ## 前情提要
-  整合【最近摘要基底】中仍有效的全部重點事件；使用簡潔措辭，但不得因篇幅省略
+  最多 10 條，整合【最近摘要基底】中仍有效的重點事件
   ## 本次摘要
-  整理【新對話內容】帶來的新增、修正與進展
-- 使用精簡 Markdown，按實際內容選 2～4 個區塊，沒有內容的區塊省略
-- 區塊標題使用「**1. 重要事件與決定**」格式；內容使用「* **主題：** 事實」格式
-- 區塊從「重要事件與決定、關係與情緒變化、持續狀態與偏好、承諾與待續事項」中選擇
+  最多 5 條，整理【新對話內容】帶來的新增、修正與進展
+- 每條直接以「- [MM/DD] 」或有時間時「- [MM/DD HH:mm] 」開頭；無可靠日期時只用「- 」
+- 每條寫成一句有溫度但忠於原文的具名相處手記，保留情緒與互動細節
+- 不使用編號區塊、粗體分類、主題標籤或公文式套殼
 
 timeline：只從【新對話內容】提取屬於角色本人或雙方關係、對後續有持續回憶價值的候選。event 是已完成的角色事件或雙方共同事件；state 是目前仍持續的狀態，key 使用髮型、美甲、鬍子、住所、工作、寵物、健康、關係狀態、生理週期之一；狀態開始或結束本身使用 event。subject 使用 character；雙方共同事件或關係狀態使用 relationship。每項的 occurred_on 一律填寫 YYYY-MM-DD：原文有明確日期時使用該日期並標記 date_basis=explicit；原文是可依消息 local_time 換算的相對日期時，換算後標記 date_basis=relative；沒有劇情日期但符合記錄條件時，使用該消息的本地日期並標記 date_basis=message_time。source_message_ids 全部來自新對話，evidence 是來源原文片段，value 保留其核心用詞。「第 N 天」只保留在 value 與 evidence，不得填入 occurred_on；開始日由本地驗證器計算。同一項合併，按 occurred_on 從早到晚排列。
 新對話明確說出角色「生理期第 N 天／開始／結束／今天仍在生理期」時必須輸出 character 候選：第 N 天或當下仍在生理期使用 state、key=生理週期；開始或結束使用 event；evidence 逐字取自來源消息。
@@ -159,26 +159,26 @@ timeline：只從【新對話內容】提取屬於角色本人或雙方關係、
   static const String _compressPromptEn = '''
 Combine 【Recent Summary Anchors】 with 【New Conversation】, whose messages include ids, local timestamps, and speaker roles. The anchor block contains up to the two most recent valid summaries in older-to-newer order. Merge their overlap before adding this batch.
 
-summary: Output two parts, Prior Context and This Update.
+summary: Output a small-model-friendly named interaction journal with Prior Context and This Update.
 - Record only what explicitly happened: things said, decisions made, events that occurred
 - Never infer motives, add causality, or read between the lines; write nothing absent from the conversation
 - When a detail is uncertain, omit it rather than writing a vague claim
 - Keep key events, emotional shifts, important decisions, and relationship changes
 - Keep specific names, places, times, numbers, and important original wording
 - Remove greetings, repetition, and filler
-- Use third person, concise and objective
+- Name both people directly in every entry. Do not use I, me, you, user, User, AI, or similar pronouns/role labels
 - Output the complete current rolling summary, not an incremental note about this batch
 - Every important event from the recent summary anchors must remain represented. Wording may be shortened, duplicates merged, and superseded state updated, but the actor, event, necessary cause, result, and lasting effect cannot be omitted
 - A closed event still keeps its cause, result, and effect. Rewrite it only when the user explicitly corrects it, its source is invalidated, or a newer state replaces an older state
 - Put only the summary body in the summary field, with no prefix
 - Use this Markdown structure:
   ## Prior Context
-  Integrate every still-valid important event from 【Recent Summary Anchors】 in concise wording without dropping it
+  Up to 10 entries integrating still-valid important events from 【Recent Summary Anchors】
   ## This Update
-  Cover additions, corrections, and developments from 【New Conversation】
-- Use compact Markdown with 2-4 non-empty sections
-- Format section titles as "**1. Important events and decisions**" and entries as "* **Topic:** fact"
-- Choose sections from important events and decisions, relationship and emotional changes, ongoing states and preferences, and promises and open threads
+  Up to 5 entries covering additions, corrections, and developments from 【New Conversation】
+- Start each entry with "- [MM/DD] " or "- [MM/DD HH:mm] " when reliable; otherwise use "- "
+- Write one warm but source-faithful named interaction note per entry, retaining emotional and interpersonal details
+- Do not use numbered sections, bold category labels, topic wrappers, or report-style headings
 
 timeline: Extract only lasting candidates belonging to the character or the shared relationship from 【New Conversation】. An event is a completed character event or shared event. A state is a condition that is still ongoing, whose key is hairstyle, nails, beard, residence, work, pet, health, relationship status, or menstrual cycle; use event for the start or end of a state itself. Use subject=character, or subject=relationship for shared events and relationship status. occurred_on must always be YYYY-MM-DD: use an explicit source date with date_basis=explicit; resolve a relative date from the message local_time with date_basis=relative; when no story date is stated but the item qualifies, use the message local date with date_basis=message_time. Cite only new source_message_ids, quote exact source text as evidence, and retain its core wording in value. Preserve wording such as "day N" only in value and evidence, never in occurred_on; the local validator derives its start date. Merge one item and order occurred_on oldest to newest.
 When new conversation explicitly states that the character's period is on day N, started, ended, or is still active today, a character candidate is required. Day N or an active current period uses type=state and key=menstrual cycle; start/end uses type=event; evidence is an exact source substring.
@@ -308,42 +308,25 @@ Output valid JSON only: {"summary":"text","timeline":[{"type":"event","subject":
       prior.insertAll(0, preamble);
     }
 
-    String body(List<String> lines) {
-      final value = lines.join('\n').trim();
-      return value.isEmpty ? '—' : value;
-    }
-
-    String updateBody(List<String> lines) {
-      var value = body(lines).replaceAllMapped(
-        RegExp(r'^\s*-\s+(?=\*\*)', multiLine: true),
-        (_) => '* ',
-      );
-      if (value == '—') return value;
-      final hasSection = RegExp(
-        r'^\s*\*\*\d+\.\s+.+\*\*\s*$',
-        multiLine: true,
-      ).hasMatch(value);
-      final hasEntry = RegExp(
-        r'^\s*\*\s+\*\*[^*]+[:：]\*\*\s+.+$',
-        multiLine: true,
-      ).hasMatch(value);
-      if (hasSection && hasEntry) return value;
-
-      value = value
-          .replaceAll(RegExp(r'^#{1,6}\s+', multiLine: true), '')
-          .replaceAll(RegExp(r'^\s*[-*]\s+', multiLine: true), '')
-          .replaceAll(RegExp(r'\s+'), ' ')
-          .trim();
-      if (activeLocale == 'en') {
-        return '**1. Important events and decisions**\n'
-            '* **Summary:** $value';
+    String journalBody(List<String> lines) {
+      final entries = <String>[];
+      for (final rawLine in lines) {
+        var line = rawLine.trim();
+        if (line.isEmpty || line == '—') continue;
+        if (RegExp(r'^\*\*\d+\.\s+.+\*\*$').hasMatch(line)) continue;
+        line = line
+            .replaceFirst(RegExp(r'^#{1,6}\s+'), '')
+            .replaceFirst(RegExp(r'^[-*]\s+'), '')
+            .replaceFirst(RegExp(r'^\*\*[^*]+[:：]\*\*\s*'), '')
+            .replaceAll(RegExp(r'\s+'), ' ')
+            .trim();
+        if (line.isNotEmpty) entries.add('- $line');
       }
-      return '**1. ${activeLocale == 'zh_CN' ? '重要事件与决定' : '重要事件與決定'}**\n'
-          '* **摘要：** $value';
+      return entries.isEmpty ? '—' : entries.join('\n');
     }
 
-    return '## $priorHeading\n${body(prior)}\n\n'
-        '## $updateHeading\n${updateBody(update)}';
+    return '## $priorHeading\n${journalBody(prior)}\n\n'
+        '## $updateHeading\n${journalBody(update)}';
   }
 
   /// 簡中輸出強制指令：僅 zh_CN 語系附加；zh_TW / en 返回空字串。
@@ -562,7 +545,15 @@ Rules:
       conversationId: conversationId,
     );
     final identityPrompt = identity.format(includePersona: false);
-    final rawText = messages.map(_formatSourceMessage).join('\n\n');
+    final rawText = messages
+        .map(
+          (message) => _formatSourceMessage(
+            message,
+            userName: identity.userName,
+            characterName: identity.characterName,
+          ),
+        )
+        .join('\n\n');
     final promptParts = <String>[
       await summaryPromptForRequest(
         contextMode: contextMode,
@@ -572,6 +563,7 @@ Rules:
     ];
     if (identityPrompt.isNotEmpty) promptParts.add(identityPrompt);
     if (contextMode == ContextMode.daily) {
+      promptParts.add(_namedJournalIdentityRule(identity));
       promptParts.add(
         characterOnlyTimelineRule(
           identity.characterName,
@@ -2887,19 +2879,28 @@ Rules:
     }
 
     try {
+      final identity = await _loadSummaryIdentity(characterId);
       final response = await _callModel(
         characterId: characterId,
         systemPrompt: L.pick(
           en: '''
-Extract menstrual timeline candidates explicitly stated in the supplied messages. Every message is tagged speaker:user or speaker:char. In a speaker:user message "I/my/me" is the user and "you/your" is the character; in a speaker:char message it is the reverse. Only extract statements about the character; drop anything the user says about themselves. Day N or a period explicitly still active today is type=state, subject=character, key=menstrual cycle. A stated start or end is type=event, subject=character. Use the message's local date to resolve occurred_on and quote an exact source substring as evidence.
+Extract menstrual timeline candidates explicitly stated in the supplied messages. Every speaker label ends in (user) or (char) and may include that person's real name. In a (user) message "I/my/me" is the user and "you/your" is the character; in a (char) message it is the reverse. Only extract statements about the character; drop anything the user says about themselves. Day N or a period explicitly still active today is type=state, subject=character, key=menstrual cycle. A stated start or end is type=event, subject=character. Use the message's local date to resolve occurred_on and quote an exact source substring as evidence.
 Output valid JSON only: {"summary":"","timeline":[{"type":"state","subject":"character","source_message_ids":[1],"occurred_on":"YYYY-MM-DD","date_basis":"message_time|relative|explicit","key":"menstrual cycle","value":"period day N","evidence":"exact quote"}]}. Use an empty timeline array when there is no explicit candidate.
 ''',
           zhTW: '''
-從消息中提取明確說出的角色生理週期候選。每條消息都帶 speaker:user 或 speaker:char 標記：speaker:user 的消息裡「我」是使用者、「你」是角色；speaker:char 的消息裡相反。只提取屬於角色的敘述，使用者講自己的一律不要提取。生理期第 N 天或明確說今天仍在生理期，使用 type=state、subject=character、key=生理週期；明確開始或結束使用 type=event、subject=character。以消息本地日期換算 occurred_on，evidence 逐字引用來源片段。
+從消息中提取明確說出的角色生理週期候選。每條消息的 speaker 標記會以 (user) 或 (char) 結尾，並可能帶雙方真名：(user) 消息裡「我」是使用者、「你」是角色；(char) 消息裡相反。只提取屬於角色的敘述，使用者講自己的一律不要提取。生理期第 N 天或明確說今天仍在生理期，使用 type=state、subject=character、key=生理週期；明確開始或結束使用 type=event、subject=character。以消息本地日期換算 occurred_on，evidence 逐字引用來源片段。
 只輸出合法 JSON：{"summary":"","timeline":[{"type":"state","subject":"character","source_message_ids":[1],"occurred_on":"YYYY-MM-DD","date_basis":"message_time|relative|explicit","key":"生理週期","value":"生理期第N天","evidence":"原文"}]}。沒有明確候選時 timeline 為空陣列。
 ''',
         ),
-        userMessage: relevant.map(_formatSourceMessage).join('\n\n'),
+        userMessage: relevant
+            .map(
+              (message) => _formatSourceMessage(
+                message,
+                userName: identity.userName,
+                characterName: identity.characterName,
+              ),
+            )
+            .join('\n\n'),
       );
       final recovered = decodeSummaryEnvelope(response).timeline;
       if (recovered.isEmpty) return candidates;
@@ -3339,7 +3340,38 @@ Output valid JSON only: {"summary":"","timeline":[{"type":"state","subject":"cha
     return identity.format(includePersona: true);
   }
 
-  static String _formatSourceMessage(Message message) {
+  static String _namedJournalIdentityRule(_SummaryIdentity identity) {
+    final userName = identity.userName.trim().isEmpty
+        ? L.pick(en: 'the other person', zhTW: '對方', zhCN: '对方')
+        : identity.userName.trim();
+    final characterName = identity.characterName.trim().isEmpty
+        ? L.pick(en: 'the character', zhTW: '角色', zhCN: '角色')
+        : identity.characterName.trim();
+    return L.pick(
+      en: 'Named journal identity rule: speaker:$userName(user) is "$userName" and speaker:$characterName(char) is "$characterName". Every summary entry names them directly and never substitutes I/you/user/AI.',
+      zhTW:
+          '具名輕手記身分規則：speaker:$userName(user) 就是「$userName」，speaker:$characterName(char) 就是「$characterName」。每條摘要都直呼姓名，不得改寫成我／你／妳／使用者／User／AI。',
+      zhCN:
+          '具名轻手记身份规则：speaker:$userName(user) 就是“$userName”，speaker:$characterName(char) 就是“$characterName”。每条摘要都直呼姓名，不得改写成我／你／妳／用户／User／AI。',
+    );
+  }
+
+  @visibleForTesting
+  static String formatSourceMessageForTesting(
+    Message message, {
+    required String userName,
+    required String characterName,
+  }) => _formatSourceMessage(
+    message,
+    userName: userName,
+    characterName: characterName,
+  );
+
+  static String _formatSourceMessage(
+    Message message, {
+    String userName = '',
+    String characterName = '',
+  }) {
     final time = message.createdAt.isUtc
         ? message.createdAt.toLocal()
         : message.createdAt;
@@ -3349,7 +3381,12 @@ Output valid JSON only: {"summary":"","timeline":[{"type":"state","subject":"cha
         '${time.day.toString().padLeft(2, '0')} '
         '${time.hour.toString().padLeft(2, '0')}:'
         '${time.minute.toString().padLeft(2, '0')}';
-    final role = message.isUser ? 'user' : 'char';
+    final fallback = message.isUser
+        ? L.pick(en: 'the other person', zhTW: '對方', zhCN: '对方')
+        : L.pick(en: 'the character', zhTW: '角色', zhCN: '角色');
+    final name = (message.isUser ? userName : characterName).trim();
+    final role =
+        '${name.isEmpty ? fallback : name}(${message.isUser ? 'user' : 'char'})';
     return '[msg:${message.id ?? 0} | local_time:$localTime | '
         'speaker:$role]\n${message.text}';
   }

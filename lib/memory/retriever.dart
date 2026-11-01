@@ -69,6 +69,28 @@ class Retriever {
     _injectionLogsByWindow[_scope(windowId)] ?? const <String>[],
   );
 
+  static int _stableSparkSeed(String value) {
+    var hash = 0x811c9dc5;
+    for (final unit in value.codeUnits) {
+      hash ^= unit;
+      hash = (hash * 0x01000193) & 0x7fffffff;
+    }
+    return hash;
+  }
+
+  static List<String> _triggerWords(String raw) => raw
+      .split(RegExp(r'[,，、;；\n]+'))
+      .map((value) => value.trim())
+      .where((value) => value.length >= 2 && value.length <= 24)
+      .toList(growable: false);
+
+  static bool _matchesForceRecall(Memory memory, String query) =>
+      memory.content.contains(query) ||
+      RecallTextMatcher.bestKeywordMatch(query, memory.triggers) != null;
+
+  static bool forceRecallMatchesForTesting(Memory memory, String query) =>
+      _matchesForceRecall(memory, query);
+
   static String _displayCategory(String canonical) {
     return switch (canonical.trim().toLowerCase()) {
       '長期情緒' ||
@@ -297,7 +319,7 @@ class Retriever {
           )) {
         return false;
       }
-      if (mem.id != null && !seen.add(mem.id!)) return false;
+      if (mem.id != null && seen.contains(mem.id)) return false;
 
       final shortNo = mem.id != null ? shortFor(mem.id!, windowId: scope) : 0;
       String line = '';
@@ -319,6 +341,7 @@ class Retriever {
 
       final cost = TokenEstimator.estimate(line);
       if (usedTokens + cost > budget) return false;
+      if (mem.id != null) seen.add(mem.id!);
       injected.add(line);
       usedTokens += cost;
       return true;
@@ -368,19 +391,22 @@ class Retriever {
       if (isSpiderWebEnabled &&
           pendingRecall != null &&
           pendingRecall.isNotEmpty) {
+        final forceRecallQuery = pendingRecall;
         final matches = allActive
-            .where((m) => m.content.contains(pendingRecall!))
+            .where((m) => _matchesForceRecall(m, forceRecallQuery))
             .toList();
         if (matches.isNotEmpty) {
           injectionLog.add('🔍 強行回想命中：「$pendingRecall」(${matches.length}條)');
           for (final mem in matches) {
-            forceRecallInjected =
-                tryInject(
-                  mem,
-                  prefix:
-                      '[#${mem.id != null ? shortFor(mem.id!, windowId: scope) : 0}·${_displayCategory(mem.category)}][${L.pick(en: 'Forced recall match', zhTW: '強行回想命中')}] ${mem.content}',
-                ) ||
-                forceRecallInjected;
+            final inserted = tryInject(
+              mem,
+              prefix:
+                  '[#${mem.id != null ? shortFor(mem.id!, windowId: scope) : 0}·${_displayCategory(mem.category)}][${L.pick(en: 'Forced recall match', zhTW: '強行回想命中')}] ${mem.content}',
+            );
+            forceRecallInjected = inserted || forceRecallInjected;
+            if (inserted && mem.id != null) {
+              triggeredMemoryIds.add(mem.id!);
+            }
           }
         }
       }
@@ -498,17 +524,63 @@ class Retriever {
       }
     }
 
+    String dormantSparkPrompt = '';
+    if (contextMode == ContextMode.daily && isSpiderWebEnabled) {
+      final injectedText = injected.join('\n').toLowerCase();
+      final candidateWords = <String>{};
+      for (final memory in allActive) {
+        if (memory.id != null && seen.contains(memory.id)) continue;
+        final clarity = SpiderWebCore.calculateClarity(
+          memory.lastAccessed.toIso8601String(),
+          category: memory.category,
+          activeDateKeys: spiderActiveDateKeys,
+        );
+        if (clarity >= 0.85) continue;
+        for (final word in _triggerWords(memory.triggers)) {
+          if (!injectedText.contains(word.toLowerCase())) {
+            candidateWords.add(word);
+          }
+        }
+      }
+      if (candidateWords.isNotEmpty) {
+        final today = DateTime.now();
+        final dayKey = '${today.year}-${today.month}-${today.day}';
+        final ordered = candidateWords.toList(growable: false)
+          ..sort(
+            (left, right) => _stableSparkSeed(
+              '$scope|$characterId|$dayKey|$left',
+            ).compareTo(_stableSparkSeed('$scope|$characterId|$dayKey|$right')),
+          );
+        final sparks = ordered.take(min(3, ordered.length)).toList();
+        final words = sparks.join(L.locale == 'en' ? ', ' : '、');
+        final candidatePrompt = L.pick(
+          en: '[Hazy old keywords passing through mind: $words] (Faint fragments from older memories; if one naturally resonates with the current topic and you want the full details, call memory.force_recall with that keyword for the next turn; otherwise ignore.)',
+          zhTW:
+              '【腦海掠過的模糊舊詞：$words】（這些是記憶深處閃過的舊日碎片；若剛好與當下話題或心緒產生共鳴卻想不起細節，可自然流露一絲似曾相識，並調用 memory.force_recall 填入該詞，下一回合將浮現完整記憶；若無關則忽略）',
+          zhCN:
+              '【脑海掠过的模糊旧词：$words】（这些是记忆深处闪过的旧日碎片；若刚好与当下话题或心绪产生共鸣却想不起细节，可自然流露一丝似曾相识，并调用 memory.force_recall 填入该词，下一回合将浮现完整记忆；若无关则忽略）',
+        );
+        if (usedTokens + TokenEstimator.estimate(candidatePrompt) <= budget) {
+          dormantSparkPrompt = candidatePrompt;
+          injectionLog.add('✦ 閃回舊詞碎片：$words');
+        }
+      }
+    }
+
     _triggeredCountByWindow[scope] = triggered;
 
     // 沒有真正召回到記憶時，連記憶說明也不發送。
     // 這保持 App Live State 是事實導向的：有內容才有區塊。
-    if (injected.isEmpty) return DeferredPrompt.empty();
+    if (injected.isEmpty && dormantSparkPrompt.isEmpty) {
+      return DeferredPrompt.empty();
+    }
 
     sections.addAll(injected);
+    if (dormantSparkPrompt.isNotEmpty) sections.add(dormantSparkPrompt);
     final total = injected.length;
     if (triggered > 0) {
       injectionLog.add('↳ 觸發 $triggered 條 + 順序 ${total - triggered} 條');
-    } else {
+    } else if (total > 0) {
       injectionLog.add('↳ 注入 $total 條');
     }
 

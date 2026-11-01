@@ -9,16 +9,28 @@ extension _HomeManualSummaryMethods on _HomeScreenState {
 
     final choice = await showModalBottomSheet<String>(
       context: context,
-      backgroundColor: YanciTheme.surfacePanel,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      // 跟主題走：面板底色帶主題色調、細主題色邊，不用 Material 預設
+      // 色調疊加（surfaceTint 會把底色染成跟主題無關的紫灰）。
+      backgroundColor: YanciTheme.themedOverlaySurface,
+      shape: RoundedRectangleBorder(
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(18)),
+        side: BorderSide(color: YanciTheme.themedOverlayBorder, width: 0.8),
       ),
       builder: (ctx) => SafeArea(
         child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 8),
+          padding: const EdgeInsets.only(top: 8, bottom: 8),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
+              Container(
+                width: 36,
+                height: 4,
+                margin: const EdgeInsets.only(bottom: 6),
+                decoration: BoxDecoration(
+                  color: YanciTheme.accent.withValues(alpha: 0.32),
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
               ListTile(
                 leading: Icon(
                   Icons.subject_rounded,
@@ -35,6 +47,7 @@ extension _HomeManualSummaryMethods on _HomeScreenState {
                   ),
                   style: TextStyle(color: YanciTheme.textSecondary),
                 ),
+                splashColor: YanciTheme.accent.withValues(alpha: 0.10),
                 onTap: () => Navigator.of(ctx).pop('all'),
               ),
               ListTile(
@@ -53,6 +66,7 @@ extension _HomeManualSummaryMethods on _HomeScreenState {
                   ),
                   style: TextStyle(color: YanciTheme.textSecondary),
                 ),
+                splashColor: YanciTheme.accent.withValues(alpha: 0.10),
                 onTap: () => Navigator.of(ctx).pop('selected'),
               ),
               ListTile(
@@ -71,6 +85,7 @@ extension _HomeManualSummaryMethods on _HomeScreenState {
                   ),
                   style: TextStyle(color: YanciTheme.textSecondary),
                 ),
+                splashColor: YanciTheme.accent.withValues(alpha: 0.10),
                 onTap: () => Navigator.of(ctx).pop('memory_summary'),
               ),
             ],
@@ -117,8 +132,12 @@ extension _HomeManualSummaryMethods on _HomeScreenState {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: YanciTheme.surfacePanel,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        backgroundColor: YanciTheme.themedOverlaySurface,
+        surfaceTintColor: Colors.transparent,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: BorderSide(color: YanciTheme.themedOverlayBorder, width: 0.8),
+        ),
         title: Text(
           L.pick(en: 'Summarize all messages', zhTW: '摘要全部聊天'),
           style: TextStyle(color: YanciTheme.textPrimary),
@@ -139,12 +158,19 @@ extension _HomeManualSummaryMethods on _HomeScreenState {
         ),
         actions: [
           TextButton(
+            style: TextButton.styleFrom(
+              foregroundColor: YanciTheme.textSecondary,
+            ),
             onPressed: () => Navigator.of(ctx).pop(false),
             child: Text(L.pick(en: 'Cancel', zhTW: '取消')),
           ),
           TextButton(
+            style: TextButton.styleFrom(foregroundColor: YanciTheme.accent),
             onPressed: () => Navigator.of(ctx).pop(true),
-            child: Text(L.pick(en: 'Start', zhTW: '開始摘要')),
+            child: Text(
+              L.pick(en: 'Start', zhTW: '開始摘要'),
+              style: const TextStyle(fontWeight: FontWeight.w600),
+            ),
           ),
         ],
       ),

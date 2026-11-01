@@ -15,6 +15,7 @@ import '../openai_compatible_service.dart';
 import '../thinking_machines_service.dart';
 import '../local_model_service.dart';
 import '../locale_strings.dart';
+import '../reasoning_effort.dart';
 import 'memory_settings.dart';
 import '../../models/context_mode.dart';
 
@@ -580,10 +581,23 @@ class ApiSettings {
     const supported = <String>{'low', 'medium', 'high', 'xhigh'};
     final normalized = value.trim().toLowerCase();
     final p = await SharedPreferences.getInstance();
-    await p.setString(
-      _keyThinkingMachinesEffort,
-      supported.contains(normalized) ? normalized : 'high',
-    );
+    final savedValue = supported.contains(normalized) ? normalized : 'high';
+    await p.setString(_keyThinkingMachinesEffort, savedValue);
+
+    // The provider-specific card may still expose `xhigh`, while the shared
+    // window selector intentionally has four levels. Keep an already-enabled
+    // global selector in sync without turning Thinking on when it is off.
+    final sharedSaved = p.getString(_keyReasoningEffort);
+    final sharedEnabled = sharedSaved != null
+        ? ReasoningEffort.isEnabled(sharedSaved)
+        : (p.getBool(_keyThinkingChain) ?? false);
+    if (sharedEnabled) {
+      await p.setString(
+        _keyReasoningEffort,
+        ReasoningEffort.normalize(savedValue),
+      );
+      await p.setBool(_keyThinkingChain, true);
+    }
   }
 
   static Future<String> getThinkingMachinesEffort() async {
@@ -1088,9 +1102,16 @@ class ApiSettings {
     String? overrideModel,
     String? overrideProvider,
     bool? thinkingEnabledOverride,
+    String? reasoningEffortOverride,
+    String? conversationId,
   }) async {
     final provider = overrideProvider ?? await getApiProvider();
-    final thinkingEnabled = thinkingEnabledOverride ?? await getThinkingChain();
+    final reasoningEffort = reasoningEffortOverride != null
+        ? ReasoningEffort.normalize(reasoningEffortOverride)
+        : await getReasoningEffort(conversationId: conversationId);
+    final thinkingEnabled =
+        thinkingEnabledOverride ??
+        await getThinkingChain(conversationId: conversationId);
     // 如果指定了本地模型，直接返回 LocalModelService
     final modelId = overrideModel ?? await _modelForProvider(provider);
     if (LocalModelService.isLocalModelId(modelId)) {
@@ -1194,11 +1215,12 @@ class ApiSettings {
       final model = overrideModel ?? await getGeminiModel();
       // Utility requests such as character signatures must not mutate the
       // shared chat adapter's Thinking state while a chat request is active.
-      if (thinkingEnabledOverride != null) {
+      if (thinkingEnabledOverride != null || reasoningEffortOverride != null) {
         return GeminiService(
           apiKey: key,
           modelId: model,
           thinkingEnabled: thinkingEnabled,
+          reasoningEffort: reasoningEffort,
         );
       }
       final cached = _cachedGeminiService;
@@ -1206,6 +1228,7 @@ class ApiSettings {
           _cachedGeminiModel == model &&
           cached != null) {
         cached.thinkingEnabled = thinkingEnabled;
+        cached.reasoningEffort = reasoningEffort;
         return cached;
       }
       _cachedGeminiKey = key;
@@ -1214,6 +1237,7 @@ class ApiSettings {
         apiKey: key,
         modelId: model,
         thinkingEnabled: thinkingEnabled,
+        reasoningEffort: reasoningEffort,
       );
       return _cachedGeminiService!;
     }
@@ -1242,7 +1266,11 @@ class ApiSettings {
           ),
         );
       }
-      return DeepInfraService(apiKey: key, thinkingEnabled: thinkingEnabled);
+      return DeepInfraService(
+        apiKey: key,
+        thinkingEnabled: thinkingEnabled,
+        reasoningEffort: reasoningEffort,
+      );
     }
 
     if (provider == 'qwen') {
@@ -1271,7 +1299,7 @@ class ApiSettings {
       return ThinkingMachinesService(
         apiKey: key,
         thinkingEnabled: thinkingEnabled,
-        thinkingEffort: await getThinkingMachinesEffort(),
+        thinkingEffort: reasoningEffort,
       );
     }
 
@@ -1311,7 +1339,8 @@ class ApiSettings {
       }
       return OpenRouterService(
         apiKey: apiKey,
-        thinkingEnabled: await getThinkingChain(),
+        thinkingEnabled: thinkingEnabled,
+        reasoningEffort: reasoningEffort,
       );
     }
 
@@ -1361,16 +1390,155 @@ class ApiSettings {
 
   // ═══ 思考鏈 ═══
   static const String _keyThinkingChain = 'thinking_chain_enabled';
+  static const String _keyReasoningEffort = 'reasoning_effort_v1';
+  static const String _keyConversationReasoningEfforts =
+      'conversation_reasoning_efforts_v1';
+  static const String _keyConversationThinkingEnabled =
+      'conversation_thinking_enabled_v1';
   static const String _keyThinkingRequestStates = 'thinking_request_states_v1';
 
   static Future<void> saveThinkingChain(bool v) async {
     final p = await SharedPreferences.getInstance();
-    await p.setBool(_keyThinkingChain, v);
+    if (v && !p.containsKey(_keyReasoningEffort)) {
+      await p.setString(_keyReasoningEffort, ReasoningEffort.medium);
+    }
+    await setThinkingChain(v);
   }
 
-  static Future<bool> getThinkingChain() async {
+  static Future<bool> getThinkingChain({String? conversationId}) async {
     final p = await SharedPreferences.getInstance();
-    return p.getBool(_keyThinkingChain) ?? false;
+    final scope = (conversationId ?? '').trim();
+    if (scope.isNotEmpty) {
+      final raw = p.getString(_keyConversationThinkingEnabled);
+      if (raw != null) {
+        try {
+          final values = jsonDecode(raw);
+          if (values is Map && values[scope] is bool) {
+            return values[scope] as bool;
+          }
+        } catch (_) {
+          // Ignore a damaged optional window override.
+        }
+      }
+      // Older windows inferred the switch from their strength choice.
+      final oldRaw = p.getString(_keyConversationReasoningEfforts);
+      if (oldRaw != null) {
+        try {
+          final values = jsonDecode(oldRaw);
+          if (values is Map && values[scope] is String) {
+            return ReasoningEffort.isEnabled(values[scope] as String);
+          }
+        } catch (_) {}
+      }
+    }
+    if (p.containsKey(_keyThinkingChain)) {
+      return p.getBool(_keyThinkingChain) ?? false;
+    }
+    final legacyEffort = p.getString(_keyReasoningEffort);
+    return legacyEffort != null && ReasoningEffort.isEnabled(legacyEffort);
+  }
+
+  static Future<void> setThinkingChain(
+    bool enabled, {
+    String? conversationId,
+  }) async {
+    final p = await SharedPreferences.getInstance();
+    final scope = (conversationId ?? '').trim();
+    if (scope.isEmpty) {
+      await p.setBool(_keyThinkingChain, enabled);
+      return;
+    }
+    final values = <String, bool>{};
+    try {
+      final decoded = jsonDecode(
+        p.getString(_keyConversationThinkingEnabled) ?? '{}',
+      );
+      if (decoded is Map) {
+        for (final entry in decoded.entries) {
+          if (entry.key is String && entry.value is bool) {
+            values[entry.key as String] = entry.value as bool;
+          }
+        }
+      }
+    } catch (_) {}
+    values[scope] = enabled;
+    await p.setString(_keyConversationThinkingEnabled, jsonEncode(values));
+  }
+
+  static Future<String> getReasoningEffort({String? conversationId}) async {
+    final p = await SharedPreferences.getInstance();
+    final scope = (conversationId ?? '').trim();
+    if (scope.isNotEmpty) {
+      final raw = p.getString(_keyConversationReasoningEfforts);
+      if (raw != null && raw.isNotEmpty) {
+        try {
+          final decoded = jsonDecode(raw);
+          if (decoded is Map && decoded[scope] is String) {
+            return ReasoningEffort.normalize(decoded[scope] as String);
+          }
+        } catch (_) {
+          // A damaged optional override must fall back to the global setting.
+        }
+      }
+    }
+
+    final saved = p.getString(_keyReasoningEffort);
+    if (saved != null && saved.trim().isNotEmpty) {
+      return ReasoningEffort.normalize(saved);
+    }
+
+    final legacyEnabled = p.getBool(_keyThinkingChain) ?? false;
+    if (!legacyEnabled) return ReasoningEffort.off;
+    if (p.containsKey(_keyThinkingMachinesEffort)) {
+      return ReasoningEffort.normalize(p.getString(_keyThinkingMachinesEffort));
+    }
+    return ReasoningEffort.medium;
+  }
+
+  static Future<void> setReasoningEffort(
+    String effort, {
+    String? conversationId,
+  }) async {
+    final normalized = ReasoningEffort.normalize(effort);
+    final p = await SharedPreferences.getInstance();
+    final scope = (conversationId ?? '').trim();
+    // Migrate the old strength-derived switch before changing strength.
+    final wasEnabled = await getThinkingChain(conversationId: conversationId);
+    if (scope.isNotEmpty) {
+      await setThinkingChain(wasEnabled, conversationId: scope);
+    } else if (!p.containsKey(_keyThinkingChain)) {
+      await setThinkingChain(wasEnabled);
+    }
+    if (scope.isNotEmpty) {
+      final values = <String, String>{};
+      final raw = p.getString(_keyConversationReasoningEfforts);
+      if (raw != null && raw.isNotEmpty) {
+        try {
+          final decoded = jsonDecode(raw);
+          if (decoded is Map) {
+            for (final entry in decoded.entries) {
+              final key = entry.key.toString().trim();
+              final value = entry.value?.toString() ?? '';
+              if (key.isNotEmpty) {
+                values[key] = ReasoningEffort.normalize(value);
+              }
+            }
+          }
+        } catch (_) {
+          // Replace a damaged optional map with the current valid override.
+        }
+      }
+      values[scope] = normalized;
+      await p.setString(_keyConversationReasoningEfforts, jsonEncode(values));
+    } else {
+      await p.setString(_keyReasoningEffort, normalized);
+    }
+
+    // Keep the dedicated Thinking Machines settings card aligned with the
+    // latest non-off shared strength. `off` remains represented by its bool.
+    if (normalized != ReasoningEffort.off) {
+      await p.setString(_keyThinkingMachinesEffort, normalized);
+    }
   }
 
   static String _thinkingRequestIdentity({

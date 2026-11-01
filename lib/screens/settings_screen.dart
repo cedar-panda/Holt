@@ -9,6 +9,7 @@ import '../services/settings_manager.dart';
 import '../services/custom_font_service.dart';
 import '../widgets/gradient_background.dart';
 import '../main.dart'; // for changeFont, changeFontScale, previewFontScale
+import 'storage_screen.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -583,6 +584,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           if (confirmed != true || !mounted) return;
                           await navigator.pushNamed('/initial_setup');
                         },
+                      ),
+                    ),
+                    _buildSectionTitle(L.pick(en: 'Storage', zhTW: '儲存空間')),
+                    _buildGlassCard(
+                      child: _legalRow(
+                        icon: Icons.storage_rounded,
+                        label: L.pick(
+                          en: 'Manage storage',
+                          zhTW: '查看與清理（圖片、語音、模型、暫存）',
+                        ),
+                        onTap: () => Navigator.of(context).push(
+                          MaterialPageRoute<void>(
+                            builder: (_) => const StorageScreen(),
+                          ),
+                        ),
                       ),
                     ),
                     _buildSectionTitle(

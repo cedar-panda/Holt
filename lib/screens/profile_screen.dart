@@ -278,9 +278,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
   @override
   Widget build(BuildContext context) {
     return PopScope(
-      canPop: false,
+      // 允許右滑返回：彈出時補存最後一次修改（_flushPendingSave 只讀
+      // controller 文字、不 setState，頁面卸載後也能跑完）。
+      canPop: true,
       onPopInvokedWithResult: (didPop, _) {
-        if (!didPop) unawaited(_handleBack());
+        if (didPop) {
+          unawaited(_flushPendingSave().catchError((_) {}));
+        } else {
+          unawaited(_handleBack());
+        }
       },
       child: Scaffold(
         resizeToAvoidBottomInset: true,

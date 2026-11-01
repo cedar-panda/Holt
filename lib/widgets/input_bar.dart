@@ -1,5 +1,5 @@
+import 'dart:async';
 import 'dart:io';
-import 'dart:math' as math;
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
@@ -9,6 +9,7 @@ import '../services/locale_strings.dart';
 
 import '../services/scratch_service.dart';
 import 'managed_text_controllers.dart';
+import 'shell_coin_icon.dart';
 
 /// 發送按鈕樣式
 enum SendButtonStyle { leaf, paw, shell, custom }
@@ -18,41 +19,6 @@ SendButtonStyle sendButtonStyleFromName(String? value) {
     if (style.name == value) return style;
   }
   return SendButtonStyle.leaf;
-}
-
-/// The shell asset's alpha-weighted source hue, measured once from the PNG.
-const double _shellSourceHueDegrees = 40.56;
-
-ColorFilter shellHueColorFilter(Color accent) {
-  final targetHue = HSLColor.fromColor(accent).hue;
-  final angle = (targetHue - _shellSourceHueDegrees) * math.pi / 180;
-  final cosine = math.cos(angle);
-  final sine = math.sin(angle);
-  const lumR = 0.213;
-  const lumG = 0.715;
-  const lumB = 0.072;
-  return ColorFilter.matrix(<double>[
-    lumR + cosine * (1 - lumR) + sine * -lumR,
-    lumG + cosine * -lumG + sine * -lumG,
-    lumB + cosine * -lumB + sine * (1 - lumB),
-    0,
-    0,
-    lumR + cosine * -lumR + sine * 0.143,
-    lumG + cosine * (1 - lumG) + sine * 0.140,
-    lumB + cosine * -lumB + sine * -0.283,
-    0,
-    0,
-    lumR + cosine * -lumR + sine * -(1 - lumR),
-    lumG + cosine * -lumG + sine * lumG,
-    lumB + cosine * (1 - lumB) + sine * lumB,
-    0,
-    0,
-    0,
-    0,
-    0,
-    1,
-    0,
-  ]);
 }
 
 /// 輸入欄組件 — ＋按鈕 + 毛玻璃輸入框 + 發送鍵
@@ -160,6 +126,10 @@ class _InputBarState extends State<InputBar> with TickerProviderStateMixin {
   static const double _multilineRadius = 24;
   final GlobalKey _surfaceKey = GlobalKey();
   double _surfaceRadius = _pillRadius;
+
+  /// 容器高度動畫（AnimatedSize 200ms）結束後再量一次的計時器。
+  Timer? _radiusSettleTimer;
+  static const Duration _radiusSettleDelay = Duration(milliseconds: 260);
 
   // ═══ 葉子動效 ═══
   late AnimationController _swayCtrl; // 待機搖擺
@@ -283,6 +253,8 @@ class _InputBarState extends State<InputBar> with TickerProviderStateMixin {
   @override
   void didUpdateWidget(covariant InputBar oldWidget) {
     super.didUpdateWidget(oldWidget);
+    // 待發圖片、引用等外部內容也會改變輸入容器高度。
+    _scheduleRadiusSync();
     if (!identical(oldWidget.drawerOpen, widget.drawerOpen)) {
       oldWidget.drawerOpen?.removeListener(_onExternalDrawerChanged);
       widget.drawerOpen?.addListener(_onExternalDrawerChanged);
@@ -306,6 +278,7 @@ class _InputBarState extends State<InputBar> with TickerProviderStateMixin {
 
   @override
   void dispose() {
+    _radiusSettleTimer?.cancel();
     _controller.removeListener(_scheduleRadiusSync);
     if (_ownsController) _controller.dispose();
     widget.drawerOpen?.removeListener(_onExternalDrawerChanged);
@@ -330,62 +303,69 @@ class _InputBarState extends State<InputBar> with TickerProviderStateMixin {
     });
   }
 
-  Widget _leafSendImage() => Image.asset(
-    'assets/images/send_leaf.png',
+  Color _sendLineColor(bool isActive) => isActive
+      ? (YanciTheme.accent.computeLuminance() > 0.179
+            ? Colors.black
+            : Colors.white)
+      : YanciTheme.accent;
+
+  Widget _themedSendAsset({
+    required String assetPath,
+    required Key key,
+    required bool isActive,
+  }) => ColorFiltered(
+    colorFilter: ColorFilter.mode(_sendLineColor(isActive), BlendMode.modulate),
+    child: Image.asset(
+      assetPath,
+      key: key,
+      width: 32,
+      height: 32,
+      fit: BoxFit.contain,
+      filterQuality: FilterQuality.none,
+    ),
+  );
+
+  Widget _leafSendImage({required bool isActive}) => _themedSendAsset(
+    assetPath: 'assets/images/send_maple_leaf.png',
     key: const ValueKey('send-button-image-leaf'),
-    width: 32,
-    height: 32,
-    fit: BoxFit.contain,
-    filterQuality: FilterQuality.none,
+    isActive: isActive,
   );
 
   Widget _buildSendImage({required bool isActive}) {
     switch (widget.sendStyle) {
       case SendButtonStyle.leaf:
-        return _leafSendImage();
+        return _leafSendImage(isActive: isActive);
       case SendButtonStyle.paw:
-        // The paw PNG is white. On the lit button, tinting it with the same
-        // accent as the button makes it disappear; choose the contrasting
-        // on-accent ink only for that state. The idle tint stays unchanged.
-        final pawColor = isActive
-            ? (YanciTheme.accent.computeLuminance() > 0.179
-                  ? Colors.black
-                  : Colors.white)
-            : YanciTheme.accent;
-        return ColorFiltered(
-          colorFilter: ColorFilter.mode(pawColor, BlendMode.modulate),
-          child: Image.asset(
-            'assets/images/send_paw.png',
-            key: const ValueKey('send-button-image-paw'),
-            width: 32,
-            height: 32,
-            fit: BoxFit.contain,
-            filterQuality: FilterQuality.none,
-          ),
+        return _themedSendAsset(
+          assetPath: 'assets/images/send_paw.png',
+          key: const ValueKey('send-button-image-paw'),
+          isActive: isActive,
         );
       case SendButtonStyle.shell:
-        return ColorFiltered(
-          colorFilter: shellHueColorFilter(YanciTheme.accent),
-          child: Image.asset(
-            'assets/images/shell_coin.png',
-            key: const ValueKey('send-button-image-shell'),
-            width: 32,
-            height: 32,
-            fit: BoxFit.contain,
-            filterQuality: FilterQuality.none,
-          ),
+        return _themedSendAsset(
+          assetPath: 'assets/images/send_paper_boat.png',
+          key: const ValueKey('send-button-image-shell'),
+          isActive: isActive,
         );
       case SendButtonStyle.custom:
         final path = widget.sendCustomPath.trim();
-        if (path.isEmpty || !File(path).existsSync()) return _leafSendImage();
-        return Image.file(
-          File(path),
-          key: const ValueKey('send-button-image-custom'),
-          width: 32,
-          height: 32,
-          fit: BoxFit.contain,
-          filterQuality: FilterQuality.none,
-          errorBuilder: (_, _, _) => _leafSendImage(),
+        if (path.isEmpty || !File(path).existsSync()) {
+          return _leafSendImage(isActive: isActive);
+        }
+        return ColorFiltered(
+          colorFilter: ColorFilter.mode(
+            _sendLineColor(isActive),
+            BlendMode.modulate,
+          ),
+          child: Image.file(
+            File(path),
+            key: const ValueKey('send-button-image-custom'),
+            width: 32,
+            height: 32,
+            fit: BoxFit.contain,
+            filterQuality: FilterQuality.none,
+            errorBuilder: (_, _, _) => _leafSendImage(isActive: isActive),
+          ),
         );
     }
   }
@@ -995,12 +975,6 @@ class _InputBarState extends State<InputBar> with TickerProviderStateMixin {
                         accent: hasCustomChatImage
                             ? Color.lerp(inputBarText, inputBarBg, 0.16)!
                             : YanciTheme.accent,
-                        surface: hasCustomChatImage
-                            ? inputBarBg.withValues(
-                                alpha: math.max(inputBarBg.a, 0.82),
-                              )
-                            : YanciTheme.glassWhite.withValues(alpha: 0.18),
-                        border: inputBarBorder,
                       ),
                     )
                   : const SizedBox(width: double.infinity, height: 0),
@@ -1013,6 +987,11 @@ class _InputBarState extends State<InputBar> with TickerProviderStateMixin {
 
   void _scheduleRadiusSync() {
     WidgetsBinding.instance.addPostFrameCallback((_) => _syncSurfaceRadius());
+    // 文字一變就量，量到的常是 AnimatedSize 還在伸縮途中的高度：縮回單行時
+    // 若剛好量到中途（例如 90），圓角就停在半方不圓，之後也不會再量。
+    // 高度動畫結束後補量一次，確保最後落在正確的圓角。
+    _radiusSettleTimer?.cancel();
+    _radiusSettleTimer = Timer(_radiusSettleDelay, _syncSurfaceRadius);
   }
 
   /// 依容器目標高度連續決定圓角：72（單行）= 藥丸，約 112+ = 大圓角。
@@ -1047,12 +1026,7 @@ class _InputBarState extends State<InputBar> with TickerProviderStateMixin {
     if (_focusNode.hasFocus && _drawerOpen) _setDrawerOpen(false);
   }
 
-  Widget _buildActionPanel({
-    required Color foreground,
-    required Color accent,
-    required Color surface,
-    required Color border,
-  }) {
+  Widget _buildActionPanel({required Color foreground, required Color accent}) {
     Widget action({
       IconData? iconData,
       String? assetPath,
@@ -1067,8 +1041,6 @@ class _InputBarState extends State<InputBar> with TickerProviderStateMixin {
       wide: wide,
       foreground: foreground,
       accent: accent,
-      surface: surface,
-      border: border,
     );
 
     return Semantics(
@@ -1203,8 +1175,6 @@ class _InputBarState extends State<InputBar> with TickerProviderStateMixin {
     bool wide = false,
     required Color foreground,
     required Color accent,
-    required Color surface,
-    required Color border,
   }) {
     return Semantics(
       button: true,
@@ -1214,16 +1184,13 @@ class _InputBarState extends State<InputBar> with TickerProviderStateMixin {
         child: InkWell(
           onTap: onTap,
           borderRadius: BorderRadius.circular(17),
+          splashColor: accent.withValues(alpha: 0.08),
+          highlightColor: accent.withValues(alpha: 0.04),
           child: Container(
             constraints: const BoxConstraints(minHeight: 66),
             padding: EdgeInsets.symmetric(
               horizontal: wide ? 14 : 8,
               vertical: 9,
-            ),
-            decoration: BoxDecoration(
-              color: surface,
-              borderRadius: BorderRadius.circular(17),
-              border: Border.all(color: border, width: 0.5),
             ),
             child: Flex(
               direction: wide ? Axis.horizontal : Axis.vertical,
@@ -1234,6 +1201,8 @@ class _InputBarState extends State<InputBar> with TickerProviderStateMixin {
                   height: 28,
                   child: iconData != null
                       ? Icon(iconData, size: 25, color: accent)
+                      : assetPath == ShellCoinIcon.assetPath
+                      ? ShellCoinIcon(size: 25, color: accent)
                       : Image.asset(
                           assetPath!,
                           width: 25,
@@ -1310,12 +1279,7 @@ class _InputBarState extends State<InputBar> with TickerProviderStateMixin {
         backgroundColor: YanciTheme.surfacePanel,
         title: Row(
           children: [
-            Image.asset(
-              'assets/images/shell_coin.png',
-              width: 20,
-              height: 20,
-              filterQuality: FilterQuality.none,
-            ),
+            ShellCoinIcon(size: 20),
             const SizedBox(width: 8),
             Text(
               L.pick(en: 'Buy Scratch Card', zhTW: '買刮刮卡'),
@@ -1431,12 +1395,7 @@ class _InputBarState extends State<InputBar> with TickerProviderStateMixin {
                         child: Row(
                           children: [
                             const SizedBox(width: 12),
-                            Image.asset(
-                              'assets/images/shell_coin.png',
-                              width: 18,
-                              height: 18,
-                              filterQuality: FilterQuality.none,
-                            ),
+                            ShellCoinIcon(size: 18),
                             const SizedBox(width: 10),
                             Expanded(
                               child: TextField(

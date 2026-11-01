@@ -14,10 +14,14 @@ class GiftMiniCard extends StatelessWidget {
   /// 對方之後已回覆 → 視為已收下
   final bool accepted;
 
+  /// 角色從商店送給 user 的已送達禮物。
+  final bool receivedFromCharacter;
+
   const GiftMiniCard({
     super.key,
     required this.giftName,
     this.accepted = false,
+    this.receivedFromCharacter = false,
   });
 
   @override
@@ -108,7 +112,7 @@ class GiftMiniCard extends StatelessWidget {
                   Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      if (accepted) ...[
+                      if (accepted || receivedFromCharacter) ...[
                         Icon(
                           Icons.check_rounded,
                           size: 11,
@@ -118,12 +122,23 @@ class GiftMiniCard extends StatelessWidget {
                       ],
                       Flexible(
                         child: Text(
-                          accepted
+                          receivedFromCharacter
+                              ? L.pick(
+                                  en: 'Received in backpack',
+                                  zhTW: '已收到並放入背包',
+                                  zhCN: '已收到并放入背包',
+                                )
+                              : accepted
                               ? L.pick(
                                   en: '$giftName received',
                                   zhTW: '$giftName 已收下',
+                                  zhCN: '$giftName 已收下',
                                 )
-                              : L.pick(en: 'Gift sent', zhTW: '禮物已送出'),
+                              : L.pick(
+                                  en: 'Gift sent',
+                                  zhTW: '禮物已送出',
+                                  zhCN: '礼物已送出',
+                                ),
                           style: TextStyle(
                             fontSize: 10.5,
                             color: YanciTheme.textSecondary.withValues(

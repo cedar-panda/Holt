@@ -53,6 +53,19 @@ void main() {
       findsOneWidget,
     );
     expect(find.text('綁定角色'), findsOneWidget);
+    expect(find.text('語音通話使用當前背景'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('background-current-call-selection')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('background-home-call-selection')),
+      findsNothing,
+    );
+    expect(
+      find.byKey(const ValueKey('background-chat-call-selection')),
+      findsNothing,
+    );
 
     expect(find.text('圖片位置微調'), findsOneWidget);
     expect(find.text('字體氣泡顏色'), findsNothing);

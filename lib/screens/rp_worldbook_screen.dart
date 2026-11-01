@@ -516,6 +516,9 @@ class _RpWorldbookScreenState extends State<RpWorldbookScreen> {
       height: 34,
       alignment: Alignment.center,
       decoration: BoxDecoration(
+        color: selected
+            ? YanciTheme.accent.withValues(alpha: 0.09)
+            : YanciTheme.glassInputBg.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(18),
         border: Border.all(
           color: selected
@@ -554,10 +557,9 @@ class _RpWorldbookScreenState extends State<RpWorldbookScreen> {
           child: Container(
             padding: const EdgeInsets.fromLTRB(14, 12, 8, 12),
             decoration: BoxDecoration(
+              color: YanciTheme.themedCardBackground(),
               borderRadius: BorderRadius.circular(16),
-              border: Border.all(
-                color: YanciTheme.textSecondary.withValues(alpha: 0.16),
-              ),
+              border: Border.all(color: YanciTheme.themedCardBorder()),
             ),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -587,16 +589,36 @@ class _RpWorldbookScreenState extends State<RpWorldbookScreen> {
                           ),
                         ),
                         const SizedBox(height: 7),
-                        Text(
-                          '${_categoryLabel(row['category']?.toString() ?? 'other')} · '
-                          '${_bindingScopeLabel(row['binding_scope']?.toString() ?? 'storyline')} · '
-                          '${_activationModeLabel(row['activation_mode']?.toString() ?? 'triggered')}',
-                          style: YanciTheme.bodySmall.copyWith(
-                            fontSize: 10,
-                            color: YanciTheme.textSecondary.withValues(
-                              alpha: 0.62,
+                        Wrap(
+                          spacing: 6,
+                          runSpacing: 5,
+                          children: <Widget>[
+                            _entryBadge(
+                              _categoryLabel(
+                                row['category']?.toString() ?? 'other',
+                              ),
                             ),
-                          ),
+                            _entryBadge(
+                              _bindingScopeLabel(
+                                row['binding_scope']?.toString() ?? 'storyline',
+                              ),
+                            ),
+                            _entryBadge(
+                              _activationModeLabel(
+                                row['activation_mode']?.toString() ??
+                                    'triggered',
+                              ),
+                              accent: true,
+                            ),
+                            if (archived)
+                              _entryBadge(
+                                L.pick(
+                                  en: 'Archived',
+                                  zhTW: '已封存',
+                                  zhCN: '已归档',
+                                ),
+                              ),
+                          ],
                         ),
                       ],
                     ),
@@ -634,6 +656,31 @@ class _RpWorldbookScreenState extends State<RpWorldbookScreen> {
       },
     );
   }
+
+  Widget _entryBadge(String label, {bool accent = false}) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+    decoration: BoxDecoration(
+      color: (accent ? YanciTheme.accent : YanciTheme.textSecondary).withValues(
+        alpha: accent ? 0.11 : 0.07,
+      ),
+      borderRadius: BorderRadius.circular(YanciTheme.radiusPill),
+      border: Border.all(
+        color: (accent ? YanciTheme.accent : YanciTheme.textSecondary)
+            .withValues(alpha: accent ? 0.23 : 0.13),
+        width: 0.5,
+      ),
+    ),
+    child: Text(
+      label,
+      style: YanciTheme.bodySmall.copyWith(
+        fontSize: 9.5,
+        height: 1.1,
+        color: accent
+            ? YanciTheme.accent
+            : YanciTheme.textSecondary.withValues(alpha: 0.76),
+      ),
+    ),
+  );
 
   Future<void> _editReview(Map<String, dynamic> row) async {
     final payload = _jsonMap(row['payload_json']);

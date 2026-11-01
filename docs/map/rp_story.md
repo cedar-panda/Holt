@@ -34,6 +34,7 @@
 - 生成端由 `ContextCompressor.fitPrioritizedRpReferencePartsToCharacterBudget` 依「劇情狀態 → 人物／關係 → 動態世界書 → 一般記憶 → RP 時間線」分配共享預算；高優先項未用完的額度才向後流動。
 - 來源摘要與續接內容由 `ContextCompressor.buildRpArchiveContext` 組合；歸檔請求只保留一份 user 人設與一份本輪實際提及人物的精簡結構，不重複傾倒 evidence、來源 ID、建立時間等內部欄位。
 - 顯示與人工編輯入口：`lib/screens/rp_story_relationship_screen.dart` 與 `lib/screens/rp_worldbook_screen.dart`。搜尋、文字欄位與枚舉選擇共用 `YanciTheme.themedInputDecoration`；人物、關係、劇情狀態以輕量卡片分組，狀態類型／層級／進度以徽章顯示。這些視覺調整不改資料寫入或 Prompt 注入。
+- 角色頁的劇情檔案入口與每條故事線都使用主題化柔光卡；故事線內四個資源入口為 2×2 膠囊格。關係仍保留方向語意，顯示改為 `A › B`；最新變化、形成經過與引用原文改用層級差異，不刪除資訊。世界書條目類別、綁定範圍與召回模式以小徽章顯示。
 
 ## 檢索方式（字面 / BM25 / 向量 / 名字觸發 / 無）
 - 人物、關係、狀態：以故事線、角色與有效狀態篩選；不是記憶 FTS5。人物參考預算預設 1000 tokens；完整人物最多 3、場外精簡人物最多 6。狀態預算預設 800 tokens，另按 scene／identity／knowledge／body／promise／item／plot 設全域上限，同一主客體同類最多 2 條。

@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 
 import '../services/locale_strings.dart';
+import '../services/settings_manager.dart';
 import '../theme/app_theme.dart';
 
 Future<int?> showCharacterQuickPicker(
@@ -37,6 +38,31 @@ class _CharacterQuickPicker extends StatefulWidget {
 class _CharacterQuickPickerState extends State<_CharacterQuickPicker> {
   final TextEditingController _searchController = TextEditingController();
   String _query = '';
+  Set<String> _starredIds = <String>{};
+
+  @override
+  void initState() {
+    super.initState();
+    _loadStars();
+  }
+
+  Future<void> _loadStars() async {
+    final ids = await UserSettings.getStarredCharacterIds();
+    if (mounted) setState(() => _starredIds = ids);
+  }
+
+  Future<void> _toggleStar(String id) async {
+    final next = !_starredIds.contains(id);
+    await UserSettings.setCharacterStarred(id, next);
+    if (!mounted) return;
+    setState(() {
+      if (next) {
+        _starredIds.add(id);
+      } else {
+        _starredIds.remove(id);
+      }
+    });
+  }
 
   @override
   void dispose() {
@@ -157,6 +183,12 @@ class _CharacterQuickPickerState extends State<_CharacterQuickPicker> {
                             return _CharacterChoice(
                               character: character,
                               selected: index == widget.selectedIndex,
+                              starred: _starredIds.contains(
+                                character['id']?.toString(),
+                              ),
+                              onToggleStar: () => _toggleStar(
+                                character['id']?.toString() ?? '',
+                              ),
                               onTap: () => Navigator.pop(context, index),
                             );
                           },
@@ -175,11 +207,15 @@ class _CharacterChoice extends StatelessWidget {
   const _CharacterChoice({
     required this.character,
     required this.selected,
+    required this.starred,
+    required this.onToggleStar,
     required this.onTap,
   });
 
   final Map<String, dynamic> character;
   final bool selected;
+  final bool starred;
+  final VoidCallback onToggleStar;
   final VoidCallback onTap;
 
   @override
@@ -235,6 +271,19 @@ class _CharacterChoice extends StatelessWidget {
                 ),
                 if (selected)
                   Icon(Icons.check_rounded, size: 18, color: YanciTheme.accent),
+                IconButton(
+                  tooltip: starred
+                      ? L.pick(en: 'Unstar', zhTW: '取消星標', zhCN: '取消星标')
+                      : L.pick(en: 'Star', zhTW: '設為星標', zhCN: '设为星标'),
+                  onPressed: onToggleStar,
+                  icon: Icon(
+                    starred ? Icons.star_rounded : Icons.star_border_rounded,
+                    size: 20,
+                    color: starred
+                        ? YanciTheme.accent
+                        : YanciTheme.textSecondary.withValues(alpha: 0.55),
+                  ),
+                ),
               ],
             ),
           ),

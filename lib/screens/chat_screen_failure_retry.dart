@@ -99,22 +99,13 @@ extension _ChatFailureRetryMethods on _ChatScreenState {
       _transferDataMap.remove('msg_$incompleteId');
       _webSearchResultsByMessageId.remove(incompleteId);
       await _refreshPendingMemoryActionCounts();
-      if (userMessage.imagePath != null) {
-        await _sendImageLocked(
-          userMessage.imagePath!,
-          caption: userMessage.text,
-          composerDraft: '',
-          clearComposerOnAccept: false,
-          retryUserMessage: userMessage,
-        );
-      } else {
-        await _sendMessageLocked(
-          userMessage.text,
-          composerDraft: '',
-          clearComposerOnAccept: false,
-          retryUserMessage: userMessage,
-        );
-      }
+      // 圖片沿用 retryUserMessage.imagePaths，文字／圖片同一條路徑。
+      await _sendMessageLocked(
+        userMessage.text,
+        composerDraft: '',
+        clearComposerOnAccept: false,
+        retryUserMessage: userMessage,
+      );
     });
   }
 
@@ -192,22 +183,13 @@ extension _ChatFailureRetryMethods on _ChatScreenState {
     final source = await DatabaseHelper.getMessageById(event.sourceMessageId);
     if (source == null || !source.isUser) return;
     await _runMessageRetry(() async {
-      if (source.imagePath != null) {
-        await _sendImageLocked(
-          source.imagePath!,
-          caption: source.text,
-          composerDraft: '',
-          clearComposerOnAccept: false,
-          retryUserMessage: source,
-        );
-      } else {
-        await _sendMessageLocked(
-          source.text,
-          composerDraft: '',
-          clearComposerOnAccept: false,
-          retryUserMessage: source,
-        );
-      }
+      // 圖片沿用 retryUserMessage.imagePaths，文字／圖片同一條路徑。
+      await _sendMessageLocked(
+        source.text,
+        composerDraft: '',
+        clearComposerOnAccept: false,
+        retryUserMessage: source,
+      );
     }, sourceMessageId: source.id);
   }
 

@@ -16,6 +16,7 @@ import '../models/context_mode.dart';
 import '../models/chat_diagnostic_event.dart';
 import '../models/character_self_note.dart';
 import '../utils/app_file_safety.dart';
+import '../utils/app_directories.dart';
 import '../utils/iso_week.dart';
 import '../services/memory_debug_log.dart';
 
@@ -80,7 +81,7 @@ class DatabaseHelper {
   static Future<Database>? _dbInitFuture;
   static Future<Database> Function() _databaseInitializer = _initDatabase;
   static const String _dbName = 'yanci.db';
-  static const int _dbVersion = 84;
+  static const int _dbVersion = 86;
 
   /// The label index stores retrieval phrases, not every archived paragraph.
   /// Keep this shared with ContextCompressor so invalidation recovery and the
@@ -114,9 +115,13 @@ class DatabaseHelper {
     // Resolve the established mobile database directory before selecting the
     // bundled FFI engine. This preserves the existing yanci.db in-place while
     // guaranteeing an SQLite build compiled with FTS5 on Android/iOS.
-    final dbPath = await getDatabasesPath();
+    // Windows has no platform sqflite engine: use the app data folder and go
+    // straight to the bundled FFI engine (there is no legacy FTS4 DB there).
+    final dbPath = await getAppDatabasesPath(getDatabasesPath);
     final path = join(dbPath, _dbName);
-    await _removeLegacyMemoryFtsBeforeBundledOpen(path);
+    if (kIsWeb || !Platform.isWindows) {
+      await _removeLegacyMemoryFtsBeforeBundledOpen(path);
+    }
     sqfliteFfiInit();
     return await databaseFactoryFfi.openDatabase(
       path,

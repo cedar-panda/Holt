@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:ui' show ImageFilter, TileMode;
 
@@ -16,6 +17,8 @@ import '../models/background_preset.dart';
 import '../memory/database.dart';
 import '../main.dart' show themeNotifier;
 import '../widgets/input_bar.dart';
+import '../widgets/themed_notice.dart';
+import '../widgets/ambient_particles.dart';
 
 part 'theme_workshop_background_logic.dart';
 part 'theme_workshop_background_page.dart';
@@ -41,6 +44,11 @@ class _ThemeWorkshopScreenState extends State<ThemeWorkshopScreen> {
   late bool _starEnabled;
   late int _starDensity;
   late String _particleEffect;
+  late String _cloudStyle;
+  Timer? _particleSwapTimer;
+  final TextEditingController _particleEmojiController = TextEditingController(
+    text: YanciTheme.particleEmojis.join(),
+  );
   late bool _aiBubbleFlat;
   late SendButtonStyle _sendButtonStyle;
   String _sendButtonCustomPath = '';
@@ -59,6 +67,7 @@ class _ThemeWorkshopScreenState extends State<ThemeWorkshopScreen> {
   Color? _chatBgBubbleTextColor;
   Color? _chatBgThinkingTextColor;
   double? _chatBgBubbleOpacity;
+  String _callBackgroundScope = 'none';
   int _backgroundSlot = 1;
   Map<String, int> _backgroundBindings = <String, int>{};
   List<Color> _colorHistory = [];
@@ -77,6 +86,7 @@ class _ThemeWorkshopScreenState extends State<ThemeWorkshopScreen> {
     _starEnabled = YanciTheme.starEnabled;
     _starDensity = YanciTheme.starDensity;
     _particleEffect = YanciTheme.particleEffect;
+    _cloudStyle = YanciTheme.cloudStyle;
     _aiBubbleFlat = YanciTheme.aiBubbleFlat;
     _sendButtonStyle = sendButtonStyleFromName(YanciTheme.sendButtonStyle);
     _sendButtonCustomPath = YanciTheme.sendButtonCustomPath;
@@ -115,6 +125,14 @@ class _ThemeWorkshopScreenState extends State<ThemeWorkshopScreen> {
   @override
   void dispose() {
     _themeCarouselController.dispose();
+    _particleEmojiController.dispose();
+    // 動畫還沒跑完就離開：把待換的粒子立刻套上，跟已保存的設定一致。
+    if (_particleSwapTimer?.isActive ?? false) {
+      _particleSwapTimer!.cancel();
+      final pending = _particleEffect;
+      // dispose 期間樹是鎖住的，通知首頁粒子層要等這一幀收完。
+      scheduleMicrotask(() => YanciTheme.setParticleEffect(pending));
+    }
     super.dispose();
   }
 
@@ -201,7 +219,7 @@ class _ThemeWorkshopScreenState extends State<ThemeWorkshopScreen> {
       YanciTheme.bubbleOpacity;
 
   bool _tuningExpanded = false;
-  bool _bubbleMoreExpanded = false;
+  bool _particleExpanded = false;
 
   @override
   Widget build(BuildContext context) {
@@ -219,7 +237,24 @@ class _ThemeWorkshopScreenState extends State<ThemeWorkshopScreen> {
             colors: YanciTheme.backgroundGradient,
           ),
         ),
-        child: SafeArea(
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            // 粒子即時預覽：與首頁同一個粒子層，改樣式不必退出才看得到。
+            Positioned.fill(
+              child: TickerMode(
+                enabled:
+                    _starEnabled && !MediaQuery.disableAnimationsOf(context),
+                child: Offstage(
+                  offstage: !_starEnabled,
+                  child: RepaintBoundary(
+                    // 不傳 effect：跟著 particleRevision 換，按鍵動畫跑完才換。
+                    child: const AmbientParticleField(),
+                  ),
+                ),
+              ),
+            ),
+            SafeArea(
           child: Column(
             children: [
               // 頂部導航
@@ -431,9 +466,13 @@ class _ThemeWorkshopScreenState extends State<ThemeWorkshopScreen> {
                     ),
                     const SizedBox(height: 12),
 
+                    // ═══ 自訂背景 ═══
+                    _buildBackgroundEntryCard(currentPreset),
+                    const SizedBox(height: 14),
+
                     // ═══ 氣泡設定 ═══
                     _buildBubbleSection(currentPreset),
-                    const SizedBox(height: 8),
+                    const SizedBox(height: 14),
 
                     // ═══ 粒子特效 ═══
                     _buildParticleSection(),
@@ -443,6 +482,8 @@ class _ThemeWorkshopScreenState extends State<ThemeWorkshopScreen> {
               ),
             ],
           ),
+        ),
+          ],
         ),
       ),
     );

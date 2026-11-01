@@ -6,14 +6,23 @@ import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
 import 'neural_generation_box.dart';
 
-/// 已發送訊息的圖片。
-/// 1 張：保持原比例；2 張：並排；3 張：一排三張；
+/// 已發送訊息的圖片（縮略圖，點開看原圖）。
+/// 1 張：方形縮略圖；2 張：並排；3 張：一排三張；
 /// 4 張以上：2×2，第 4 格若還有更多，蓋一層 `+N`。
 /// `'generating'` 是生成中的佔位路徑，顯示動畫、不可點。
 class MessageImageGrid extends StatelessWidget {
   static const double _gap = 4;
-  static const double _radius = 16;
-  static const double _singleHeight = 218;
+  static const double _radius = 12;
+
+  /// 單張縮略圖邊長。
+  static const double singleSize = 150;
+
+  /// 多張時每格的最大邊長。
+  static const double cellSize = 72;
+
+  /// 整組圖最多佔螢幕寬的比例。氣泡兩側還有頭像與留白，
+  /// 舊版固定 ~300pt 寬會超出可用空間，溢出的部分畫到頭像上。
+  static const double _maxScreenFraction = 0.55;
 
   final List<String> paths;
   final ValueChanged<String>? onTap;
@@ -31,21 +40,26 @@ class MessageImageGrid extends StatelessWidget {
     if (paths.isEmpty) return const SizedBox.shrink();
     // ChatBubble 在 IntrinsicWidth 內量測：寬度必須是有限的固定值，
     // 不能用 LayoutBuilder（它不支援 intrinsic 量測）。
-    final width = math.min(320.0, MediaQuery.sizeOf(context).width * 0.78);
+    final media = MediaQuery.of(context);
+    final maxWidth = media.size.width * _maxScreenFraction;
+    final dpr = media.devicePixelRatio;
 
     if (paths.length == 1) {
+      final side = math.min(singleSize, maxWidth);
       return SizedBox(
-        width: width,
-        height: _singleHeight,
-        child: Center(child: _tile(paths.first, 0, single: true)),
+        width: side,
+        height: side,
+        child: _tile(paths.first, 0, decodeWidth: (side * dpr).round()),
       );
     }
 
     final columns = paths.length == 3 ? 3 : 2;
     final shown = math.min(paths.length, 4);
-    final cell = (width - _gap * (columns - 1)) / columns;
+    final cell = math.min(cellSize, (maxWidth - _gap * (columns - 1)) / columns);
+    final width = cell * columns + _gap * (columns - 1);
     final rowCount = (shown / columns).ceil();
     final more = paths.length - shown;
+    final decodeWidth = (cell * dpr).round();
 
     final rows = <Widget>[];
     for (var r = 0; r < rowCount; r++) {
@@ -61,6 +75,7 @@ class MessageImageGrid extends StatelessWidget {
             child: _tile(
               paths[i],
               i,
+              decodeWidth: decodeWidth,
               moreCount: (i == shown - 1 && more > 0) ? more : null,
             ),
           ),
@@ -81,13 +96,20 @@ class MessageImageGrid extends StatelessWidget {
     );
   }
 
-  Widget _tile(String path, int index, {bool single = false, int? moreCount}) {
+  Widget _tile(
+    String path,
+    int index, {
+    required int decodeWidth,
+    int? moreCount,
+  }) {
     final generating = path == 'generating';
     Widget image = generating
         ? const NeuralGenerationBox()
         : Image.file(
             File(path),
-            fit: single ? BoxFit.contain : BoxFit.cover,
+            fit: BoxFit.cover,
+            // 只按縮略圖尺寸解碼，九張大圖不會整張進記憶體。
+            cacheWidth: decodeWidth,
             filterQuality: FilterQuality.medium,
             errorBuilder: (_, _, _) => SizedBox(
               width: 96,
@@ -100,21 +122,38 @@ class MessageImageGrid extends StatelessWidget {
               ),
             ),
           );
-    if (!single) image = SizedBox.expand(child: image);
+    image = SizedBox.expand(child: image);
     if (moreCount != null) {
+      // 不再整格壓黑＋大粗字：圖照常顯示，右下角一顆小膠囊標剩幾張。
       image = Stack(
         fit: StackFit.expand,
         children: [
           image,
-          ColoredBox(color: Colors.black.withValues(alpha: 0.45)),
-          Center(
-            child: Text(
-              '+$moreCount',
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 22,
-                fontWeight: FontWeight.w600,
-                height: 1,
+          Positioned(
+            right: 5,
+            bottom: 5,
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: Colors.black.withValues(alpha: 0.42),
+                borderRadius: BorderRadius.circular(999),
+                border: Border.all(
+                  color: Colors.white.withValues(alpha: 0.22),
+                  width: 0.5,
+                ),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                child: Text(
+                  '+$moreCount',
+                  style: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.94),
+                    fontSize: 11,
+                    fontWeight: FontWeight.w500,
+                    letterSpacing: 0.3,
+                    height: 1.2,
+                    fontFamily: YanciTheme.fontFamily,
+                  ),
+                ),
               ),
             ),
           ),

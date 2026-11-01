@@ -227,7 +227,7 @@ class _RpStoryRelationshipScreenState extends State<RpStoryRelationshipScreen> {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 Text(
-                  '${row['from_name']} → ${row['to_name']}',
+                  '${row['from_name']} › ${row['to_name']}',
                   style: YanciTheme.headingMedium,
                 ),
                 const SizedBox(height: 16),
@@ -541,6 +541,9 @@ class _RpStoryRelationshipScreenState extends State<RpStoryRelationshipScreen> {
       alignment: Alignment.center,
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
       decoration: BoxDecoration(
+        color: selected
+            ? YanciTheme.accent.withValues(alpha: 0.09)
+            : YanciTheme.glassInputBg.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(18),
         border: Border.all(
           color: selected
@@ -638,7 +641,7 @@ class _RpStoryRelationshipScreenState extends State<RpStoryRelationshipScreen> {
     final people = <String>[
       subject,
       object,
-    ].where((item) => item.isNotEmpty).join(' → ');
+    ].where((item) => item.isNotEmpty).join(' · ');
     final layer = row['narrative_layer']?.toString() ?? 'main';
     final status = row['status']?.toString() ?? '';
     final storyTime = row['story_time']?.toString().trim() ?? '';
@@ -923,7 +926,7 @@ class _RpStoryRelationshipScreenState extends State<RpStoryRelationshipScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            '${row['from_name']} → ${row['to_name']}',
+            '${row['from_name']} › ${row['to_name']}',
             style: YanciTheme.bodyText,
           ),
           const SizedBox(height: 4),
@@ -934,35 +937,37 @@ class _RpStoryRelationshipScreenState extends State<RpStoryRelationshipScreen> {
             ),
           ),
           if ('${row['latest_change'] ?? ''}'.trim().isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.only(top: 4),
-              child: _markdown(
-                '${L.pick(en: 'Latest change', zhTW: '最新變化', zhCN: '最新变化')}：${row['latest_change']}',
-                style: YanciTheme.bodySmall.copyWith(
-                  color: YanciTheme.textSecondary.withValues(alpha: 0.84),
-                ),
-              ),
+            _relationshipField(
+              L.pick(en: 'Latest change', zhTW: '最新變化', zhCN: '最新变化'),
+              '${row['latest_change']}',
             ),
           if ('${row['origin'] ?? ''}'.trim().isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.only(top: 3),
-              child: _markdown(
-                '${L.pick(en: 'Origin', zhTW: '形成經過', zhCN: '形成经过')}：${row['origin']}',
-                style: YanciTheme.bodySmall.copyWith(
-                  color: YanciTheme.textSecondary.withValues(alpha: 0.72),
-                ),
-              ),
+            _relationshipField(
+              L.pick(en: 'Origin', zhTW: '形成經過', zhCN: '形成经过'),
+              '${row['origin']}',
+              muted: true,
             ),
           if ('${row['evidence'] ?? ''}'.trim().isNotEmpty)
             Padding(
-              padding: const EdgeInsets.only(top: 4),
-              child: Text(
-                '「${row['evidence']}」',
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: YanciTheme.bodySmall.copyWith(
-                  color: YanciTheme.textSecondary.withValues(alpha: 0.52),
-                  fontSize: 10,
+              padding: const EdgeInsets.only(top: 7),
+              child: Container(
+                padding: const EdgeInsets.only(left: 8),
+                decoration: BoxDecoration(
+                  border: Border(
+                    left: BorderSide(
+                      color: YanciTheme.accent.withValues(alpha: 0.4),
+                      width: 1.5,
+                    ),
+                  ),
+                ),
+                child: Text(
+                  '「${row['evidence']}」',
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: YanciTheme.bodySmall.copyWith(
+                    color: YanciTheme.textSecondary.withValues(alpha: 0.58),
+                    fontSize: 10,
+                  ),
                 ),
               ),
             ),
@@ -970,4 +975,32 @@ class _RpStoryRelationshipScreenState extends State<RpStoryRelationshipScreen> {
       ),
     ),
   );
+
+  Widget _relationshipField(String label, String value, {bool muted = false}) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 7),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: YanciTheme.bodySmall.copyWith(
+              fontSize: 9.5,
+              height: 1.1,
+              color: YanciTheme.accent.withValues(alpha: muted ? 0.48 : 0.64),
+            ),
+          ),
+          const SizedBox(height: 2),
+          _markdown(
+            value,
+            style: YanciTheme.bodySmall.copyWith(
+              color: YanciTheme.textSecondary.withValues(
+                alpha: muted ? 0.7 : 0.84,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }

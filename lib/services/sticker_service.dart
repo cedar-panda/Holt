@@ -1,12 +1,12 @@
 import 'dart:convert';
 import 'dart:io';
 import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
 import '../memory/database.dart';
 import 'api_adapter.dart';
 import 'settings_manager.dart';
 import 'locale_strings.dart';
 import 'token_tracker.dart';
+import '../utils/app_directories.dart';
 
 /// 表情包管理服務
 /// 上傳 → 三種描述 → AI 挑選 → 台詞注入 prompt
@@ -72,7 +72,7 @@ class StickerService {
   }) async {
     final source = File(filePath);
     if (!await source.exists()) return -1;
-    final documents = await getApplicationDocumentsDirectory();
+    final documents = await getAppDocumentsDirectory();
     final stickerDir = Directory(p.join(documents.path, 'stickers'));
     await stickerDir.create(recursive: true);
     final rawExt = p.extension(filePath).toLowerCase();
@@ -188,7 +188,7 @@ class StickerService {
     final sourceFile = File(sourcePath);
     if (!await sourceFile.exists()) return false;
 
-    final documents = await getApplicationDocumentsDirectory();
+    final documents = await getAppDocumentsDirectory();
     final stickerDir = Directory(p.join(documents.path, 'stickers'));
     await stickerDir.create(recursive: true);
     final rawExt = p.extension(sourceName).toLowerCase();

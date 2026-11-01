@@ -2,7 +2,19 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:project_yanci/services/chat_window_stats_service.dart';
+import 'package:project_yanci/widgets/chat_model_picker.dart';
 import 'package:project_yanci/widgets/chat_window_status.dart';
+
+const _modelEntries = <ChatModelPickerEntry>[
+  ChatModelPickerEntry(
+    id: 'gemini-flash',
+    label: 'gemini-flash',
+    provider: 'gemini',
+    providerLabel: 'Gemini',
+    isLocal: false,
+    isProviderConfigured: true,
+  ),
+];
 
 void main() {
   testWidgets('window status uses the requested three-slider control', (
@@ -97,7 +109,13 @@ void main() {
               liveTokenCount: 0,
               initialSnapshot: snapshot,
               loadSnapshot: () async => snapshot,
-              onChooseModel: () {},
+              modelEntries: _modelEntries,
+              currentModelId: 'gemini-flash',
+              currentProvider: 'gemini',
+              initialReasoningEffort: 'medium',
+              onReasoningEffortChanged: (_, _) async {},
+              onModelSelected: (_) async {},
+              onUnavailableProviderSelected: (_) {},
               onLongScreenshot: () {},
               longScreenshotBusy: false,
               onEditMemory: (_, _, _) async {},
@@ -135,7 +153,13 @@ void main() {
             liveTokenCount: 0,
             initialSnapshot: snapshot,
             loadSnapshot: () async => snapshot,
-            onChooseModel: () {},
+            modelEntries: _modelEntries,
+            currentModelId: 'gemini-flash',
+            currentProvider: 'gemini',
+            initialReasoningEffort: 'medium',
+            onReasoningEffortChanged: (_, _) async {},
+            onModelSelected: (_) async {},
+            onUnavailableProviderSelected: (_) {},
             onLongScreenshot: () => captures++,
             longScreenshotBusy: false,
             onEditMemory: (_, _, _) async {},
@@ -154,9 +178,69 @@ void main() {
       tester
           .getTopLeft(find.byKey(const ValueKey('chat-window-long-screenshot')))
           .dy,
-      greaterThan(tester.getTopLeft(find.text('gemini-flash')).dy),
+      greaterThan(tester.getTopLeft(find.text('gemini-flash').first).dy),
     );
     await tester.tap(find.byKey(const ValueKey('chat-window-long-screenshot')));
     expect(captures, 1);
+  });
+
+  testWidgets('model and reasoning controls expand inside the status sheet', (
+    tester,
+  ) async {
+    String? selectedEffort;
+    const snapshot = ChatWindowStatsSnapshot(
+      recordedTokens: 0,
+      summaryCount: 0,
+      worldbookCount: 0,
+      cacheHitCount: 0,
+      cacheReportingAvailable: false,
+      memories: <ChatWindowMemoryRecord>[],
+    );
+    await tester.binding.setSurfaceSize(const Size(390, 667));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Align(
+            alignment: Alignment.bottomCenter,
+            child: ChatWindowStatusSheet(
+              modelName: 'gemini-flash',
+              liveTokenCount: 0,
+              initialSnapshot: snapshot,
+              loadSnapshot: () async => snapshot,
+              modelEntries: _modelEntries,
+              currentModelId: 'gemini-flash',
+              currentProvider: 'gemini',
+              initialReasoningEffort: 'medium',
+              onReasoningEffortChanged: (effort, _) async {
+                selectedEffort = effort;
+              },
+              onModelSelected: (_) async {},
+              onUnavailableProviderSelected: (_) {},
+              onLongScreenshot: () {},
+              longScreenshotBusy: false,
+              onEditMemory: (_, _, _) async {},
+              onArchiveMemory: (_) async => true,
+              accentColor: Colors.green,
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.byKey(const ValueKey('chat-window-model-toggle')));
+    await tester.pump(const Duration(milliseconds: 260));
+    expect(
+      find.byKey(const ValueKey('chat-model-thinking-toggle')),
+      findsOneWidget,
+    );
+    expect(tester.takeException(), isNull);
+
+    final highFinder = find.byKey(const ValueKey('chat-model-reasoning-high'));
+    tester.widget<InkWell>(highFinder).onTap?.call();
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(selectedEffort, 'high');
+    expect(tester.takeException(), isNull);
   });
 }

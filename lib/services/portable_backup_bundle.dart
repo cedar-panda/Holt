@@ -62,6 +62,12 @@ class PortableBackupBundle {
     r'[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-'
     r'[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/Documents/(.+)$',
   );
+  /// 同上，Application Support（自訂字體放這裡）的舊容器路徑。
+  static final RegExp _legacyIosSupportPath = RegExp(
+    r'^/(?:private/)?var/mobile/Containers/Data/Application/'
+    r'[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-'
+    r'[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/Library/Application Support/(.+)$',
+  );
   static final RegExp _backgroundPresetPreferenceKey = RegExp(
     r'^background_preset_slot_\d+_v1$',
   );
@@ -76,6 +82,8 @@ class PortableBackupBundle {
     required Directory ownedRoot,
     required Directory workingRoot,
     required File outputFile,
+    // Documents 以外也屬於 App 的資料夾（Application Support：自訂字體）。
+    List<Directory> extraOwnedRoots = const <Directory>[],
   }) async {
     final stage = Directory(
       p.join(
@@ -91,6 +99,7 @@ class PortableBackupBundle {
       final stagedMedia = await _stageReferencedMedia(
         portableData,
         ownedRoot: ownedRoot,
+        extraOwnedRoots: extraOwnedRoots,
         stage: stage,
       );
       if (!await databaseSnapshot.exists()) {
@@ -340,11 +349,16 @@ class PortableBackupBundle {
     Map<String, dynamic> data, {
     required Directory ownedRoot,
     required Directory stage,
+    List<Directory> extraOwnedRoots = const <Directory>[],
   }) async {
     final sourceToPortable = <String, String>{};
     final digestToPortable = <String, String>{};
     final manifest = <Map<String, Object?>>[];
     final resolvedOwnedRoot = await ownedRoot.resolveSymbolicLinks();
+    final resolvedExtraRoots = <String>[
+      for (final root in extraOwnedRoots)
+        if (await root.exists()) await root.resolveSymbolicLinks(),
+    ];
     var sequence = 0;
     var totalSize = 0;
 
@@ -384,6 +398,27 @@ class PortableBackupBundle {
           }
         }
       }
+      if (ownedPath == null && p.isAbsolute(normalized)) {
+        for (final extra in extraOwnedRoots) {
+          final root = p.normalize(extra.path);
+          if (p.isWithin(root, normalized)) {
+            ownedPath = normalized;
+            break;
+          }
+          final legacySupport = _legacyIosSupportPath.firstMatch(normalized);
+          if (legacySupport != null &&
+              p.split(root).last == 'Application Support') {
+            final relativePath = p.normalize(legacySupport.group(1)!);
+            final rebased = p.normalize(p.join(root, relativePath));
+            if (relativePath != '.' &&
+                !p.isAbsolute(relativePath) &&
+                p.isWithin(root, rebased)) {
+              ownedPath = rebased;
+              break;
+            }
+          }
+        }
+      }
       if (ownedPath == null) {
         if (requiredForBackup) {
           throw StateError('備份媒體不在 App 儲存範圍：$owner');
@@ -397,7 +432,8 @@ class PortableBackupBundle {
       }
       final resolvedSource = await source.resolveSymbolicLinks();
       if (!p.equals(resolvedSource, resolvedOwnedRoot) &&
-          !p.isWithin(resolvedOwnedRoot, resolvedSource)) {
+          !p.isWithin(resolvedOwnedRoot, resolvedSource) &&
+          !resolvedExtraRoots.any((root) => p.isWithin(root, resolvedSource))) {
         if (requiredForBackup) {
           throw StateError('備份媒體指向 App 儲存範圍外：$owner');
         }

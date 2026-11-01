@@ -501,13 +501,13 @@ class _SplashScreenState extends State<SplashScreen>
             backgroundColor: YanciTheme.glassInputBg.withValues(alpha: 0.72),
             disabledForegroundColor: YanciTheme.textSecondary,
             side: BorderSide(
-              color: selected
-                  ? YanciTheme.accent
-                  : YanciTheme.glassBorder.withValues(alpha: 0.8),
+              color: YanciTheme.accent.withValues(
+                alpha: selected ? 0.60 : 0.20,
+              ),
               width: selected ? 1.2 : 0.7,
             ),
             shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(YanciTheme.radiusMd),
+              borderRadius: BorderRadius.circular(YanciTheme.radiusPill),
             ),
           ),
           child: Stack(
@@ -532,11 +532,7 @@ class _SplashScreenState extends State<SplashScreen>
                           color: YanciTheme.accent,
                         ),
                       )
-                    : Icon(
-                        Icons.arrow_forward_rounded,
-                        size: 18,
-                        color: YanciTheme.textSecondary,
-                      ),
+                    : const SizedBox.square(dimension: 18),
               ),
             ],
           ),

@@ -70,6 +70,7 @@ class SidebarAccordionSection extends StatefulWidget {
     this.initiallyExpanded = false,
     this.trailing,
     this.showChevron = true,
+    this.isActive = false,
     this.exclusiveWithinGroup = false,
   });
 
@@ -82,6 +83,10 @@ class SidebarAccordionSection extends StatefulWidget {
   final bool initiallyExpanded;
   final Widget? trailing;
   final bool showChevron;
+
+  /// Keeps the title visually active even when the accordion body is
+  /// collapsed. This represents the feature switch state, not disclosure.
+  final bool isActive;
   final bool exclusiveWithinGroup;
 
   @override
@@ -178,7 +183,9 @@ class _SidebarAccordionSectionState extends State<SidebarAccordionSection>
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || widget.initiallyExpanded != shouldExpand) return;
       if (shouldExpand && !_expanded) {
-        _expand();
+        // External state restoration must not collapse another relation
+        // group. Only a deliberate user expansion coordinates siblings.
+        _expand(notifyCoordinator: false);
       } else if (!shouldExpand && _expanded) {
         _collapse();
       }
@@ -195,18 +202,20 @@ class _SidebarAccordionSectionState extends State<SidebarAccordionSection>
     }
   }
 
-  void _expand() {
+  void _expand({bool notifyCoordinator = true}) {
     setState(() => _expanded = true);
     if (_reduceMotion) {
       _animCtrl.value = 1;
     } else {
       _animCtrl.forward();
     }
-    _coordinator?.activate(
-      widget.relationGroup,
-      id: widget.id,
-      exclusive: widget.exclusiveWithinGroup,
-    );
+    if (notifyCoordinator) {
+      _coordinator?.activate(
+        widget.relationGroup,
+        id: widget.id,
+        exclusive: widget.exclusiveWithinGroup,
+      );
+    }
   }
 
   void _collapse() {
@@ -254,33 +263,6 @@ class _SidebarAccordionSectionState extends State<SidebarAccordionSection>
                 ),
                 child: Row(
                   children: [
-                    // accent dot
-                    AnimatedBuilder(
-                      animation: _expandCurve,
-                      builder: (context, child) {
-                        final t = _expandCurve.value;
-                        final dotOpacity = 0.2 + 0.65 * t;
-                        return Container(
-                          width: 4,
-                          height: 4,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: accent.withValues(alpha: dotOpacity),
-                            boxShadow: t > 0.3
-                                ? [
-                                    BoxShadow(
-                                      color: accent.withValues(alpha: 0.25 * t),
-                                      blurRadius: 6 * t,
-                                      spreadRadius: 1 * t,
-                                    ),
-                                  ]
-                                : null,
-                          ),
-                        );
-                      },
-                    ),
-                    const SizedBox(width: 10),
-
                     // title + subtitle
                     Expanded(
                       child: Column(
@@ -291,10 +273,11 @@ class _SidebarAccordionSectionState extends State<SidebarAccordionSection>
                             animation: _expandCurve,
                             builder: (context, _) {
                               final t = _expandCurve.value;
+                              final visualT = widget.isActive ? 1.0 : t;
                               final color = Color.lerp(
                                 textSecondary,
                                 textPrimary,
-                                t,
+                                visualT,
                               )!;
                               return DefaultTextStyle.merge(
                                 style: YanciTheme.bodyText.copyWith(
@@ -324,16 +307,19 @@ class _SidebarAccordionSectionState extends State<SidebarAccordionSection>
                       ),
                     ),
 
-                    if (widget.trailing != null) widget.trailing!,
                     if (widget.showChevron)
-                      RotationTransition(
-                        turns: _chevronTurns,
-                        child: Icon(
-                          Icons.expand_more_rounded,
-                          size: 18,
-                          color: textSecondary.withValues(alpha: 0.45),
+                      Padding(
+                        padding: const EdgeInsets.only(left: 4, right: 2),
+                        child: RotationTransition(
+                          turns: _chevronTurns,
+                          child: Icon(
+                            Icons.expand_more_rounded,
+                            size: 18,
+                            color: textSecondary.withValues(alpha: 0.45),
+                          ),
                         ),
                       ),
+                    if (widget.trailing != null) widget.trailing!,
                   ],
                 ),
               ),
@@ -350,7 +336,11 @@ class _SidebarAccordionSectionState extends State<SidebarAccordionSection>
                 excluding: !_expanded,
                 child: IgnorePointer(
                   ignoring: !_expanded,
-                  child: Padding(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Padding(
                     padding:
                         widget.childrenPadding ??
                         const EdgeInsets.only(left: 16, top: 2, bottom: 6),
@@ -385,11 +375,42 @@ class _SidebarAccordionSectionState extends State<SidebarAccordionSection>
                       ),
                     ),
                   ),
+                      // 展開內容與下一個子項之間的分隔：重點色、左右漸隱。
+                      _ExpandedSectionDivider(color: accent),
+                    ],
+                  ),
                 ),
               ),
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// 子項展開後，內容底部的一條重點色漸隱線，和下一個子項分開。
+class _ExpandedSectionDivider extends StatelessWidget {
+  const _ExpandedSectionDivider({required this.color});
+
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 2, 12, 4),
+      child: Container(
+        key: const ValueKey('sidebar-section-expanded-divider'),
+        height: 0.8,
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            colors: <Color>[
+              color.withValues(alpha: 0),
+              color.withValues(alpha: 0.45),
+              color.withValues(alpha: 0),
+            ],
+          ),
+        ),
       ),
     );
   }

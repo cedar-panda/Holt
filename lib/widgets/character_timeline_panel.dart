@@ -15,6 +15,7 @@ import '../utils/latest_request_gate.dart';
 import 'shop_backpack_sheets.dart';
 import 'coin_amount_text.dart';
 import 'context_mode_pill.dart';
+import 'shell_coin_icon.dart';
 
 /// 角色時間線 — 橫軸 + 上下交錯
 /// 一條橫線貫穿，節點圓點在線上，內容交替顯示在線的上方/下方
@@ -27,6 +28,7 @@ class CharacterTimelinePanel extends StatefulWidget {
   final bool showContextModeControl;
   final bool showEconomyActions;
   final bool initiallyCollapsed;
+  final bool fullScreenVertical;
 
   const CharacterTimelinePanel({
     super.key,
@@ -37,6 +39,7 @@ class CharacterTimelinePanel extends StatefulWidget {
     this.showContextModeControl = true,
     this.showEconomyActions = true,
     this.initiallyCollapsed = false,
+    this.fullScreenVertical = false,
   });
 
   @override
@@ -283,21 +286,29 @@ class _CharacterTimelinePanelState extends State<CharacterTimelinePanel> {
   }
 
   Future<void> _setMode(ContextMode mode) async {
+    var preferredModeSaved = false;
     if (_globalRpEnabled) {
-      showContextModeNotice(
-        context,
-        L.pick(
-          en: 'Global RP mode currently controls this character.',
-          zhTW: '目前由全域 RP 模式控制該夥伴。',
-          zhCN: '目前由全局 RP 模式控制该伙伴。',
-        ),
+      if (mode != ContextMode.daily) return;
+      final confirmed = await confirmDisableGlobalRp(context);
+      if (!mounted || !confirmed) return;
+      await ContextModeSettings.setCharacterPreferredMode(
+        widget.characterId,
+        mode,
       );
-      return;
+      preferredModeSaved = true;
+      await ContextModeSettings.setGlobalRpEnabled(false);
+      if (!mounted) return;
+      setState(() {
+        _globalRpEnabled = false;
+        _mode = mode;
+      });
     }
-    await ContextModeSettings.setCharacterPreferredMode(
-      widget.characterId,
-      mode,
-    );
+    if (!preferredModeSaved) {
+      await ContextModeSettings.setCharacterPreferredMode(
+        widget.characterId,
+        mode,
+      );
+    }
     final differs = await ContextModeSettings.latestWindowDiffers(
       widget.characterId,
       mode,
@@ -349,9 +360,7 @@ class _CharacterTimelinePanelState extends State<CharacterTimelinePanel> {
       builder: (ctx) => Container(
         padding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
         decoration: BoxDecoration(
-          color: YanciTheme.isDark
-              ? const Color(0xFF1a1520).withValues(alpha: 0.98)
-              : Colors.white.withValues(alpha: 0.98),
+          color: YanciTheme.surfacePanel.withValues(alpha: 0.98),
           borderRadius: const BorderRadius.vertical(
             top: Radius.circular(YanciTheme.radiusLg),
           ),
@@ -494,7 +503,9 @@ class _CharacterTimelinePanelState extends State<CharacterTimelinePanel> {
         '${_selectedDate.year}.${_selectedDate.month.toString().padLeft(2, '0')}';
 
     return Column(
-      mainAxisSize: MainAxisSize.min,
+      mainAxisSize: widget.fullScreenVertical
+          ? MainAxisSize.max
+          : MainAxisSize.min,
       children: [
         // ═══ 角色貝殼餘額 ═══
         if (widget.showEconomyActions && (_shellEconomyEnabled || _shopEnabled))
@@ -511,12 +522,7 @@ class _CharacterTimelinePanelState extends State<CharacterTimelinePanel> {
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Image.asset(
-                          'assets/images/shell_coin.png',
-                          width: 20,
-                          height: 20,
-                          filterQuality: FilterQuality.none,
-                        ),
+                        ShellCoinIcon(size: 20),
                         const SizedBox(width: 6),
                         CoinAmountText(_charCoins),
                       ],
@@ -568,7 +574,7 @@ class _CharacterTimelinePanelState extends State<CharacterTimelinePanel> {
               if (widget.showContextModeControl) ...[
                 ContextModePill(
                   mode: _mode,
-                  enabled: !_globalRpEnabled,
+                  enabled: true,
                   onChanged: (mode) => unawaited(_setMode(mode)),
                 ),
                 const SizedBox(width: 10),
@@ -691,85 +697,250 @@ class _CharacterTimelinePanelState extends State<CharacterTimelinePanel> {
 
         if (!_collapsed) const SizedBox(height: 8),
 
-        // ═══ 橫軸時間線 ═══
+        // ═══ 時間線 ═══
         if (!_collapsed)
-          SizedBox(
-            height: _totalHeight,
-            child: _loading
-                ? Center(
-                    child: SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 1.5,
-                        color: YanciTheme.accent.withValues(alpha: 0.4),
+          if (widget.fullScreenVertical)
+            Expanded(child: _buildVerticalTimeline())
+          else
+            SizedBox(
+              height: _totalHeight,
+              child: _loading
+                  ? Center(
+                      child: SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 1.5,
+                          color: YanciTheme.accent.withValues(alpha: 0.4),
+                        ),
                       ),
-                    ),
-                  )
-                : _nodes.isEmpty
-                ? Center(
-                    child: Text(
-                      _mode == ContextMode.rp
-                          ? L.pick(
-                              en: 'No story events yet',
-                              zhTW: '這條故事線還沒有事件',
-                              zhCN: '这条故事线还没有事件',
-                            )
-                          : L.pick(
-                              en: 'Nothing this month yet',
-                              zhTW: '這個月還沒有足跡',
-                              zhCN: '这个月还没有足迹',
-                            ),
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontFamily: YanciTheme.fontFamily,
-                        color: YanciTheme.textSecondary.withValues(alpha: 0.35),
-                      ),
-                    ),
-                  )
-                : LayoutBuilder(
-                    builder: (ctx, constraints) {
-                      return SingleChildScrollView(
-                        controller: _scrollCtrl,
-                        scrollDirection: Axis.horizontal,
-                        padding: const EdgeInsets.symmetric(horizontal: 24),
-                        child: CustomPaint(
-                          painter: _TimelineAxisPainter(
-                            nodeCount: _nodes.length,
-                            nodeWidth: _nodeWidth,
-                            lineGap: _lineGap,
-                            totalHeight: _totalHeight,
-                            contentHeight: _contentHeight,
-                            stalkHeight: _stalkHeight,
-                            lineZoneHeight: _lineZoneHeight,
-                            lineColor: YanciTheme.accent.withValues(
-                              alpha: 0.15,
-                            ),
-                            dotColor: YanciTheme.accent,
-                            dotColorAlt: YanciTheme.accent.withValues(
-                              alpha: 0.5,
-                            ),
-                            nodes: _nodes,
+                    )
+                  : _nodes.isEmpty
+                  ? Center(
+                      child: Text(
+                        _mode == ContextMode.rp
+                            ? L.pick(
+                                en: 'No story events yet',
+                                zhTW: '這條故事線還沒有事件',
+                                zhCN: '这条故事线还没有事件',
+                              )
+                            : L.pick(
+                                en: 'Nothing this month yet',
+                                zhTW: '這個月還沒有足跡',
+                                zhCN: '这个月还没有足迹',
+                              ),
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontFamily: YanciTheme.fontFamily,
+                          color: YanciTheme.textSecondary.withValues(
+                            alpha: 0.35,
                           ),
-                          child: SizedBox(
-                            width:
-                                _nodes.length * (_nodeWidth + _lineGap) -
-                                _lineGap +
-                                8, // 尾部留點空間
-                            height: _totalHeight,
-                            child: Stack(
-                              children: List.generate(
-                                _nodes.length,
-                                (i) => _buildNodeContent(i),
+                        ),
+                      ),
+                    )
+                  : LayoutBuilder(
+                      builder: (ctx, constraints) {
+                        return SingleChildScrollView(
+                          controller: _scrollCtrl,
+                          scrollDirection: Axis.horizontal,
+                          padding: const EdgeInsets.symmetric(horizontal: 24),
+                          child: CustomPaint(
+                            painter: _TimelineAxisPainter(
+                              nodeCount: _nodes.length,
+                              nodeWidth: _nodeWidth,
+                              lineGap: _lineGap,
+                              totalHeight: _totalHeight,
+                              contentHeight: _contentHeight,
+                              stalkHeight: _stalkHeight,
+                              lineZoneHeight: _lineZoneHeight,
+                              lineColor: YanciTheme.accent.withValues(
+                                alpha: 0.15,
+                              ),
+                              dotColor: YanciTheme.accent,
+                              dotColorAlt: YanciTheme.accent.withValues(
+                                alpha: 0.5,
+                              ),
+                              nodes: _nodes,
+                            ),
+                            child: SizedBox(
+                              width:
+                                  _nodes.length * (_nodeWidth + _lineGap) -
+                                  _lineGap +
+                                  8, // 尾部留點空間
+                              height: _totalHeight,
+                              child: Stack(
+                                children: List.generate(
+                                  _nodes.length,
+                                  (i) => _buildNodeContent(i),
+                                ),
                               ),
                             ),
                           ),
-                        ),
-                      );
-                    },
-                  ),
-          ),
+                        );
+                      },
+                    ),
+            ),
       ],
+    );
+  }
+
+  Widget _buildVerticalTimeline() {
+    if (_loading) {
+      return Center(
+        child: SizedBox(
+          width: 18,
+          height: 18,
+          child: CircularProgressIndicator(
+            strokeWidth: 1.5,
+            color: YanciTheme.accent.withValues(alpha: 0.4),
+          ),
+        ),
+      );
+    }
+    if (_nodes.isEmpty) {
+      return Center(
+        child: Text(
+          L.pick(
+            en: 'No story events yet',
+            zhTW: '這條故事線還沒有事件',
+            zhCN: '这条故事线还没有事件',
+          ),
+          style: YanciTheme.bodySmall.copyWith(
+            color: YanciTheme.textSecondary.withValues(alpha: 0.42),
+          ),
+        ),
+      );
+    }
+    return ListView.builder(
+      controller: _scrollCtrl,
+      padding: const EdgeInsets.fromLTRB(24, 8, 24, 36),
+      itemCount: _nodes.length,
+      itemBuilder: (context, index) {
+        final node = _nodes[index];
+        final isState = node.type == _NodeType.state;
+        final timeLabel = node.storyTimeText.trim().isNotEmpty
+            ? node.storyTimeText.trim()
+            : L.pick(
+                en: 'Scene ${node.sequenceOrder}',
+                zhTW: '第 ${node.sequenceOrder} 節',
+                zhCN: '第 ${node.sequenceOrder} 节',
+              );
+        return IntrinsicHeight(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              SizedBox(
+                width: 24,
+                child: Stack(
+                  alignment: Alignment.topCenter,
+                  children: [
+                    if (index < _nodes.length - 1)
+                      Positioned(
+                        top: 16,
+                        bottom: 0,
+                        child: Container(
+                          width: 1,
+                          color: YanciTheme.accent.withValues(alpha: 0.2),
+                        ),
+                      ),
+                    Positioned(
+                      top: 11,
+                      child: Container(
+                        width: isState ? 9 : 7,
+                        height: isState ? 9 : 7,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: isState
+                              ? YanciTheme.accent
+                              : YanciTheme.accent.withValues(alpha: 0.58),
+                          boxShadow: isState
+                              ? [
+                                  BoxShadow(
+                                    color: YanciTheme.accent.withValues(
+                                      alpha: 0.2,
+                                    ),
+                                    blurRadius: 7,
+                                  ),
+                                ]
+                              : null,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.only(bottom: 10),
+                  child: Material(
+                    color: Colors.transparent,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(YanciTheme.radiusSm),
+                      side: BorderSide(
+                        color: YanciTheme.themedCardBorder(),
+                        width: 0.6,
+                      ),
+                    ),
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(YanciTheme.radiusSm),
+                      onTap: () => _showNodeDetail(node),
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(12, 10, 12, 11),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Text(
+                                  timeLabel,
+                                  style: YanciTheme.bodySmall.copyWith(
+                                    fontSize: 10,
+                                    color: YanciTheme.accent.withValues(
+                                      alpha: 0.7,
+                                    ),
+                                  ),
+                                ),
+                                const Spacer(),
+                                Text(
+                                  isState
+                                      ? L.pick(
+                                          en: 'State',
+                                          zhTW: '狀態',
+                                          zhCN: '状态',
+                                        )
+                                      : L.pick(
+                                          en: 'Event',
+                                          zhTW: '事件',
+                                          zhCN: '事件',
+                                        ),
+                                  style: YanciTheme.bodySmall.copyWith(
+                                    fontSize: 9.5,
+                                    color: YanciTheme.textSecondary.withValues(
+                                      alpha: 0.55,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 5),
+                            Text(
+                              node.value,
+                              maxLines: 4,
+                              overflow: TextOverflow.ellipsis,
+                              style: YanciTheme.bodyText.copyWith(height: 1.45),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 
@@ -801,9 +972,7 @@ class _CharacterTimelinePanelState extends State<CharacterTimelinePanel> {
         ),
         padding: const EdgeInsets.fromLTRB(24, 16, 24, 32),
         decoration: BoxDecoration(
-          color: YanciTheme.isDark
-              ? const Color(0xFF1a1520).withValues(alpha: 0.98)
-              : Colors.white.withValues(alpha: 0.98),
+          color: YanciTheme.surfacePanel.withValues(alpha: 0.98),
           borderRadius: const BorderRadius.vertical(
             top: Radius.circular(YanciTheme.radiusLg),
           ),
@@ -918,19 +1087,6 @@ class _CharacterTimelinePanelState extends State<CharacterTimelinePanel> {
                 ),
               ],
             ),
-            // 狀態 key
-            if (isState && node.key.isNotEmpty) ...[
-              const SizedBox(height: 12),
-              Text(
-                node.key,
-                style: TextStyle(
-                  fontSize: 14,
-                  fontFamily: YanciTheme.fontFamily,
-                  fontWeight: FontWeight.w600,
-                  color: YanciTheme.accent.withValues(alpha: 0.9),
-                ),
-              ),
-            ],
             const SizedBox(height: 12),
             // 完整內容（可滾動）
             Flexible(
@@ -974,9 +1130,7 @@ class _CharacterTimelinePanelState extends State<CharacterTimelinePanel> {
     final bottomY =
         _contentHeight + _stalkHeight + _lineZoneHeight + _stalkHeight;
 
-    final displayText = isState && node.key.isNotEmpty
-        ? '${node.key}·${node.value}'
-        : node.value;
+    final displayText = node.value;
 
     return Positioned(
       left: left,

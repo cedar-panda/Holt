@@ -72,6 +72,15 @@ class _DatabaseSchema {
     await _createStickerTables(db);
     await _createCharacterTables(db);
     await _createUserPersonaTables(db);
+    if (await _tableExists(db, 'characters')) {
+      await _safeAddColumn(db, 'characters', 'remark', "TEXT DEFAULT ''");
+      await _safeAddColumn(
+        db,
+        'characters',
+        'tts_voice_ids_json',
+        "TEXT NOT NULL DEFAULT '{}'",
+      );
+    }
     await _createNotesTable(db);
     await _createUsageTable(db);
     await _createWebSearchUsageTable(db);
@@ -122,6 +131,15 @@ class _DatabaseSchema {
     await DatabaseHelper._createCharacterSignatureTable(db);
     await _createChatDiagnosticsTable(db);
     await _createUserPersonaTables(db);
+    if (await _tableExists(db, 'characters')) {
+      await _safeAddColumn(db, 'characters', 'remark', "TEXT DEFAULT ''");
+      await _safeAddColumn(
+        db,
+        'characters',
+        'tts_voice_ids_json',
+        "TEXT NOT NULL DEFAULT '{}'",
+      );
+    }
     if (await _tableExists(db, 'messages')) {
       await _safeAddColumn(
         db,
@@ -880,6 +898,7 @@ class _DatabaseSchema {
       CREATE TABLE IF NOT EXISTS characters (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
+        remark TEXT DEFAULT '',
         gender TEXT DEFAULT '',
         relationship TEXT DEFAULT '',
         description TEXT,
@@ -889,6 +908,7 @@ class _DatabaseSchema {
         height TEXT,
         avatar_path TEXT,
         tts_voice_id TEXT DEFAULT '',
+        tts_voice_ids_json TEXT NOT NULL DEFAULT '{}',
         self_notes TEXT DEFAULT '',
         signature TEXT DEFAULT '',
         draw_anchor_user TEXT DEFAULT '',
@@ -2172,6 +2192,19 @@ class _DatabaseSchema {
         'memories',
         'is_pinned',
         'INTEGER NOT NULL DEFAULT 0 CHECK(is_pinned IN (0, 1))',
+      );
+    }
+    if (oldVersion < 85 && await _tableExists(db, 'characters')) {
+      await _safeAddColumn(db, 'characters', 'remark', "TEXT DEFAULT ''");
+    }
+    // v86：角色聲音按供應商分開綁定。舊 tts_voice_id 保留（備份相容），
+    // 讀取時若新欄位為空，由 CharacterVoiceBindings 依格式歸給對應供應商。
+    if (oldVersion < 86 && await _tableExists(db, 'characters')) {
+      await _safeAddColumn(
+        db,
+        'characters',
+        'tts_voice_ids_json',
+        "TEXT NOT NULL DEFAULT '{}'",
       );
     }
     // Rebuild shared indexes only after every versioned column migration has

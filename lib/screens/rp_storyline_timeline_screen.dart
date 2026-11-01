@@ -71,16 +71,14 @@ class RpStorylineTimelineScreen extends StatelessWidget {
                 ),
               ),
               Expanded(
-                child: SingleChildScrollView(
-                  padding: const EdgeInsets.fromLTRB(0, 24, 0, 40),
-                  child: CharacterTimelinePanel(
-                    characterId: characterId,
-                    modeOverride: ContextMode.rp,
-                    rpContinuityId: continuityId,
-                    rpStorylineLabel: storylineLabel,
-                    showContextModeControl: false,
-                    showEconomyActions: false,
-                  ),
+                child: CharacterTimelinePanel(
+                  characterId: characterId,
+                  modeOverride: ContextMode.rp,
+                  rpContinuityId: continuityId,
+                  rpStorylineLabel: storylineLabel,
+                  showContextModeControl: false,
+                  showEconomyActions: false,
+                  fullScreenVertical: true,
                 ),
               ),
             ],

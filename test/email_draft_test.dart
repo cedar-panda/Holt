@@ -73,4 +73,37 @@ void main() {
     expect(uri.queryParameters['subject'], 'Tea tomorrow?');
     expect(uri.queryParameters['body'], 'See you at 3.');
   });
+
+  test('mailto URI percent-encodes spaces instead of Gmail-visible pluses', () {
+    final uri = EmailDraftLauncher.buildUri(
+      EmailDraft(
+        to: 'friend@example.com',
+        subject: 'Re: First letter from Kael',
+        body: 'Thanks for not rushing your reply. I could tell.',
+      ),
+    );
+
+    expect(uri.toString(), isNot(contains('+')));
+    expect(uri.toString(), contains('Re%3A%20First%20letter%20from%20Kael'));
+    expect(uri.queryParameters['subject'], 'Re: First letter from Kael');
+    expect(
+      uri.queryParameters['body'],
+      'Thanks for not rushing your reply. I could tell.',
+    );
+  });
+
+  test('mailto URI keeps unicode, line breaks, and literal plus signs', () {
+    final uri = EmailDraftLauncher.buildUri(
+      EmailDraft(
+        to: 'friend@example.com',
+        subject: '明天見 + 確認',
+        body: '第一行\n第二行 + 附件',
+      ),
+    );
+
+    expect(uri.queryParameters['subject'], '明天見 + 確認');
+    expect(uri.queryParameters['body'], '第一行\n第二行 + 附件');
+    expect(uri.toString(), contains('%20%2B%20'));
+    expect(uri.toString(), contains('%0A'));
+  });
 }

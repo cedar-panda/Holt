@@ -28,3 +28,4 @@ export 'settings/memory_settings.dart';
 export 'settings/tts_settings.dart';
 export 'settings/theme_settings.dart';
 export 'settings/user_settings.dart';
+export 'reasoning_effort.dart';

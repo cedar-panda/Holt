@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:shared_preferences/shared_preferences.dart';
 import '../secure_store.dart';
 import '../locale_strings.dart';
@@ -16,9 +18,10 @@ class TtsSettings {
 
   // ═══ STT 語音辨識語言 ═══
   static const sttLocales = [
-    ('zh_TW', '繁體中文'),
-    ('zh_CN', '简体中文'),
-    ('en_US', 'English'),
+    ('zh_HK', '粵語'),
+    ('zh_TW', '繁中'),
+    ('zh_CN', '簡中'),
+    ('en_US', 'EN'),
   ];
 
   static Future<void> saveSttLocale(String v) async {
@@ -38,6 +41,25 @@ class TtsSettings {
       _ => 'en_US',
     };
   }
+
+  /// 粵語只有 ElevenLabs v3／v4 唸得出來；OpenAI 與其他 ElevenLabs 模型
+  /// 會用普通話唸粵語字，所以這些情況下不提供粵語選項。
+  static bool supportsCantonese({
+    required String provider,
+    required String elevenlabsModel,
+  }) =>
+      provider == 'elevenlabs' &&
+      (elevenlabsModel == 'eleven_v3' || elevenlabsModel == 'eleven_v4');
+
+  static List<(String, String)> sttLocalesFor({required bool cantonese}) =>
+      cantonese
+      ? sttLocales
+      : sttLocales.where((entry) => entry.$1 != 'zh_HK').toList();
+
+  /// 存的是粵語、但目前聲音不支援時，暫時改用繁中（不覆寫已存值，
+  /// 換回 v3／v4 時自動恢復粵語）。
+  static String effectiveSttLocale(String saved, {required bool cantonese}) =>
+      saved == 'zh_HK' && !cantonese ? 'zh_TW' : saved;
 
   /// 取得語言顯示名稱
   static String sttLocaleName(String localeId) {
@@ -95,48 +117,134 @@ class TtsSettings {
 
   static Future<void> saveTtsElevenlabsVoiceId(String v) async {
     final p = await SharedPreferences.getInstance();
-    await p.setString(_keyTtsElevenlabsVoiceId, v);
+    await p.setString(_keyTtsElevenlabsVoiceId, v.trim());
   }
 
   static Future<String> getTtsElevenlabsVoiceId() async {
     final p = await SharedPreferences.getInstance();
-    return p.getString(_keyTtsElevenlabsVoiceId) ?? '';
+    return (p.getString(_keyTtsElevenlabsVoiceId) ?? '').trim();
   }
 
   // ═══ 多個聲音 ID 管理 ═══
   static const String _keyTtsVoiceIdList = 'tts_elevenlabs_voice_id_list';
+  static const String _keyTtsVoiceIdLabels =
+      'tts_elevenlabs_voice_id_labels_v1';
 
   /// 獲取已保存的聲音 ID 列表
   static Future<List<String>> getVoiceIdList() async {
     final p = await SharedPreferences.getInstance();
-    return p.getStringList(_keyTtsVoiceIdList) ?? [];
+    return normalizeVoiceIdOptions(
+      p.getStringList(_keyTtsVoiceIdList) ?? const <String>[],
+    );
   }
 
   /// 保存聲音 ID 列表
   static Future<void> saveVoiceIdList(List<String> list) async {
     final p = await SharedPreferences.getInstance();
-    await p.setStringList(_keyTtsVoiceIdList, list);
+    await p.setStringList(_keyTtsVoiceIdList, normalizeVoiceIdOptions(list));
+  }
+
+  /// User-facing aliases are keyed by the immutable ElevenLabs Voice ID. The
+  /// ID stays visible beside the alias so copied configurations remain
+  /// diagnosable and two similarly named voices cannot be confused.
+  static Future<Map<String, String>> getVoiceIdLabels() async {
+    final p = await SharedPreferences.getInstance();
+    final raw = p.getString(_keyTtsVoiceIdLabels);
+    if (raw == null || raw.trim().isEmpty) return <String, String>{};
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return <String, String>{};
+      return <String, String>{
+        for (final entry in decoded.entries)
+          if (entry.key.toString().trim().isNotEmpty &&
+              (entry.value?.toString().trim() ?? '').isNotEmpty)
+            entry.key.toString().trim(): entry.value!.toString().trim(),
+      };
+    } catch (_) {
+      return <String, String>{};
+    }
+  }
+
+  static Future<void> saveVoiceIdLabel(String voiceId, String label) async {
+    final id = voiceId.trim();
+    if (id.isEmpty) return;
+    final labels = await getVoiceIdLabels();
+    final normalized = label.trim();
+    if (normalized.isEmpty) {
+      labels.remove(id);
+    } else {
+      labels[id] = normalized;
+    }
+    final p = await SharedPreferences.getInstance();
+    await p.setString(_keyTtsVoiceIdLabels, jsonEncode(labels));
+  }
+
+  static String voiceIdDisplayName(
+    String voiceId,
+    Map<String, String> labels, {
+    bool compact = false,
+  }) {
+    final id = voiceId.trim();
+    final label = labels[id]?.trim() ?? '';
+    if (label.isEmpty) return id;
+    if (!compact) return '$label · $id';
+    final shortId = id.length > 10 ? '${id.substring(0, 10)}…' : id;
+    return '$label · $shortId';
+  }
+
+  /// 清理、去重並保留 Voice ID 的原有順序。
+  ///
+  /// [boundVoiceId] 讓已綁定角色的舊 ID 即使未出現在全域清單中，仍能在
+  /// 角色設定裡安全顯示與重新選取，不會令 Dropdown 的 value 失去對應 item。
+  static List<String> normalizeVoiceIdOptions(
+    Iterable<String> values, {
+    String boundVoiceId = '',
+  }) {
+    final result = <String>[];
+    final seen = <String>{};
+    void add(String raw) {
+      final value = raw.trim();
+      if (value.isNotEmpty && seen.add(value)) result.add(value);
+    }
+
+    for (final value in values) {
+      add(value);
+    }
+    add(boundVoiceId);
+    return result;
   }
 
   /// 新增一個聲音 ID 到列表
   static Future<void> addVoiceId(String voiceId) async {
-    final list = await getVoiceIdList();
-    if (!list.contains(voiceId) && voiceId.isNotEmpty) {
-      list.add(voiceId);
-      await saveVoiceIdList(list);
-    }
+    final normalized = voiceId.trim();
+    if (normalized.isEmpty) return;
+    final list = normalizeVoiceIdOptions(<String>[
+      ...await getVoiceIdList(),
+      normalized,
+    ]);
+    await saveVoiceIdList(list);
+  }
+
+  /// 新增 Voice ID 並立即設為全域預設；回傳可直接刷新 UI 的完整清單。
+  static Future<List<String>> addAndSelectVoiceId(String voiceId) async {
+    final normalized = voiceId.trim();
+    if (normalized.isEmpty) return getVoiceIdList();
+    await addVoiceId(normalized);
+    await saveTtsElevenlabsVoiceId(normalized);
+    return getVoiceIdList();
   }
 
   /// 從列表移除一個聲音 ID
   static Future<void> removeVoiceId(String voiceId) async {
     final list = await getVoiceIdList();
-    list.remove(voiceId);
+    list.remove(voiceId.trim());
     await saveVoiceIdList(list);
     // 如果移除的是當前使用的，清空當前
     final current = await getTtsElevenlabsVoiceId();
     if (current == voiceId) {
       await saveTtsElevenlabsVoiceId(list.isNotEmpty ? list.first : '');
     }
+    await saveVoiceIdLabel(voiceId, '');
   }
 
   static Future<void> saveTtsElevenlabsModel(String v) async {
@@ -194,6 +302,20 @@ class TtsSettings {
   static Future<String> getCallMicMode() async {
     final p = await SharedPreferences.getInstance();
     return p.getString(_keyCallMicMode) ?? 'hold';
+  }
+
+  // ═══ 通話：自然電話 ═══
+  // 開著時每次回覆盡量 1–5 句短句、說完就停，像真的打電話一來一往。預設開。
+  static const String _keyCallNaturalMode = 'call_natural_mode';
+
+  static Future<void> saveCallNaturalMode(bool v) async {
+    final p = await SharedPreferences.getInstance();
+    await p.setBool(_keyCallNaturalMode, v);
+  }
+
+  static Future<bool> getCallNaturalMode() async {
+    final p = await SharedPreferences.getInstance();
+    return p.getBool(_keyCallNaturalMode) ?? true;
   }
 
   // ═══ 通話：來電鈴聲 ═══

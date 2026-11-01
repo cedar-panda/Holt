@@ -437,6 +437,7 @@ class MemorySettings {
 
   // ═══ AI 拆分回覆 ═══
   static const String _keySplitReply = 'split_reply_enabled';
+  static const String _keySplitReplyNatural = 'split_reply_natural_enabled';
 
   // ═══ 窗口摘要總開關（舊 key 保留，避免升級後設定丟失）═══
   static const String _keyMemorySummarize = 'memory_summarize_enabled';
@@ -608,6 +609,18 @@ class MemorySettings {
   static Future<bool> getSplitReply() async {
     final p = await SharedPreferences.getInstance();
     return p.getBool(_keySplitReply) ?? false;
+  }
+
+  /// 多氣泡的子開關「自然發言」：開＝像真的在聊天軟體打字；
+  /// 關＝只告訴模型用空行分氣泡，不改它的說話方式。預設開。
+  static Future<void> saveSplitReplyNatural(bool v) async {
+    final p = await SharedPreferences.getInstance();
+    await p.setBool(_keySplitReplyNatural, v);
+  }
+
+  static Future<bool> getSplitReplyNatural() async {
+    final p = await SharedPreferences.getInstance();
+    return p.getBool(_keySplitReplyNatural) ?? true;
   }
 
   // ═══ Ability 模組開關 ═══

@@ -21,6 +21,9 @@ void main() {
     await L.setLocale('zh_TW');
     expect(ToolPrompts.toolHeader(), contains('可用工具'));
     expect(ToolPrompts.whisper(), contains('對方輸入時看到的那句話。'));
+    expect(ToolPrompts.voiceCall(), contains('"type":"call.start"'));
+    expect(ToolPrompts.voiceCall(), contains('<call>'));
+    expect(ToolPrompts.voiceCall(), contains('只使用其中一種格式'));
     expect(BioClockService.abilityPrompt(), contains('生物鐘'));
     expect(KeepAliveService.heartbeatPrompt(), contains('隱藏保活消息'));
 
@@ -32,6 +35,8 @@ void main() {
 
     await L.setLocale('en');
     expect(ToolPrompts.toolHeader(), contains('Available Tools'));
+    expect(ToolPrompts.voiceCall(), contains('Compatibility form'));
+    expect(ToolPrompts.voiceCall(), contains('<call>'));
     expect(BioClockService.abilityPrompt(), contains('Bio Clock'));
     expect(KeepAliveService.heartbeatPrompt(), contains('Hidden keep-alive'));
   });
@@ -107,7 +112,7 @@ void main() {
       emotionEnabled: false,
       bioclockEnabled: false,
     );
-    expect(quietSpiderPrompt, contains('■ 蛛網記憶系統'));
+    expect(quietSpiderPrompt, contains('■ 進階記憶系統'));
     expect(quietSpiderPrompt, isNot(contains('<emo>')));
     expect(quietSpiderPrompt, isNot(contains('<clock>')));
 

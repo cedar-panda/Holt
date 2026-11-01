@@ -69,6 +69,30 @@ void main() {
     }
   });
 
+  testWidgets('transfer card only renders on the side that initiated it', (
+    tester,
+  ) async {
+    final toCharacter = TransferData(
+      amount: 20,
+      direction: 'toChar',
+      status: 'pending',
+    );
+    await pumpBubble(tester, isUser: true, transferData: toCharacter);
+    expect(find.byType(TransferMiniCard), findsOneWidget);
+    await pumpBubble(tester, isUser: false, transferData: toCharacter);
+    expect(find.byType(TransferMiniCard), findsNothing);
+
+    final toUser = TransferData(
+      amount: 20,
+      direction: 'toUser',
+      status: 'pending',
+    );
+    await pumpBubble(tester, isUser: false, transferData: toUser);
+    expect(find.byType(TransferMiniCard), findsOneWidget);
+    await pumpBubble(tester, isUser: true, transferData: toUser);
+    expect(find.byType(TransferMiniCard), findsNothing);
+  });
+
   testWidgets('scratch card does not stretch user or character text bubble', (
     tester,
   ) async {

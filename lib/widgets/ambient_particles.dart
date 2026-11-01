@@ -5,9 +5,18 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart' show SchedulerBinding;
 import '../theme/app_theme.dart';
+import 'ambient_particles_extra.dart';
 import 'neural_field.dart';
 import 'rain_painter.dart';
 import 'starfield_painter.dart';
+
+export 'ambient_particles_extra.dart'
+    show
+        EmojiRainWidget,
+        FireworkWidget,
+        GoldDustWidget,
+        SkyWidget,
+        SparkBurstWidget;
 
 /// 主題背景粒子入口。只負責選擇與密度換算，不改動各動畫本身。
 class AmbientParticleField extends StatefulWidget {
@@ -18,8 +27,12 @@ class AmbientParticleField extends StatefulWidget {
   final int rainCount;
   final int rippleCount;
   final int emberCount;
-  final int fogCount;
   final int dandelionCount;
+  final int goldCount;
+  final int sparkCount;
+  final int cloudCount;
+  final int fireworkCount;
+  final int emojiCount;
 
   const AmbientParticleField({
     super.key,
@@ -30,8 +43,12 @@ class AmbientParticleField extends StatefulWidget {
     this.rainCount = 30,
     this.rippleCount = 7,
     this.emberCount = 22,
-    this.fogCount = 4,
     this.dandelionCount = 16,
+    this.goldCount = 30,
+    this.sparkCount = 26,
+    this.cloudCount = 6,
+    this.fireworkCount = 26,
+    this.emojiCount = 10,
   });
 
   /// 1～50 的每一段都要有意義，同時保留既有三個視覺錨點：
@@ -75,6 +92,14 @@ class _AmbientParticleFieldState extends State<AmbientParticleField>
   bool _reduceMotion = false;
   bool _routeVisible = true;
   bool _tickerModeEnabled = true;
+
+  // ── 自適應降級（防弱機閃退）──
+  // 連續慢幀就降一級粒子量；只降不升，避免粒子反覆重建「跳一下」。
+  // 換頁／重開後是新的 State，自然回到滿級。
+  static const List<double> _perfLevels = [1.0, 0.75, 0.55, 0.4];
+  int _perfLevel = 0;
+  int _slowFrameStreak = 0;
+  final Stopwatch _frameGap = Stopwatch();
 
   @override
   void initState() {
@@ -123,7 +148,7 @@ class _AmbientParticleFieldState extends State<AmbientParticleField>
       YanciTheme.starEnabled;
 
   /// 本身動得很慢的效果，60fps 看不出差別，固定走 30fps。
-  static const Set<String> _slowEffects = {'fog'};
+  static const Set<String> _slowEffects = {'sky', 'gold'};
 
   String get _selectedEffect =>
       YanciTheme.particleEffectIds.contains(widget.effect)
@@ -159,6 +184,11 @@ class _AmbientParticleFieldState extends State<AmbientParticleField>
 
   void _stopClock() {
     _cancelPendingFrame();
+    // 暫停期間的空檔不能算成慢幀。
+    _frameGap
+      ..stop()
+      ..reset();
+    _slowFrameStreak = 0;
     if (_runClock.isRunning) {
       _clockOffset += _runClock.elapsed;
       _runClock
@@ -193,10 +223,33 @@ class _AmbientParticleFieldState extends State<AmbientParticleField>
       _stopClock();
       return;
     }
+    _trackFrameBudget();
     // 位置一律由真實經過時間決定，掉幀時粒子仍在正確位置。
     final elapsed = _clockOffset + _runClock.elapsed;
     _clock.value = elapsed.inMicroseconds / Duration.microsecondsPerSecond;
     _scheduleFrame(_frameInterval - _vsyncLead);
+  }
+
+  /// 兩次更新的實際間隔比預定間隔多出 3 倍以上（30fps 時約 >100ms）算慢幀；
+  /// 連續 6 次才降級，偶發的 GC 或切頁卡頓不會誤判。
+  void _trackFrameBudget() {
+    if (_frameGap.isRunning) {
+      final gap = _frameGap.elapsedMicroseconds;
+      final budget = _frameInterval.inMicroseconds * 3;
+      if (gap > budget) {
+        _slowFrameStreak++;
+        if (_slowFrameStreak >= 6 && _perfLevel < _perfLevels.length - 1) {
+          _slowFrameStreak = 0;
+          _perfLevel++;
+          if (mounted) setState(() {});
+        }
+      } else {
+        _slowFrameStreak = 0;
+      }
+    }
+    _frameGap
+      ..reset()
+      ..start();
   }
 
   @override
@@ -210,9 +263,28 @@ class _AmbientParticleFieldState extends State<AmbientParticleField>
     super.dispose();
   }
 
-  int _scaledCount(int baseCount) {
+  /// 每種效果的粒子硬上限：密度拉滿也不會超過，弱機不至於被壓垮。
+  /// 密度滑桿最大值（主題工坊 1–50）。
+  static const int _maxDensity = 50;
+
+  static const Map<String, int> _maxParticles = {
+    'neural': 30,
+    'stars': 40,
+    'rain': 48,
+    'ripple': 12,
+    'ember': 36,
+    'dandelion': 28,
+    'gold': 45,
+    'spark': 40,
+    'sky': 9,
+    'firework': 40,
+    'emoji': 18,
+  };
+
+  int _scaledCount(int baseCount, String effect) {
     final scale = AmbientParticleField.densityScaleFor(YanciTheme.starDensity);
-    return max(1, (baseCount * scale).round());
+    final raw = (baseCount * scale * _perfLevels[_perfLevel]).round();
+    return raw.clamp(1, _maxParticles[effect] ?? 30).toInt();
   }
 
   @override
@@ -227,44 +299,69 @@ class _AmbientParticleFieldState extends State<AmbientParticleField>
     final selected = _selectedEffect;
     final childKey = ValueKey(
       'ambient-$selected-${YanciTheme.starDensity}-'
-      '${YanciTheme.starColor.toARGB32()}-${YanciTheme.starGlow.toARGB32()}',
+      '${YanciTheme.starColor.toARGB32()}-${YanciTheme.starGlow.toARGB32()}-'
+      'p$_perfLevel${selected == 'emoji' ? '-${YanciTheme.particleEmojis.join()}' : ''}'
+      '${selected == 'sky' ? '-${YanciTheme.cloudStyle}' : ''}',
     );
 
     final child = switch (selected) {
       'stars' => StarfieldWidget(
         key: childKey,
         clock: _clock,
-        starCount: _scaledCount(widget.starCount),
+        starCount: _scaledCount(widget.starCount, 'stars'),
       ),
       'rain' => RainWidget(
         key: childKey,
         clock: _clock,
-        dropCount: _scaledCount(widget.rainCount),
+        dropCount: _scaledCount(widget.rainCount, 'rain'),
       ),
       'ripple' => RippleParticleWidget(
         key: childKey,
         clock: _clock,
-        rippleCount: _scaledCount(widget.rippleCount),
-      ),
-      'fog' => FogParticleWidget(
-        key: childKey,
-        clock: _clock,
-        fogCount: _scaledCount(widget.fogCount),
+        rippleCount: _scaledCount(widget.rippleCount, 'ripple'),
       ),
       'ember' => EmberParticleWidget(
         key: childKey,
         clock: _clock,
-        emberCount: _scaledCount(widget.emberCount),
+        emberCount: _scaledCount(widget.emberCount, 'ember'),
+      ),
+      'gold' => GoldDustWidget(
+        key: childKey,
+        clock: _clock,
+        flakeCount: _scaledCount(widget.goldCount, 'gold'),
+      ),
+      'spark' => SparkBurstWidget(
+        key: childKey,
+        clock: _clock,
+        sparkCount: _scaledCount(widget.sparkCount, 'spark'),
+      ),
+      'sky' => SkyWidget(
+        key: childKey,
+        clock: _clock,
+        cloudCount: _scaledCount(widget.cloudCount, 'sky'),
+      ),
+      'firework' => FireworkWidget(
+        key: childKey,
+        clock: _clock,
+        sparkCount: _scaledCount(widget.fireworkCount, 'firework'),
+        // 密度拉滿才有 5% 機率整片齊放。
+        salvoChance: YanciTheme.starDensity >= _maxDensity ? 0.05 : 0,
+      ),
+      'emoji' => EmojiRainWidget(
+        key: childKey,
+        clock: _clock,
+        emojis: YanciTheme.particleEmojis,
+        dropCount: _scaledCount(widget.emojiCount, 'emoji'),
       ),
       'dandelion' => DandelionParticleWidget(
         key: childKey,
         clock: _clock,
-        seedCount: _scaledCount(widget.dandelionCount),
+        seedCount: _scaledCount(widget.dandelionCount, 'dandelion'),
       ),
       _ => NeuralFieldWidget(
         key: childKey,
         clock: _clock,
-        nodeCount: _scaledCount(widget.neuralCount),
+        nodeCount: _scaledCount(widget.neuralCount, 'neural'),
       ),
     };
 
@@ -344,7 +441,7 @@ class _RippleParticleWidgetState extends State<RippleParticleWidget> {
       final radiusX = baseRadius * (0.78 + depthFactor * 0.34);
 
       // 大衝擊力的水滴激起的波峰稍微更亮一些，且因為擴散遠，用 1 週期慢速走完
-      final opacity = (0.15 + impact * 0.22).clamp(0.15, 0.38);
+      final opacity = (0.28 + impact * 0.30).clamp(0.28, 0.58);
       final cycles = impact > 0.62 ? 1 : (_random.nextBool() ? 1 : 2);
 
       // 把可用寬度切成等份，再於各自區段內取隨機落點。
@@ -430,17 +527,17 @@ class _RipplePainter extends CustomPainter {
     final spreadWidth = baseStroke * (1.0 + disperseCurve * 3.2);
 
     _mistOuterPaint
-      ..color = baseColor.withValues(alpha: (alpha * 0.14).clamp(0.0, 0.20))
+      ..color = baseColor.withValues(alpha: (alpha * 0.18).clamp(0.0, 0.28))
       ..strokeWidth = spreadWidth * 1.75;
     canvas.drawOval(rect, _mistOuterPaint);
     _mistInnerPaint
-      ..color = baseColor.withValues(alpha: (alpha * 0.30).clamp(0.0, 0.38))
+      ..color = baseColor.withValues(alpha: (alpha * 0.36).clamp(0.0, 0.50))
       ..strokeWidth = spreadWidth;
     canvas.drawOval(rect, _mistInnerPaint);
 
     // 2. 整圈連貫的細水紋（在後半段隨模糊拉高而提前淡出，交棒給上面的模糊帶）
     final sharpRetention = pow(1.0 - ringP, 1.8).toDouble();
-    final coreAlpha = (alpha * 0.55 * sharpRetention).clamp(0.0, 1.0);
+    final coreAlpha = (alpha * 0.72 * sharpRetention).clamp(0.0, 1.0);
     if (coreAlpha > 0.01) {
       _ringCorePaint
         ..color = baseColor.withValues(alpha: coreAlpha)
@@ -583,7 +680,7 @@ class _RipplePainter extends CustomPainter {
       if (p <= strikeOffset) continue;
       final waveP = (p - strikeOffset) / (1.0 - strikeOffset); // 0.0 -> 1.0
 
-      final baseStroke = 0.72 + r.impact * 0.48;
+      final baseStroke = 1.0 + r.impact * 0.6;
 
       // ── 第一圈：最外層主波（帶走最多能量，活滿全程 0.0 -> 1.0，推到最遠才化開）──
       final eased1 = 1.0 - pow(1.0 - waveP, 2.35).toDouble();
@@ -711,8 +808,8 @@ class _EmberParticleWidgetState extends State<EmberParticleWidget> {
         x: 0.06 + _random.nextDouble() * 0.88,
         startY: 0.78 + _random.nextDouble() * 0.26, // 從底部 78%~104% 處升起
         travelDistance: 0.42 + _random.nextDouble() * 0.36, // 向上飄移距離
-        size: 1.0 + _random.nextDouble() * 2.0, // 1.0~3.0px
-        opacity: 0.25 + _random.nextDouble() * 0.45,
+        size: 1.6 + _random.nextDouble() * 2.2, // 1.6~3.8px
+        opacity: 0.45 + _random.nextDouble() * 0.45,
         swayAmp: 6.0 + _random.nextDouble() * 14.0, // S 型擺幅 px
         swayPhase: _random.nextDouble() * 2 * pi,
         swayWaves: _random.nextBool() ? 1 : 2,
@@ -783,7 +880,7 @@ class _EmberPainter extends CustomPainter {
         currentSize * 1.8,
         _haloOuterPaint
           ..color = glowColor.withValues(
-            alpha: (alpha * 0.14).clamp(0.0, 0.20),
+            alpha: (alpha * 0.22).clamp(0.0, 0.30),
           ),
       );
       canvas.drawCircle(
@@ -791,7 +888,7 @@ class _EmberPainter extends CustomPainter {
         currentSize * 1.3,
         _haloInnerPaint
           ..color = glowColor.withValues(
-            alpha: (alpha * 0.25).clamp(0.0, 0.34),
+            alpha: (alpha * 0.38).clamp(0.0, 0.48),
           ),
       );
       canvas.drawCircle(
@@ -809,7 +906,7 @@ class _EmberPainter extends CustomPainter {
 }
 
 // ─────────────────────────────────────────────────────────────
-// 3. 落花吹雪（保留 dandelion key 相容舊設定）— DandelionParticleWidget
+// 3. 飛花（純花瓣；保留 dandelion key 相容舊設定）— DandelionParticleWidget
 // ─────────────────────────────────────────────────────────────
 
 class _FallingPetal {
@@ -824,6 +921,7 @@ class _FallingPetal {
   final double rotationPhase;
   final int swayWaves;
   final int flipWaves;
+  final bool isSnow; // true = 雪花, false = 花瓣
 
   const _FallingPetal({
     required this.startX,
@@ -837,10 +935,11 @@ class _FallingPetal {
     required this.rotationPhase,
     required this.swayWaves,
     required this.flipWaves,
+    this.isSnow = false,
   });
 }
 
-/// 落花吹雪：花瓣由上方與側上方落下，隨風擺盪並自然翻面。
+/// 飛花：花瓣由上方與側上方落下，隨風擺盪並自然翻面。
 /// 公開類名與設定 key 保持不變，舊資料不需要遷移。
 class DandelionParticleWidget extends StatefulWidget {
   final ValueListenable<double> clock;
@@ -868,19 +967,22 @@ class _DandelionParticleWidgetState extends State<DandelionParticleWidget> {
   }
 
   List<_FallingPetal> _generatePetals() {
-    return List.generate(widget.seedCount, (_) {
+    // 純花瓣：不再混雪花（雪花繪製分支留著相容，不會再生成）。
+    return List.generate(widget.seedCount, (i) {
       return _FallingPetal(
         startX: -0.08 + _random.nextDouble() * 1.08,
         startY: -0.28 + _random.nextDouble() * 0.34,
         driftX: -0.12 + _random.nextDouble() * 0.34,
         travelY: 1.04 + _random.nextDouble() * 0.34,
         size: 3.5 + _random.nextDouble() * 4.0,
-        opacity: 0.20 + _random.nextDouble() * 0.30,
+        // 少了雪花的亮點，花瓣本身提亮一點，淺底上才不會太淡。
+        opacity: 0.30 + _random.nextDouble() * 0.35,
         swayAmp: 7.0 + _random.nextDouble() * 18.0,
         phase: _random.nextDouble(),
         rotationPhase: _random.nextDouble() * 2 * pi,
         swayWaves: 1 + _random.nextInt(3),
         flipWaves: 2 + _random.nextInt(3),
+        isSnow: false,
       );
     });
   }
@@ -946,21 +1048,34 @@ class _DandelionPainter extends CustomPainter {
           sin(swayPhase) * 0.62 +
           petal.driftX * 0.8;
 
-      canvas
-        ..save()
-        ..translate(currentX, currentY)
-        ..rotate(rotation)
-        ..scale(petal.size, petal.size * flip);
-      _softPaint.color = baseColor.withValues(alpha: alpha * 0.16);
-      canvas
-        ..save()
-        ..scale(1.18, 1.18)
-        ..drawPath(_petalPath, _softPaint)
-        ..restore();
-      _bodyPaint.color = baseColor.withValues(alpha: alpha);
-      canvas
-        ..drawPath(_petalPath, _bodyPaint)
-        ..restore();
+      if (petal.isSnow) {
+        // ── 雪花：半透明小圓點 + 柔光暈 ──
+        final snowCenter = Offset(currentX, currentY);
+        final snowRadius = petal.size * 0.65;
+        // 外層柔光
+        _softPaint.color = baseColor.withValues(alpha: alpha * 0.18);
+        canvas.drawCircle(snowCenter, snowRadius * 1.6, _softPaint);
+        // 核心
+        _bodyPaint.color = baseColor.withValues(alpha: alpha * 0.92);
+        canvas.drawCircle(snowCenter, snowRadius, _bodyPaint);
+      } else {
+        // ── 花瓣 ──
+        canvas
+          ..save()
+          ..translate(currentX, currentY)
+          ..rotate(rotation)
+          ..scale(petal.size, petal.size * flip);
+        _softPaint.color = baseColor.withValues(alpha: alpha * 0.16);
+        canvas
+          ..save()
+          ..scale(1.18, 1.18)
+          ..drawPath(_petalPath, _softPaint)
+          ..restore();
+        _bodyPaint.color = baseColor.withValues(alpha: alpha);
+        canvas
+          ..drawPath(_petalPath, _bodyPaint)
+          ..restore();
+      }
     }
   }
 
@@ -968,193 +1083,4 @@ class _DandelionPainter extends CustomPainter {
   bool shouldRepaint(covariant _DandelionPainter oldDelegate) {
     return !identical(oldDelegate.petals, petals);
   }
-}
-
-// ─────────────────────────────────────────────────────────────
-// 沉香煙霧（保留 fog key 相容舊設定）— FogParticleWidget
-// ─────────────────────────────────────────────────────────────
-
-class _IncenseWisp {
-  final double startX;
-  final double startY;
-  final double endY;
-  final double period;
-  final double phase;
-  final double amplitude;
-  final double frequency1;
-  final double frequency2;
-  final double baseWidth;
-  final double topWidth;
-  final double opacity;
-  final double secondaryOffset;
-
-  const _IncenseWisp({
-    required this.startX,
-    required this.startY,
-    required this.endY,
-    required this.period,
-    required this.phase,
-    required this.amplitude,
-    required this.frequency1,
-    required this.frequency2,
-    required this.baseWidth,
-    required this.topWidth,
-    required this.opacity,
-    required this.secondaryOffset,
-  });
-}
-
-class FogParticleWidget extends StatefulWidget {
-  final ValueListenable<double> clock;
-  final int fogCount;
-
-  const FogParticleWidget({super.key, required this.clock, this.fogCount = 4})
-    : assert(fogCount > 0);
-
-  @override
-  State<FogParticleWidget> createState() => _FogParticleWidgetState();
-}
-
-class _FogParticleWidgetState extends State<FogParticleWidget> {
-  final Random _random = Random();
-  late final List<_IncenseWisp> _wisps;
-
-  double _r(double min, double span) => min + _random.nextDouble() * span;
-
-  @override
-  void initState() {
-    super.initState();
-    _wisps = List.generate(widget.fogCount, (_) {
-      return _IncenseWisp(
-        startX: _r(0.18, 0.64),
-        startY: _r(0.75, 0.20),
-        endY: _r(0.12, 0.16),
-        period: _r(32, 16),
-        phase: _random.nextDouble(),
-        amplitude: _r(10, 18),
-        frequency1: _r(1.1, 0.9),
-        frequency2: _r(2.2, 1.2),
-        baseWidth: _r(2.5, 3.0),
-        topWidth: _r(28, 20),
-        opacity: _r(0.045, 0.055),
-        secondaryOffset: _r(-10, 20),
-      );
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return RepaintBoundary(
-      child: CustomPaint(
-        painter: _IncensePainter(wisps: _wisps, clock: widget.clock),
-        size: Size.infinite,
-      ),
-    );
-  }
-}
-
-class _IncensePainter extends CustomPainter {
-  static const int _samples = 42;
-  final List<_IncenseWisp> wisps;
-  final ValueListenable<double> clock;
-  final Paint _fill = Paint()..style = PaintingStyle.fill;
-  final Path _path = Path();
-  final List<double> _xs = List<double>.filled(_samples + 1, 0);
-  final List<double> _ys = List<double>.filled(_samples + 1, 0);
-  final List<double> _hs = List<double>.filled(_samples + 1, 0);
-
-  _IncensePainter({required this.wisps, required this.clock})
-    : super(repaint: clock);
-
-  Path _band(double widthScale) {
-    _path
-      ..reset()
-      ..moveTo(_xs[0] - _hs[0] * widthScale / 2, _ys[0]);
-    for (var i = 1; i <= _samples; i++) {
-      _path.lineTo(_xs[i] - _hs[i] * widthScale / 2, _ys[i]);
-    }
-    for (var i = _samples; i >= 0; i--) {
-      _path.lineTo(_xs[i] + _hs[i] * widthScale / 2, _ys[i]);
-    }
-    return _path..close();
-  }
-
-  void _prepareWisp(
-    _IncenseWisp wisp,
-    double time,
-    Size size, {
-    required bool secondary,
-  }) {
-    final life = (time / wisp.period + wisp.phase) % 1.0;
-    final easedLife = Curves.easeOutCubic.transform(life);
-    final headY =
-        (wisp.startY + (wisp.endY - wisp.startY) * easedLife) * size.height;
-    final trailLength = size.height * (0.24 + life * 0.14);
-    final phaseShift = secondary ? 0.58 : 0.0;
-
-    for (var i = 0; i <= _samples; i++) {
-      final v = i / _samples;
-      final y = headY + (1.0 - v) * trailLength;
-      final yNorm = y / size.height;
-      final heightProgress = ((wisp.startY - yNorm) / (wisp.startY - wisp.endY))
-          .clamp(0.0, 1.0);
-      final middleTwist = sin(pi * heightProgress);
-      final wave =
-          sin(v * 2 * pi * wisp.frequency1 + time * 0.34 + phaseShift) +
-          0.42 *
-              sin(
-                v * 2 * pi * wisp.frequency2 - time * 0.21 + phaseShift * 1.7,
-              );
-      _xs[i] =
-          wisp.startX * size.width +
-          wave * wisp.amplitude * (0.25 + middleTwist * 0.75) +
-          (secondary ? wisp.secondaryOffset * middleTwist : 0);
-      _ys[i] = y;
-
-      final topSpread = Curves.easeInOutCubic.transform(
-        ((heightProgress - 0.62) / 0.38).clamp(0.0, 1.0),
-      );
-      final tipEnvelope = pow(sin(pi * v), 0.55).toDouble();
-      final silkTurn = 0.62 + 0.38 * cos(v * pi * 3 + phaseShift).abs();
-      _hs[i] =
-          (wisp.baseWidth + (wisp.topWidth - wisp.baseWidth) * topSpread) *
-          tipEnvelope *
-          silkTurn *
-          (secondary ? 0.62 : 1.0);
-    }
-  }
-
-  void _drawPreparedWisp(Canvas canvas, Color color, double alpha) {
-    _fill.color = color.withValues(alpha: (alpha * 0.22).clamp(0.0, 0.12));
-    canvas.drawPath(_band(1.75), _fill);
-    _fill.color = color.withValues(alpha: (alpha * 0.46).clamp(0.0, 0.18));
-    canvas.drawPath(_band(1.18), _fill);
-    _fill.color = color.withValues(alpha: alpha.clamp(0.0, 0.22));
-    canvas.drawPath(_band(0.64), _fill);
-  }
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final t = clock.value;
-    final color = YanciTheme.starColor;
-    for (final wisp in wisps) {
-      final life = (t / wisp.period + wisp.phase) % 1.0;
-      final edgeFade = life < 0.12
-          ? life / 0.12
-          : life > 0.82
-          ? (1.0 - life) / 0.18
-          : 1.0;
-      final alpha = wisp.opacity * edgeFade.clamp(0.0, 1.0);
-      if (alpha < 0.004) continue;
-
-      _prepareWisp(wisp, t, size, secondary: true);
-      _drawPreparedWisp(canvas, color, alpha * 0.44);
-      _prepareWisp(wisp, t, size, secondary: false);
-      _drawPreparedWisp(canvas, color, alpha);
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant _IncensePainter oldDelegate) =>
-      !identical(oldDelegate.wisps, wisps);
 }

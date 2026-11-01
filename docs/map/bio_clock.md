@@ -16,7 +16,7 @@
 - `lib/services/bio_clock_service.dart`：`BioClockService.addHabit` 寫入習慣；關鍵詞重疊時保留兩條並加入 pending dedup。
 - `lib/services/bio_clock_service.dart`：`BioClockService.resolveDedup`、`fallbackDedup` 處理重複習慣。
 - `lib/services/bio_clock_service.dart`：`BioClockService.recordLastChatTime` 更新最近 14 天 fatigue log。
-- `lib/screens/chat_screen_generation.dart`：`_ChatScreenState._sendMessageLocked`、`_sendImageLocked` 只在日常模式處理生物鐘回覆與最後聊天時間。
+- `lib/screens/chat_screen_generation.dart`：`_ChatScreenState._sendMessageLocked`（文字／圖片共用同一路徑） 只在日常模式處理生物鐘回覆與最後聊天時間。
 - `lib/services/deferred_prompt.dart`：`DeferredPrompt.commit` 在請求成功後才提交提醒／校準／構建提示的 last-delivered 狀態。
 
 ## 誰讀取、怎麼注入（檔案：函式；注入 prompt 的哪一層）
@@ -26,7 +26,7 @@
 - `lib/services/bio_clock_service.dart`：`BioClockService.turnPrompt` 依序嘗試時段提醒、去重、校準、前七天構建提示。
 - `lib/services/bio_clock_service.dart`：`BioClockService.habitDeltaPrompt` 只注入本窗口快照後新增的習慣。
 - `lib/services/bio_clock_service.dart`：`BioClockService.fatiguePrompt` 依最近七天偏離睡眠時間的天數，以機率回傳一條身體提示。
-- `lib/screens/chat_screen_generation.dart`：`_ChatScreenState._sendMessageLocked`、`_sendImageLocked` 將 turn prompt、delta 與疲勞提示放進 `liveStatePart`。
+- `lib/screens/chat_screen_generation.dart`：`_ChatScreenState._sendMessageLocked`（文字／圖片共用同一路徑） 將 turn prompt、delta 與疲勞提示放進 `liveStatePart`。
 - `lib/screens/call_screen.dart`：`_CallScreenState._generateTurn` 在日常通話 prompt 中加入生物鐘能力與本輪提示。
 
 ## 檢索方式（字面 / BM25 / 向量 / 名字觸發 / 無）

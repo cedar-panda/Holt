@@ -1,7 +1,7 @@
 import 'dart:io';
 
 import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
+import '../utils/app_directories.dart';
 
 /// Persists app-owned backgrounds relative to Documents. iOS may give the
 /// app's data container a new UUID after an update while keeping its files.
@@ -19,7 +19,7 @@ class BackgroundImagePathService {
     required String scope,
   }) async {
     if (!_isManaged(stored, slot: slot, scope: scope)) return stored;
-    final documents = await getApplicationDocumentsDirectory();
+    final documents = await getAppDocumentsDirectory();
     return resolveInDocuments(stored, documents.path, slot: slot, scope: scope);
   }
 
@@ -29,7 +29,7 @@ class BackgroundImagePathService {
     required String scope,
   }) async {
     if (!_isManaged(runtime, slot: slot, scope: scope)) return runtime;
-    final documents = await getApplicationDocumentsDirectory();
+    final documents = await getAppDocumentsDirectory();
     return forStorageInDocuments(
       runtime,
       documents.path,

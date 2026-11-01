@@ -30,9 +30,9 @@ void main() {
       }
       expect(NeuralFieldWidget.particleColorMix, 0.72);
       expect(NeuralFieldWidget.particleGlowMix, 0.74);
-      expect(NeuralFieldWidget.particleOpacityBoost, 1.12);
-      expect(NeuralFieldWidget.connectionStrength, 0.32);
-      expect(NeuralFieldWidget.connectionMaxOpacity, 0.38);
+      expect(NeuralFieldWidget.particleOpacityBoost, 1.45);
+      expect(NeuralFieldWidget.connectionStrength, 0.42);
+      expect(NeuralFieldWidget.connectionMaxOpacity, 0.52);
     },
   );
 
@@ -80,8 +80,8 @@ void main() {
     final zh = ContextCompressor.compressionPromptForTesting();
     final en = ContextCompressor.compressionPromptForTesting(english: true);
 
-    expect(zh, contains('**1. 重要事件與決定**'));
-    expect(zh, contains('* **主題：** 事實'));
+    expect(zh, contains('具名輕手記'));
+    expect(zh, contains('- [MM/DD]'));
     expect(zh, contains('## 前情提要'));
     expect(zh, contains('## 本次摘要'));
     expect(zh, contains('目前完整的滾動摘要'));
@@ -89,8 +89,8 @@ void main() {
     expect(zh, isNot(contains('約 250～700 個中文字')));
     expect(zh, isNot(contains('中文約 180～450 字')));
     expect(zh, contains('「第 N 天」只保留在 value 與 evidence'));
-    expect(en, contains('**1. Important events and decisions**'));
-    expect(en, contains('* **Topic:** fact'));
+    expect(en, contains('named interaction journal'));
+    expect(en, contains('- [MM/DD]'));
     expect(en, contains('## Prior Context'));
     expect(en, contains('## This Update'));
     expect(en, contains('"day N" only in value and evidence'));
@@ -103,8 +103,7 @@ void main() {
         locale: 'zh_TW',
       ),
       '## 前情提要\n—\n\n## 本次摘要\n'
-      '**1. 重要事件與決定**\n'
-      '* **摘要：** GPT 自己改成的一段純文字摘要',
+      '- GPT 自己改成的一段純文字摘要',
     );
     expect(
       ContextCompressor.normalizeSummaryFormat(
@@ -112,9 +111,7 @@ void main() {
         '## Latest Summary\nnew',
         locale: 'en',
       ),
-      '## Prior Context\nold\n\n## This Update\n'
-      '**1. Important events and decisions**\n'
-      '* **Summary:** new',
+      '## Prior Context\n- old\n\n## This Update\n- new',
     );
   });
 }

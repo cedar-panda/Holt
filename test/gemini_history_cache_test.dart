@@ -247,7 +247,7 @@ void main() {
     final generationConfig = body['generationConfig'] as Map;
     expect(generationConfig['maxOutputTokens'], 32768);
     expect(generationConfig['thinkingConfig'], <String, Object?>{
-      'thinkingLevel': 'low',
+      'thinkingLevel': 'LOW',
       'includeThoughts': false,
     });
     expect(usage?.cacheReadTokens, 4700);
@@ -277,7 +277,47 @@ void main() {
 
     final generationConfig = requestBody['generationConfig'] as Map;
     expect(generationConfig['thinkingConfig'], <String, Object?>{
-      'thinkingLevel': 'medium',
+      'thinkingLevel': 'MEDIUM',
+      'includeThoughts': true,
+    });
+  });
+
+  test('Gemini 4 Argon maps high reasoning to HIGH', () {
+    final service = GeminiService(
+      apiKey: 'argon-high-thinking-key',
+      modelId: 'gemini-4-argon',
+      thinkingEnabled: true,
+      reasoningEffort: 'high',
+    );
+
+    final body = service.debugBuildBodyForTesting(
+      messages: const <Map<String, String>>[
+        <String, String>{'role': 'user', 'content': 'hello'},
+      ],
+    );
+    final generationConfig = body['generationConfig'] as Map;
+    expect(generationConfig['thinkingConfig'], <String, Object?>{
+      'thinkingLevel': 'HIGH',
+      'includeThoughts': true,
+    });
+  });
+
+  test('Gemini 2.5 maps medium reasoning to a numeric thinking budget', () {
+    final service = GeminiService(
+      apiKey: 'gemini-25-thinking-key',
+      modelId: 'gemini-2.5-flash',
+      thinkingEnabled: true,
+      reasoningEffort: 'medium',
+    );
+
+    final body = service.debugBuildBodyForTesting(
+      messages: const <Map<String, String>>[
+        <String, String>{'role': 'user', 'content': 'hello'},
+      ],
+    );
+    final generationConfig = body['generationConfig'] as Map;
+    expect(generationConfig['thinkingConfig'], <String, Object?>{
+      'thinkingBudget': 4096,
       'includeThoughts': true,
     });
   });
@@ -453,6 +493,7 @@ void main() {
     final firstConfig = bodies.first['generationConfig'] as Map;
     final retryConfig = bodies.last['generationConfig'] as Map;
     expect(firstConfig['thinkingConfig'], <String, Object?>{
+      'thinkingLevel': 'MEDIUM',
       'includeThoughts': true,
     });
     expect(retryConfig['thinkingConfig'], <String, Object?>{

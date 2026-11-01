@@ -183,7 +183,18 @@ extension _ChatLoadingMethods on _ChatScreenState {
   Future<void> _loadSettings(Conversation conversation) async {
     _currentModel = await ApiSettings.getModel();
     _splitReply = await MemorySettings.getSplitReply();
+    if (_splitReply && YanciTheme.aiBubbleFlat) {
+      YanciTheme.aiBubbleFlat = false;
+      await ThemeSettings.saveAiBubbleFlat(false);
+    }
     _showChatAvatar = await UserSettings.getShowChatAvatar();
+    // 心情流光：載入這個窗口的顏色給角色頭像用（範圍不適用時為 null）。
+    unawaited(
+      MoodGlowService.bindConversation(
+        conversation.id,
+        mode: conversation.contextMode,
+      ),
+    );
 
     // 用戶頭像
     final uAvatar = _userPersona?.avatarPath ?? '';
@@ -217,6 +228,7 @@ extension _ChatLoadingMethods on _ChatScreenState {
       debugPrint('Recovered to character $fallbackId');
     }
     _characterName = char['name'] as String? ?? '';
+    _characterRemark = char['remark'] as String? ?? '';
     _charAvatarPath = char['avatar_path'] as String?;
     _composerHint = CharacterWhisperState.fromCharacter(char).displayText;
     _boundBackgroundPreset =

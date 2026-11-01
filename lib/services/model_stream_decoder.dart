@@ -1,3 +1,5 @@
+import 'protocol_tags.dart';
+
 /// Incrementally separates user-visible prose from Holt's hidden action
 /// protocol while provider chunks are still arriving.
 ///
@@ -11,50 +13,18 @@ class ModelStreamDecoder {
   static const String jsonActionStart = '[[HOLT_ACTIONS]]';
   static const String jsonActionEnd = '[[/HOLT_ACTIONS]]';
 
+  /// Bare JSON action blocks the model sometimes outputs without sentinels.
+  /// Only matched as a prefix of the `{` currently being examined.
+  static final RegExp _bareJsonActionStart = ProtocolTags.bareJsonActionStart;
+  static const String _bareJsonCompact = '{"actions":[';
+
   static const Set<String> _blockTags = <String>{
-    'emo',
-    'emo_resolve',
-    'memo',
-    'memo_del',
-    'memo_merge',
-    'memo_update',
-    'memo_link',
-    'force_recall',
-    'persona_note',
-    'draw',
-    'clock',
-    'clock_keep',
-    'clock_update',
-    'clock_del',
-    'life_fix',
-    'home',
-    'whisper',
+    ...ProtocolTags.block,
     'think',
     'thinking',
-    'search_chat',
-    'search_web',
-    'call',
-    'x_post',
-    'pack_star',
-    'email_draft',
-    'holt_diary',
-    'holt_persona_draft',
-    'tool_call',
-    'tool_calls',
   };
 
-  static const Set<String> _standaloneTags = <String>{
-    'scratch',
-    'transfer',
-    'transfer_accept',
-    'transfer_decline',
-    'buy',
-    'shop_view',
-    'sign_marriage',
-    'propose_marriage',
-    'decline_call',
-    'hangup',
-  };
+  static const Set<String> _standaloneTags = ProtocolTags.standalone;
 
   static final Set<String> _knownTags = <String>{
     ..._blockTags,
@@ -64,6 +34,13 @@ class ModelStreamDecoder {
   String _pending = '';
   String _heldWhitespace = '';
   String? _hiddenClose;
+
+  /// When hiding a bare JSON action block (no sentinels), track brace depth
+  /// to find the matching closing `}`. Braces inside JSON strings (for
+  /// example a free-text `note`) are ignored.
+  int _jsonBraceDepth = 0;
+  bool _jsonInString = false;
+  bool _jsonEscaped = false;
 
   /// Adds a provider chunk and returns only newly available visible text.
   String add(String chunk) {
@@ -79,14 +56,15 @@ class ModelStreamDecoder {
   String close() {
     final out = StringBuffer();
     _drain(out, finishing: true);
-    if (_hiddenClose == null && _pending.isNotEmpty) {
+    if (_hiddenClose == null && _jsonBraceDepth == 0 && _pending.isNotEmpty) {
       _emitVisible(_pending, out);
     }
     _pending = '';
-    if (_hiddenClose == null && _heldWhitespace.isNotEmpty) {
+    if (_hiddenClose == null && _jsonBraceDepth == 0 && _heldWhitespace.isNotEmpty) {
       out.write(_heldWhitespace);
     }
     _heldWhitespace = '';
+    _resetJson();
     return out.toString();
   }
 
@@ -94,6 +72,13 @@ class ModelStreamDecoder {
     _pending = '';
     _heldWhitespace = '';
     _hiddenClose = null;
+    _resetJson();
+  }
+
+  void _resetJson() {
+    _jsonBraceDepth = 0;
+    _jsonInString = false;
+    _jsonEscaped = false;
   }
 
   void _drain(StringBuffer out, {required bool finishing}) {
@@ -119,9 +104,46 @@ class ModelStreamDecoder {
         return;
       }
 
+      // ── Bare JSON action block (brace-depth tracking) ──
+      if (_jsonBraceDepth > 0) {
+        for (var i = 0; i < _pending.length; i++) {
+          final ch = _pending.codeUnitAt(i);
+          if (_jsonInString) {
+            if (_jsonEscaped) {
+              _jsonEscaped = false;
+            } else if (ch == 0x5C) {
+              _jsonEscaped = true;
+            } else if (ch == 0x22) {
+              _jsonInString = false;
+            }
+            continue;
+          }
+          if (ch == 0x22) {
+            _jsonInString = true;
+          } else if (ch == 0x7B) {
+            _jsonBraceDepth++;
+          } else if (ch == 0x7D) {
+            _jsonBraceDepth--;
+            if (_jsonBraceDepth == 0) {
+              _pending = _pending.substring(i + 1);
+              _heldWhitespace = '';
+              _resetJson();
+              break;
+            }
+          }
+        }
+        if (_jsonBraceDepth > 0) {
+          // Still inside the JSON block — consume everything.
+          _pending = '';
+          return;
+        }
+        continue;
+      }
+
       final xmlIndex = _pending.indexOf('<');
       final jsonIndex = _pending.indexOf('[');
-      final candidateIndex = _firstCandidate(xmlIndex, jsonIndex);
+      final braceIndex = _pending.indexOf('{');
+      final candidateIndex = _firstOfThree(xmlIndex, jsonIndex, braceIndex);
       if (candidateIndex < 0) {
         _emitVisible(_pending, out);
         _pending = '';
@@ -130,6 +152,25 @@ class ModelStreamDecoder {
       if (candidateIndex > 0) {
         _emitVisible(_pending.substring(0, candidateIndex), out);
         _pending = _pending.substring(candidateIndex);
+        continue;
+      }
+
+      // ── Bare JSON action block: {"actions":[ ──
+      if (_pending.startsWith('{')) {
+        if (_bareJsonActionStart.matchAsPrefix(_pending) != null) {
+          _resetJson();
+          _jsonBraceDepth = 1;
+          _pending = _pending.substring(1);
+          _heldWhitespace = '';
+          continue;
+        }
+        if (!finishing && _couldBeBareJsonPrefix(_pending)) {
+          // Could still become `{"actions":[` — wait for more.
+          return;
+        }
+        // Not an action block — emit the brace as visible text.
+        _emitVisible(_pending[0], out);
+        _pending = _pending.substring(1);
         continue;
       }
 
@@ -196,8 +237,17 @@ class ModelStreamDecoder {
     return xmlIndex < jsonIndex ? xmlIndex : jsonIndex;
   }
 
+  static int _firstOfThree(int a, int b, int c) =>
+      _firstCandidate(_firstCandidate(a, b), c);
+
   static int _indexOfIgnoreCase(String value, String needle) =>
       value.toLowerCase().indexOf(needle.toLowerCase());
+
+  static bool _couldBeBareJsonPrefix(String value) {
+    final head = value.length > 64 ? value.substring(0, 64) : value;
+    final compact = head.replaceAll(RegExp(r'\s'), '');
+    return _bareJsonCompact.startsWith(compact);
+  }
 
   static bool _couldBeKnownTagPrefix(String value) {
     final normalized = value.toLowerCase().replaceFirst(RegExp(r'^<\s*'), '');

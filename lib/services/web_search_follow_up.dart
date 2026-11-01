@@ -1,13 +1,16 @@
+import 'protocol_tags.dart';
 import 'web_search_service.dart';
 
 /// Builds the request-only evidence used for the character's post-search reply.
 ///
-/// Only OpenRouter/Exa outcomes are eligible. Gemini grounded output must stay
-/// in its provider-owned display path and is never forwarded to another model.
+/// Search evidence remains request-only. If a small chat model returns an
+/// empty or merely ceremonial search acknowledgement, the already-grounded
+/// provider answer is also the deterministic last-resort visible reply.
 abstract final class WebSearchFollowUp {
   static const int _maxAnswerRunes = 5000;
   static const int _maxSnippetRunes = 700;
   static const int _maxSources = 5;
+  static const int _maxFallbackRunes = 2200;
 
   static String? evidenceFor(WebSearchBatchResult batch) {
     final results = batch.successes;
@@ -43,15 +46,10 @@ abstract final class WebSearchFollowUp {
   static String? failureContextFor(WebSearchBatchResult batch) {
     if (batch.failures.isEmpty) return null;
     final status = batch.allFailed ? 'failed' : 'partially failed';
-    final details = <String>[
-      for (final failure in batch.failures)
-        '- ${failure.provider.name}: ${failure.safeMessage}',
-    ];
     return '''### Web Search Attempt
 Status: $status
-Query: ${batch.requestedQuery}
-${details.join('\n')}
-Treat this as App state, not something the user said. Do not claim a failed provider returned verified facts. If no verified evidence is available, tell the user naturally that the search could not verify the answer and do not invent missing facts.''';
+No reliable web evidence was obtained from the failed part of this attempt.
+Treat this as App state, not something the user said. Technical diagnostics are shown separately by the App. Do not mention or infer providers, API keys, relays, routes, rate limits, HTTP status codes, configuration, or how many paths were attempted. Do not compare this attempt with earlier failures. If no verified evidence is available, say only that the search could not verify the answer and do not invent missing facts.''';
   }
 
   static String standaloneFailureContext({
@@ -59,15 +57,21 @@ Treat this as App state, not something the user said. Do not claim a failed prov
     required List<String> providers,
     required String safeMessage,
   }) {
-    final providerText = providers.isEmpty
-        ? 'not dispatched'
-        : providers.join(', ');
     return '''### Web Search Attempt
 Status: failed
-Query: $query
-Provider(s): $providerText
-Safe failure: $safeMessage
-Treat this as App state, not something the user said. Tell the user naturally that the search could not verify the answer. Do not invent missing facts or claim the search succeeded.''';
+No reliable web evidence was obtained for this attempt.
+Treat this as App state, not something the user said. Technical diagnostics are shown separately by the App. Do not mention or infer providers, API keys, relays, routes, rate limits, HTTP status codes, configuration, or how many paths were attempted. Do not compare this attempt with earlier failures. Say only that the search could not verify the answer. Do not invent missing facts or claim the search succeeded.''';
+  }
+
+  /// A failed search with no successful evidence must not trigger another
+  /// model pass: the conversation history may contain stale diagnostics that
+  /// the model could incorrectly present as part of the current attempt.
+  static bool hasNoVerifiedEvidence({
+    required WebSearchBatchResult? result,
+    required String failureContext,
+  }) {
+    return failureContext.trim().isNotEmpty &&
+        (result == null || result.successes.isEmpty);
   }
 
   /// Gemini grounding stays provider-owned instead of entering the character
@@ -86,39 +90,118 @@ Treat this as App state, not something the user said. Tell the user naturally th
   }
 
   static String fallbackReply(WebSearchBatchResult batch) {
-    for (final result in batch.successes) {
-      if (result.provider == WebSearchProviderId.openRouter) {
-        return sanitizeReply(result.text);
+    const priority = <WebSearchProviderId>[
+      WebSearchProviderId.openRouter,
+      WebSearchProviderId.relay,
+      WebSearchProviderId.xai,
+      WebSearchProviderId.gemini,
+    ];
+    for (final provider in priority) {
+      for (final result in batch.successes) {
+        if (result.provider != provider) continue;
+        final reply = sanitizeReply(result.text);
+        if (reply.isNotEmpty) return _takeRunes(reply, _maxFallbackRunes);
       }
     }
     return '';
   }
 
+  /// Keeps a successful search from becoming an empty or content-free chat
+  /// bubble when the selected character model is too weak to use evidence.
+  /// Substantive character replies remain untouched; only short replies with
+  /// no recognisable evidence anchor receive the grounded provider answer.
+  static String ensureGroundedReply({
+    required String reply,
+    required WebSearchBatchResult batch,
+  }) {
+    final visible = sanitizeReply(reply);
+    final fallback = fallbackReply(batch);
+    if (fallback.isEmpty) return visible;
+    if (visible.isEmpty) return fallback;
+    if (_hasEvidenceAnchor(visible, batch)) return visible;
+
+    final prose = visible
+        .replaceAll(
+          RegExp(
+            r'<(?:think|thinking)\b[^>]*>[\s\S]*?</(?:think|thinking)\s*>',
+            caseSensitive: false,
+          ),
+          '',
+        )
+        .trim();
+    if (prose.runes.length >= 80) return visible;
+    return '$visible\n\n$fallback'.trim();
+  }
+
+  static bool _hasEvidenceAnchor(String reply, WebSearchBatchResult batch) {
+    final normalizedReply = _normalizeForMatch(reply);
+    if (normalizedReply.isEmpty) return false;
+    var lexicalHits = 0;
+    final seen = <String>{};
+    for (final result in batch.successes) {
+      final evidenceParts = <String>[
+        result.text,
+        for (final source in result.sources) ...<String>[
+          source.title,
+          source.snippet,
+        ],
+      ];
+      for (final part in evidenceParts) {
+        for (final match in RegExp(
+          r'\d+(?:[./:\-]\d+)+|\d{2,}',
+        ).allMatches(part)) {
+          final token = _normalizeForMatch(match.group(0) ?? '');
+          if (token.isNotEmpty && normalizedReply.contains(token)) return true;
+        }
+        for (final match in RegExp(
+          r'[A-Za-z][A-Za-z0-9_-]{3,}',
+        ).allMatches(part)) {
+          final token = (match.group(0) ?? '').toLowerCase();
+          if (!_usefulLatinToken(token) || !seen.add(token)) continue;
+          if (normalizedReply.contains(token)) lexicalHits++;
+          if (lexicalHits >= 2) return true;
+        }
+        for (final match in RegExp(r'[\u3400-\u9fff]{4,}').allMatches(part)) {
+          final run = match.group(0) ?? '';
+          final chars = run.runes.toList(growable: false);
+          for (var i = 0; i + 4 <= chars.length; i += 2) {
+            final token = String.fromCharCodes(chars.sublist(i, i + 4));
+            if (!seen.add(token)) continue;
+            if (normalizedReply.contains(token)) lexicalHits++;
+            if (lexicalHits >= 2) return true;
+          }
+        }
+      }
+    }
+    return false;
+  }
+
+  static bool _usefulLatinToken(String token) => !const <String>{
+    'that',
+    'this',
+    'with',
+    'from',
+    'have',
+    'will',
+    'your',
+    'about',
+    'there',
+    'their',
+    'result',
+    'search',
+  }.contains(token);
+
+  static String _normalizeForMatch(String value) =>
+      value.toLowerCase().replaceAll(RegExp(r'[^a-z0-9\u3400-\u9fff]+'), '');
+
   /// Pure-text finalizer: tool/action tags are removed, never executed.
   static String sanitizeReply(String raw) {
     var output = raw;
-    const blockedTags = <String>[
-      'search_web',
-      'tool_call',
-      'memo',
-      'persona_note',
-      'memo_link',
-      'force_recall',
-      'shop_view',
-      'buy',
-      'emo',
-      'clock',
-      'clock_keep',
-      'home',
-      'whisper',
-      'scratch',
-      'transfer',
-      'transfer_accept',
-      'transfer_decline',
-      'call',
-      'x_post',
-      'draw',
-    ];
+    // 協議標籤只剝不執行；保留 <think> 給 Thinking 呈現。
+    const blockedTags = <String>{
+      ...ProtocolTags.block,
+      ...ProtocolTags.standalone,
+    };
     for (final tag in blockedTags) {
       final escaped = RegExp.escape(tag);
       output = output.replaceAll(

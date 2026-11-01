@@ -73,6 +73,11 @@ class _StarfieldWidgetState extends State<StarfieldWidget> {
 class _StarfieldPainter extends CustomPainter {
   final List<_Star> stars;
   final ValueListenable<double> clock;
+  final Paint _halo = Paint();
+  final Paint _core = Paint();
+  final Paint _cross = Paint()
+    ..strokeWidth = 0.6
+    ..strokeCap = StrokeCap.round;
 
   _StarfieldPainter({required this.stars, required this.clock})
     : super(repaint: clock);
@@ -80,6 +85,7 @@ class _StarfieldPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final animationValue = (clock.value / 10.0) % 1.0;
+    final color = YanciTheme.starColor;
     for (final star in stars) {
       // 呼吸閃爍效果
       final breathe = sin(animationValue * 2 * pi * star.speed + star.phase);
@@ -92,23 +98,18 @@ class _StarfieldPainter extends CustomPainter {
       canvas.drawCircle(
         offset,
         star.size * 2.1,
-        Paint()
-          ..color = YanciTheme.starColor.withValues(
-            alpha: currentOpacity * 0.12,
-          ),
+        _halo..color = color.withValues(alpha: currentOpacity * 0.18),
       );
       canvas.drawCircle(
         offset,
         star.size,
-        Paint()..color = YanciTheme.starColor.withValues(alpha: currentOpacity),
+        _core..color = color.withValues(alpha: currentOpacity),
       );
 
       // 十字光芒（較大的星星才畫）
       if (star.size > 1.5) {
-        final crossPaint = Paint()
-          ..color = YanciTheme.starColor.withValues(alpha: currentOpacity * 0.4)
-          ..strokeWidth = 0.5
-          ..strokeCap = StrokeCap.round;
+        final crossPaint = _cross
+          ..color = color.withValues(alpha: currentOpacity * 0.5);
 
         final crossLen = star.size * 3;
         canvas.drawLine(

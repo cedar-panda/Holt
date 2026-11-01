@@ -43,22 +43,13 @@ extension _ChatReplyVariantMethods on _ChatScreenState {
         });
         await _refreshPendingMemoryActionCounts();
         await _restoreTokensSinceSummary();
-        if (edited.imagePath != null) {
-          await _sendImageLocked(
-            edited.imagePath!,
-            caption: edited.text,
-            composerDraft: '',
-            clearComposerOnAccept: false,
-            retryUserMessage: edited,
-          );
-        } else {
-          await _sendMessageLocked(
-            edited.text,
-            composerDraft: '',
-            clearComposerOnAccept: false,
-            retryUserMessage: edited,
-          );
-        }
+        // 圖片沿用 retryUserMessage.imagePaths，文字／圖片同一條路徑。
+        await _sendMessageLocked(
+          edited.text,
+          composerDraft: '',
+          clearComposerOnAccept: false,
+          retryUserMessage: edited,
+        );
       });
 
   Future<void> _selectReplyVariant(int messageId, int archiveId) =>

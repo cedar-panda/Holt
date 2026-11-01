@@ -15,6 +15,7 @@ import '../widgets/gradient_background.dart';
 import '../widgets/yanci_sprite_overlay.dart';
 import '../widgets/help_switch_tile.dart';
 import '../widgets/context_mode_pill.dart';
+import '../main.dart' show themeNotifier;
 
 enum CostContextSection { behavior, modules, avatars, memory }
 
@@ -35,13 +36,19 @@ class _CostContextScreenState extends State<CostContextScreen> {
   bool _settingsLoaded = false;
   bool _conciseMode = false;
   bool _freeformMode = false;
+  int _freeformMaxLines = 8;
+  static const int _freeformMinLines = 2;
+  static const int _freeformMaxLinesLimit = 30;
   bool _splitReply = false;
+  bool _splitNatural = true;
   bool _bioclockEnabled = true;
   bool _timelineEnabled = true;
   bool _selfNotesEnabled = true;
   bool _vibrationEnabled = true;
   bool _showChatAvatar = false;
   ToolFeatureState _toolFeatures = const ToolFeatureState();
+  List<FeatureModulePreset> _featurePresets = const <FeatureModulePreset>[];
+  String _activeFeaturePresetId = '';
 
   String get _screenTitle => switch (widget.section) {
     CostContextSection.behavior => L.pick(
@@ -88,6 +95,11 @@ class _CostContextScreenState extends State<CostContextScreen> {
       MemorySettings.getSelfNotesEnabled(),
       UserSettings.getEnableVibration(),
       UserSettings.getShowChatAvatar(),
+      ToolFeatureSettings.loadPresets(),
+      ToolFeatureSettings.getActivePresetId(),
+      MemorySettings.getSplitReplyNatural(),
+      // 保持最後一項：下面用 results.last 取。
+      ApiSettings.getFreeformMaxLines(),
     ]);
     if (!mounted) return;
     setState(() {
@@ -98,12 +110,19 @@ class _CostContextScreenState extends State<CostContextScreen> {
       _guideEnabled = results[4] as bool;
       _conciseMode = results[5] as bool;
       _freeformMode = results[6] as bool;
+      _freeformMaxLines = (results.last as int).clamp(
+        _freeformMinLines,
+        _freeformMaxLinesLimit,
+      );
       _splitReply = results[7] as bool;
+      _splitNatural = results[15] as bool;
       _bioclockEnabled = results[8] as bool;
       _timelineEnabled = results[9] as bool;
       _selfNotesEnabled = results[10] as bool;
       _vibrationEnabled = results[11] as bool;
       _showChatAvatar = results[12] as bool;
+      _featurePresets = results[13] as List<FeatureModulePreset>;
+      _activeFeaturePresetId = results[14] as String;
       _settingsLoaded = true;
     });
   }
@@ -128,9 +147,29 @@ class _CostContextScreenState extends State<CostContextScreen> {
     if (mounted) StaticTokenEstimator.showAfterToggle(context);
   }
 
+  Future<void> _toggleSplitNatural(bool value) async {
+    setState(() => _splitNatural = value);
+    await MemorySettings.saveSplitReplyNatural(value);
+  }
+
   Future<void> _toggleSplitReply(bool value) async {
     setState(() => _splitReply = value);
     await MemorySettings.saveSplitReply(value);
+    if (value && YanciTheme.aiBubbleFlat) {
+      YanciTheme.aiBubbleFlat = false;
+      await ThemeSettings.saveAiBubbleFlat(false);
+      themeNotifier.value++;
+      if (mounted) {
+        showThemedPillNotice(
+          context,
+          L.pick(
+            en: 'Switched to bubble mode for multi-bubble replies',
+            zhTW: '已自動切換為氣泡模式以支援多氣泡回覆',
+            zhCN: '已自动切换为气泡模式以支持多气泡回复',
+          ),
+        );
+      }
+    }
     if (mounted) StaticTokenEstimator.showAfterToggle(context);
   }
 
@@ -181,6 +220,226 @@ class _CostContextScreenState extends State<CostContextScreen> {
     setState(() => _toolFeatures = next);
     await persist();
     if (mounted) StaticTokenEstimator.showAfterToggle(context);
+  }
+
+  Future<void> _activateFeaturePreset(FeatureModulePreset preset) async {
+    final active = _activeFeaturePresetId == preset.id;
+    await ToolFeatureSettings.activatePreset(active ? null : preset);
+    final features = await ToolFeatureSettings.load();
+    if (!mounted) return;
+    setState(() {
+      _activeFeaturePresetId = active ? '' : preset.id;
+      _toolFeatures = features;
+    });
+    StaticTokenEstimator.showAfterToggle(context);
+  }
+
+  Future<void> _deleteFeaturePreset(FeatureModulePreset preset) async {
+    await ToolFeatureSettings.deletePreset(preset.id);
+    final presets = await ToolFeatureSettings.loadPresets();
+    final activeId = await ToolFeatureSettings.getActivePresetId();
+    if (!mounted) return;
+    setState(() {
+      _featurePresets = presets;
+      _activeFeaturePresetId = activeId;
+    });
+  }
+
+  Future<void> _openFeaturePresetEditor() async {
+    final nameController = TextEditingController();
+    var draft = _toolFeatures;
+    var applyToRp = false;
+    final saved = await showDialog<FeatureModulePreset>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setDialogState) {
+          Widget choice(
+            String label,
+            bool value,
+            ToolFeatureState Function(bool value) update,
+          ) {
+            return CheckboxListTile(
+              dense: true,
+              contentPadding: EdgeInsets.zero,
+              title: Text(label, style: YanciTheme.bodyText),
+              value: value,
+              activeColor: YanciTheme.accent,
+              onChanged: (next) {
+                if (next == null) return;
+                setDialogState(() => draft = update(next));
+              },
+            );
+          }
+
+          return AlertDialog(
+            backgroundColor: YanciTheme.surfacePanel,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(YanciTheme.radiusSheet),
+            ),
+            title: Text(
+              L.pick(en: 'New feature set', zhTW: '新增功能組合', zhCN: '新增功能组合'),
+              style: YanciTheme.headingMedium,
+            ),
+            content: SizedBox(
+              width: 420,
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: <Widget>[
+                    TextField(
+                      controller: nameController,
+                      autofocus: true,
+                      maxLength: 20,
+                      decoration: YanciTheme.themedInputDecoration(
+                        hintText: L.pick(
+                          en: 'e.g. RP only',
+                          zhTW: '例如：RP 專用',
+                          zhCN: '例如：RP 专用',
+                        ),
+                      ),
+                    ),
+                    choice(
+                      L.pick(en: 'Draw', zhTW: '畫畫', zhCN: '画画'),
+                      draft.imageGenerationEnabled,
+                      (value) => draft.copyWith(imageGenerationEnabled: value),
+                    ),
+                    choice(
+                      L.pick(
+                        en: 'Shell interactions',
+                        zhTW: '貝殼虛擬幣互動',
+                        zhCN: '贝壳虚拟币互动',
+                      ),
+                      draft.shellEconomyEnabled,
+                      (value) => draft.copyWith(shellEconomyEnabled: value),
+                    ),
+                    choice(
+                      L.pick(en: 'Diary', zhTW: '日記', zhCN: '日记'),
+                      draft.diaryEnabled,
+                      (value) => draft.copyWith(diaryEnabled: value),
+                    ),
+                    choice(
+                      L.pick(
+                        en: 'Tool prompts',
+                        zhTW: '工具系統提示詞',
+                        zhCN: '工具系统提示词',
+                      ),
+                      draft.toolPromptsEnabled,
+                      (value) => draft.copyWith(toolPromptsEnabled: value),
+                    ),
+                    choice(
+                      L.pick(en: 'Home greeting', zhTW: '首頁問候語', zhCN: '首页问候语'),
+                      draft.modelGreetingEnabled,
+                      (value) => draft.copyWith(modelGreetingEnabled: value),
+                    ),
+                    choice(
+                      L.pick(en: 'Write email', zhTW: '撰寫郵件', zhCN: '撰写邮件'),
+                      draft.emailDraftEnabled,
+                      (value) => draft.copyWith(emailDraftEnabled: value),
+                    ),
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: Text(
+                        L.pick(
+                          en: 'Use automatically in RP mode',
+                          zhTW: '在 RP 模式自動套用',
+                          zhCN: '在 RP 模式自动应用',
+                        ),
+                        style: YanciTheme.bodyText,
+                      ),
+                      value: applyToRp,
+                      activeThumbColor: YanciTheme.accent,
+                      onChanged: (value) =>
+                          setDialogState(() => applyToRp = value),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            actions: <Widget>[
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: Text(L.pick(en: 'Cancel', zhTW: '取消', zhCN: '取消')),
+              ),
+              TextButton(
+                onPressed: () {
+                  final name = nameController.text.trim();
+                  if (name.isEmpty) return;
+                  Navigator.pop(
+                    dialogContext,
+                    FeatureModulePreset(
+                      id: DateTime.now().microsecondsSinceEpoch.toString(),
+                      name: name,
+                      state: draft,
+                      applyToRp: applyToRp,
+                    ),
+                  );
+                },
+                child: Text(L.pick(en: 'Save', zhTW: '儲存', zhCN: '保存')),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+    nameController.dispose();
+    if (saved == null) return;
+    await ToolFeatureSettings.savePreset(saved);
+    final presets = await ToolFeatureSettings.loadPresets();
+    if (!mounted) return;
+    setState(() => _featurePresets = presets);
+  }
+
+  Widget _buildFeaturePresetSection() {
+    if (_featurePresets.isEmpty) return const SizedBox.shrink();
+    return Column(
+      children: <Widget>[
+        for (final preset in _featurePresets)
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            title: Text(preset.name, style: YanciTheme.bodyText),
+            subtitle: preset.applyToRp
+                ? Text(
+                    L.pick(en: 'Auto in RP', zhTW: 'RP 自動套用', zhCN: 'RP 自动应用'),
+                    style: YanciTheme.bodySmall.copyWith(
+                      color: YanciTheme.accent,
+                    ),
+                  )
+                : null,
+            // Flutter's Cupertino adaptive switch can paint once with an
+            // uninitialised pressed-thumb extension when this selectable row
+            // rebuilds during the release animation. Use the Material painter
+            // here: the control still follows the active theme and avoids the
+            // iOS framework crash in _SwitchPainter.paint.
+            // RP 自動套用的組合由系統在 RP 窗口自動生效，手動開關沒有意義
+            // （開／關都不影響 RP），所以不顯示開關，只放一個自動標記。
+            leading: preset.applyToRp
+                ? SizedBox(
+                    key: ValueKey<String>('feature-preset-auto-${preset.id}'),
+                    width: 48,
+                    child: Icon(
+                      Icons.auto_mode_rounded,
+                      size: 20,
+                      color: YanciTheme.accent.withValues(alpha: 0.8),
+                    ),
+                  )
+                : Switch(
+                    key: ValueKey<String>(
+                      'feature-preset-toggle-${preset.id}',
+                    ),
+                    value: _activeFeaturePresetId == preset.id,
+                    activeThumbColor: YanciTheme.accent,
+                    onChanged: (_) =>
+                        unawaited(_activateFeaturePreset(preset)),
+                  ),
+            trailing: IconButton(
+              tooltip: L.pick(en: 'Delete', zhTW: '刪除', zhCN: '删除'),
+              onPressed: () => unawaited(_deleteFeaturePreset(preset)),
+              icon: const Icon(Icons.delete_outline_rounded, size: 19),
+            ),
+          ),
+        _softDivider(),
+      ],
+    );
   }
 
   Widget _featureSwitch({
@@ -361,6 +620,7 @@ class _CostContextScreenState extends State<CostContextScreen> {
     if (widget.section == CostContextSection.modules) {
       return Column(
         children: [
+          _buildFeaturePresetSection(),
           for (var index = 0; index < rows.length; index++) ...[
             if (index > 0) _softDivider(),
             rows[index],
@@ -544,6 +804,68 @@ class _CostContextScreenState extends State<CostContextScreen> {
     );
   }
 
+  /// 自由發揮的建議行數（以前只有預設 8 行、沒有地方改）。
+  Widget _buildFreeformLinesStepper() {
+    Widget stepButton(IconData icon, int delta, String label) {
+      final next = _freeformMaxLines + delta;
+      final enabled =
+          next >= _freeformMinLines && next <= _freeformMaxLinesLimit;
+      return IconButton(
+        tooltip: label,
+        onPressed: enabled
+            ? () {
+                setState(() => _freeformMaxLines = next);
+                unawaited(ApiSettings.saveFreeformMaxLines(next));
+              }
+            : null,
+        icon: Icon(icon, size: 18),
+        color: YanciTheme.accent,
+        disabledColor: YanciTheme.textSecondary.withValues(alpha: 0.3),
+        constraints: const BoxConstraints.tightFor(width: 40, height: 40),
+      );
+    }
+
+    return Padding(
+      key: const ValueKey('freeform-max-lines'),
+      padding: const EdgeInsets.only(left: 4, top: 2, bottom: 2),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              L.get('settings_freeform_lines'),
+              style: YanciTheme.bodySmall.copyWith(
+                color: YanciTheme.textSecondary,
+                fontSize: 12.5,
+              ),
+            ),
+          ),
+          stepButton(
+            Icons.remove_rounded,
+            -1,
+            L.pick(en: 'Fewer lines', zhTW: '減少行數', zhCN: '减少行数'),
+          ),
+          SizedBox(
+            width: 28,
+            child: Text(
+              '$_freeformMaxLines',
+              textAlign: TextAlign.center,
+              style: YanciTheme.bodyText.copyWith(
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+                fontFeatures: const [FontFeature.tabularFigures()],
+              ),
+            ),
+          ),
+          stepButton(
+            Icons.add_rounded,
+            1,
+            L.pick(en: 'More lines', zhTW: '增加行數', zhCN: '增加行数'),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _softDivider() {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 6),
@@ -599,6 +921,20 @@ class _CostContextScreenState extends State<CostContextScreen> {
                           onPressed: () => Navigator.pop(context),
                         ),
                       ),
+                      if (widget.section == CostContextSection.modules)
+                        Align(
+                          alignment: Alignment.centerRight,
+                          child: IconButton(
+                            key: const ValueKey('add-feature-module-preset'),
+                            tooltip: L.pick(
+                              en: 'Create feature set',
+                              zhTW: '新增功能組合',
+                              zhCN: '新增功能组合',
+                            ),
+                            onPressed: _openFeaturePresetEditor,
+                            icon: const Icon(Icons.add_rounded),
+                          ),
+                        ),
                     ],
                   ),
                 ),
@@ -632,6 +968,7 @@ class _CostContextScreenState extends State<CostContextScreen> {
                               onChanged: (value) =>
                                   unawaited(_toggleFreeformMode(value)),
                             ),
+                            if (_freeformMode) _buildFreeformLinesStepper(),
                             _softDivider(),
                             HelpSwitchTile(
                               title: L.get('settings_split'),
@@ -641,6 +978,21 @@ class _CostContextScreenState extends State<CostContextScreen> {
                               onChanged: (value) =>
                                   unawaited(_toggleSplitReply(value)),
                             ),
+                            if (_splitReply)
+                              Padding(
+                                key: const ValueKey('split-natural'),
+                                padding: const EdgeInsets.only(left: 14),
+                                child: HelpSwitchTile(
+                                  title: L.get('settings_split_natural'),
+                                  description: L.get(
+                                    'settings_split_natural_desc',
+                                  ),
+                                  value: _splitNatural,
+                                  enabled: _settingsLoaded,
+                                  onChanged: (value) =>
+                                      unawaited(_toggleSplitNatural(value)),
+                                ),
+                              ),
                           ],
                         ),
                       ),
@@ -697,9 +1049,9 @@ class _CostContextScreenState extends State<CostContextScreen> {
                                 zhCN: '记忆模式',
                               ),
                               description: L.pick(
-                                en: 'Choose classic memory or Spider Web memory.',
-                                zhTW: '選擇經典記憶或蛛網記憶。',
-                                zhCN: '选择经典记忆或蛛网记忆。',
+                                en: 'Choose classic memory or Advanced Memory.',
+                                zhTW: '選擇經典記憶或進階記憶。',
+                                zhCN: '选择经典记忆或进阶记忆。',
                               ),
                               onTap: _openMemoryMode,
                             ),

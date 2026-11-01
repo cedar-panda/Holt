@@ -1,12 +1,20 @@
 package com.yanci.holt
 
+import android.Manifest
 import android.app.Activity
+import android.app.ActivityManager
+import android.app.ApplicationExitInfo
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Intent
+import android.content.Context
+import android.content.pm.PackageManager
+import android.media.AudioDeviceInfo
+import android.media.AudioManager
 import android.os.Build
 import android.os.Bundle
+import android.os.Process
 import java.io.File
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -14,25 +22,136 @@ import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
+import org.json.JSONObject
 
 class MainActivity : FlutterActivity() {
     companion object {
         private const val FILE_SAVER_CHANNEL = "com.yanci.holt/file_saver"
         private const val SAVE_FILE_REQUEST = 0x484F
+        private const val CRASH_MARKER_PREFS = "holt_native_crash_markers"
+        private const val LAST_EXIT_TIMESTAMP = "last_exit_timestamp"
         private const val REPLY_NOTIFICATION_CHANNEL = "holt/reply_notifications"
+        private const val CALL_AUDIO_ROUTE_CHANNEL = "com.yanci.holt/call_audio_route"
+        private const val BLUETOOTH_CONNECT_REQUEST = 0x4842
         private const val REPLY_CHANNEL_ID = "holt_reply"
         private const val REPLY_CONVERSATION_EXTRA = "holt.reply.conversation_id"
+        @Volatile private var crashHandlerInstalled = false
     }
 
     private var pendingSaveResult: MethodChannel.Result? = null
     private var pendingSaveSource: File? = null
     private var replyNotificationChannel: MethodChannel? = null
     private var pendingReplyConversationId: String? = null
+    private var pendingBluetoothPermissionResult: MethodChannel.Result? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        captureHistoricalProcessExits()
+        installPrivacySafeCrashJournal()
         super.onCreate(savedInstanceState)
         captureReplyIntent(intent)
     }
+
+    private fun diagnosticFile(): File {
+        val directory = File(filesDir, "diagnostics")
+        directory.mkdirs()
+        return File(directory, "android_native_diagnostics.jsonl")
+    }
+
+    private fun appendDiagnostic(row: JSONObject) {
+        try {
+            diagnosticFile().appendText(row.toString() + "\n", Charsets.UTF_8)
+        } catch (_: Throwable) {
+            // Diagnostics must never interfere with app startup or crash flow.
+        }
+    }
+
+    private fun installPrivacySafeCrashJournal() {
+        if (crashHandlerInstalled) return
+        val previous = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { thread, error ->
+            try {
+                val safeFrames = error.stackTrace
+                    .take(40)
+                    .joinToString("|") { frame ->
+                        "${frame.className}.${frame.methodName}(${frame.fileName ?: "?"}:${frame.lineNumber})"
+                    }
+                appendDiagnostic(
+                    JSONObject()
+                        .put("created_at_ms", System.currentTimeMillis())
+                        .put("source", "android_uncaught_exception")
+                        .put("reason", "java_crash")
+                        .put("process", Process.myPid())
+                        .put("thread", thread.name.take(80))
+                        .put("exception_type", error.javaClass.name)
+                        .put("safe_stack", safeFrames),
+                )
+            } catch (_: Throwable) {
+                // Preserve the original crash even if diagnostics fail.
+            } finally {
+                if (previous != null) {
+                    previous.uncaughtException(thread, error)
+                } else {
+                    Process.killProcess(Process.myPid())
+                }
+            }
+        }
+        crashHandlerInstalled = true
+    }
+
+    private fun captureHistoricalProcessExits() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return
+        try {
+            val manager = getSystemService(ActivityManager::class.java)
+            val prefs = getSharedPreferences(CRASH_MARKER_PREFS, MODE_PRIVATE)
+            val lastSeen = prefs.getLong(LAST_EXIT_TIMESTAMP, 0L)
+            var newestSeen = lastSeen
+            manager.getHistoricalProcessExitReasons(null, 0, 10)
+                .sortedBy { it.timestamp }
+                .forEach { info ->
+                    if (info.timestamp <= lastSeen || !isActionableExitReason(info.reason)) {
+                        return@forEach
+                    }
+                    newestSeen = maxOf(newestSeen, info.timestamp)
+                    appendDiagnostic(
+                        JSONObject()
+                            .put("created_at_ms", info.timestamp)
+                            .put("source", "android_process_exit")
+                            .put("reason", exitReasonName(info.reason))
+                            .put("reason_code", info.reason)
+                            .put("status", info.status)
+                            .put("importance", info.importance)
+                            .put("pss_kb", info.pss)
+                            .put("rss_kb", info.rss),
+                    )
+                }
+            if (newestSeen > lastSeen) {
+                prefs.edit().putLong(LAST_EXIT_TIMESTAMP, newestSeen).apply()
+            }
+        } catch (_: Throwable) {
+            // Older vendor ROMs may expose incomplete exit-history support.
+        }
+    }
+
+    private fun isActionableExitReason(reason: Int): Boolean = when (reason) {
+        ApplicationExitInfo.REASON_CRASH,
+        ApplicationExitInfo.REASON_CRASH_NATIVE,
+        ApplicationExitInfo.REASON_ANR,
+        ApplicationExitInfo.REASON_LOW_MEMORY,
+        ApplicationExitInfo.REASON_EXCESSIVE_RESOURCE_USAGE -> true
+        else -> false
+    }
+
+    private fun exitReasonName(reason: Int): String = when (reason) {
+        ApplicationExitInfo.REASON_CRASH -> "crash"
+        ApplicationExitInfo.REASON_CRASH_NATIVE -> "native_crash"
+        ApplicationExitInfo.REASON_ANR -> "anr"
+        ApplicationExitInfo.REASON_LOW_MEMORY -> "low_memory"
+        ApplicationExitInfo.REASON_EXCESSIVE_RESOURCE_USAGE -> "excessive_resource"
+        else -> "reason_$reason"
+    }
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         MethodChannel(
@@ -41,6 +160,20 @@ class MainActivity : FlutterActivity() {
         ).setMethodCallHandler { call, result ->
             when (call.method) {
                 "saveFile" -> startSaveFile(call, result)
+                else -> result.notImplemented()
+            }
+        }
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            CALL_AUDIO_ROUTE_CHANNEL,
+        ).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "ensureBluetoothPermission" -> ensureBluetoothPermission(result)
+                "activateBluetoothMicrophone" -> activateBluetoothMicrophone(result)
+                "releaseBluetoothMicrophone" -> {
+                    releaseBluetoothMicrophone()
+                    result.success(null)
+                }
                 else -> result.notImplemented()
             }
         }
@@ -66,6 +199,120 @@ class MainActivity : FlutterActivity() {
                 }
             }
         }
+    }
+
+    private fun ensureBluetoothPermission(result: MethodChannel.Result) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
+            ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.BLUETOOTH_CONNECT,
+            ) == PackageManager.PERMISSION_GRANTED
+        ) {
+            result.success(true)
+            return
+        }
+        // Do not ask every phone-mic user for Nearby Devices. AudioManager can
+        // expose the currently selected input type without Bluetooth metadata;
+        // request CONNECT only when a Bluetooth microphone is actually present.
+        if (!hasConnectedBluetoothInput()) {
+            result.success(true)
+            return
+        }
+        if (pendingBluetoothPermissionResult != null) {
+            result.error("BLUETOOTH_PERMISSION_BUSY", "A Bluetooth permission request is already active.", null)
+            return
+        }
+        pendingBluetoothPermissionResult = result
+        ActivityCompat.requestPermissions(
+            this,
+            arrayOf(Manifest.permission.BLUETOOTH_CONNECT),
+            BLUETOOTH_CONNECT_REQUEST,
+        )
+    }
+
+    private fun hasConnectedBluetoothInput(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return false
+        return try {
+            val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            audioManager.getDevices(AudioManager.GET_DEVICES_INPUTS).any { device ->
+                device.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO ||
+                    (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+                        device.type == AudioDeviceInfo.TYPE_BLE_HEADSET)
+            }
+        } catch (_: Throwable) {
+            false
+        }
+    }
+
+    private fun activateBluetoothMicrophone(result: MethodChannel.Result) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+            ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.BLUETOOTH_CONNECT,
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
+            result.success(false)
+            return
+        }
+        try {
+            val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
+            val bluetoothInput = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                audioManager.getDevices(AudioManager.GET_DEVICES_INPUTS).firstOrNull { device ->
+                    device.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO ||
+                        (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+                            device.type == AudioDeviceInfo.TYPE_BLE_HEADSET)
+                }
+            } else {
+                null
+            }
+            if (bluetoothInput != null) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    audioManager.setCommunicationDevice(bluetoothInput)
+                } else {
+                    @Suppress("DEPRECATION")
+                    audioManager.startBluetoothSco()
+                    @Suppress("DEPRECATION")
+                    audioManager.isBluetoothScoOn = true
+                }
+            }
+            // No connected Bluetooth input is not an error: the recorder should
+            // simply continue through the system-selected phone microphone.
+            result.success(true)
+        } catch (_: SecurityException) {
+            result.success(false)
+        } catch (error: Throwable) {
+            result.error("BLUETOOTH_ROUTE_FAILED", error.message, null)
+        }
+    }
+
+    private fun releaseBluetoothMicrophone() {
+        try {
+            val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                audioManager.clearCommunicationDevice()
+            } else {
+                @Suppress("DEPRECATION")
+                audioManager.stopBluetoothSco()
+                @Suppress("DEPRECATION")
+                audioManager.isBluetoothScoOn = false
+            }
+            audioManager.mode = AudioManager.MODE_NORMAL
+        } catch (_: Throwable) {
+            // Releasing an optional route must never block call teardown.
+        }
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray,
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode != BLUETOOTH_CONNECT_REQUEST) return
+        val result = pendingBluetoothPermissionResult ?: return
+        pendingBluetoothPermissionResult = null
+        result.success(grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED)
     }
 
     override fun onNewIntent(intent: Intent) {

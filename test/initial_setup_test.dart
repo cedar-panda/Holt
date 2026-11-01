@@ -4,9 +4,12 @@ import 'package:project_yanci/memory/database.dart';
 import 'package:project_yanci/screens/initial_setup_screen.dart';
 import 'package:project_yanci/services/initial_setup_service.dart';
 import 'package:project_yanci/services/locale_strings.dart';
+import 'package:project_yanci/services/settings/character_signature_settings.dart';
+import 'package:project_yanci/services/settings/context_mode_settings.dart';
 import 'package:project_yanci/services/settings/memory_settings.dart';
 import 'package:project_yanci/services/settings/theme_settings.dart';
 import 'package:project_yanci/services/settings/user_settings.dart';
+import 'package:project_yanci/services/tool_feature_settings.dart';
 import 'package:project_yanci/theme/app_theme.dart';
 import 'package:project_yanci/theme/theme_presets.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -81,7 +84,7 @@ void main() {
     await _continueFromModeStep(tester);
 
     expect(find.text('怎麼稱呼你～'), findsOneWidget);
-    expect(find.text('無需引導 自我探索'), findsOneWidget);
+    expect(find.text('無需引導'), findsOneWidget);
     expect(tester.takeException(), isNull);
 
     await tester.enterText(
@@ -171,7 +174,86 @@ void main() {
     expect(await MemorySettings.isAbilityEnabled('bioclock'), isFalse);
     expect(await MemorySettings.getTimelineEnabled(), isTrue);
     expect(await MemorySettings.getTimelinePromptMode(), 'plot');
+    expect(await MemorySettings.getSelfNotesEnabled(), isFalse);
+    expect(await MemorySettings.getRpWorldbookAutoWriteEnabled(), isTrue);
+    expect(await ContextModeSettings.getGlobalRpEnabled(), isTrue);
+    expect(await CharacterSignatureSettings.isEnabled(), isFalse);
+    final toolFeatures = await ToolFeatureSettings.load();
+    expect(toolFeatures.toolPromptsEnabled, isTrue);
+    expect(toolFeatures.imageGenerationEnabled, isTrue);
+    expect(toolFeatures.diaryEnabled, isTrue);
+    expect(toolFeatures.rpDailyLifeToolsEnabled, isFalse);
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('basic preset clears prior feature state deterministically', (
+    tester,
+  ) async {
+    await ContextModeSettings.setGlobalRpEnabled(true);
+    await MemorySettings.saveRpWorldbookAutoWriteEnabled(true);
+    await CharacterSignatureSettings.setEnabled(true);
+    await ToolFeatureSettings.setToolPromptsEnabled(true);
+    await ToolFeatureSettings.setShellEconomyEnabled(true);
+    await ToolFeatureSettings.setDiaryEnabled(true);
+    await ToolFeatureSettings.setModelGreetingEnabled(true);
+    await ToolFeatureSettings.setImageGenerationEnabled(true);
+    await ToolFeatureSettings.setEmailDraftEnabled(true);
+
+    await _pumpSetup(tester);
+    await tester.tap(find.text('基礎'));
+    await tester.pump();
+    await tester.tap(find.text('繼續'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(await ContextModeSettings.getGlobalRpEnabled(), isFalse);
+    expect(await MemorySettings.isAbilityEnabled('emotion'), isFalse);
+    expect(await MemorySettings.isAbilityEnabled('bioclock'), isFalse);
+    expect(await MemorySettings.getTimelineEnabled(), isFalse);
+    expect(await MemorySettings.getSelfNotesEnabled(), isFalse);
+    expect(await MemorySettings.getRpWorldbookAutoWriteEnabled(), isFalse);
+    expect(await CharacterSignatureSettings.isEnabled(), isFalse);
+    final toolFeatures = await ToolFeatureSettings.load();
+    expect(toolFeatures.toolPromptsEnabled, isFalse);
+    expect(toolFeatures.shellEconomyEnabled, isFalse);
+    expect(toolFeatures.diaryEnabled, isFalse);
+    expect(toolFeatures.modelGreetingEnabled, isFalse);
+    expect(toolFeatures.imageGenerationEnabled, isFalse);
+    expect(toolFeatures.emailDraftEnabled, isFalse);
+  });
+
+  testWidgets('advanced preset restores features after a minimal setup', (
+    tester,
+  ) async {
+    await ContextModeSettings.setGlobalRpEnabled(true);
+    await MemorySettings.saveRpWorldbookAutoWriteEnabled(true);
+    await CharacterSignatureSettings.setEnabled(false);
+    await ToolFeatureSettings.setToolPromptsEnabled(false);
+    await ToolFeatureSettings.setShellEconomyEnabled(false);
+    await ToolFeatureSettings.setDiaryEnabled(false);
+    await ToolFeatureSettings.setModelGreetingEnabled(false);
+    await ToolFeatureSettings.setImageGenerationEnabled(false);
+    await ToolFeatureSettings.setEmailDraftEnabled(false);
+
+    await _pumpSetup(tester);
+    await tester.tap(find.text('繼續'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(await ContextModeSettings.getGlobalRpEnabled(), isFalse);
+    expect(await MemorySettings.isAbilityEnabled('emotion'), isTrue);
+    expect(await MemorySettings.isAbilityEnabled('bioclock'), isTrue);
+    expect(await MemorySettings.getTimelineEnabled(), isTrue);
+    expect(await MemorySettings.getSelfNotesEnabled(), isTrue);
+    expect(await MemorySettings.getRpWorldbookAutoWriteEnabled(), isFalse);
+    expect(await CharacterSignatureSettings.isEnabled(), isTrue);
+    final toolFeatures = await ToolFeatureSettings.load();
+    expect(toolFeatures.toolPromptsEnabled, isTrue);
+    expect(toolFeatures.shellEconomyEnabled, isTrue);
+    expect(toolFeatures.diaryEnabled, isTrue);
+    expect(toolFeatures.modelGreetingEnabled, isTrue);
+    expect(toolFeatures.imageGenerationEnabled, isTrue);
+    expect(toolFeatures.emailDraftEnabled, isTrue);
   });
 
   testWidgets(

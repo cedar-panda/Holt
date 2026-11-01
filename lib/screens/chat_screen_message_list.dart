@@ -6,6 +6,7 @@ extension _ChatMessageListMethods on _ChatScreenState {
   RegExp get _callActionRe => _ChatScreenState._callActionRe;
   RegExp get _callDividerRe => _ChatScreenState._callDividerRe;
   RegExp get _giftTagRe => _ChatScreenState._giftTagRe;
+  RegExp get _receivedGiftTagRe => _ChatScreenState._receivedGiftTagRe;
   RegExp get _marriageCertTagRe => _ChatScreenState._marriageCertTagRe;
   String get _marriageCertCharTag => _ChatScreenState._marriageCertCharTag;
   double get _chatHeaderHeight => _ChatScreenState._chatHeaderHeight;
@@ -157,14 +158,11 @@ extension _ChatMessageListMethods on _ChatScreenState {
         continue;
       }
 
-      if (_splitReply &&
-          !msg.isUser &&
-          msg.splitMode &&
-          msg.text.contains('\n\n')) {
-        final parts = msg.text
-            .split('\n\n')
-            .where((p) => p.trim().isNotEmpty)
-            .toList();
+      final splitParts = _splitReply && !msg.isUser && msg.splitMode
+          ? splitReplyParagraphs(msg.text)
+          : const <String>[];
+      if (splitParts.length > 1) {
+        final parts = splitParts;
         final splitHasCert = msg.text.contains(_marriageCertCharTag);
         for (int j = 0; j < parts.length; j++) {
           final isLast = j == parts.length - 1;
@@ -178,7 +176,15 @@ extension _ChatMessageListMethods on _ChatScreenState {
               messageId: 'msg_${msg.id}_$j',
               dbMessageId: msg.id,
               originalIndex: i,
-              showToolbar: false,
+              showToolbar: isLast,
+              // The final split bubble owns actions for the whole reply, but
+              // actions must use the presentation-safe prose rather than the
+              // raw response (which can still contain thinking/tool markup).
+              toolbarText: isLast
+                  ? VisibleModelOutput.finalOnly(msg.text)
+                  : null,
+              toolbarMessageId: isLast ? 'msg_${msg.id}' : null,
+              isSplitReplySegment: true,
               memoryLog: j == 0 ? msg.memoryLog : '',
               pendingMemoryActionCount: j == 0 && msg.id != null
                   ? (_pendingMemoryActionCounts[msg.id]?.total ?? 0)
@@ -208,10 +214,22 @@ extension _ChatMessageListMethods on _ChatScreenState {
         }
       } else {
         // ═══ 送禮標記 → 禮物卡片跟隨氣泡；對方之後回了話 = 已收下 ═══
-        final giftMatch = msg.isUser ? _giftTagRe.firstMatch(msg.text) : null;
+        final sentGiftMatch = msg.isUser
+            ? _giftTagRe.firstMatch(msg.text)
+            : null;
+        final receivedGiftMatch = msg.isUser
+            ? null
+            : _receivedGiftTagRe.firstMatch(msg.text);
+        final giftMatch = sentGiftMatch ?? receivedGiftMatch;
+        // 多氣泡寫的回覆（段落之間空一行）在平鋪／單氣泡顯示時，
+        // 把段落間的空行收成一般換行，不留一大段空白。只影響顯示，
+        // 資料庫原文、複製以外的處理都不動；切回多氣泡會照原樣拆開。
+        final displayText = !msg.isUser && msg.splitMode && !_splitReply
+            ? msg.text.replaceAll(RegExp(r'\n[ \t]*\n\s*'), '\n')
+            : msg.text;
         displayItems.add(
           _DisplayItem(
-            text: msg.text,
+            text: displayText,
             isUser: msg.isUser,
             timestamp: msg.createdAt,
             imagePath: msg.imagePath,
@@ -236,7 +254,10 @@ extension _ChatMessageListMethods on _ChatScreenState {
             emailDraft: msg.isUser ? null : msg.emailDraft,
             personaCard: msg.isUser ? null : msg.personaCard,
             giftName: giftMatch?.group(1)?.trim(),
-            giftAccepted: giftMatch != null && charReplyAfter[srcIdx],
+            giftAccepted:
+                receivedGiftMatch != null ||
+                (sentGiftMatch != null && charReplyAfter[srcIdx]),
+            giftReceivedFromCharacter: receivedGiftMatch != null,
             hasMarriageCert:
                 (msg.isUser && _marriageCertTagRe.hasMatch(msg.text)) ||
                 (!msg.isUser && msg.text.contains(_marriageCertCharTag)),
@@ -512,6 +533,12 @@ extension _ChatMessageListMethods on _ChatScreenState {
               final groupedWithNext =
                   index + 1 < displayItems.length &&
                   _canGroupDisplayItems(item, displayItems[index + 1]);
+              final tightGroupWithPrevious =
+                  index > 0 &&
+                  _isSameSplitReplyGroup(displayItems[index - 1], item);
+              final tightGroupWithNext =
+                  index + 1 < displayItems.length &&
+                  _isSameSplitReplyGroup(item, displayItems[index + 1]);
               final bubble = ChatBubble(
                 text: item.text,
                 isUser: item.isUser,
@@ -548,8 +575,12 @@ extension _ChatMessageListMethods on _ChatScreenState {
                 showAvatarImage: !groupedWithPrevious,
                 groupedWithPrevious: groupedWithPrevious,
                 groupedWithNext: groupedWithNext,
+                tightGroupWithPrevious: tightGroupWithPrevious,
+                tightGroupWithNext: tightGroupWithNext,
                 avatarPath: item.isUser ? _userAvatarPath : _charAvatarPath,
                 showToolbar: item.showToolbar,
+                toolbarText: item.toolbarText,
+                toolbarMessageId: item.toolbarMessageId,
                 cacheHit: item.cacheHit,
                 incomplete: item.incomplete,
                 onRetryIncomplete:
@@ -563,6 +594,7 @@ extension _ChatMessageListMethods on _ChatScreenState {
                 transferData: _transferDataMap[item.messageId],
                 giftName: item.giftName,
                 giftAccepted: item.giftAccepted,
+                giftReceivedFromCharacter: item.giftReceivedFromCharacter,
                 marriageCert: item.hasMarriageCert
                     ? MarriageCertDisplay(
                         userName: _userNameCache,

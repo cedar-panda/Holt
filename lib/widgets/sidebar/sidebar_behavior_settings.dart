@@ -172,7 +172,8 @@ class _SidebarBehaviorSettingsState extends State<SidebarBehaviorSettings> {
       relationGroup: 'memory_behavior',
       title: Text(title),
       initiallyExpanded: _worldbookEnabled ?? false,
-      showChevron: false,
+      showChevron: _worldbookEnabled ?? false,
+      isActive: _worldbookEnabled ?? false,
       trailing: _headerActions(
         title: title,
         help: L.pick(
@@ -193,20 +194,30 @@ class _SidebarBehaviorSettingsState extends State<SidebarBehaviorSettings> {
       childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
       children: [
         if (_worldbookEnabled ?? true)
-          _CommittedCountField(
-            value: int.tryParse(_worldbookIntervalController.text) ?? 4,
-            suffix: '',
-            width: double.infinity,
-            labelText: L.pick(
-              en: 'Process every N RP summaries',
-              zhTW: '每累積幾個 RP 摘要整理一次',
-              zhCN: '每累积几个 RP 摘要整理一次',
-            ),
-            onCommit: (value) async {
-              await MemorySettings.saveRpWorldbookSummaryInterval(value);
-              if (!mounted) return;
-              setState(() => _worldbookIntervalController.text = '$value');
-            },
+          Wrap(
+            alignment: WrapAlignment.center,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: <Widget>[
+              Text(L.pick(en: 'Organize every (', zhTW: '每積累（', zhCN: '每积累（')),
+              _CommittedCountField(
+                value: int.tryParse(_worldbookIntervalController.text) ?? 4,
+                suffix: '',
+                width: 46,
+                fontSize: 17.25,
+                onCommit: (value) async {
+                  await MemorySettings.saveRpWorldbookSummaryInterval(value);
+                  if (!mounted) return;
+                  setState(() => _worldbookIntervalController.text = '$value');
+                },
+              ),
+              Text(
+                L.pick(
+                  en: ') RP summaries',
+                  zhTW: '）個 RP 摘要整理一次',
+                  zhCN: '）个 RP 摘要整理一次',
+                ),
+              ),
+            ],
           ),
       ],
     );
@@ -364,7 +375,8 @@ class _SidebarBehaviorSettingsState extends State<SidebarBehaviorSettings> {
       exclusiveWithinGroup: true,
       title: Text(title),
       initiallyExpanded: enabled,
-      showChevron: false,
+      showChevron: enabled,
+      isActive: enabled,
       trailing: _headerActions(
         title: title,
         help: L.pick(
@@ -490,7 +502,8 @@ class _SidebarBehaviorSettingsState extends State<SidebarBehaviorSettings> {
       exclusiveWithinGroup: true,
       title: Text(title),
       initiallyExpanded: enabled,
-      showChevron: false,
+      showChevron: enabled,
+      isActive: enabled,
       trailing: _headerActions(
         title: title,
         help: L.pick(
@@ -622,6 +635,7 @@ class _SidebarBehaviorSettingsState extends State<SidebarBehaviorSettings> {
       relationGroup: 'web_search',
       title: Text(title),
       showChevron: false,
+      isActive: _webSearchEnabled ?? false,
       trailing: _headerActions(
         title: title,
         help: L.pick(
@@ -663,14 +677,14 @@ class _CommittedCountField extends StatefulWidget {
     required this.suffix,
     required this.onCommit,
     this.width = 88,
-    this.labelText,
+    this.fontSize,
   });
 
   final int value;
   final String suffix;
   final Future<void> Function(int value) onCommit;
   final double width;
-  final String? labelText;
+  final double? fontSize;
 
   @override
   State<_CommittedCountField> createState() => _CommittedCountFieldState();
@@ -739,6 +753,7 @@ class _CommittedCountFieldState extends State<_CommittedCountField> {
         keyboardType: TextInputType.number,
         textInputAction: TextInputAction.done,
         textAlign: TextAlign.center,
+        style: YanciTheme.bodyText.copyWith(fontSize: widget.fontSize),
         onTapOutside: (_) {
           FocusManager.instance.primaryFocus?.unfocus();
           unawaited(_commit());
@@ -748,8 +763,8 @@ class _CommittedCountFieldState extends State<_CommittedCountField> {
           unawaited(_commit());
         },
         decoration: InputDecoration(
+          isDense: true,
           suffixText: widget.suffix,
-          labelText: widget.labelText,
           border: InputBorder.none,
         ),
       ),

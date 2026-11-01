@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../services/locale_strings.dart';
 import '../services/background_foreground_service.dart';
+import '../services/reasoning_effort.dart';
 import '../theme/app_theme.dart';
 
 class ChatModelPickerEntry {
@@ -223,33 +224,44 @@ class ChatModelPickerPanel extends StatefulWidget {
   final List<ChatModelPickerEntry> entries;
   final String currentModelId;
   final String currentProvider;
-  final bool initialThinking;
+  final String initialReasoningEffort;
+  final bool initialThinkingEnabled;
   final Color accentColor;
   final BackgroundForegroundPalette? backgroundPalette;
-  final Future<void> Function(bool value) onThinkingChanged;
+  final Future<void> Function(String effort) onReasoningEffortChanged;
+  final Future<void> Function(bool enabled) onThinkingEnabledChanged;
   final Future<void> Function(ChatModelPickerEntry entry) onModelSelected;
   final ValueChanged<ChatModelPickerEntry> onUnavailableProviderSelected;
+  final bool embedded;
 
   const ChatModelPickerPanel({
     super.key,
     required this.entries,
     required this.currentModelId,
     required this.currentProvider,
-    required this.initialThinking,
+    required this.initialReasoningEffort,
+    this.initialThinkingEnabled = true,
     required this.accentColor,
     this.backgroundPalette,
-    required this.onThinkingChanged,
+    required this.onReasoningEffortChanged,
+    this.onThinkingEnabledChanged = _noopThinkingChange,
     required this.onModelSelected,
     required this.onUnavailableProviderSelected,
+    this.embedded = false,
   });
+
+  static Future<void> _noopThinkingChange(bool _) async {}
 
   @override
   State<ChatModelPickerPanel> createState() => _ChatModelPickerPanelState();
 }
 
 class _ChatModelPickerPanelState extends State<ChatModelPickerPanel> {
-  late bool _thinking;
-  bool _savingThinking = false;
+  late String _reasoningEffort;
+  late bool _thinkingEnabled;
+  final ScrollController _modelScrollController = ScrollController();
+  bool _savingReasoningEffort = false;
+  bool _savingThinkingEnabled = false;
 
   Color get _panelColor {
     final dominant = widget.backgroundPalette?.dominant;
@@ -274,22 +286,91 @@ class _ChatModelPickerPanelState extends State<ChatModelPickerPanel> {
   @override
   void initState() {
     super.initState();
-    _thinking = widget.initialThinking;
+    _reasoningEffort = ReasoningEffort.normalize(widget.initialReasoningEffort);
+    _thinkingEnabled = widget.initialThinkingEnabled;
+    WidgetsBinding.instance.addPostFrameCallback((_) => _revealCurrentModel());
   }
 
-  Future<void> _setThinking(bool value) async {
-    if (_savingThinking || value == _thinking) return;
-    final previous = _thinking;
+  @override
+  void didUpdateWidget(covariant ChatModelPickerPanel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!_savingReasoningEffort &&
+        oldWidget.initialReasoningEffort != widget.initialReasoningEffort) {
+      _reasoningEffort = ReasoningEffort.normalize(
+        widget.initialReasoningEffort,
+      );
+    }
+    if (!_savingThinkingEnabled &&
+        oldWidget.initialThinkingEnabled != widget.initialThinkingEnabled) {
+      _thinkingEnabled = widget.initialThinkingEnabled;
+    }
+    if (oldWidget.currentModelId != widget.currentModelId ||
+        oldWidget.currentProvider != widget.currentProvider ||
+        oldWidget.entries.length != widget.entries.length) {
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => _revealCurrentModel(),
+      );
+    }
+  }
+
+  void _revealCurrentModel() {
+    if (!mounted || !_modelScrollController.hasClients) return;
+    final cloud = widget.entries.where((entry) => !entry.isLocal).toList();
+    final local = widget.entries.where((entry) => entry.isLocal).toList();
+    final ordered = <ChatModelPickerEntry>[...cloud, ...local];
+    final index = ordered.indexWhere(
+      (entry) =>
+          entry.id == widget.currentModelId &&
+          entry.provider == widget.currentProvider,
+    );
+    if (index < 0) return;
+    var target = index * 68.0;
+    if (index >= cloud.length && cloud.isNotEmpty && local.isNotEmpty) {
+      target += 38;
+    }
+    final position = _modelScrollController.position;
+    final centered = target - position.viewportDimension * 0.35;
+    _modelScrollController.jumpTo(
+      centered.clamp(position.minScrollExtent, position.maxScrollExtent),
+    );
+  }
+
+  @override
+  void dispose() {
+    _modelScrollController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _setReasoningEffort(String value) async {
+    final normalized = ReasoningEffort.normalize(value);
+    if (_savingReasoningEffort || normalized == _reasoningEffort) return;
+    final previous = _reasoningEffort;
     setState(() {
-      _thinking = value;
-      _savingThinking = true;
+      _reasoningEffort = normalized;
+      _savingReasoningEffort = true;
     });
     try {
-      await widget.onThinkingChanged(value);
+      await widget.onReasoningEffortChanged(normalized);
     } catch (_) {
-      if (mounted) setState(() => _thinking = previous);
+      if (mounted) setState(() => _reasoningEffort = previous);
     } finally {
-      if (mounted) setState(() => _savingThinking = false);
+      if (mounted) setState(() => _savingReasoningEffort = false);
+    }
+  }
+
+  Future<void> _setThinkingEnabled(bool value) async {
+    if (_savingThinkingEnabled || value == _thinkingEnabled) return;
+    final previous = _thinkingEnabled;
+    setState(() {
+      _thinkingEnabled = value;
+      _savingThinkingEnabled = true;
+    });
+    try {
+      await widget.onThinkingEnabledChanged(value);
+    } catch (_) {
+      if (mounted) setState(() => _thinkingEnabled = previous);
+    } finally {
+      if (mounted) setState(() => _savingThinkingEnabled = false);
     }
   }
 
@@ -309,32 +390,57 @@ class _ChatModelPickerPanelState extends State<ChatModelPickerPanel> {
     return Container(
       key: const ValueKey('chat-model-picker-panel'),
       decoration: BoxDecoration(
-        color: panelColor,
+        color: widget.embedded ? Colors.transparent : panelColor,
         borderRadius: BorderRadius.circular(YanciTheme.radiusLg),
-        border: Border.all(
-          color:
-              textColor?.secondary.withValues(alpha: 0.16) ??
-              YanciTheme.textSecondary.withValues(alpha: 0.1),
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.3),
-            blurRadius: 20,
-            offset: const Offset(0, 10),
-          ),
-        ],
+        border: widget.embedded
+            ? null
+            : Border.all(
+                color:
+                    textColor?.secondary.withValues(alpha: 0.16) ??
+                    YanciTheme.textSecondary.withValues(alpha: 0.1),
+              ),
+        boxShadow: widget.embedded
+            ? const <BoxShadow>[]
+            : [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.3),
+                  blurRadius: 20,
+                  offset: const Offset(0, 10),
+                ),
+              ],
       ),
       child: Padding(
-        padding: const EdgeInsets.all(12),
+        padding: widget.embedded
+            ? const EdgeInsets.fromLTRB(0, 6, 0, 0)
+            : const EdgeInsets.all(12),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            _ThinkingRippleToggle(
-              value: _thinking,
-              enabled: !_savingThinking,
+            Row(
+              children: [
+                Text(
+                  L.pick(en: 'Thinking', zhTW: '思考鏈', zhCN: '思考链'),
+                  style: TextStyle(
+                    color: textColor?.primary ?? YanciTheme.textPrimary,
+                  ),
+                ),
+                const Spacer(),
+                Switch.adaptive(
+                  key: const ValueKey('chat-model-thinking-switch'),
+                  value: _thinkingEnabled,
+                  onChanged: _savingThinkingEnabled
+                      ? null
+                      : _setThinkingEnabled,
+                  activeTrackColor: widget.accentColor,
+                ),
+              ],
+            ),
+            ModelStrengthFateSelector(
+              value: _reasoningEffort,
+              enabled: !_savingReasoningEffort && _thinkingEnabled,
               accentColor: widget.accentColor,
               foregroundColor: textColor?.primary,
-              onChanged: _setThinking,
+              onChanged: _setReasoningEffort,
             ),
             const SizedBox(height: 4),
             Divider(
@@ -348,6 +454,7 @@ class _ChatModelPickerPanelState extends State<ChatModelPickerPanel> {
               child: ConstrainedBox(
                 constraints: BoxConstraints(maxHeight: desiredListHeight),
                 child: ListView(
+                  controller: _modelScrollController,
                   shrinkWrap: true,
                   padding: EdgeInsets.zero,
                   children: [
@@ -570,14 +677,15 @@ class _ModelProviderStatus extends StatelessWidget {
   }
 }
 
-class _ThinkingRippleToggle extends StatefulWidget {
-  final bool value;
+class ModelStrengthFateSelector extends StatefulWidget {
+  final String value;
   final bool enabled;
   final Color accentColor;
   final Color? foregroundColor;
-  final ValueChanged<bool> onChanged;
+  final ValueChanged<String> onChanged;
 
-  const _ThinkingRippleToggle({
+  const ModelStrengthFateSelector({
+    super.key,
     required this.value,
     required this.enabled,
     required this.accentColor,
@@ -586,20 +694,21 @@ class _ThinkingRippleToggle extends StatefulWidget {
   });
 
   @override
-  State<_ThinkingRippleToggle> createState() => _ThinkingRippleToggleState();
+  State<ModelStrengthFateSelector> createState() =>
+      _ModelStrengthFateSelectorState();
 }
 
-class _ThinkingRippleToggleState extends State<_ThinkingRippleToggle>
+class _ModelStrengthFateSelectorState extends State<ModelStrengthFateSelector>
     with SingleTickerProviderStateMixin {
-  late final AnimationController _controller;
+  late final AnimationController _ambientController;
   bool _reduceMotion = false;
 
   @override
   void initState() {
     super.initState();
-    _controller = AnimationController(
+    _ambientController = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 1900),
+      duration: const Duration(milliseconds: 3600),
     );
   }
 
@@ -611,176 +720,278 @@ class _ThinkingRippleToggleState extends State<_ThinkingRippleToggle>
   }
 
   @override
-  void didUpdateWidget(covariant _ThinkingRippleToggle oldWidget) {
+  void didUpdateWidget(covariant ModelStrengthFateSelector oldWidget) {
     super.didUpdateWidget(oldWidget);
     _syncAnimation();
   }
 
   void _syncAnimation() {
-    if (widget.value &&
+    if (widget.value != ReasoningEffort.auto &&
         !_reduceMotion &&
         TickerMode.valuesOf(context).enabled) {
-      if (!_controller.isAnimating) _controller.repeat();
+      if (!_ambientController.isAnimating) _ambientController.repeat();
     } else {
-      _controller.stop();
-      _controller.value = 0;
+      _ambientController.stop();
+      _ambientController.value = 0;
     }
   }
 
   @override
   void dispose() {
-    _controller.dispose();
+    _ambientController.dispose();
     super.dispose();
   }
 
+  String _shortLabel(String effort) => switch (effort) {
+    ReasoningEffort.low => L.pick(en: 'Low', zhTW: '低', zhCN: '低'),
+    ReasoningEffort.medium => L.pick(en: 'Medium', zhTW: '中', zhCN: '中'),
+    ReasoningEffort.high => L.pick(en: 'High', zhTW: '高', zhCN: '高'),
+    _ => L.pick(en: 'Auto', zhTW: '自動', zhCN: '自动'),
+  };
+
   @override
   Widget build(BuildContext context) {
-    final transitionDuration = _reduceMotion
-        ? Duration.zero
-        : const Duration(milliseconds: 220);
-    return Semantics(
+    final normalized = ReasoningEffort.normalize(widget.value);
+    final foreground = widget.foregroundColor ?? YanciTheme.textPrimary;
+    final options = const <String>[
+      ReasoningEffort.auto,
+      ReasoningEffort.low,
+      ReasoningEffort.medium,
+      ReasoningEffort.high,
+    ];
+    return Container(
       key: const ValueKey('chat-model-thinking-toggle'),
-      button: true,
-      toggled: widget.value,
-      enabled: widget.enabled,
-      label: L.get('chat_thinking_toggle'),
-      onTap: widget.enabled ? () => widget.onChanged(!widget.value) : null,
-      child: ExcludeSemantics(
-        child: Material(
-          color: Colors.transparent,
-          child: InkWell(
-            onTap: widget.enabled
-                ? () => widget.onChanged(!widget.value)
-                : null,
-            borderRadius: BorderRadius.circular(999),
-            child: Container(
-              constraints: const BoxConstraints(minHeight: 54),
-              padding: const EdgeInsets.symmetric(horizontal: 4),
-              child: Row(
+      padding: const EdgeInsets.fromLTRB(4, 4, 4, 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            L.pick(en: 'Reasoning strength', zhTW: '思考強度', zhCN: '思考强度'),
+            style: YanciTheme.bodyText.copyWith(
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
+              color: foreground,
+            ),
+          ),
+          const SizedBox(height: 8),
+          SizedBox(
+            height: 44,
+            width: double.infinity,
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: YanciTheme.glassInputBg.withValues(alpha: 0.66),
+                borderRadius: BorderRadius.circular(999),
+                border: Border.all(
+                  color: YanciTheme.glassBorder.withValues(alpha: 0.48),
+                  width: 0.6,
+                ),
+              ),
+              child: Stack(
                 children: [
-                  Expanded(
-                    child: Text(
-                      L.get('chat_thinking_toggle'),
-                      style: YanciTheme.bodyText.copyWith(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                        color: widget.foregroundColor ?? YanciTheme.textPrimary,
+                  Positioned.fill(
+                    child: IgnorePointer(
+                      child: AnimatedBuilder(
+                        animation: _ambientController,
+                        builder: (context, _) => CustomPaint(
+                          painter: _FateStrengthPainter(
+                            effort: normalized,
+                            accent: widget.accentColor,
+                            progress: _reduceMotion
+                                ? 0.18
+                                : _ambientController.value,
+                            staticOnly: _reduceMotion,
+                          ),
+                        ),
                       ),
                     ),
                   ),
-                  SizedBox(
-                    width: 76,
-                    height: 44,
-                    child: Stack(
-                      alignment: Alignment.center,
-                      children: [
-                        AnimatedContainer(
-                          duration: transitionDuration,
-                          curve: Curves.easeOutCubic,
-                          width: 66,
-                          height: 34,
-                          decoration: BoxDecoration(
-                            color: widget.value
-                                ? widget.accentColor.withValues(alpha: 0.22)
-                                : YanciTheme.glassInputBg,
-                            borderRadius: BorderRadius.circular(999),
-                          ),
-                        ),
-                        Positioned.fill(
-                          left: 9,
-                          right: 9,
-                          child: AnimatedAlign(
-                            duration: transitionDuration,
-                            curve: Curves.easeOutCubic,
-                            alignment: widget.value
-                                ? Alignment.centerRight
-                                : Alignment.centerLeft,
-                            child: SizedBox(
-                              width: 34,
-                              height: 44,
-                              child: AnimatedBuilder(
-                                animation: _controller,
-                                builder: (context, child) {
-                                  return Stack(
-                                    alignment: Alignment.center,
-                                    children: [
-                                      if (widget.value && !_reduceMotion) ...[
-                                        _RippleRing(
-                                          progress: _controller.value,
-                                          color: widget.accentColor,
-                                        ),
-                                        _RippleRing(
-                                          progress:
-                                              (_controller.value + 0.5) % 1,
-                                          color: widget.accentColor,
-                                        ),
-                                      ],
-                                      child!,
-                                    ],
-                                  );
-                                },
-                                child: AnimatedContainer(
-                                  duration: transitionDuration,
+                  Row(
+                    children: [
+                      for (final effort in options)
+                        Expanded(
+                          child: Semantics(
+                            button: true,
+                            selected: effort == normalized,
+                            enabled: widget.enabled,
+                            label:
+                                '${L.pick(en: 'Reasoning strength', zhTW: '思考強度', zhCN: '思考强度')} ${_shortLabel(effort)}',
+                            child: InkWell(
+                              key: ValueKey<String>(
+                                'chat-model-reasoning-$effort',
+                              ),
+                              borderRadius: BorderRadius.circular(999),
+                              onTap: widget.enabled
+                                  ? () => widget.onChanged(effort)
+                                  : null,
+                              child: Center(
+                                child: AnimatedDefaultTextStyle(
+                                  duration: _reduceMotion
+                                      ? Duration.zero
+                                      : const Duration(milliseconds: 180),
                                   curve: Curves.easeOutCubic,
-                                  width: 26,
-                                  height: 26,
-                                  decoration: BoxDecoration(
-                                    color: widget.value
-                                        ? widget.accentColor
-                                        : YanciTheme.textSecondary.withValues(
-                                            alpha: 0.50,
-                                          ),
-                                    shape: BoxShape.circle,
-                                    boxShadow: widget.value
-                                        ? [
-                                            BoxShadow(
-                                              color: widget.accentColor
-                                                  .withValues(alpha: 0.32),
-                                              blurRadius: 8,
-                                            ),
-                                          ]
-                                        : null,
+                                  style: YanciTheme.bodySmall.copyWith(
+                                    fontSize: 12,
+                                    fontWeight: effort == normalized
+                                        ? FontWeight.w700
+                                        : FontWeight.w500,
+                                    color: effort == normalized
+                                        ? foreground
+                                        : foreground.withValues(alpha: 0.48),
                                   ),
+                                  child: Text(_shortLabel(effort)),
                                 ),
                               ),
                             ),
                           ),
                         ),
-                      ],
-                    ),
+                    ],
                   ),
                 ],
               ),
             ),
           ),
-        ),
+        ],
       ),
     );
   }
 }
 
-class _RippleRing extends StatelessWidget {
-  final double progress;
-  final Color color;
+class _FateStrengthPainter extends CustomPainter {
+  const _FateStrengthPainter({
+    required this.effort,
+    required this.accent,
+    required this.progress,
+    required this.staticOnly,
+  });
 
-  const _RippleRing({required this.progress, required this.color});
+  final String effort;
+  final Color accent;
+  final double progress;
+  final bool staticOnly;
 
   @override
-  Widget build(BuildContext context) {
-    final diameter = 20 + 16 * progress;
-    return ExcludeSemantics(
-      child: Container(
-        width: diameter,
-        height: diameter,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          border: Border.all(
-            color: color.withValues(alpha: 0.24 * (1 - progress)),
-          ),
-        ),
-      ),
+  void paint(Canvas canvas, Size size) {
+    if (effort == ReasoningEffort.auto || size.isEmpty) return;
+    final index = switch (effort) {
+      ReasoningEffort.low => 1,
+      ReasoningEffort.medium => 2,
+      _ => 3,
+    };
+    final segmentWidth = size.width / 4;
+    final rect = Rect.fromLTWH(
+      index * segmentWidth,
+      0,
+      segmentWidth,
+      size.height,
     );
+    canvas.save();
+    canvas.clipRRect(RRect.fromRectAndRadius(rect, const Radius.circular(999)));
+    final center = rect.center;
+    final warm = Color.lerp(accent, const Color(0xFFFFD99A), 0.52)!;
+    final pink = Color.lerp(accent, const Color(0xFFFFA8C4), 0.55)!;
+
+    void glowDot(Offset point, Color color, double radius) {
+      canvas.drawCircle(
+        point,
+        radius * 2.6,
+        Paint()
+          ..color = color.withValues(alpha: 0.18)
+          ..blendMode = BlendMode.plus
+          ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 6),
+      );
+      canvas.drawCircle(
+        point,
+        radius,
+        Paint()
+          ..color = color.withValues(alpha: 0.9)
+          ..blendMode = BlendMode.plus,
+      );
+      canvas.drawCircle(
+        point,
+        1,
+        Paint()
+          ..color = const Color(0xFFFFFDF9)
+          ..blendMode = BlendMode.plus,
+      );
+    }
+
+    if (effort == ReasoningEffort.low) {
+      final angle = staticOnly ? -0.4 : progress * math.pi * 2;
+      final point = center + Offset(math.cos(angle) * 16, math.sin(angle) * 6);
+      final tail = Path()
+        ..moveTo(point.dx, point.dy)
+        ..quadraticBezierTo(
+          center.dx,
+          center.dy + 5,
+          point.dx - math.cos(angle) * 18,
+          point.dy - math.sin(angle) * 7,
+        );
+      canvas.drawPath(
+        tail,
+        Paint()
+          ..color = warm.withValues(alpha: 0.20)
+          ..strokeWidth = 1.2
+          ..style = PaintingStyle.stroke
+          ..strokeCap = StrokeCap.round
+          ..blendMode = BlendMode.plus,
+      );
+      glowDot(point, warm, 2.1);
+    } else if (effort == ReasoningEffort.medium) {
+      final angle = staticOnly ? 0.55 : progress * math.pi * 2;
+      final first = center + Offset(math.cos(angle) * 17, math.sin(angle) * 7);
+      final second =
+          center +
+          Offset(math.cos(angle + math.pi) * 17, math.sin(angle + math.pi) * 7);
+      final orbitPaint = Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 0.8
+        ..blendMode = BlendMode.plus;
+      canvas.drawOval(
+        Rect.fromCenter(center: center, width: 38, height: 13),
+        orbitPaint..color = warm.withValues(alpha: 0.13),
+      );
+      canvas.save();
+      canvas.translate(center.dx, center.dy);
+      canvas.rotate(-0.36);
+      canvas.translate(-center.dx, -center.dy);
+      canvas.drawOval(
+        Rect.fromCenter(center: center, width: 38, height: 13),
+        orbitPaint..color = pink.withValues(alpha: 0.13),
+      );
+      canvas.restore();
+      glowDot(first, warm, 1.9);
+      glowDot(second, pink, 1.9);
+    } else {
+      // 高：與低（一顆）、中（兩顆）同一套軌道語言，三顆光點等距繞行。
+      final angle = staticOnly ? 0.55 : progress * math.pi * 2;
+      final light = Color.lerp(warm, const Color(0xFFFFFDF9), 0.35)!;
+      canvas.drawOval(
+        Rect.fromCenter(center: center, width: 38, height: 13),
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 0.8
+          ..blendMode = BlendMode.plus
+          ..color = warm.withValues(alpha: 0.13),
+      );
+      final colors = <Color>[warm, pink, light];
+      for (var i = 0; i < colors.length; i++) {
+        final a = angle + i * math.pi * 2 / colors.length;
+        glowDot(
+          center + Offset(math.cos(a) * 17, math.sin(a) * 7),
+          colors[i],
+          1.9,
+        );
+      }
+    }
+    canvas.restore();
   }
+
+  @override
+  bool shouldRepaint(covariant _FateStrengthPainter oldDelegate) =>
+      effort != oldDelegate.effort ||
+      accent != oldDelegate.accent ||
+      progress != oldDelegate.progress ||
+      staticOnly != oldDelegate.staticOnly;
 }
 
 class _ModelBreathingDot extends StatefulWidget {

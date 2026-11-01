@@ -1,243 +1,30 @@
-import 'dart:async';
-import 'dart:convert';
-import 'package:http/http.dart' as http;
-import 'api_adapter.dart';
-import 'sse_stream.dart';
-import 'stream_transport.dart';
-import 'system_context_debug.dart';
+import 'openai_style_chat_service.dart';
 
 /// 通義千問 API（阿里雲 DashScope，OpenAI 兼容格式）
 /// endpoint: compatible-mode/v1
-class QwenService implements ApiAdapter {
-  final String apiKey;
-  final bool thinkingEnabled;
-  http.Client? _activeClient;
+/// 請求／流式流程在 [OpenAiStyleChatService]，這裡只放 Qwen 的差異。
+class QwenService extends OpenAiStyleChatService {
   static const String _baseUrl =
       'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions';
 
   static Map<String, int> lastCacheStats = {};
 
-  QwenService({required this.apiKey, this.thinkingEnabled = false});
-
-  Map<String, dynamic> debugBuildBodyForTesting({
-    required List<Map<String, String>> messages,
-    required String model,
-    String? systemPrompt,
-    StructuredPrompt? structuredPrompt,
-  }) {
-    return _buildBody(
-      messages,
-      model,
-      systemPrompt,
-      structuredPrompt: structuredPrompt,
-      stream: false,
-    );
-  }
+  QwenService({required super.apiKey, super.thinkingEnabled});
 
   @override
-  Future<String> sendMessage({
-    required List<Map<String, String>> messages,
-    required String model,
-    String? systemPrompt,
-    StructuredPrompt? structuredPrompt,
-    ApiUsageCallback? onUsage,
-  }) async {
-    final body = _buildBody(
-      messages,
-      model,
-      systemPrompt,
-      structuredPrompt: structuredPrompt,
-      stream: false,
-    );
-
-    final client = http.Client();
-    _activeClient?.close();
-    _activeClient = client;
-    try {
-      final response = await client
-          .post(
-            Uri.parse(_baseUrl),
-            headers: _headers(),
-            body: jsonEncode(body),
-          )
-          .timeout(const Duration(seconds: 180));
-
-      if (response.statusCode != 200) {
-        throw Exception('Qwen 錯誤 ${response.statusCode}: ${response.body}');
-      }
-
-      final data = jsonDecode(response.body);
-      final stats = _extractUsage(data);
-      if (stats != null) onUsage?.call(ApiUsage.fromStats(stats));
-      final message = data['choices']?[0]?['message'];
-      final content = message is Map ? '${message['content'] ?? ''}' : '';
-      final reasoning = message is Map
-          ? ProviderReasoning.fromMap(message)
-          : '';
-      if (thinkingEnabled && reasoning.isNotEmpty) {
-        return '<think>$reasoning</think>$content';
-      }
-      return content;
-    } finally {
-      if (identical(_activeClient, client)) _activeClient = null;
-      client.close();
-    }
-  }
+  String get providerLabel => 'Qwen';
 
   @override
-  Stream<String> sendMessageStream({
-    required List<Map<String, String>> messages,
-    required String model,
-    String? systemPrompt,
-    StructuredPrompt? structuredPrompt,
-    ApiUsageCallback? onUsage,
-  }) async* {
-    final body = _buildBody(
-      messages,
-      model,
-      systemPrompt,
-      structuredPrompt: structuredPrompt,
-      stream: true,
-    );
-
-    final request = http.Request('POST', Uri.parse(_baseUrl));
-    request.headers.addAll(_headers());
-    request.body = jsonEncode(body);
-
-    // client 自己開的自己關（finally），連接超時 30s 防永久轉圈
-    final client = http.Client();
-    _activeClient?.close();
-    _activeClient = client;
-    try {
-      final response = await StreamTransport.waitForResponseStart(
-        client.send(request),
-        provider: 'Qwen',
-      );
-
-      if (response.statusCode != 200) {
-        final err = await response.stream.bytesToString().timeout(
-          SseStream.defaultIdleTimeout,
-        );
-        throw Exception('Qwen 錯誤 ${response.statusCode}: $err');
-      }
-
-      Map<String, int>? requestStats;
-      var reasoningOpen = false;
-      final diagnostics = SseStreamDiagnostics();
-      await for (final data in SseStream.data(
-        response.stream,
-        diagnostics: diagnostics,
-      )) {
-        if (data == '[DONE]') break;
-
-        try {
-          final json = jsonDecode(data);
-          if (json['usage'] != null) requestStats = _extractUsage(json);
-          final deltaMap = json['choices']?[0]?['delta'];
-          final reasoning = deltaMap is Map
-              ? ProviderReasoning.fromMap(deltaMap)
-              : '';
-          if (reasoning.isNotEmpty && thinkingEnabled) {
-            if (!reasoningOpen) {
-              reasoningOpen = true;
-              yield '<think>';
-            }
-            yield reasoning;
-          }
-          final delta = deltaMap is Map ? deltaMap['content'] : null;
-          if (delta is String && delta.isNotEmpty) {
-            if (reasoningOpen) {
-              reasoningOpen = false;
-              yield '</think>';
-            }
-            yield delta;
-          }
-        } catch (_) {}
-      }
-      if (reasoningOpen) yield '</think>';
-      final streamDiagnostics = <String, Object?>{
-        'malformed_utf8_replacements': diagnostics.malformedUtf8Replacements,
-      };
-      if (requestStats != null) {
-        onUsage?.call(
-          ApiUsage.fromStats(requestStats, diagnostics: streamDiagnostics),
-        );
-      } else {
-        onUsage?.call(ApiUsage(diagnostics: streamDiagnostics));
-      }
-    } finally {
-      if (identical(_activeClient, client)) _activeClient = null;
-      client.close();
-    }
-  }
+  String get debugProviderId => 'qwen';
 
   @override
-  void cancelActive() {
-    final client = _activeClient;
-    _activeClient = null;
-    client?.close();
-  }
+  String get chatCompletionsUrl => _baseUrl;
 
-  Map<String, String> _headers() => {
-    'Content-Type': 'application/json',
-    'Authorization': 'Bearer $apiKey',
-  };
+  @override
+  String get fallbackModelId => 'qwen-plus';
 
-  Map<String, dynamic> _buildBody(
-    List<Map<String, String>> messages,
-    String model,
-    String? systemPrompt, {
-    StructuredPrompt? structuredPrompt,
-    required bool stream,
-  }) {
-    final allMessages = <Map<String, dynamic>>[];
-
-    // system 僅保留穩定前綴；動態 runtime 在歷史後作 request-only system。
-    final systemParts =
-        structuredPrompt?.cacheableParts ?? <String>[systemPrompt ?? ''];
-    for (final part in systemParts.where((part) => part.isNotEmpty)) {
-      allMessages.add({'role': 'system', 'content': part});
-    }
-
-    for (final m in messages) {
-      allMessages.add({
-        'role': m['role'] ?? 'user',
-        'content': m['content'] ?? '',
-      });
-    }
-
-    final liveState = structuredPrompt?.requestOnlyPart ?? '';
-    final attached = RuntimeContextSidecar.insertSystemBeforeLatestUser(
-      allMessages,
-      liveState,
-    );
-
-    // model 如果帶前綴就去掉
-    final modelId = model.contains('/') ? model.split('/').last : model;
-
-    final body = <String, dynamic>{
-      'model': modelId.isEmpty ? 'qwen-plus' : modelId,
-      'messages': allMessages,
-      'stream': stream,
-    };
-    if (structuredPrompt != null) {
-      SystemContextDebug.recordChatRequest(
-        provider: 'qwen',
-        model: model,
-        cacheChannel: structuredPrompt.cacheChannel,
-        sessionId: structuredPrompt.cacheSessionId,
-        transport: attached ? 'system_before_latest_user' : '',
-        sourceMessages: messages,
-        requestMessages: allMessages,
-        stableContext: systemParts.join('\n\n'),
-        liveState: structuredPrompt.liveStatePart,
-        expectTime: structuredPrompt.liveStatePart.trim().isNotEmpty,
-      );
-    }
-    return body;
-  }
-
-  Map<String, int>? _extractUsage(Map<String, dynamic> data) {
+  @override
+  Map<String, int>? extractUsage(Map<String, dynamic> data) {
     final usage = data['usage'];
     if (usage is! Map) return null;
     final promptDetails = usage['prompt_tokens_details'];

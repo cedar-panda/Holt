@@ -18,13 +18,14 @@
 - `lib/memory/emotion_coordinates.dart`：`EmotionCoordinates.tickDecay` 在發訊息前處理自然衰減、閒置衰減與維度互動。
 - `lib/memory/emotion_coordinates.dart`：`EmotionCoordinates.onNewWindow` 將該 scope 的 active 慾望點減半。
 - `lib/memory/emotion_coordinates.dart`：`EmotionCoordinates.resetAll` 將指定 scope 的 active 點標記為 dissipated。
-- `lib/screens/chat_screen_generation.dart`：`_ChatScreenState._sendMessageLocked`、`_sendImageLocked` 以 `_emotionScopeId` 呼叫寫入與衰減。
+- `lib/screens/chat_screen_generation.dart`：`_ChatScreenState._sendMessageLocked`（文字／圖片共用同一路徑） 以 `_emotionScopeId` 呼叫寫入與衰減。
 - `lib/screens/call_screen.dart`：`_CallScreenState._generateTurn` 以角色 id 寫入日常通話情緒。
+- `lib/services/mood_glow_service.dart`：`MoodGlowService.processReply` 以窗口為單位累計已處理回覆；一般換色須距上次換色滿 10 輪，判定包含當前這一輪，固定色／解鎖另走立即規則。
 
 ## 誰讀取、怎麼注入（檔案：函式；注入 prompt 的哪一層）
 
 - `lib/memory/emotion_coordinates.dart`：`EmotionCoordinates.statePrompt` 讀 active 點、五維 bars、24 小時波動與 grudge，輸出行為參照。
-- `lib/screens/chat_screen_generation.dart`：`_ChatScreenState._sendMessageLocked`、`_sendImageLocked` 把狀態 prompt 放進 `dynamicParts`。
+- `lib/screens/chat_screen_generation.dart`：`_ChatScreenState._sendMessageLocked`（文字／圖片共用同一路徑） 把狀態 prompt 放進 `dynamicParts`。
 - Prompt 層：當前情緒狀態在 `liveStatePart`；`EmotionCoordinates.abilityPrompt` 的固定動作規則在 `staticPart`。
 - `lib/widgets/emotion_panel.dart`：`_EmotionPanelState._load` 讀 `EmotionCoordinates.bars` 顯示 UI。
 - `lib/memory/retriever.dart`：`Retriever.buildMemoryPrompt` 在日常蛛網模式讀 active 點，作記憶情緒共振排序。
@@ -48,6 +49,7 @@
 - `ability_emotion_enabled`：由 `MemorySettings.isAbilityEnabled('emotion')` 讀取。
 - 工具提示詞總開關關閉時，不注入情緒能力說明；情緒模組本身關閉時，回覆中的情緒協議只剝離、不落庫。
 - 蛛網記憶開啟時，情緒開關同時決定是否參與記憶共振排序。
+- 聊天角色頭像讀 `MoodGlowService.activeColor`；未啟用或沒有顏色時直接使用靜態無光圈狀態，不建立空終點的顏色 tween。
 
 ## 量大時的風險
 
@@ -62,6 +64,9 @@
 - `test/prompt_locale_test.dart`
 - `test/model_action_protocol_test.dart`
 - `test/context_mode_migration_test.dart`
+- `test/chat_bubble_thinking_test.dart`
+- `test/chat_bubble_card_width_test.dart`
+- `test/mood_glow_service_test.dart`
 
 ## ❓ 不確定的地方
 

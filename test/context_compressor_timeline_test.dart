@@ -123,6 +123,31 @@ void main() {
     expect(decoded['timeline'], isEmpty);
   });
 
+  test('daily summary normalization uses named light-journal bullets', () {
+    expect(
+      ContextCompressor.normalizeSummaryFormat(
+        '**1. 重要事件與決定**\n* **晚餐：** 小禾與顧遠一起吃麵。',
+        locale: 'zh_TW',
+      ),
+      '## 前情提要\n—\n\n## 本次摘要\n- 小禾與顧遠一起吃麵。',
+    );
+  });
+
+  test('summary source labels carry both real names', () {
+    final userSource = ContextCompressor.formatSourceMessageForTesting(
+      message(61, '晚安'),
+      userName: '小禾',
+      characterName: '顧遠',
+    );
+    final charSource = ContextCompressor.formatSourceMessageForTesting(
+      message(62, '晚安'),
+      userName: '小禾',
+      characterName: '顧遠',
+    );
+    expect(userSource, contains('speaker:小禾(user)'));
+    expect(charSource, contains('speaker:顧遠(char)'));
+  });
+
   test(
     'manual summary source keeps real ids, local dates and speaker roles',
     () {

@@ -208,8 +208,7 @@ class _AnimatedCustomBackgroundVisibilityState
         // Match the home character carousel's visual rhythm: the outgoing
         // background cross-fades as the blur peaks around the hand-off, while
         // the feathered edge preserves the tab's spatial direction.
-        final blur =
-            (pow(sin(pi * transitionProgress), 0.75) * 10).toDouble();
+        final blur = (pow(sin(pi * transitionProgress), 0.75) * 10).toDouble();
         final revealDirection = _revealing ? _direction : _opposite(_direction);
         final translated = Opacity(
           opacity: value,
@@ -574,10 +573,7 @@ class _BakedBlurBackgroundState extends State<_BakedBlurBackground> {
     codec.dispose();
     final source = frame.image;
     try {
-      final imageSize = Size(
-        source.width.toDouble(),
-        source.height.toDouble(),
-      );
+      final imageSize = Size(source.width.toDouble(), source.height.toDouble());
       final box = Offset.zero & Size(w, h);
       final fitted = applyBoxFit(BoxFit.cover, imageSize, box.size);
       final sourceRect = Alignment.center.inscribe(
@@ -651,13 +647,82 @@ class _BakedBlurBackgroundState extends State<_BakedBlurBackground> {
   Widget build(BuildContext context) {
     final image = _image;
     if (image == null || _imageKey != _key) return widget.live;
-    // RawImage 會接管並在替換時 dispose 傳入的 clone；State 保留自己的那份。
+    // RawImage 不管理 ui.Image 生命週期；State 持有這份 clone，並在替換或
+    // dispose 時釋放。不要在 build 裡再次 clone，否則每次重建都會漏掉
+    // 一個 GPU image handle。
     return RawImage(
-      image: image.clone(),
+      image: image,
       width: widget.size.width,
       height: widget.size.height,
       fit: BoxFit.fill,
       filterQuality: FilterQuality.medium,
+    );
+  }
+}
+
+/// 把一張已預烘焙的全螢幕背景，依螢幕座標裁成卡片內的局部模糊。
+///
+/// 此元件與首頁背景共用 [_BakedBlurBackground] 的 LRU；每幀只移動／裁切
+/// 已完成的 ui.Image，不使用 BackdropFilter 或 ImageFiltered 即時模糊。
+class BakedCardRegionBlur extends StatelessWidget {
+  const BakedCardRegionBlur({
+    super.key,
+    required this.file,
+    required this.scale,
+    required this.offsetX,
+    required this.offsetY,
+    required this.blur,
+    required this.viewportSize,
+    required this.regionOffset,
+    required this.devicePixelRatio,
+    required this.overlayColor,
+  });
+
+  final File file;
+  final double scale;
+  final double offsetX;
+  final double offsetY;
+  final double blur;
+  final Size viewportSize;
+  final Offset regionOffset;
+  final double devicePixelRatio;
+  final Color overlayColor;
+
+  @override
+  Widget build(BuildContext context) {
+    if (viewportSize.isEmpty || !viewportSize.isFinite || !file.existsSync()) {
+      return ColoredBox(color: overlayColor);
+    }
+    return ClipRect(
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          OverflowBox(
+            alignment: Alignment.topLeft,
+            minWidth: viewportSize.width,
+            maxWidth: viewportSize.width,
+            minHeight: viewportSize.height,
+            maxHeight: viewportSize.height,
+            child: Transform.translate(
+              offset: -regionOffset,
+              child: SizedBox.fromSize(
+                size: viewportSize,
+                child: _BakedBlurBackground(
+                  file: file,
+                  scale: scale,
+                  offsetX: offsetX,
+                  offsetY: offsetY,
+                  blur: blur,
+                  size: viewportSize,
+                  devicePixelRatio: devicePixelRatio,
+                  live: const SizedBox.expand(),
+                ),
+              ),
+            ),
+          ),
+          ColoredBox(color: overlayColor),
+        ],
+      ),
     );
   }
 }

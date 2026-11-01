@@ -237,10 +237,22 @@ extension _ChatPromptPartMethods on _ChatScreenState {
     ShopService.lastBuyResults.clear();
     for (final r in results) {
       if (r['success'] == '1' && r['target'] == 'user') {
+        final characterName = _characterName.trim().isEmpty
+            ? L.pick(en: 'The character', zhTW: '對方', zhCN: '对方')
+            : _characterName.trim();
+        final giftName = (r['name'] ?? '').trim();
+        final safeMarkerName = giftName
+            .replaceAll(RegExp(r'[\]\r\n]'), ' ')
+            .trim();
+        final markerName = safeMarkerName.length > 40
+            ? safeMarkerName.substring(0, 40)
+            : safeMarkerName;
         final sysMsg = Message(
           conversationId: conversationId,
           characterId: _activeCharacterId,
-          text: '*(TA從商店買了「${r['name']}」送給你，已放入背包)*',
+          text:
+              '${L.pick(en: '*($characterName bought “$giftName” for you from the shop. It is now in your backpack.)*', zhTW: '*($characterName 從商店買了「$giftName」送給你，已放入背包)*', zhCN: '*($characterName 从商店买了「$giftName」送给你，已放入背包)*')}\n'
+              '[gift_received:$markerName]',
           isUser: false,
           createdAt: DateTime.now(),
         );
@@ -276,6 +288,7 @@ extension _ChatPromptPartMethods on _ChatScreenState {
     required String systemPrompt,
     required String charDesc,
     required String characterName,
+    String characterRemark = '',
     required String userProfile,
     required String selfNotes,
     required String userNickname,
@@ -335,10 +348,11 @@ extension _ChatPromptPartMethods on _ChatScreenState {
     final windowParts = <String>[];
     final normalizedSystemPrompt = systemPrompt.trim();
     final normalizedCharacterDescription = charDesc.trim();
+    final normalizedCharacterRemark = characterRemark.trim();
+    // RP needs a hard identity boundary before cards, summaries and story
+    // state. Daily mode keeps its existing companion prompt behavior; only the
+    // composer whisper tool is explicitly bound to char -> user there.
     if (contextMode == ContextMode.rp) {
-      // This must remain the first text in the first stable system block.
-      // Character cards, user personas, summaries, memories and live state all
-      // follow it, so none of them can blur the RP speaker boundary.
       staticParts.add(
         RpIdentityLockPrompt.build(
           characterName: characterName,
@@ -357,6 +371,17 @@ extension _ChatPromptPartMethods on _ChatScreenState {
     if (normalizedCharacterDescription.isNotEmpty) {
       staticParts.add(
         '${L.pick(en: '【Character Profile】', zhTW: '【角色設定】')}\n$normalizedCharacterDescription',
+      );
+    }
+    if (normalizedCharacterRemark.isNotEmpty) {
+      staticParts.add(
+        L.pick(
+          en: '【User remark for the character】Your original name is $characterName. The user has saved the display remark "$normalizedCharacterRemark" for you. This is a personal form of address, not a replacement for your identity.',
+          zhTW:
+              '【User 對角色的備注】你的本名是$characterName，User 將你備注為「$normalizedCharacterRemark」。這是 User 稱呼你的顯示備注，不會改變你的原本身分。',
+          zhCN:
+              '【User 对角色的备注】你的本名是$characterName，User 将你备注为“$normalizedCharacterRemark”。这是 User 称呼你的显示备注，不会改变你的原本身份。',
+        ),
       );
     }
     if (selfNotes.isNotEmpty && _selfNotesSnapshot?.isNotEmpty == true) {

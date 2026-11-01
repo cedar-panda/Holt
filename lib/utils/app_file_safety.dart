@@ -2,7 +2,7 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
+import 'app_directories.dart';
 
 /// Restricts imported and deleted media to the app-owned documents directory.
 class AppFileSafety {
@@ -15,7 +15,7 @@ class AppFileSafety {
 
   static Future<String?> normalizeOwnedPath(dynamic value) async {
     if (value is! String || value.trim().isEmpty) return null;
-    final documents = await getApplicationDocumentsDirectory();
+    final documents = await getAppDocumentsDirectory();
     final normalized = p.normalize(value);
     return isWithinRoot(normalized, documents.path) ? normalized : null;
   }
@@ -26,7 +26,7 @@ class AppFileSafety {
         .where((path) => path.trim().isNotEmpty)
         .toSet();
     if (candidates.isEmpty) return;
-    final documents = await getApplicationDocumentsDirectory();
+    final documents = await getAppDocumentsDirectory();
     final uniquePaths = candidates
         .map(p.normalize)
         .where((path) => isWithinRoot(path, documents.path))

@@ -1,4 +1,6 @@
 import 'dart:convert';
+import 'protocol_tags.dart';
+import '../utils/thinking_blocks.dart';
 
 import 'locale_strings.dart';
 import '../models/chat_session_identity.dart';
@@ -404,11 +406,11 @@ abstract final class ThinkingModePolicy {
       zhCNTitle: 'Thinking',
       content: enabled
           ? L.pick(
-              en: 'Thinking Mode is on. Before the final reply, put the visible first-person thought process in <think>...</think>, using the reply language. Always provide a non-empty final reply after </think>. Keep clock, tool, and other protocol tags after </think>; never put them inside the thinking block.',
+              en: 'Thinking Mode is on. Before the final reply, put the visible first-person thought process in <think>...</think>, using the reply language. Always provide a non-empty final reply after </think>. Keep clock, tool, and other protocol tags after </think>; never put them inside the thinking block. Thinking may only be output in this format: one <think>...</think> block at the very start of the reply. Never write thinking into the reply body or any chat bubble, including in multi-bubble mode.',
               zhTW:
-                  'Thinking 模式已開啟。正常回覆前，使用回覆語言在 <think>...</think> 中呈現第一人稱思考過程；</think> 後必須提供非空白的正式回覆。所有 clock、tool 和其他協議標籤都必須放在 </think> 之後，不能放進思考區塊。',
+                  'Thinking 模式已開啟。正常回覆前，使用回覆語言在 <think>...</think> 中呈現第一人稱思考過程；</think> 後必須提供非空白的正式回覆。所有 clock、tool 和其他協議標籤都必須放在 </think> 之後，不能放進思考區塊。Thinking 只能按照此格式輸出：一組 <think>...</think>，放在回覆最開頭；不得把思考內容寫進正文或任何聊天氣泡（多氣泡模式也一樣）。',
               zhCN:
-                  'Thinking 模式已开启。正常回复前，使用回复语言在 <think>...</think> 中呈现第一人称思考过程；</think> 后必须提供非空白的正式回复。所有 clock、tool 和其他协议标签都必须放在 </think> 之后，不能放进思考区块。',
+                  'Thinking 模式已开启。正常回复前，使用回复语言在 <think>...</think> 中呈现第一人称思考过程；</think> 后必须提供非空白的正式回复。所有 clock、tool 和其他协议标签都必须放在 </think> 之后，不能放进思考区块。Thinking 只能按照此格式输出：一组 <think>...</think>，放在回复最开头；不得把思考内容写进正文或任何聊天气泡（多气泡模式也一样）。',
             )
           : L.pick(
               en: 'Thinking Mode is off. Return only the final reply. Do not output <think> or <thinking> tags, and do not imitate visible thought-process blocks from earlier assistant messages.',
@@ -458,14 +460,38 @@ abstract final class VisibleModelOutput {
     r'\[\[HOLT_ACTIONS\]\][\s\S]*$',
     caseSensitive: false,
   );
-  static const String _blockNames =
-      r'emo|emo_resolve|memo|memo_del|memo_merge|memo_update|memo_link|'
-      r'force_recall|persona_note|draw|clock|clock_keep|clock_update|clock_del|'
-      r'life_fix|home|whisper|search_chat|search_web|call|x_post|pack_star|'
-      r'email_draft|holt_diary|holt_persona_draft|tool_call|tool_calls';
-  static const String _standaloneNames =
-      r'scratch|transfer|transfer_accept|transfer_decline|buy|shop_view|'
-      r'sign_marriage|propose_marriage|decline_call|hangup';
+
+  /// 語音模型偶爾把草稿和「我重來」一起吐出來，例如
+  /// 「……草稿……Wait — I need to redo this cleanly.……正式版……」。
+  /// 只認這種明確的英文自我修正句，不碰一般對話。
+  static final RegExp _selfCorrectionMarker = RegExp(
+    r'(?:^|(?<=[\s。！？.!?…～]))'
+    r'(?:(?:wait|hold on|hmm|okay|ok|actually|sorry)\s*[,，—–-]*\s*)?'
+    r'(?:i need to|i should|let me|i\x27ll|i will|i have to)\s+'
+    r'(?:redo|rewrite|re-do|re-write)\s+(?:this|that|it)'
+    r'(?:\s+(?:cleanly|properly|again|correctly))?\s*[.!。！]?',
+    caseSensitive: false,
+  );
+
+  /// 有自我修正句時，只留最後一次修正之後的正式版；沒有就原樣返回。
+  static String dropSelfCorrectionDraft(String text) {
+    final matches = _selfCorrectionMarker.allMatches(text).toList();
+    if (matches.isEmpty) return text;
+    final tail = text.substring(matches.last.end).trim();
+    // 修正句後面什麼都沒有：至少把那句元評論拿掉，保留原本的內容。
+    if (tail.isEmpty) return text.replaceAll(_selfCorrectionMarker, '').trim();
+    return tail;
+  }
+
+  /// 只拿掉自我修正句本身（TTS 逐句朗讀用：草稿那句已經播出去了）。
+  static String removeSelfCorrectionMarkers(String text) =>
+      text.replaceAll(_selfCorrectionMarker, '');
+  static final String _blockNames = ProtocolTags.blockPattern;
+  static final String _standaloneNames = ProtocolTags.standalonePattern;
+
+  /// 只剝協議標籤（不動 Thinking）：氣泡顯示的保險層用。
+  static String protocolStripped(String raw) =>
+      _stripProtocol(raw, streaming: false);
 
   static final RegExp _completeBlock = RegExp(
     '<($_blockNames)\\b[^>]*>[\\s\\S]*?</\\1\\s*>',
@@ -494,6 +520,9 @@ abstract final class VisibleModelOutput {
 
     final danglingJson = _danglingJsonActionBlock.firstMatch(text);
     if (danglingJson != null) text = text.substring(0, danglingJson.start);
+
+    // 裸 JSON 動作：字串感知的括號配對，巢狀陣列不會只刪一半。
+    text = ProtocolTags.stripBareJsonActions(text);
 
     final dangling = _danglingBlock.firstMatch(text);
     if (dangling != null) text = text.substring(0, dangling.start);
@@ -526,7 +555,7 @@ abstract final class VisibleModelOutput {
   /// Plain final prose for titles, TTS, notifications and other utility paths.
   /// Thinking and every XML-like wrapper are removed fail-closed.
   static String finalOnly(String raw) {
-    var text = reply(raw, thinkingEnabled: false);
+    var text = reply(collapseRepeatedThinking(raw), thinkingEnabled: false);
     text = text.replaceAll(_anyXmlLikeTag, '');
     return text.trim();
   }
@@ -539,7 +568,8 @@ abstract final class VisibleModelOutput {
         _completeBlock.hasMatch(text) ||
         _danglingBlock.hasMatch(text) ||
         _standalone.hasMatch(text) ||
-        _anyXmlLikeTag.hasMatch(text);
+        _anyXmlLikeTag.hasMatch(text) ||
+        ProtocolTags.bareJsonActionStart.hasMatch(text);
   }
 }
 

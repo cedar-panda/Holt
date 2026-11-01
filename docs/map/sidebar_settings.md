@@ -16,6 +16,8 @@
 - 成本設定載入／本地狀態：`lib/widgets/sidebar/sidebar_behavior_settings.dart:_SidebarBehaviorSettingsState._load`
 - 數字設定失焦提交：`_CommittedCountFieldState._handleFocusChange`、`_commit`
 - 中轉站能力設定：`lib/screens/api_settings_screen.dart:_loadSettings`、`_saveSettings`，UI 在 `lib/widgets/api_compatible_provider_settings_card.dart:ApiCompatibleProviderSettingsCard.build`。
+- 聲音模型與全域 Voice ID：`lib/widgets/sidebar/sidebar_model_settings.dart:_buildVoiceModel`、`_addTtsVoiceId`、`_removeTtsVoiceId`、`_editVoiceIdLabel`；角色專屬綁定另見 `voice_tts.md`。
+- 功能模組組合：`lib/screens/cost_context_screen.dart:_saveFeaturePreset`、`_activateFeaturePreset`、`_deleteFeaturePreset`；持久化由 `ToolFeatureSettings.savePreset`／`activatePreset` 負責。
 - 回覆通知：`lib/widgets/sidebar/sidebar_feature_settings.dart:_SidebarFeatureSettingsState._setReplyNotifications`；平台權限與通知行為由 `ReplyNotificationService` 負責。
 
 ## 誰讀取、怎麼注入（檔案：函式；注入 prompt 的哪一層）
@@ -30,8 +32,13 @@
 
 ## 相關開關
 - 「模型與連線」「系統行為」「功能模組開關」「用量」等大區塊。
+- 「其他功能模型設定 → 聲音模型」可選來源／模型／預設聲音；ElevenLabs 可直接新增、命名、選擇與移除 Voice ID，列表固定保留 ID 供辨識。
+- 「功能模組」右上角加號可把目前的畫圖、貝殼、日記、工具提示、首頁問候與郵件開關保存為具名組合；同一時間最多一組被標記為 RP 自動套用。
 - 「回覆通知」預設開啟；關閉後不發 iOS／Android 本機完成通知，再次開啟會向系統重新請求通知權限。
 - 無關聯群組展開時會收起上一組；同組是否互斥由 `exclusiveWithinGroup` 決定。
+- 大分組標題（模型與連線／系統行為／功能模組開關）字級 12.5、下方留 12pt；第二組起上方有左右漸隱分隔線，作為分組層級。
+- 標題列不再使用左側狀態光點；展開箭頭放在標題與問號之間，與右側 Switch 分離，避免狹窄區域誤觸。上下文限制、緩存命中與世界書仍可用 chevron 獨立收展。
+- `SidebarAccordionSection.didUpdateWidget` 恢復持久設定的初始展開狀態時不啟動協調器；只有 user 手動展開才會收起不相關區塊，避免非同步載入時互擠。
 - 上下文限制與緩存命中只在首次掛載時讀取持久設定；後續切換先更新本地狀態再保存，避免任意 `setState` 令開關短暫回到預設值。
 - 數字欄位只在編輯結束時保存；收起手風琴、滑動關閉側邊欄或鍵盤 Done 造成的失焦都會提交，避免 `18` 被非同步拆成 `1`／`18` 競態。
 

@@ -61,7 +61,41 @@ extension _HomeProfileMethods on _HomeScreenState {
     }());
   }
 
+  /// 「我的」頁的大標題按鍵：按下微縮、水波，全部在獨立圖層裡跑，
+  /// 不會帶著整頁（頭像、紀念日、模糊光暈）每幀重畫。
   Widget _buildGridTile({
+    required String title,
+    required IconData icon,
+    required VoidCallback onTap,
+    Widget? customIcon,
+    double? height,
+    bool isSecondary = false,
+    Color? iconColor,
+    bool glowIcon = false,
+    bool hideText = false,
+    Color? imagePrimaryForeground,
+    Color? imageSecondaryForeground,
+  }) {
+    return _ProfileTilePress(
+      child: RepaintBoundary(
+        child: _buildGridTileContent(
+          title: title,
+          icon: icon,
+          onTap: onTap,
+          customIcon: customIcon,
+          height: height,
+          isSecondary: isSecondary,
+          iconColor: iconColor,
+          glowIcon: glowIcon,
+          hideText: hideText,
+          imagePrimaryForeground: imagePrimaryForeground,
+          imageSecondaryForeground: imageSecondaryForeground,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildGridTileContent({
     required String title,
     required IconData icon,
     required VoidCallback onTap,
@@ -83,7 +117,7 @@ extension _HomeProfileMethods on _HomeScreenState {
 
     final iconSize = hideText ? 32.0 : (isSecondary ? 28.0 : 34.0);
     final fontSize = isSecondary ? 13.5 : 16.0;
-    final fontWeight = isSecondary ? FontWeight.w500 : FontWeight.w600;
+    final fontWeight = FontWeight.w400;
     final textColor = isSecondary
         ? imageSecondaryForeground ?? YanciTheme.textSecondary
         : imagePrimaryForeground ?? YanciTheme.textPrimary;
@@ -116,81 +150,98 @@ extension _HomeProfileMethods on _HomeScreenState {
             ],
           )
         : baseIcon;
+    // 光暈是兩層模糊，很貴：單獨一層，按鍵水波重畫時不跟著重算。
+    final iconLayer = glowIcon
+        ? RepaintBoundary(child: iconWidget)
+        : iconWidget;
 
     if (isSecondary && !hideText) {
-      return GestureDetector(
-        onTap: onTap,
-        behavior: HitTestBehavior.opaque,
-        child: SizedBox(
-          width: double.infinity,
-          height: height,
-          child: Center(
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                SizedBox(width: 34, child: Center(child: iconWidget)),
-                const SizedBox(width: 8),
-                SizedBox(
-                  width: 86,
-                  child: Text(
-                    title,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      fontSize: fontSize,
-                      fontWeight: fontWeight,
-                      color: textColor,
-                      fontFamily: YanciTheme.fontFamily,
-                      height: 1.2,
+      return Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(YanciTheme.radiusSm),
+          splashColor: effectiveAccent.withValues(alpha: 0.08),
+          highlightColor: effectiveAccent.withValues(alpha: 0.04),
+          child: SizedBox(
+            width: double.infinity,
+            height: height,
+            child: Center(
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  SizedBox(width: 34, child: Center(child: iconLayer)),
+                  const SizedBox(width: 8),
+                  SizedBox(
+                    width: 86,
+                    child: Text(
+                      title,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: fontSize,
+                        fontWeight: fontWeight,
+                        color: textColor,
+                        fontFamily: YanciTheme.fontFamily,
+                        height: 1.2,
+                      ),
                     ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ),
       );
     }
 
-    return GestureDetector(
-      onTap: onTap,
-      behavior: HitTestBehavior.opaque,
-      child: SizedBox(
-        width: double.infinity,
-        height: height,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 8),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              if (!isSecondary)
-                iconWidget
-              else if (hideText)
-                iconWidget
-              else ...[
-                iconWidget,
-                const SizedBox(width: 10),
-              ],
-              if (!hideText) ...[
-                if (!isSecondary) const SizedBox(width: 12),
-                Flexible(
-                  child: Text(
-                    title,
-                    maxLines: isSecondary ? 2 : 1,
-                    overflow: TextOverflow.ellipsis,
-                    textAlign: isSecondary ? TextAlign.left : TextAlign.center,
-                    style: TextStyle(
-                      fontSize: fontSize,
-                      fontWeight: fontWeight,
-                      color: textColor,
-                      fontFamily: YanciTheme.fontFamily,
-                      height: isSecondary ? 1.2 : null,
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(YanciTheme.radiusSm),
+        splashColor: effectiveAccent.withValues(alpha: 0.08),
+        highlightColor: effectiveAccent.withValues(alpha: 0.04),
+        child: SizedBox(
+          width: double.infinity,
+          height: height,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                if (!isSecondary)
+                  iconLayer
+                else if (hideText)
+                  iconLayer
+                else ...[
+                  iconLayer,
+                  const SizedBox(width: 10),
+                ],
+                if (!hideText) ...[
+                  if (!isSecondary) const SizedBox(width: 12),
+                  Flexible(
+                    child: Text(
+                      title,
+                      maxLines: isSecondary ? 2 : 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: fontSize,
+                        fontWeight: fontWeight,
+                        color: textColor,
+                        fontFamily: YanciTheme.fontFamily,
+                        height: isSecondary ? 1.2 : null,
+                      ),
                     ),
                   ),
-                ),
+                  // 右側放一塊與「圖示＋間距」等寬的空白，讓文字本身落在
+                  // 整格正中，而不是「圖示＋文字」整組置中（文字會偏右）。
+                  if (!isSecondary) SizedBox(width: iconSize + 12),
+                ],
               ],
-            ],
+            ),
           ),
         ),
       ),
@@ -531,6 +582,101 @@ extension _HomeProfileMethods on _HomeScreenState {
         ),
       ),
     );
+  }
+
+  /// 從 HoltBackup（或上一份 HoltBackup.prev）還原：選哪一份 → 確認覆蓋 → 還原。
+  Future<void> _handleRestoreLocalBackup() async {
+    final times = await BackupService.localBackupTimes();
+    if (!mounted) return;
+    if (times.current == null && times.previous == null) {
+      showThemedPillNotice(
+        context,
+        L.pick(
+          en: 'No auto backup yet',
+          zhTW: '還沒有自動備份',
+          zhCN: '还没有自动备份',
+        ),
+      );
+      return;
+    }
+    final usePrevious = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: YanciTheme.themedOverlaySurface,
+        surfaceTintColor: Colors.transparent,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: BorderSide(color: YanciTheme.themedOverlayBorder, width: 0.8),
+        ),
+        title: Text(
+          L.pick(
+            en: 'Restore from auto backup',
+            zhTW: '從自動備份還原',
+            zhCN: '从自动备份还原',
+          ),
+          style: YanciTheme.headingMedium,
+        ),
+        content: Text(
+          L.pick(
+            en: 'This replaces all current chats, characters and settings. Images and voices on this device are kept.',
+            zhTW: '會用備份整個覆蓋目前的對話、角色與設定。本機的圖片和語音檔不受影響。',
+            zhCN: '会用备份整个覆盖当前的对话、角色与设置。本机的图片和语音文件不受影响。',
+          ),
+          style: YanciTheme.bodySmall,
+        ),
+        actions: [
+          TextButton(
+            style: TextButton.styleFrom(
+              foregroundColor: YanciTheme.textSecondary,
+            ),
+            onPressed: () => Navigator.pop(ctx),
+            child: Text(L.get('cancel')),
+          ),
+          if (times.previous != null)
+            TextButton(
+              style: TextButton.styleFrom(foregroundColor: YanciTheme.accent),
+              onPressed: () => Navigator.pop(ctx, true),
+              child: Text(
+                L.pick(
+                  en: 'Previous (${_formatBackupTime(times.previous)})',
+                  zhTW: '上一份（${_formatBackupTime(times.previous)}）',
+                  zhCN: '上一份（${_formatBackupTime(times.previous)}）',
+                ),
+              ),
+            ),
+          if (times.current != null)
+            TextButton(
+              style: TextButton.styleFrom(foregroundColor: Colors.red.shade400),
+              onPressed: () => Navigator.pop(ctx, false),
+              child: Text(
+                L.pick(
+                  en: 'Latest (${_formatBackupTime(times.current)})',
+                  zhTW: '最新（${_formatBackupTime(times.current)}）',
+                  zhCN: '最新（${_formatBackupTime(times.current)}）',
+                ),
+                style: const TextStyle(fontWeight: FontWeight.w600),
+              ),
+            ),
+        ],
+      ),
+    );
+    if (usePrevious == null || !mounted) return;
+    showThemedPillNotice(context, L.get('backup_importing'));
+    try {
+      final result = await BackupService.restoreLocalBackup(
+        previous: usePrevious,
+      );
+      await _reloadHomeAfterRestore();
+      if (!mounted) return;
+      showThemedPillNotice(context, L.fmt('backup_import_done', [result]));
+    } catch (e) {
+      if (!mounted) return;
+      showThemedPillNotice(
+        context,
+        L.fmt('backup_error', [e.toString()]),
+        tone: ThemedNoticeTone.error,
+      );
+    }
   }
 
   Future<void> _handleImportBackup() async {
@@ -1141,6 +1287,25 @@ extension _HomeProfileMethods on _HomeScreenState {
                       Navigator.pop(sheetContext, _BackupSheetAction.import);
                     },
                   ),
+                  const SizedBox(height: 8),
+                  _buildBackupSheetAction(
+                    icon: Icons.settings_backup_restore_rounded,
+                    title: L.pick(
+                      en: 'Restore from auto backup',
+                      zhTW: '從自動備份還原',
+                      zhCN: '从自动备份还原',
+                    ),
+                    subtitle:
+                        '${L.fmt('me_backup_last', [_formatBackupTime(_lastLocalBackupAt)])}'
+                        '${L.pick(en: ' · previous copy also kept', zhTW: '・另保留上一份', zhCN: '・另保留上一份')}',
+                    warning: true,
+                    onTap: () {
+                      Navigator.pop(
+                        sheetContext,
+                        _BackupSheetAction.restoreLocal,
+                      );
+                    },
+                  ),
                 ],
               ),
             ),
@@ -1181,6 +1346,8 @@ extension _HomeProfileMethods on _HomeScreenState {
         await _handleExternalChatImport();
       case _BackupSheetAction.import:
         await _handleImportBackup();
+      case _BackupSheetAction.restoreLocal:
+        await _handleRestoreLocalBackup();
       case _BackupSheetAction.cleanup:
         await _confirmDeleteLegacyExports(legacyStats);
     }
@@ -1439,6 +1606,63 @@ class _BackupPasswordDialogState extends State<_BackupPasswordDialog> {
           ),
         ),
       ],
+    );
+  }
+}
+
+
+/// 按下時輕輕縮到 0.97，放開彈回。只動 transform，不觸發子樹重畫，
+/// 搭配外層 RepaintBoundary，整段動畫只是合成層位移，60/120Hz 都順。
+class _ProfileTilePress extends StatefulWidget {
+  final Widget child;
+
+  const _ProfileTilePress({required this.child});
+
+  @override
+  State<_ProfileTilePress> createState() => _ProfileTilePressState();
+}
+
+class _ProfileTilePressState extends State<_ProfileTilePress> {
+  static const double _pressedScale = 0.97;
+  static const Duration _pressIn = Duration(milliseconds: 90);
+  static const Duration _release = Duration(milliseconds: 220);
+
+  /// 手指移動超過這段距離（邏輯像素，同系統觸控容差）就當作在捲動。
+  static const double _cancelSlop = 18;
+
+  bool _pressed = false;
+  Offset? _downAt;
+
+  void _set(bool pressed) {
+    if (_pressed == pressed) return;
+    setState(() => _pressed = pressed);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final reduceMotion = MediaQuery.disableAnimationsOf(context);
+    return Listener(
+      onPointerDown: (event) {
+        _downAt = event.position;
+        _set(true);
+      },
+      // 手指一滑就是要捲動頁面，不是按鍵：立刻彈回，不要縮著跟著捲。
+      onPointerMove: (event) {
+        final start = _downAt;
+        if (start != null && (event.position - start).distance > _cancelSlop) {
+          _set(false);
+        }
+      },
+      onPointerUp: (_) => _set(false),
+      onPointerCancel: (_) => _set(false),
+      child: AnimatedScale(
+        scale: _pressed && !reduceMotion ? _pressedScale : 1,
+        duration: reduceMotion
+            ? Duration.zero
+            : (_pressed ? _pressIn : _release),
+        curve: _pressed ? Curves.easeOutCubic : Curves.easeOutBack,
+        child: widget.child,
+      ),
     );
   }
 }

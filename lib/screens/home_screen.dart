@@ -5,6 +5,7 @@ import 'dart:io';
 import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import '../desktop/desktop_layout.dart';
 import 'package:uuid/uuid.dart';
 import '../widgets/shop_backpack_sheets.dart';
 import 'package:file_picker/file_picker.dart';
@@ -13,7 +14,6 @@ import 'package:share_plus/share_plus.dart';
 import '../theme/app_theme.dart';
 import '../services/locale_strings.dart';
 import '../main.dart' show themeNotifier;
-import '../widgets/coin_amount_text.dart';
 import '../widgets/gradient_background.dart';
 import '../widgets/ambient_particles.dart';
 import '../memory/database.dart';
@@ -48,6 +48,7 @@ import '../widgets/user_persona_switcher.dart';
 import '../widgets/anniversary_panel.dart';
 import '../services/settings/context_mode_settings.dart';
 import '../utils/latest_request_gate.dart';
+import '../utils/character_display_name.dart';
 import 'manual_summary_clean_screen.dart';
 import 'profile_screen.dart';
 import 'character_list_screen.dart';
@@ -66,7 +67,15 @@ part 'home_screen_painters.dart';
 
 enum _BackupExportMode { save, share }
 
-enum _BackupSheetAction { sync, save, share, importExternal, import, cleanup }
+enum _BackupSheetAction {
+  sync,
+  save,
+  share,
+  importExternal,
+  import,
+  restoreLocal,
+  cleanup,
+}
 
 /// 主頁 — 角色輪盤 + 水晶球 + 底部導航
 class HomeScreen extends StatefulWidget {
@@ -152,6 +161,9 @@ class _HomeScreenState extends State<HomeScreen>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     ContextModeSettings.revision.addListener(_handleContextModeChanged);
+    CharacterSignatureService.displayedChanges.addListener(
+      _handleSignatureChanged,
+    );
     ToolFeatureSettings.state.addListener(_handleToolFeaturesChanged);
     BackgroundPresetService.revision.addListener(
       _handleBackgroundPresetsChanged,
@@ -182,7 +194,7 @@ class _HomeScreenState extends State<HomeScreen>
 
     _refreshLastBackupTime();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _runAutoLocalBackup(force: true);
+      if (mounted) _runAutoLocalBackup();
     });
     _autoBackupTimer = Timer.periodic(
       _autoBackupInterval,
@@ -276,6 +288,9 @@ class _HomeScreenState extends State<HomeScreen>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     ContextModeSettings.revision.removeListener(_handleContextModeChanged);
+    CharacterSignatureService.displayedChanges.removeListener(
+      _handleSignatureChanged,
+    );
     ToolFeatureSettings.state.removeListener(_handleToolFeaturesChanged);
     BackgroundPresetService.revision.removeListener(
       _handleBackgroundPresetsChanged,
@@ -366,11 +381,17 @@ class _HomeScreenState extends State<HomeScreen>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.paused ||
-        state == AppLifecycleState.inactive ||
+    if (state == AppLifecycleState.inactive) {
+      // iOS enters inactive for transient interruptions such as Control Centre
+      // and system overlays. A full SQLite VACUUM snapshot here can otherwise
+      // run repeatedly without the app actually leaving the foreground.
+      _ecgController.stop();
+    } else if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.detached) {
       _ecgController.stop();
-      _runAutoLocalBackup(force: true);
+      // Preserve the hourly local backup guarantee without force-writing the
+      // entire database at every foreground/background transition.
+      unawaited(_runAutoLocalBackup());
     } else if (state == AppLifecycleState.resumed) {
       _syncHomeAnimations();
       _refreshLastBackupTime();
@@ -626,17 +647,11 @@ class _HomeScreenState extends State<HomeScreen>
       if (latestId != null) await UserPersonaService.selectPersona(latestId);
       return;
     }
-    final mode = await ContextModeSettings.effectiveMode(_activeCharacterId);
-    if (generation != _personaSelectionGeneration) return;
-    final companionId = await UserPersonaService.companionIdForPersona(
-      personaId: persona.id,
-      contextMode: mode,
-    );
-    if (generation != _personaSelectionGeneration) return;
-    if (companionId != null && companionId != _activeCharacterId) {
-      await _selectCharacter(companionId, syncPersonaFromCharacter: false);
-    }
-    if (generation != _personaSelectionGeneration) return;
+    // Selecting a User persona is an identity choice, not a character
+    // navigation command.  A bound character may still restore its explicit
+    // persona when that character is selected, but an unbound character must
+    // use whichever persona the user chose here without silently jumping to a
+    // different companion.
     await _loadPersonaShelf();
   }
 
@@ -671,7 +686,12 @@ class _HomeScreenState extends State<HomeScreen>
       ContextModeSettings.getGlobalRpEnabled(),
       ToolFeatureSettings.load(),
     ]);
-    final chars = results[0] as List<Map<String, dynamic>>;
+    final rawChars = results[0] as List<Map<String, dynamic>>;
+    final starredIds = await UserSettings.getStarredCharacterIds();
+    final chars = <Map<String, dynamic>>[
+      ...rawChars.where((character) => starredIds.contains(character['id'])),
+      ...rawChars.where((character) => !starredIds.contains(character['id'])),
+    ];
     final globalRp = results[1] as bool;
     final toolFeatures = results[2] as ToolFeatureState;
     final requestedActiveId =
@@ -722,6 +742,19 @@ class _HomeScreenState extends State<HomeScreen>
       _globalRpEnabled = globalRp;
       _shellEconomyEnabled = toolFeatures.shellEconomyEnabled;
     });
+    if (chars.length > 10 && starredIds.isEmpty) {
+      final shouldShowHint = await UserSettings.markCharacterStarHintShown();
+      if (mounted && shouldShowHint) {
+        showThemedPillNotice(
+          context,
+          L.pick(
+            en: 'You have more than 10 characters. Star favorites in All characters to keep them at the front of Home.',
+            zhTW: '角色已超過 10 位，可在「全部角色」加上星標，讓常用角色排在首頁最前方。',
+            zhCN: '角色已超过 10 位，可在“全部角色”加上星标，让常用角色排在首页最前方。',
+          ),
+        );
+      }
+    }
     if (activeId != requestedActiveId) {
       unawaited(UserSettings.saveActiveCharacterId(activeId));
     }
@@ -741,15 +774,23 @@ class _HomeScreenState extends State<HomeScreen>
     }
   }
 
-  Future<void> _showSignatureHistoryFor(String characterId) async {
-    final selected = await showCharacterSignatureHistory(context, characterId);
-    if (!mounted || selected == null) return;
-    final index = _characters.indexWhere((row) => row['id'] == characterId);
-    if (index < 0) return;
+  Future<void> _showSignatureHistoryFor(String characterId) =>
+      showCharacterSignatureHistory(context, characterId);
+
+  /// 任何地方換了顯示中的簽名（首頁、角色頁、背景生成）都同步到這頁。
+  void _handleSignatureChanged() {
+    final change = CharacterSignatureService.displayedChanges.value;
+    if (!mounted || change == null) return;
+    final index = _characters.indexWhere(
+      (row) => row['id'] == change.characterId,
+    );
+    if (index < 0 || _characters[index]['signature'] == change.signature) {
+      return;
+    }
     setState(() {
       _characters[index] = <String, dynamic>{
         ..._characters[index],
-        'signature': selected,
+        'signature': change.signature,
       };
     });
   }
@@ -1101,7 +1142,10 @@ class _HomeScreenState extends State<HomeScreen>
       child: Scaffold(
         extendBody: true,
         backgroundColor: Colors.transparent,
-        body: SafeArea(child: _buildCurrentPage()),
+        // 底部不在這裡留白：角色頁要能捲到懸浮導航欄底下（像聊天列表
+        // 滑到輸入框底下），不再在導航欄頂端被硬切一刀。首頁／我的
+        // 各自在 _buildCurrentPage 內保留原本的底部安全區，版面不變。
+        body: SafeArea(bottom: false, child: _buildCurrentPage()),
         bottomNavigationBar: YanciBottomNavBar(
           activeIndex: _currentTab,
           reduceMotion: _reduceMotion,
@@ -1127,8 +1171,24 @@ class _HomeScreenState extends State<HomeScreen>
                 unawaited(_loadCharacters(selectId: id)),
           ),
         ),
-        TickerMode(enabled: _currentTab == 1, child: _buildHomePage()),
-        TickerMode(enabled: _currentTab == 2, child: _buildProfilePage()),
+        TickerMode(
+          enabled: _currentTab == 1,
+          child: SafeArea(
+            top: false,
+            left: false,
+            right: false,
+            child: _buildHomePage(),
+          ),
+        ),
+        TickerMode(
+          enabled: _currentTab == 2,
+          child: SafeArea(
+            top: false,
+            left: false,
+            right: false,
+            child: _buildProfilePage(),
+          ),
+        ),
       ],
     );
   }
@@ -1235,6 +1295,8 @@ class _HomeScreenState extends State<HomeScreen>
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
+                  // Windows 寬視窗側邊欄已經釘在左邊，不需要打開按鈕。
+                  if (!DesktopLayout.isDocked(context))
                   Tooltip(
                     message: L.pick(
                       en: 'Open settings',
@@ -1256,49 +1318,7 @@ class _HomeScreenState extends State<HomeScreen>
                       ),
                     ),
                   ),
-                  if (_shellEconomyEnabled) ...[
-                    const SizedBox(width: 2),
-                    Tooltip(
-                      message: L.pick(
-                        en: 'Open Shell Shop',
-                        zhTW: '點擊餘額進入貝殼商店',
-                        zhCN: '点击余额进入贝壳商店',
-                      ),
-                      child: Semantics(
-                        button: true,
-                        label: L.pick(
-                          en: 'Shell balance $_userCoins; open shop',
-                          zhTW: '貝殼餘額 $_userCoins；進入商店',
-                          zhCN: '贝壳余额 $_userCoins；进入商店',
-                        ),
-                        child: InkWell(
-                          borderRadius: BorderRadius.circular(12),
-                          onTap: () => unawaited(_showShopBottomSheet(context)),
-                          child: ConstrainedBox(
-                            constraints: const BoxConstraints(minHeight: 44),
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 6,
-                              ),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Image.asset(
-                                    'assets/images/shell_coin.png',
-                                    width: 20,
-                                    height: 20,
-                                    filterQuality: FilterQuality.none,
-                                  ),
-                                  const SizedBox(width: 6),
-                                  CoinAmountText(_userCoins),
-                                ],
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
+                  // 貝殼餘額只在側邊欄顯示（首頁左上角不再重複）。
                 ],
               ),
             ),

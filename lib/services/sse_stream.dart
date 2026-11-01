@@ -39,6 +39,34 @@ class StreamEndedWithReasonException implements Exception {
   );
 }
 
+/// OpenAI 相容串流在 HTTP 200 之後，於 SSE 事件裡回報的錯誤
+/// （例如 OpenRouter 的 `data: {"error": {...}, "choices": [{"finish_reason": "error"}]}`，
+/// 後面常常還跟著 `[DONE]`）。以前被當成正常結束，回覆變成一則空訊息；
+/// 現在拋出，交給既有的 API 失敗流程顯示。
+class StreamPayloadException implements Exception {
+  StreamPayloadException(this.message);
+
+  final String message;
+
+  /// 事件 JSON 帶 `error` 欄位時拋出；沒有就什麼都不做。
+  static void throwIfPresent(Object? event, {required String provider}) {
+    if (event is! Map) return;
+    final error = event['error'];
+    if (error == null) return;
+    final code = error is Map ? (error['code']?.toString() ?? '') : '';
+    final detail = error is Map ? jsonEncode(error) : error.toString();
+    // 保留「API 錯誤 <code>: <body>」格式，讓 ApiErrorLocalizer 能辨識狀態碼。
+    throw StreamPayloadException(
+      code.isEmpty
+          ? '$provider 串流錯誤: $detail'
+          : 'API 錯誤 $code: $detail',
+    );
+  }
+
+  @override
+  String toString() => message;
+}
+
 abstract final class StreamTerminalGuard {
   static void requireOpenAiCompatible({
     required String provider,

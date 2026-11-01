@@ -7,9 +7,11 @@ import 'package:uuid/uuid.dart';
 import '../theme/app_theme.dart';
 import '../services/locale_strings.dart';
 import '../widgets/gradient_background.dart';
+import '../widgets/scroll_edge_fade.dart';
 import '../widgets/character_quick_picker.dart';
 import '../memory/database.dart';
 import '../services/marriage_service.dart';
+import '../services/character_signature_service.dart';
 import '../services/settings_manager.dart';
 import 'saved_messages_screen.dart';
 import '../widgets/character_timeline_panel.dart';
@@ -44,6 +46,7 @@ class CharacterListScreen extends StatefulWidget {
 }
 
 class _CharacterListScreenState extends State<CharacterListScreen> {
+  final ScrollController _listScrollController = ScrollController();
   List<Map<String, dynamic>> _characters = [];
   String _activeId = 'default';
   bool _isLoading = true;
@@ -60,6 +63,9 @@ class _CharacterListScreenState extends State<CharacterListScreen> {
     super.initState();
     _pageCtrl = PageController(viewportFraction: 0.82);
     ContextModeSettings.revision.addListener(_load);
+    CharacterSignatureService.displayedChanges.addListener(
+      _handleSignatureChanged,
+    );
     _load();
   }
 
@@ -75,8 +81,133 @@ class _CharacterListScreenState extends State<CharacterListScreen> {
   void dispose() {
     _loadGate.invalidate();
     ContextModeSettings.revision.removeListener(_load);
+    CharacterSignatureService.displayedChanges.removeListener(
+      _handleSignatureChanged,
+    );
     _pageCtrl.dispose();
+    _listScrollController.dispose();
     super.dispose();
+  }
+
+  Widget _buildListScroll(BuildContext context) {
+    return SingleChildScrollView(
+      controller: _listScrollController,
+      // 嵌在首頁時內容延伸到懸浮導航欄底下：底部多留導航欄高度，
+      // 最後一段仍可完整捲到導航欄上方，平時則從導航欄底下透出。
+      padding: EdgeInsets.only(
+        bottom:
+            24 + (widget.embedded ? MediaQuery.paddingOf(context).bottom : 0),
+      ),
+      child: Column(
+        children: [
+          const SizedBox(height: 12),
+
+          // ═══ 橫向卡片輪盤 ═══
+          _isLoading
+              ? const Padding(
+                  padding: EdgeInsets.all(40),
+                  child: CircularProgressIndicator(),
+                )
+              : _characters.isEmpty
+              ? Padding(
+                  padding: const EdgeInsets.all(40),
+                  child: Column(
+                    children: [
+                      Icon(
+                        Icons.person_add_outlined,
+                        size: 48,
+                        color: YanciTheme.textSecondary.withValues(alpha: 0.3),
+                      ),
+                      const SizedBox(height: 12),
+                      Text(
+                        L.get('char_empty_hint'),
+                        textAlign: TextAlign.center,
+                        style: YanciTheme.bodySmall.copyWith(
+                          color: YanciTheme.textSecondary.withValues(
+                            alpha: 0.5,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                )
+              : SizedBox(
+                  height:
+                      (MediaQuery.sizeOf(context).height * 0.4).clamp(
+                        320.0,
+                        380.0,
+                      ) +
+                      ((YanciTheme.fontScale *
+                                      MediaQuery.textScalerOf(
+                                        context,
+                                      ).scale(1) -
+                                  1)
+                              .clamp(0.0, 1.0) *
+                          72),
+                  child: PageView.builder(
+                    controller: _pageCtrl,
+                    itemCount: _characters.length,
+                    onPageChanged: (i) {
+                      HapticFeedback.selectionClick();
+                      setState(() => _currentPage = i);
+                    },
+                    itemBuilder: (ctx, i) => _buildCard(_characters[i], i),
+                  ),
+                ),
+
+          // ═══ 頁面指示器 ═══
+          if (_characters.length > 1)
+            Padding(
+              padding: const EdgeInsets.only(top: 12),
+              child: _buildPageIndicator(),
+            ),
+
+          const SizedBox(height: 16),
+
+          const SizedBox(height: 20),
+
+          // ═══ 時間線 ═══
+          if (_characters.isNotEmpty &&
+              _timelineEnabled &&
+              !_currentCharacterIsRp)
+            CharacterTimelinePanel(
+              key: ValueKey('timeline-$_currentCharId'),
+              characterId: _currentCharId,
+              modeOverride: ContextMode.daily,
+              showContextModeControl: false,
+              initiallyCollapsed: true,
+            ),
+          // The diary archive is a stable Daily-mode destination.
+          // Its feature switch controls model writing only; it
+          // must not make previously written entries or the empty
+          // archive affordance disappear.
+          if (_characters.isNotEmpty && !_currentCharacterIsRp)
+            CharacterDiaryReader(
+              key: ValueKey('daily-diary-$_currentCharId'),
+              characterId: _currentCharId,
+            ),
+          if (_characters.isNotEmpty && _currentCharacterIsRp)
+            RpStorylineEntry(
+              key: ValueKey('rp-storylines-$_currentCharId'),
+              characterId: _currentCharId,
+            ),
+          if (_characters.isNotEmpty &&
+              _selfNotesEnabled &&
+              !_currentCharacterIsRp) ...[
+            const SizedBox(height: 16),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(28, 0, 28, 24),
+              child: CharacterSelfNotesPanel(
+                key: ValueKey('self-notes-timeline-$_currentCharId'),
+                characterId: _currentCharId,
+                embedded: true,
+                initiallyCollapsed: false,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
   }
 
   Future<void> _load() async {
@@ -157,19 +288,29 @@ class _CharacterListScreenState extends State<CharacterListScreen> {
 
   Future<void> _setCurrentMode(ContextMode mode) async {
     if (_characters.isEmpty) return;
-    if (_globalRpEnabled) {
-      showContextModeNotice(
-        context,
-        L.pick(
-          en: 'Global RP mode currently controls this character.',
-          zhTW: '目前由全域 RP 模式控制該夥伴。',
-          zhCN: '目前由全局 RP 模式控制该伙伴。',
-        ),
-      );
-      return;
-    }
     final characterId = _currentCharId;
-    await ContextModeSettings.setCharacterPreferredMode(characterId, mode);
+    var preferredModeSaved = false;
+    if (_globalRpEnabled) {
+      if (mode != ContextMode.daily) return;
+      final confirmed = await confirmDisableGlobalRp(context);
+      if (!mounted || !confirmed) return;
+      // 先存角色偏好，再解除全域覆蓋；任一步失敗都不會讓既有 RP
+      // 對話改變身份，成功後 revision 會讓所有相關頁面同步刷新。
+      await ContextModeSettings.setCharacterPreferredMode(characterId, mode);
+      preferredModeSaved = true;
+      await ContextModeSettings.setGlobalRpEnabled(false);
+      if (!mounted) return;
+      setState(() {
+        _globalRpEnabled = false;
+        _characters[_currentPage] = <String, dynamic>{
+          ..._characters[_currentPage],
+          'preferred_context_mode': mode.storageValue,
+        };
+      });
+    }
+    if (!preferredModeSaved) {
+      await ContextModeSettings.setCharacterPreferredMode(characterId, mode);
+    }
     final differs = await ContextModeSettings.latestWindowDiffers(
       characterId,
       mode,
@@ -202,15 +343,87 @@ class _CharacterListScreenState extends State<CharacterListScreen> {
     showContextModeNotice(context, '$base$next');
   }
 
-  Future<void> _showSignatureHistoryFor(String characterId) async {
-    final selected = await showCharacterSignatureHistory(context, characterId);
-    if (!mounted || selected == null) return;
+  Future<void> _showSignatureHistoryFor(String characterId) =>
+      showCharacterSignatureHistory(context, characterId);
+
+  /// 任何地方換了顯示中的簽名（首頁、角色頁、背景生成）都同步到這頁。
+  void _handleSignatureChanged() {
+    final change = CharacterSignatureService.displayedChanges.value;
+    if (!mounted || change == null) return;
+    final index = _characters.indexWhere(
+      (row) => row['id'] == change.characterId,
+    );
+    if (index < 0 || _characters[index]['signature'] == change.signature) {
+      return;
+    }
+    setState(() {
+      _characters[index] = <String, dynamic>{
+        ..._characters[index],
+        'signature': change.signature,
+      };
+    });
+  }
+
+  Future<void> _editCharacterRemark(
+    String characterId,
+    String characterName,
+    String currentRemark,
+  ) async {
+    final controller = TextEditingController(text: currentRemark);
+    final nextRemark = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: YanciTheme.surfacePanel,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(YanciTheme.radiusMd),
+        ),
+        title: Text(
+          L.pick(
+            en: 'Remark for $characterName',
+            zhTW: '給$characterName改備注',
+            zhCN: '给$characterName改备注',
+          ),
+          style: YanciTheme.headingMedium.copyWith(fontWeight: FontWeight.w400),
+        ),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          maxLength: 24,
+          textInputAction: TextInputAction.done,
+          decoration: YanciTheme.themedInputDecoration(
+            hintText: L.pick(
+              en: 'Shown in chat instead of the original name',
+              zhTW: '對話中會優先顯示這個稱呼',
+              zhCN: '对话中会优先显示这个称呼',
+            ),
+          ),
+          onSubmitted: (value) => Navigator.pop(dialogContext, value.trim()),
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: Text(L.pick(en: 'Cancel', zhTW: '取消', zhCN: '取消')),
+          ),
+          TextButton(
+            onPressed: () =>
+                Navigator.pop(dialogContext, controller.text.trim()),
+            child: Text(L.pick(en: 'Save', zhTW: '儲存', zhCN: '保存')),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (!mounted || nextRemark == null || nextRemark == currentRemark) return;
+    await DatabaseHelper.updateCharacter(characterId, <String, dynamic>{
+      'remark': nextRemark,
+    });
+    if (!mounted) return;
     final index = _characters.indexWhere((row) => row['id'] == characterId);
     if (index < 0) return;
     setState(() {
       _characters[index] = <String, dynamic>{
         ..._characters[index],
-        'signature': selected,
+        'remark': nextRemark,
       };
     });
   }
@@ -361,7 +574,7 @@ class _CharacterListScreenState extends State<CharacterListScreen> {
                     mode: _currentCharacterIsRp
                         ? ContextMode.rp
                         : ContextMode.daily,
-                    enabled: !_globalRpEnabled,
+                    enabled: true,
                     compact: true,
                     onChanged: (mode) => unawaited(_setCurrentMode(mode)),
                   ),
@@ -409,121 +622,17 @@ class _CharacterListScreenState extends State<CharacterListScreen> {
         ),
 
         Expanded(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.only(bottom: 24),
-            child: Column(
-              children: [
-                const SizedBox(height: 12),
-
-                // ═══ 橫向卡片輪盤 ═══
-                _isLoading
-                    ? const Padding(
-                        padding: EdgeInsets.all(40),
-                        child: CircularProgressIndicator(),
-                      )
-                    : _characters.isEmpty
-                    ? Padding(
-                        padding: const EdgeInsets.all(40),
-                        child: Column(
-                          children: [
-                            Icon(
-                              Icons.person_add_outlined,
-                              size: 48,
-                              color: YanciTheme.textSecondary.withValues(
-                                alpha: 0.3,
-                              ),
-                            ),
-                            const SizedBox(height: 12),
-                            Text(
-                              L.get('char_empty_hint'),
-                              textAlign: TextAlign.center,
-                              style: YanciTheme.bodySmall.copyWith(
-                                color: YanciTheme.textSecondary.withValues(
-                                  alpha: 0.5,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      )
-                    : SizedBox(
-                        height:
-                            (MediaQuery.sizeOf(context).height * 0.4).clamp(
-                              320.0,
-                              380.0,
-                            ) +
-                            ((YanciTheme.fontScale *
-                                            MediaQuery.textScalerOf(
-                                              context,
-                                            ).scale(1) -
-                                        1)
-                                    .clamp(0.0, 1.0) *
-                                72),
-                        child: PageView.builder(
-                          controller: _pageCtrl,
-                          itemCount: _characters.length,
-                          onPageChanged: (i) {
-                            HapticFeedback.selectionClick();
-                            setState(() => _currentPage = i);
-                          },
-                          itemBuilder: (ctx, i) =>
-                              _buildCard(_characters[i], i),
-                        ),
-                      ),
-
-                // ═══ 頁面指示器 ═══
-                if (_characters.length > 1)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 12),
-                    child: _buildPageIndicator(),
-                  ),
-
-                const SizedBox(height: 16),
-
-                const SizedBox(height: 20),
-
-                // ═══ 時間線 ═══
-                if (_characters.isNotEmpty &&
-                    _timelineEnabled &&
-                    !_currentCharacterIsRp)
-                  CharacterTimelinePanel(
-                    key: ValueKey('timeline-$_currentCharId'),
-                    characterId: _currentCharId,
-                    modeOverride: ContextMode.daily,
-                    showContextModeControl: false,
-                    initiallyCollapsed: true,
-                  ),
-                // The diary archive is a stable Daily-mode destination.
-                // Its feature switch controls model writing only; it
-                // must not make previously written entries or the empty
-                // archive affordance disappear.
-                if (_characters.isNotEmpty && !_currentCharacterIsRp)
-                  CharacterDiaryReader(
-                    key: ValueKey('daily-diary-$_currentCharId'),
-                    characterId: _currentCharId,
-                  ),
-                if (_characters.isNotEmpty && _currentCharacterIsRp)
-                  RpStorylineEntry(
-                    key: ValueKey('rp-storylines-$_currentCharId'),
-                    characterId: _currentCharId,
-                  ),
-                if (_characters.isNotEmpty &&
-                    _selfNotesEnabled &&
-                    !_currentCharacterIsRp) ...[
-                  const SizedBox(height: 16),
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(28, 0, 28, 24),
-                    child: CharacterSelfNotesPanel(
-                      key: ValueKey('self-notes-timeline-$_currentCharId'),
-                      characterId: _currentCharId,
-                      embedded: true,
-                      initiallyCollapsed: false,
-                    ),
-                  ),
-                ],
-              ],
-            ),
-          ),
+          // 嵌在首頁時跟聊天列表／輸入框同一套：內容延伸到懸浮導航欄底下，
+          // 底部用 alpha 漸隱淡出，不再在導航欄頂端硬切。
+          child: widget.embedded
+              ? ScrollEdgeFade(
+                  controller: _listScrollController,
+                  bottomExtent: MediaQuery.paddingOf(context).bottom + 28,
+                  blurSigma: 0,
+                  alwaysFadeBottom: true,
+                  child: _buildListScroll(context),
+                )
+              : _buildListScroll(context),
         ),
       ],
     );
@@ -539,6 +648,7 @@ class _CharacterListScreenState extends State<CharacterListScreen> {
   Widget _buildCard(Map<String, dynamic> c, int index) {
     final id = c['id'] as String;
     final name = c['name'] as String? ?? '未命名';
+    final remark = (c['remark'] as String? ?? '').trim();
     final avatarPath = c['avatar_path'] as String? ?? '';
     final isActive = id == _activeId;
     final isCurrent = index == _currentPage;
@@ -633,21 +743,66 @@ class _CharacterListScreenState extends State<CharacterListScreen> {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Row(
-                              children: [
-                                Expanded(
-                                  child: Text(
-                                    name,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: YanciTheme.headingMedium.copyWith(
-                                      fontSize: 18,
-                                      fontWeight: FontWeight.w400,
+                            Align(
+                              alignment: Alignment.centerLeft,
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Flexible(
+                                    child: Text(
+                                      name,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: YanciTheme.headingMedium.copyWith(
+                                        fontSize: 18,
+                                        fontWeight: FontWeight.w400,
+                                      ),
                                     ),
                                   ),
-                                ),
-                              ],
+                                  const SizedBox(width: 2),
+                                  IconButton(
+                                    key: ValueKey('character-remark-$id'),
+                                    tooltip: L.pick(
+                                      en: 'Edit remark',
+                                      zhTW: '編輯備注',
+                                      zhCN: '编辑备注',
+                                    ),
+                                    onPressed: () =>
+                                        _editCharacterRemark(id, name, remark),
+                                    icon: Icon(
+                                      Icons.edit_outlined,
+                                      size: 16,
+                                      color: YanciTheme.textSecondary
+                                          .withValues(alpha: 0.78),
+                                    ),
+                                    visualDensity: VisualDensity.compact,
+                                    constraints: const BoxConstraints.tightFor(
+                                      width: 34,
+                                      height: 34,
+                                    ),
+                                  ),
+                                ],
+                              ),
                             ),
+                            if (remark.isNotEmpty)
+                              Padding(
+                                padding: const EdgeInsets.only(
+                                  top: 1,
+                                  right: 8,
+                                ),
+                                child: Text(
+                                  '（$remark）',
+                                  softWrap: true,
+                                  style: YanciTheme.bodySmall.copyWith(
+                                    color: YanciTheme.textSecondary.withValues(
+                                      alpha: 0.78,
+                                    ),
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w400,
+                                    height: 1.35,
+                                  ),
+                                ),
+                              ),
                             FutureBuilder<bool>(
                               future: MarriageService.isMarried(id),
                               builder: (context, snap) {

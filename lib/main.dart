@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io' show Platform;
+import 'dart:ui' show PlatformDispatcher;
 
 import 'package:app_links/app_links.dart';
 import 'package:flutter/foundation.dart'
@@ -21,6 +22,7 @@ import 'services/model_cost_policy.dart';
 import 'services/custom_font_service.dart';
 import 'services/background_preset_service.dart';
 import 'services/avatar_image_path_service.dart';
+import 'services/app_error_log_service.dart';
 import 'services/reply_notification_service.dart';
 import 'memory/emotion_coordinates.dart';
 import 'screens/splash_screen.dart';
@@ -90,6 +92,8 @@ void main() {
 }
 
 Future<void> _initializeAfterFirstFrame() async {
+  await _startupStep('crash diagnostics', _prepareGlobalErrorCapture);
+
   // Android 後台保活調度（iOS 不註冊，靠回前台補針）
   await _startupStep('background scheduler', () async {
     if (!kIsWeb && Platform.isAndroid) {
@@ -113,6 +117,8 @@ Future<void> _initializeAfterFirstFrame() async {
     YanciTheme.starEnabled = await ThemeSettings.getStarEnabled();
     YanciTheme.starDensity = await ThemeSettings.getStarDensity();
     YanciTheme.particleEffectOverride = await ThemeSettings.getParticleEffect();
+    YanciTheme.particleEmojis = await ThemeSettings.getParticleEmojis();
+    YanciTheme.cloudStyle = await ThemeSettings.getCloudStyle();
     YanciTheme.aiBubbleFlat = await ThemeSettings.getAiBubbleFlat();
     YanciTheme.sendButtonStyle = await ThemeSettings.getSendButtonStyle();
     YanciTheme.sendButtonCustomPath =
@@ -223,6 +229,34 @@ Future<void> _initializeAfterFirstFrame() async {
           return <void>[];
         }),
   );
+}
+
+Future<void> _prepareGlobalErrorCapture() async {
+  await AppErrorLogService.prepareCrashCapture();
+  final previousFlutterHandler = FlutterError.onError;
+  FlutterError.onError = (details) {
+    AppErrorLogService.recordUnhandledSync(
+      error: details.exception,
+      stackTrace: details.stack ?? StackTrace.current,
+      trigger: 'FlutterError.onError',
+      source: 'flutter',
+    );
+    if (previousFlutterHandler != null) {
+      previousFlutterHandler(details);
+    } else {
+      FlutterError.presentError(details);
+    }
+  };
+  final previousPlatformHandler = PlatformDispatcher.instance.onError;
+  PlatformDispatcher.instance.onError = (error, stackTrace) {
+    AppErrorLogService.recordUnhandledSync(
+      error: error,
+      stackTrace: stackTrace,
+      trigger: 'PlatformDispatcher.onError',
+      source: 'dart',
+    );
+    return previousPlatformHandler?.call(error, stackTrace) ?? false;
+  };
 }
 
 Future<void> _startupStep(

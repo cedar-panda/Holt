@@ -22,6 +22,8 @@
 - 窗口快照：`DatabaseHelper.getConversationPinnedCoinSnapshot` 與寫入方法，進 `windowPart`。
 - 結婚已婚狀態：`MarriageService.staticPrompt`，進穩定窗口／靜態內容；證書事件用動態 note。
 - 刮刮卡、轉帳與商店回覆透過消息處理器和工具 action 產生可見卡片或事件。
+- user 發給角色的轉帳卡只跟隨 user 消息；角色發給 user 的轉帳卡只跟隨角色消息。`lib/widgets/chat_bubble.dart:_ChatBubbleState.build` 會按 `direction` 與消息側二次校驗，避免同一筆 pending 轉帳在雙方各顯示一次。
+- user 送角色的商品沿用 `[gift:名稱]`；角色從商店送 user 時，`lib/screens/chat_screen_prompt_parts.dart:_consumeBuyResults` 寫入具名可見消息與 `[gift_received:名稱]` 顯示標記。`lib/screens/chat_screen_message_list.dart:_buildMessageList` 與長截圖路徑解析標記，`lib/widgets/gift_card.dart:GiftMiniCard.build` 依商品名查 `shop_items.image_path` 顯示同一張商品圖；角色名不再顯示為泛稱「TA」。
 
 ## 檢索方式（字面 / BM25 / 向量 / 名字觸發 / 無）
 主要是 owner／character ID、conversation ID、商品 ID、消息 ID 與 SharedPreferences key 查找；沒有 BM25 或向量檢索。
@@ -44,6 +46,8 @@
 - `test/transfer_service_test.dart`
 - `test/scratch_service_test.dart`
 - `test/marriage_service_test.dart`
+- `test/chat_bubble_card_width_test.dart`
+- `test/chat_bubble_thinking_test.dart`
 
 ## ❓ 不確定的地方
 - 具體錢包／刮刮卡 journal 的 SharedPreferences key 及清理週期應以 `scratch_service.dart` 內當前常數為準，這裡不列出易變的完整 key 清單。

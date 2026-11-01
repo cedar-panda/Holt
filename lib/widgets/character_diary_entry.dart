@@ -358,8 +358,14 @@ void _showDiaryEntry(BuildContext context, CharacterDiaryEntry entry) {
   showModalBottomSheet<void>(
     context: context,
     isScrollControlled: true,
+    isDismissible: true,
+    enableDrag: true,
     backgroundColor: Colors.transparent,
     builder: (sheetContext) => DraggableScrollableSheet(
+      // Without this, the draggable sheet expands to the whole modal route.
+      // The visually blank area above the card then intercepts taps instead
+      // of letting the modal barrier dismiss back to the diary list.
+      expand: false,
       initialChildSize: .75,
       minChildSize: .4,
       maxChildSize: .92,

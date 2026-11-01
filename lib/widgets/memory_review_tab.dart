@@ -220,18 +220,18 @@ class _MemoryReviewTabState extends State<MemoryReviewTab> {
             en: !hasExistingTarget
                 ? 'This model suggestion will be added to the memory library.'
                 : targetPermanent
-                ? 'The old permanent memory will move to the archive. Its permanent protection and web links will carry over to the new memory.'
-                : 'The old memory will move to the archive and its web links will carry over to the new memory.',
+                ? 'The old permanent memory will move to the archive. Its permanent protection and memory links will carry over to the new memory.'
+                : 'The old memory will move to the archive and its memory links will carry over to the new memory.',
             zhTW: !hasExistingTarget
                 ? '確認後，這條模型建議才會加入記憶庫。'
                 : targetPermanent
-                ? '舊的永久記憶會移至回收區；永久保護與蛛網連線都會繼承到新記憶。'
-                : '舊記憶會移至回收區，蛛網連線會繼承到新記憶。',
+                ? '舊的永久記憶會移至回收區；永久保護與記憶關聯都會繼承到新記憶。'
+                : '舊記憶會移至回收區，記憶關聯會繼承到新記憶。',
             zhCN: !hasExistingTarget
                 ? '确认后，这条模型建议才会加入记忆库。'
                 : targetPermanent
-                ? '旧的永久记忆会移至回收区；永久保护与蛛网连线都会继承到新记忆。'
-                : '旧记忆会移至回收区，蛛网连线会继承到新记忆。',
+                ? '旧的永久记忆会移至回收区；永久保护与记忆关联都会继承到新记忆。'
+                : '旧记忆会移至回收区，记忆关联会继承到新记忆。',
           ),
           style: YanciTheme.bodyText,
         ),
@@ -434,8 +434,9 @@ class _MemoryReviewTabState extends State<MemoryReviewTab> {
                 )
               : isMerge
               ? L.pick(
-                  en: 'The originals will be archived and their web links will move to the merged memory.',
-                  zhTW: '原記憶會進入回收區，現有蛛網連線會轉移到合併後的記憶。',
+                  en: 'The originals will be archived and their memory links will move to the merged memory.',
+                  zhTW: '原記憶會進入回收區，現有記憶關聯會轉移到合併後的記憶。',
+                  zhCN: '原记忆会进入回收区，现有记忆关联会转移到合并后的记忆。',
                 )
               : L.pick(
                   en: 'Nothing is permanently deleted. You can restore it from the archive.',

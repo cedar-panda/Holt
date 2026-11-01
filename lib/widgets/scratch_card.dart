@@ -7,6 +7,7 @@ import '../services/scratch_service.dart';
 import '../services/locale_strings.dart';
 import '../theme/app_theme.dart';
 import 'themed_notice.dart';
+import 'shell_coin_icon.dart';
 
 // ═══════════════════════════════════════════════════════════════
 // 刮刮樂系統
@@ -52,6 +53,11 @@ class _ScratchCardDialog extends StatefulWidget {
 
 class _ScratchCardDialogState extends State<_ScratchCardDialog>
     with TickerProviderStateMixin {
+  /// 疊在 accent 底色上的文字／貝殼：亮色主題用深色、暗色主題用白色。
+  Color _onAccentColor() => YanciTheme.accent.computeLuminance() > 0.179
+      ? const Color(0xFF1A1721)
+      : const Color(0xFFFFFFFF);
+
   static const _cardW = 260.0;
   static const _cardH = 140.0;
   static const _radius = 14.0;
@@ -281,9 +287,16 @@ class _ScratchCardDialogState extends State<_ScratchCardDialog>
                     borderRadius: BorderRadius.circular(_radius),
                     boxShadow: [
                       BoxShadow(
-                        color: Colors.black.withValues(alpha: 0.4),
-                        blurRadius: 20,
-                        offset: const Offset(0, 8),
+                        color: Colors.black.withValues(
+                          alpha: YanciTheme.isDark ? 0.42 : 0.16,
+                        ),
+                        blurRadius: 24,
+                        offset: const Offset(0, 10),
+                      ),
+                      BoxShadow(
+                        color: YanciTheme.accent.withValues(alpha: 0.16),
+                        blurRadius: 30,
+                        spreadRadius: -6,
                       ),
                     ],
                   ),
@@ -299,6 +312,8 @@ class _ScratchCardDialogState extends State<_ScratchCardDialog>
                             size: const Size(_cardW, _cardH),
                             painter: _ScratchOverlayPainter(
                               scratches: _scratches,
+                              tint: YanciTheme.accent,
+                              hint: L.pick(en: 'S C R A T C H', zhTW: '刮 一 刮'),
                             ),
                           ),
                         // 揭曉動畫
@@ -312,11 +327,20 @@ class _ScratchCardDialogState extends State<_ScratchCardDialog>
                                 ),
                                 padding: const EdgeInsets.symmetric(
                                   horizontal: 16,
-                                  vertical: 8,
+                                  vertical: 9,
                                 ),
                                 decoration: BoxDecoration(
-                                  color: const Color(0xFFF2C96D),
-                                  borderRadius: BorderRadius.circular(8),
+                                  color: YanciTheme.accent,
+                                  borderRadius: BorderRadius.circular(999),
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: YanciTheme.accent.withValues(
+                                        alpha: 0.35,
+                                      ),
+                                      blurRadius: 14,
+                                      offset: const Offset(0, 4),
+                                    ),
+                                  ],
                                 ),
                                 child: Row(
                                   mainAxisSize: MainAxisSize.max,
@@ -335,10 +359,13 @@ class _ScratchCardDialogState extends State<_ScratchCardDialog>
                                             labels,
                                             maxLines: 1,
                                             overflow: TextOverflow.ellipsis,
-                                            style: const TextStyle(
-                                              fontSize: 16,
-                                              fontWeight: FontWeight.bold,
-                                              color: Color(0xFF1A1721),
+                                            textAlign: TextAlign.center,
+                                            style: TextStyle(
+                                              fontSize: 15,
+                                              fontWeight: FontWeight.w600,
+                                              letterSpacing: 0.4,
+                                              color: _onAccentColor(),
+                                              fontFamily: YanciTheme.fontFamily,
                                               decoration: TextDecoration.none,
                                             ),
                                           );
@@ -354,11 +381,9 @@ class _ScratchCardDialogState extends State<_ScratchCardDialog>
                                             padding: const EdgeInsets.only(
                                               left: 4,
                                             ),
-                                            child: Image.asset(
-                                              'assets/images/shell_coin.png',
-                                              width: 18,
-                                              height: 18,
-                                              filterQuality: FilterQuality.none,
+                                            child: ShellCoinIcon(
+                                              size: 18,
+                                              color: _onAccentColor(),
                                             ),
                                           );
                                         }
@@ -382,67 +407,112 @@ class _ScratchCardDialogState extends State<_ScratchCardDialog>
     );
   }
 
+  /// 獎品底層：跟主題走的面板色，帶一點 accent 色調與細內框；
+  /// 左上角一枚小小的「刮刮樂」票根標。
   Widget _buildPrizeLayer() {
+    final accent = YanciTheme.accent;
+    final base = YanciTheme.isDark
+        ? Color.lerp(const Color(0xFF17151C), accent, 0.10)!
+        : Color.lerp(const Color(0xFFFFFFFF), accent, 0.08)!;
+    final deep = YanciTheme.isDark
+        ? Color.lerp(const Color(0xFF0F0D13), accent, 0.18)!
+        : Color.lerp(const Color(0xFFF6F3F8), accent, 0.16)!;
+    final labelColor = YanciTheme.textPrimary.withValues(alpha: 0.86);
     return Container(
       width: _cardW,
       height: _cardH,
-      decoration: const BoxDecoration(
+      decoration: BoxDecoration(
         gradient: LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: [Color(0xFF2A2435), Color(0xFF1A1721)],
+          colors: [base, deep],
         ),
       ),
-      child: Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: widget.data.prizes.map((prize) {
-            return Column(
+      child: Stack(
+        children: [
+          // 細內框：像票券的壓線
+          Positioned.fill(
+            child: Padding(
+              padding: const EdgeInsets.all(7),
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(_radius - 5),
+                  border: Border.all(
+                    color: accent.withValues(alpha: 0.28),
+                    width: 0.8,
+                  ),
+                ),
+              ),
+            ),
+          ),
+          Positioned(
+            left: 16,
+            top: 13,
+            child: Text(
+              L.pick(en: 'SCRATCH CARD', zhTW: '刮刮樂'),
+              style: TextStyle(
+                fontSize: 9.5,
+                letterSpacing: 2,
+                fontWeight: FontWeight.w600,
+                color: accent.withValues(alpha: 0.7),
+                fontFamily: YanciTheme.fontFamily,
+                decoration: TextDecoration.none,
+              ),
+            ),
+          ),
+          Center(
+            child: Column(
               mainAxisSize: MainAxisSize.min,
-              children: [
-                Row(
+              children: widget.data.prizes.map((prize) {
+                return Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    if (prize.coins > 0) ...[
-                      Image.asset(
-                        'assets/images/shell_coin.png',
-                        width: 24,
-                        height: 24,
-                        filterQuality: FilterQuality.none,
-                      ),
-                      const SizedBox(width: 4),
-                      Text(
-                        '+${prize.coins}',
-                        style: const TextStyle(
-                          fontSize: 24,
-                          decoration: TextDecoration.none,
-                          color: Color(0xFFF2C96D),
-                        ),
-                      ),
-                    ] else
-                      Text(
-                        prize.label,
-                        style: const TextStyle(
-                          fontSize: 18,
-                          decoration: TextDecoration.none,
-                          color: Color(0xFFEFEAF2),
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (prize.coins > 0) ...[
+                          ShellCoinIcon(size: 22),
+                          const SizedBox(width: 6),
+                          Text(
+                            '+${prize.coins}',
+                            style: TextStyle(
+                              fontSize: 26,
+                              fontWeight: FontWeight.w600,
+                              letterSpacing: 0.5,
+                              decoration: TextDecoration.none,
+                              color: accent,
+                              fontFamily: YanciTheme.fontFamily,
+                            ),
+                          ),
+                        ] else
+                          Text(
+                            prize.label,
+                            style: TextStyle(
+                              fontSize: 17,
+                              fontWeight: FontWeight.w500,
+                              letterSpacing: 1,
+                              decoration: TextDecoration.none,
+                              color: labelColor,
+                              fontFamily: YanciTheme.fontFamily,
+                            ),
+                          ),
+                      ],
+                    ),
+                    if (prize != widget.data.prizes.last)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 3),
+                        child: Icon(
+                          Icons.keyboard_arrow_down_rounded,
+                          color: accent.withValues(alpha: 0.45),
+                          size: 16,
                         ),
                       ),
                   ],
-                ),
-                if (prize != widget.data.prizes.last)
-                  const Padding(
-                    padding: EdgeInsets.symmetric(vertical: 2),
-                    child: Icon(
-                      Icons.arrow_downward,
-                      color: Color(0xFF7A7A82),
-                      size: 16,
-                    ),
-                  ),
-              ],
-            );
-          }).toList(),
-        ),
+                );
+              }).toList(),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -453,51 +523,99 @@ class _ScratchCardDialogState extends State<_ScratchCardDialog>
 class _ScratchOverlayPainter extends CustomPainter {
   final List<List<Offset>> scratches;
 
-  _ScratchOverlayPainter({required this.scratches});
+  /// 主題 accent：銀箔帶一點主題色調，不再是死灰。
+  final Color tint;
+  final String hint;
+
+  _ScratchOverlayPainter({
+    required this.scratches,
+    required this.tint,
+    required this.hint,
+  });
 
   @override
   void paint(Canvas canvas, Size size) {
+    final rect = Rect.fromLTWH(0, 0, size.width, size.height);
     // 存到 layer 才能用 BlendMode.clear
-    canvas.saveLayer(Rect.fromLTWH(0, 0, size.width, size.height), Paint());
+    canvas.saveLayer(rect, Paint());
 
-    // 銀灰底 + 微噪點紋理
-    final bgPaint = Paint()..color = const Color(0xFFB8B8C0);
-    canvas.drawRect(Rect.fromLTWH(0, 0, size.width, size.height), bgPaint);
+    // 銀箔：帶 accent 色調的金屬漸層
+    final silver = Color.lerp(const Color(0xFFC9C8D0), tint, 0.18)!;
+    final light = Color.lerp(const Color(0xFFEDECF1), tint, 0.10)!;
+    final dark = Color.lerp(const Color(0xFFA9A8B2), tint, 0.22)!;
+    canvas.drawRect(
+      rect,
+      Paint()
+        ..shader = LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [light, silver, dark, silver, light],
+          stops: const [0, 0.3, 0.55, 0.8, 1],
+        ).createShader(rect),
+    );
 
-    // 噪點
-    final rng = Random(42); // 固定種子，每幀一樣
+    // 斜向反光條：兩道很淡的高光，讓箔面有金屬感
+    final sheen = Paint()
+      ..shader = LinearGradient(
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: [
+          const Color(0x00FFFFFF),
+          const Color(0x55FFFFFF),
+          const Color(0x00FFFFFF),
+          const Color(0x00FFFFFF),
+          const Color(0x33FFFFFF),
+          const Color(0x00FFFFFF),
+        ],
+        stops: const [0.18, 0.26, 0.34, 0.58, 0.64, 0.7],
+      ).createShader(rect);
+    canvas.drawRect(rect, sheen);
+
+    // 細噪點：箔面顆粒感（固定種子，每幀一樣）
+    final rng = Random(42);
     final noisePaint = Paint();
-    for (int i = 0; i < 300; i++) {
+    for (int i = 0; i < 260; i++) {
       final x = rng.nextDouble() * size.width;
       final y = rng.nextDouble() * size.height;
-      final brightness = 0.65 + rng.nextDouble() * 0.25;
-      noisePaint.color = Color.fromRGBO(
-        (brightness * 255).round(),
-        (brightness * 255).round(),
-        (brightness * 258).round(),
-        0.4,
+      final bright = rng.nextBool();
+      noisePaint.color = (bright ? const Color(0xFFFFFFFF) : dark).withValues(
+        alpha: 0.10 + rng.nextDouble() * 0.12,
       );
-      canvas.drawCircle(Offset(x, y), 0.8 + rng.nextDouble() * 0.6, noisePaint);
+      canvas.drawCircle(Offset(x, y), 0.6 + rng.nextDouble() * 0.5, noisePaint);
     }
 
-    // "刮一刮" 提示（只在沒開始刮時顯示）
+    // 「刮一刮」提示（只在沒開始刮時顯示），兩側配小星芒
     if (scratches.isEmpty) {
+      final ink = Color.lerp(const Color(0xFF6E6C78), tint, 0.25)!;
       final tp = TextPainter(
         text: TextSpan(
-          text: L.pick(en: 'S C R A T C H', zhTW: '刮 一 刮'),
-          style: const TextStyle(
-            color: Color(0xFF7A7A82),
-            fontSize: 18,
+          text: hint,
+          style: TextStyle(
+            color: ink.withValues(alpha: 0.85),
+            fontSize: 16,
             fontWeight: FontWeight.w600,
             letterSpacing: 6,
           ),
         ),
         textDirection: ui.TextDirection.ltr,
       )..layout();
-      tp.paint(
-        canvas,
-        Offset((size.width - tp.width) / 2, (size.height - tp.height) / 2),
+      final origin = Offset(
+        (size.width - tp.width) / 2,
+        (size.height - tp.height) / 2,
       );
+      tp.paint(canvas, origin);
+      final sparkle = Paint()
+        ..color = ink.withValues(alpha: 0.55)
+        ..strokeWidth = 1.1
+        ..strokeCap = StrokeCap.round;
+      void star(Offset c, double r) {
+        canvas.drawLine(c - Offset(r, 0), c + Offset(r, 0), sparkle);
+        canvas.drawLine(c - Offset(0, r), c + Offset(0, r), sparkle);
+      }
+
+      final midY = origin.dy + tp.height / 2;
+      star(Offset(origin.dx - 14, midY), 3.5);
+      star(Offset(origin.dx + tp.width + 10, midY), 3.5);
     }
 
     // 擦除痕跡
@@ -554,126 +672,129 @@ class ScratchMiniCard extends StatelessWidget {
     }
   }
 
+  /// 迷你卡片共用外框：主題面板色＋一點 accent 色調、細邊、柔影，
+  /// 跟聊天氣泡同一套語言（不再是寫死的黑金／派對粉）。
+  BoxDecoration _miniDecoration({required bool highlighted}) {
+    final accent = YanciTheme.accent;
+    final panel = YanciTheme.surfacePanel;
+    return BoxDecoration(
+      gradient: LinearGradient(
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: [
+          Color.lerp(panel, accent, highlighted ? 0.10 : 0.04)!,
+          Color.lerp(panel, accent, highlighted ? 0.18 : 0.07)!,
+        ],
+      ),
+      borderRadius: BorderRadius.circular(14),
+      border: Border.all(
+        color: highlighted
+            ? accent.withValues(alpha: 0.42)
+            : YanciTheme.glassBorder.withValues(alpha: 0.6),
+        width: 0.8,
+      ),
+      boxShadow: [
+        BoxShadow(
+          color: (highlighted ? accent : Colors.black).withValues(
+            alpha: highlighted ? 0.14 : (YanciTheme.isDark ? 0.18 : 0.06),
+          ),
+          blurRadius: 10,
+          offset: const Offset(0, 3),
+        ),
+      ],
+    );
+  }
+
+  Widget _tag(String text) {
+    final accent = YanciTheme.accent;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+      decoration: BoxDecoration(
+        color: accent.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(
+        text,
+        style: TextStyle(
+          fontSize: 10,
+          letterSpacing: 0.6,
+          color: accent.withValues(alpha: 0.9),
+          fontWeight: FontWeight.w600,
+          fontFamily: YanciTheme.fontFamily,
+        ),
+      ),
+    );
+  }
+
   Widget _buildResult() {
     final totalCoins = data.prizes.fold(0, (sum, p) => sum + p.coins);
     final hasCoins = totalCoins > 0;
     final labels = data.prizes
         .map((p) => p.coins > 0 ? '+${p.coins}' : p.label)
         .join(' ➝ ');
-
-    final isDark = YanciTheme.isDark;
-
-    // 黑金風格 (Dark) / 派對風格 (Light)
-    final bgColors = isDark
-        ? [const Color(0xFF2A2424), const Color(0xFF1F1A1A)]
-        : [const Color(0xFFFFF0F5), const Color(0xFFFFE4E1)];
-    final borderColor = isDark
-        ? (hasCoins
-              ? const Color(0xFFFFD700).withValues(alpha: 0.6)
-              : const Color(0xFF453F52))
-        : (hasCoins
-              ? const Color(0xFFFF69B4).withValues(alpha: 0.6)
-              : const Color(0xFFD8BFD8));
-    final textColor = isDark
-        ? (hasCoins ? const Color(0xFFFFD700) : const Color(0xFF9A94A6))
-        : (hasCoins ? const Color(0xFFFF1493) : const Color(0xFF800080));
-    final titleColor = isDark
-        ? const Color(0xFF8B8178)
-        : const Color(0xFFDB7093);
+    final accent = YanciTheme.accent;
 
     return Container(
       margin: const EdgeInsets.only(top: 6),
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(colors: bgColors),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: borderColor, width: 1.5),
-        boxShadow: hasCoins && isDark
-            ? [
-                BoxShadow(
-                  color: const Color(0xFFFFD700).withValues(alpha: 0.15),
-                  blurRadius: 8,
-                ),
-              ]
-            : null,
-      ),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: _miniDecoration(highlighted: hasCoins),
       child: Row(
         mainAxisSize: MainAxisSize.max,
         children: [
-          if (hasCoins) ...[
-            Image.asset(
-              'assets/images/shell_coin.png',
-              width: 16,
-              height: 16,
-              filterQuality: FilterQuality.none,
+          if (hasCoins)
+            ShellCoinIcon(size: 16)
+          else
+            Icon(
+              Icons.auto_awesome_outlined,
+              size: 15,
+              color: YanciTheme.textSecondary.withValues(alpha: 0.7),
             ),
-            const SizedBox(width: 6),
-          ],
+          const SizedBox(width: 7),
           Flexible(
             child: Text(
               labels,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.bold,
-                color: textColor,
+                fontSize: 13.5,
+                fontWeight: FontWeight.w600,
+                letterSpacing: 0.3,
+                color: hasCoins
+                    ? accent
+                    : YanciTheme.textPrimary.withValues(alpha: 0.75),
                 fontFamily: YanciTheme.fontFamily,
               ),
             ),
           ),
           const SizedBox(width: 8),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-            decoration: BoxDecoration(
-              color: titleColor.withValues(alpha: 0.1),
-              borderRadius: BorderRadius.circular(4),
-            ),
-            child: Text(
-              L.pick(en: 'Scratch Card', zhTW: '刮刮樂'),
-              style: TextStyle(
-                fontSize: 10,
-                color: titleColor,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ),
+          _tag(L.pick(en: 'Scratch', zhTW: '刮刮樂')),
         ],
       ),
     );
   }
 
   Widget _buildUnscratched() {
-    final isDark = YanciTheme.isDark;
-    final bgColor = isDark ? const Color(0xFF25202A) : const Color(0xFFF8F0FA);
-    final borderColor = isDark
-        ? const Color(0xFF453F52)
-        : const Color(0xFFE0D4E5);
-    final textColor = isDark
-        ? const Color(0xFFB8B8C0)
-        : const Color(0xFF9E7FA6);
-
+    final accent = YanciTheme.accent;
     return Container(
       margin: const EdgeInsets.only(top: 6),
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-      decoration: BoxDecoration(
-        color: bgColor,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: borderColor, width: 1.5),
-      ),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: _miniDecoration(highlighted: false),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(Icons.stars_rounded, size: 16, color: textColor),
-          const SizedBox(width: 6),
+          Icon(Icons.auto_awesome_rounded, size: 15, color: accent),
+          const SizedBox(width: 7),
           Text(
             L.pick(en: 'Unopened scratch card', zhTW: '未刮開的刮刮樂'),
             style: TextStyle(
               fontSize: 13,
-              color: textColor,
+              color: YanciTheme.textPrimary.withValues(alpha: 0.8),
               fontWeight: FontWeight.w500,
+              fontFamily: YanciTheme.fontFamily,
             ),
           ),
+          const SizedBox(width: 8),
+          _tag(L.pick(en: 'Tap to scratch', zhTW: '點開刮')),
         ],
       ),
     );

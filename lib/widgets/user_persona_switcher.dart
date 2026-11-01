@@ -108,7 +108,7 @@ class _UserPersonaSwitcherState extends State<UserPersonaSwitcher> {
                                   textAlign: TextAlign.center,
                                   style: TextStyle(
                                     fontSize: 18,
-                                    fontWeight: FontWeight.w600,
+                                    fontWeight: FontWeight.w400,
                                     color:
                                         widget.imagePrimaryForeground ??
                                         YanciTheme.textPrimary,

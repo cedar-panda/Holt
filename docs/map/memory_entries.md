@@ -21,6 +21,7 @@
 - `lib/memory/summarizer.dart`：`Summarizer.summarize` 可從一段對話提取最多兩條並送入同一 guard。
 - `lib/screens/memory_screen_dialogs.dart`：`_MemoryDialogMethods._showAddMemoryDialog` 寫入手動記憶。
 - `lib/services/memory_guard_service.dart`：`MemoryGuardService.execute` 執行使用者確認後的新增／刪除／合併／連線提案。
+- `lib/widgets/memory_review_tab.dart:_confirmAndClearAll` 可一次清空目前角色／故事線的全部「待確認」提案；`lib/screens/memory_screen_links.dart:_confirmAndClearSuggestedRelations` 可一次拒絕全部未確認「關係建議」。兩者都必須二次輸入本地化確認詞（繁中為「刪除」），不會刪除既有記憶或已確認連線。
 - `lib/memory/database_memories.dart`：`_MemoryStore.insertMemory`、`archiveMemory`、`restoreFromArchive`、`permanentlyDelete` 實際修改 SQLite。
 - `lib/memory/database_memories.dart`：`setMemoryPinned` 單獨切換每輪常駐；不改永久保存／封存保護。
 - `lib/services/dream_curation_service.dart`：`DreamCurationService.maybeTrigger` 按 scope 累積門檻，交給整理服務產生關聯／重複提案。
@@ -30,7 +31,7 @@
 - `lib/memory/retriever.dart`：`Retriever.buildMemoryPrompt` 讀永久與活躍記憶、排序並套用條數／token 預算。
 - `lib/services/rp_memory_service.dart`：`RpMemoryService.buildPrompt` 固定使用 RP scope 與經典記憶引擎；可接收本輪已注入摘要作為排重依據。
 - `lib/screens/chat_screen_generation.dart`：`_ChatScreenState._sendMessageLocked` 把非空記憶區塊放入 `dynamicParts`。
-- `lib/screens/chat_screen_generation.dart`：`_ChatScreenState._sendImageLocked` 對圖片訊息走同一類動態注入。
+- `lib/screens/chat_screen_generation.dart`：`_ChatScreenState._sendMessageLocked` 圖片訊息與文字同一路徑、同一套動態注入。
 - `lib/screens/call_screen.dart`：`_CallScreenState._generateTurn` 依目前的 `memory_mode` 選擇 `story`／`romance` 分桶，不再把通話固定讀成 `romance`。
 - Prompt 層：`liveStatePart`，只屬本次 request，不進聊天紀錄，也不進可快取前綴。
 - `lib/screens/chat_screen_prompt_parts.dart`：`_ChatScreenState._buildCommonStaticParts` 把記憶動作能力說明放入 `staticPart`；只有功能／設定改變才影響前綴。
@@ -48,6 +49,7 @@
 ## 日常 / RP 差異
 
 - 日常 scope 為 `character_id + daily + main`；可選經典記憶或蛛網記憶。
+- 日常「進階記憶」可把未注入的沉睡記憶 triggers 以最多 3 個模糊舊詞提示模型；只有後續 `memory.force_recall` 命中並成功送達，才注入完整正文並刷新清晰度。
 - RP scope 為 `character_id + rp + continuity_id`，固定走經典記憶；單輪發送條數最多再限制為 8。
 - RP 候選不使用蛛網清晰度／情緒共振排序；日常蛛網模式會使用清晰度與情緒距離。
 - RP 的一般記憶另有 600 token 單輪硬上限，避免與摘要、人物關係、狀態、世界書和時間線共同注入時擠掉較近的劇情資料。
@@ -84,6 +86,8 @@
 - `test/dream_curation_scope_test.dart`
 - `test/context_mode_migration_test.dart`
 - `test/context_mode_feature_test.dart`
+- `test/memory_review_visibility_test.dart`
+- `test/memory_guard_service_test.dart`
 - `test/database_schema_v33_test.dart`
 - `test/manual_memory_curation_apply_test.dart`
 - `test/memory_screen_header_test.dart`

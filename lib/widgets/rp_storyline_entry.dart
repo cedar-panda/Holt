@@ -70,26 +70,32 @@ class RpStorylineEntry extends StatelessWidget {
       child: Semantics(
         button: true,
         label: label,
-        child: GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTap: onTap,
-          child: SizedBox(
-            height: 42,
-            child: Center(
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 4),
-                child: FittedBox(
-                  fit: BoxFit.scaleDown,
-                  child: Text(
-                    label,
-                    textAlign: TextAlign.center,
-                    textScaler: const TextScaler.linear(1),
-                    maxLines: 1,
-                    style: TextStyle(
-                      color: YanciTheme.textSecondary.withValues(alpha: 0.72),
-                      fontSize: fontSize,
-                      fontWeight: FontWeight.w500,
-                      fontFamily: YanciTheme.fontFamily,
+        child: Material(
+          color: YanciTheme.accent.withValues(alpha: 0.06),
+          borderRadius: BorderRadius.circular(12),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(12),
+            splashColor: YanciTheme.accent.withValues(alpha: 0.08),
+            highlightColor: YanciTheme.accent.withValues(alpha: 0.04),
+            onTap: onTap,
+            child: SizedBox(
+              height: 42,
+              child: Center(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: Text(
+                      label,
+                      textAlign: TextAlign.center,
+                      textScaler: const TextScaler.linear(1),
+                      maxLines: 1,
+                      style: TextStyle(
+                        color: YanciTheme.textSecondary.withValues(alpha: 0.82),
+                        fontSize: fontSize,
+                        fontWeight: FontWeight.w500,
+                        fontFamily: YanciTheme.fontFamily,
+                      ),
                     ),
                   ),
                 ),
@@ -101,75 +107,83 @@ class RpStorylineEntry extends StatelessWidget {
     );
   }
 
-  Widget _separator() => Container(
-    width: 0.6,
-    height: 16,
-    color: YanciTheme.textSecondary.withValues(alpha: 0.22),
-  );
-
   @override
   Widget build(BuildContext context) {
     final label = L.pick(en: 'Story archive', zhTW: '劇情檔案', zhCN: '剧情档案');
     return Padding(
       padding: const EdgeInsets.fromLTRB(24, 14, 24, 0),
-      child: Column(
-        children: [
-          Semantics(
-            button: true,
-            label: label,
-            child: GestureDetector(
-              key: const ValueKey('rp-storyline-entry'),
-              behavior: HitTestBehavior.opaque,
-              onTap: () => _openArchive(context),
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(minHeight: 48),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 8),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          label,
-                          style: TextStyle(
-                            color: YanciTheme.accent.withValues(alpha: 0.82),
-                            fontSize: 13,
-                            fontWeight: FontWeight.w600,
-                            fontFamily: YanciTheme.fontFamily,
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(12, 4, 12, 10),
+        decoration: BoxDecoration(
+          color: Colors.transparent,
+          borderRadius: BorderRadius.circular(YanciTheme.radiusCard),
+          border: Border.all(color: YanciTheme.themedCardBorder(), width: 0.65),
+        ),
+        child: Column(
+          children: [
+            Semantics(
+              button: true,
+              label: label,
+              child: GestureDetector(
+                key: const ValueKey('rp-storyline-entry'),
+                behavior: HitTestBehavior.opaque,
+                onTap: () => _openArchive(context),
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(minHeight: 48),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 4),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            label,
+                            style: TextStyle(
+                              color: YanciTheme.accent.withValues(alpha: 0.82),
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                              fontFamily: YanciTheme.fontFamily,
+                            ),
                           ),
                         ),
-                      ),
-                      Icon(
-                        Icons.chevron_right_rounded,
-                        size: 18,
-                        color: YanciTheme.textSecondary.withValues(alpha: 0.34),
-                      ),
-                    ],
+                        Icon(
+                          Icons.chevron_right_rounded,
+                          size: 18,
+                          color: YanciTheme.textSecondary.withValues(
+                            alpha: 0.34,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),
             ),
-          ),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              _resourceLabel(
-                label: L.pick(en: 'Worldbook', zhTW: '世界書', zhCN: '世界书'),
-                onTap: () => _openResource(context, _StoryResource.worldbook),
-              ),
-              _separator(),
-              _resourceLabel(
-                label: L.pick(en: 'Relationships', zhTW: '人物關係', zhCN: '人物关系'),
-                onTap: () =>
-                    _openResource(context, _StoryResource.relationships),
-              ),
-              _separator(),
-              _resourceLabel(
-                label: L.pick(en: 'Timeline', zhTW: '時間線', zhCN: '时间线'),
-                onTap: () => _openResource(context, _StoryResource.timeline),
-              ),
-            ],
-          ),
-        ],
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                _resourceLabel(
+                  label: L.pick(en: 'Worldbook', zhTW: '世界書', zhCN: '世界书'),
+                  onTap: () => _openResource(context, _StoryResource.worldbook),
+                ),
+                const SizedBox(width: 6),
+                _resourceLabel(
+                  label: L.pick(
+                    en: 'Relationships',
+                    zhTW: '人物關係',
+                    zhCN: '人物关系',
+                  ),
+                  onTap: () =>
+                      _openResource(context, _StoryResource.relationships),
+                ),
+                const SizedBox(width: 6),
+                _resourceLabel(
+                  label: L.pick(en: 'Timeline', zhTW: '時間線', zhCN: '时间线'),
+                  onTap: () => _openResource(context, _StoryResource.timeline),
+                ),
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }

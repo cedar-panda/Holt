@@ -113,6 +113,69 @@ extension _ThemeWorkshopBackgroundPreview on _ThemeWorkshopScreenState {
     );
   }
 
+  Widget _buildCallBackgroundSelection({
+    required String selectedScope,
+    required String selectedPath,
+    required StateSetter setPageState,
+  }) {
+    final available =
+        selectedPath.isNotEmpty && File(selectedPath).existsSync();
+    final checked = available && _callBackgroundScope == selectedScope;
+    void toggle() {
+      if (!available) return;
+      _setCallBackgroundScope(selectedScope, setPageState);
+    }
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(24, 2, 24, 6),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          key: const ValueKey('background-current-call-selection'),
+          onTap: available ? toggle : null,
+          borderRadius: BorderRadius.circular(YanciTheme.radiusSm),
+          splashColor: YanciTheme.accent.withValues(alpha: 0.08),
+          highlightColor: YanciTheme.accent.withValues(alpha: 0.04),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minHeight: 48),
+            child: Row(
+              children: [
+                Checkbox(
+                  value: checked,
+                  onChanged: available ? (_) => toggle() : null,
+                  shape: const CircleBorder(),
+                  activeColor: YanciTheme.accent,
+                  side: BorderSide(
+                    color: available
+                        ? YanciTheme.accent.withValues(alpha: 0.72)
+                        : YanciTheme.textSecondary.withValues(alpha: 0.28),
+                    width: 1,
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    L.pick(
+                      en: 'Use current background for voice calls',
+                      zhTW: '語音通話使用當前背景',
+                      zhCN: '语音通话使用当前背景',
+                    ),
+                    style: TextStyle(
+                      color: available
+                          ? YanciTheme.textPrimary
+                          : YanciTheme.textSecondary.withValues(alpha: 0.48),
+                      fontSize: 13,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   /// 無邊框無底色的可收起區塊（用在彈窗下部 1/3）
   Widget _bgDialogCollapsible({
     Key? key,

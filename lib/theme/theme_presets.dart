@@ -215,8 +215,8 @@ const changAnPreset = ThemePreset(
   glassInputBg: Color(0xB0EDE6DC),
   navBarBg: Color(0xE6DCD4CA),
   navInactive: Color(0xFF8A7870),
-  starColor: Color(0x55D8C8B8),
-  starGlow: Color(0x1CD0C0B0),
+  starColor: Color(0x60C0785C), // 夯土上的朱砂印
+  starGlow: Color(0x1CB0604A),
 );
 
 // ─── 5. 花信 ───

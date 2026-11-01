@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'package:path_provider/path_provider.dart';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../memory/database.dart';
@@ -9,6 +8,7 @@ import 'package:uuid/uuid.dart';
 import 'locale_strings.dart';
 import 'scratch_service.dart';
 import 'tool_feature_settings.dart';
+import '../utils/app_directories.dart';
 
 class ShopItem {
   final String id;
@@ -433,7 +433,7 @@ class ShopService {
     if (imageSourcePath.isNotEmpty) {
       final sourceFile = File(imageSourcePath);
       if (sourceFile.existsSync()) {
-        final docDir = await getApplicationDocumentsDirectory();
+        final docDir = await getAppDocumentsDirectory();
         final shopDir = Directory('${docDir.path}/shop_items');
         if (!shopDir.existsSync()) {
           shopDir.createSync(recursive: true);
@@ -485,7 +485,7 @@ class ShopService {
     if (imageSourcePath != null && imageSourcePath.isNotEmpty) {
       final sourceFile = File(imageSourcePath);
       if (sourceFile.existsSync()) {
-        final docDir = await getApplicationDocumentsDirectory();
+        final docDir = await getAppDocumentsDirectory();
         final shopDir = Directory('${docDir.path}/shop_items');
         if (!shopDir.existsSync()) {
           shopDir.createSync(recursive: true);

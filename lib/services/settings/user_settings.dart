@@ -233,6 +233,9 @@ class UserSettings {
   static const String _keyCharacterName = 'character_name';
   static const String _keyAvatarPath = 'avatar_path';
   static const String _keyActiveCharacterId = 'active_character_id';
+  static const String _keyStarredCharacterIds = 'starred_character_ids_v1';
+  static const String _keyCharacterStarHintShown =
+      'character_star_hint_shown_v1';
 
   static Future<void> saveCharacterName(String name) async {
     final p = await SharedPreferences.getInstance();
@@ -262,6 +265,35 @@ class UserSettings {
   static Future<String> getActiveCharacterId() async {
     final p = await SharedPreferences.getInstance();
     return p.getString(_keyActiveCharacterId) ?? 'default';
+  }
+
+  static Future<Set<String>> getStarredCharacterIds() async {
+    final p = await SharedPreferences.getInstance();
+    return (p.getStringList(_keyStarredCharacterIds) ?? const <String>[])
+        .map((id) => id.trim())
+        .where((id) => id.isNotEmpty)
+        .toSet();
+  }
+
+  static Future<void> setCharacterStarred(String id, bool starred) async {
+    final p = await SharedPreferences.getInstance();
+    final ids = (p.getStringList(_keyStarredCharacterIds) ?? const <String>[])
+        .map((value) => value.trim())
+        .where((value) => value.isNotEmpty)
+        .toSet();
+    if (starred) {
+      ids.add(id.trim());
+    } else {
+      ids.remove(id.trim());
+    }
+    await p.setStringList(_keyStarredCharacterIds, ids.toList()..sort());
+  }
+
+  static Future<bool> markCharacterStarHintShown() async {
+    final p = await SharedPreferences.getInstance();
+    if (p.getBool(_keyCharacterStarHintShown) ?? false) return false;
+    await p.setBool(_keyCharacterStarHintShown, true);
+    return true;
   }
 
   // ═══ 雜項 ═══

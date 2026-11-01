@@ -5,6 +5,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../theme/app_theme.dart';
+import '../../desktop/desktop_layout.dart';
 
 // ═══════════════════════════════════════════════════════════════════
 // HoltSidebarShell — Claude-mobile-style sidebar
@@ -76,7 +77,17 @@ class HoltSidebarShellState extends State<HoltSidebarShell>
   /// Open / close animation duration.
   static const Duration _dur = Duration(milliseconds: 280);
 
-  bool get isOpen => _ctrl.isCompleted;
+  /// Windows 寬視窗：側邊欄釘在左邊，open/close 都不需要動。
+  bool _docked = false;
+
+  // 抽屜 ↔ 釘住切換時（拖動視窗寬度）沿用同一棵子樹，狀態不丟。
+  final GlobalKey _childKey = GlobalKey(debugLabel: 'sidebar-shell-child');
+  final GlobalKey _panelKey = GlobalKey(debugLabel: 'sidebar-shell-panel');
+  final GlobalKey _backgroundKey = GlobalKey(
+    debugLabel: 'sidebar-shell-background',
+  );
+
+  bool get isOpen => _docked || _ctrl.isCompleted;
   bool get isClosed => _ctrl.isDismissed;
 
   @override
@@ -108,6 +119,7 @@ class HoltSidebarShellState extends State<HoltSidebarShell>
   }
 
   void open() {
+    if (_docked) return;
     _ensureSidebarVisible();
     if (_reduceMotion) {
       _ctrl.value = 1;
@@ -118,6 +130,7 @@ class HoltSidebarShellState extends State<HoltSidebarShell>
 
   void close() {
     _dismissKeyboard();
+    if (_docked) return;
     if (_reduceMotion) {
       _ctrl.value = 0;
       return;
@@ -178,6 +191,24 @@ class HoltSidebarShellState extends State<HoltSidebarShell>
 
   @override
   Widget build(BuildContext context) {
+    _docked = DesktopLayout.isDocked(context);
+    if (_docked) {
+      if (_ctrl.value != 0) {
+        // 抽屜開著時把視窗拉寬：收回抽屜狀態，縮窄回來時不會一打開就蓋住。
+        // 不能在 build 裡動 controller（會觸發自己的 setState）。
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted && _docked) _ctrl.value = 0;
+        });
+      }
+      return DesktopDockedShell(
+        background: KeyedSubtree(key: _backgroundKey, child: widget.background),
+        sidebar: KeyedSubtree(
+          key: _panelKey,
+          child: _buildSidebarPanel(docked: true),
+        ),
+        child: KeyedSubtree(key: _childKey, child: widget.child),
+      );
+    }
     final screenW = MediaQuery.of(context).size.width;
     final sidebarW = screenW * _widthRatio;
     _reduceMotion = MediaQuery.disableAnimationsOf(context);
@@ -198,7 +229,12 @@ class HoltSidebarShellState extends State<HoltSidebarShell>
               // frame. Freeze ambient motion while the drawer is visible;
               // the last rendered frame remains as the visual backdrop.
               enabled: !_sidebarVisible,
-              child: RepaintBoundary(child: widget.background),
+              child: RepaintBoundary(
+                child: KeyedSubtree(
+                  key: _backgroundKey,
+                  child: widget.background,
+                ),
+              ),
             ),
           ),
 
@@ -227,7 +263,10 @@ class HoltSidebarShellState extends State<HoltSidebarShell>
                 onHorizontalDragUpdate: (d) => _onDragUpdate(d, sidebarW),
                 onHorizontalDragEnd: _onDragEnd,
                 onHorizontalDragCancel: _onDragCancel,
-                child: _buildSidebarPanel(),
+                child: KeyedSubtree(
+                  key: _panelKey,
+                  child: _buildSidebarPanel(),
+                ),
               ),
             ),
           ),
@@ -261,7 +300,9 @@ class HoltSidebarShellState extends State<HoltSidebarShell>
                 ),
               );
             },
-            child: RepaintBoundary(child: widget.child),
+            child: RepaintBoundary(
+              child: KeyedSubtree(key: _childKey, child: widget.child),
+            ),
           ),
 
           // ── Layer 3: exposed-content dismiss surface ──
@@ -319,11 +360,14 @@ class HoltSidebarShellState extends State<HoltSidebarShell>
 
   // ── sidebar panel: fixed-background blur with a restrained tint ──
 
-  Widget _buildSidebarPanel() {
-    const radius = BorderRadius.only(
-      topRight: Radius.circular(_radius),
-      bottomRight: Radius.circular(_radius),
-    );
+  Widget _buildSidebarPanel({bool docked = false}) {
+    // 釘在左邊時貼齊視窗邊，不需要抽屜的右側圓角。
+    final radius = docked
+        ? BorderRadius.zero
+        : const BorderRadius.only(
+            topRight: Radius.circular(_radius),
+            bottomRight: Radius.circular(_radius),
+          );
     return RepaintBoundary(
       child: ClipRRect(
         borderRadius: radius,

@@ -12,6 +12,7 @@ import 'sse_stream.dart';
 import 'stream_transport.dart';
 import 'token_estimator.dart';
 import 'system_context_debug.dart';
+import 'reasoning_effort.dart';
 
 class GeminiResponseTruncatedException implements Exception {
   const GeminiResponseTruncatedException();
@@ -42,6 +43,7 @@ class GeminiService implements ApiAdapter {
   final String apiKey;
   final String modelId;
   bool thinkingEnabled;
+  String reasoningEffort;
   http.Client? _activeClient;
   static const String _baseUrl =
       'https://generativelanguage.googleapis.com/v1beta';
@@ -70,6 +72,7 @@ class GeminiService implements ApiAdapter {
     required this.apiKey,
     this.modelId = 'gemini-2.5-flash',
     this.thinkingEnabled = false,
+    this.reasoningEffort = ReasoningEffort.medium,
     http.Client Function()? clientFactory,
   }) : _clientFactory = clientFactory;
 
@@ -1057,14 +1060,35 @@ class GeminiService implements ApiAdapter {
 
   Map<String, Object?> _thinkingConfig(String model) {
     final normalized = model.toLowerCase();
+    final effort = ReasoningEffort.normalize(reasoningEffort);
+    if (effort == ReasoningEffort.auto) {
+      // Absence is intentional: Gemini chooses the model-native default.
+      return const <String, Object?>{};
+    }
+    final level = ReasoningEffort.normalize(
+      thinkingEnabled ? reasoningEffort : ReasoningEffort.off,
+    ).toUpperCase();
     if (GeminiCachePolicy.usesImplicitCaching(normalized)) {
       return <String, Object?>{
-        'thinkingLevel': thinkingEnabled ? 'medium' : 'low',
+        // Argon-style models require reasoning; off means LOW with thoughts
+        // hidden, matching the provider's mandatory-reasoning contract.
+        'thinkingLevel': thinkingEnabled ? level : 'LOW',
         'includeThoughts': thinkingEnabled,
       };
     }
+    if (thinkingEnabled && _supportsThinkingBudget(normalized)) {
+      final budget = switch (ReasoningEffort.normalize(reasoningEffort)) {
+        ReasoningEffort.low => 1024,
+        ReasoningEffort.high => 8192,
+        _ => 4096,
+      };
+      return <String, Object?>{
+        'thinkingBudget': budget,
+        'includeThoughts': true,
+      };
+    }
     if (thinkingEnabled) {
-      return const <String, Object?>{'includeThoughts': true};
+      return <String, Object?>{'thinkingLevel': level, 'includeThoughts': true};
     }
     if (_supportsThinkingBudget(normalized)) {
       return const <String, Object?>{

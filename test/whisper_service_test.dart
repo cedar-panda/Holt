@@ -88,9 +88,16 @@ void main() {
         modelOverrideEnabled: true,
       );
 
-      final instruction = WhisperService.runtimeInstruction(state);
+      final instruction = WhisperService.runtimeInstruction(
+        state,
+        characterName: '顧遠',
+        userName: '小禾',
+      );
 
       expect(instruction, contains('靠近一點說'));
+      expect(instruction, contains('顧遠'));
+      expect(instruction, contains('小禾'));
+      expect(instruction, anyOf(contains('不是旁白'), contains('never narration')));
       expect(instruction, contains('<whisper>'));
       expect(instruction, contains('${WhisperService.maxLines}'));
       expect(instruction, contains('${WhisperService.maxCjkLength}'));

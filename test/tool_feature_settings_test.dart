@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:project_yanci/models/context_mode.dart';
 import 'package:project_yanci/services/scratch_service.dart';
 import 'package:project_yanci/services/tool_feature_settings.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -62,6 +63,46 @@ void main() {
     expect(reloaded.toolPromptsEnabled, isFalse);
     expect(reloaded.modelGreetingEnabled, isFalse);
   });
+
+  test(
+    'one named preset can become the default RP capability bundle',
+    () async {
+      const first = FeatureModulePreset(
+        id: 'rp-first',
+        name: 'RP first',
+        applyToRp: true,
+        state: ToolFeatureState(
+          imageGenerationEnabled: false,
+          diaryEnabled: false,
+          toolPromptsEnabled: false,
+        ),
+      );
+      const second = FeatureModulePreset(
+        id: 'rp-second',
+        name: 'RP second',
+        applyToRp: true,
+        state: ToolFeatureState(
+          imageGenerationEnabled: true,
+          diaryEnabled: true,
+          toolPromptsEnabled: true,
+          rpDailyLifeToolsEnabled: true,
+        ),
+      );
+
+      await ToolFeatureSettings.savePreset(first);
+      await ToolFeatureSettings.savePreset(second);
+
+      final presets = await ToolFeatureSettings.loadPresets();
+      expect(presets.where((preset) => preset.applyToRp), hasLength(1));
+      expect(presets.last.id, 'rp-second');
+
+      final rp = await ToolFeatureSettings.loadForContext(ContextMode.rp);
+      expect(rp.imageGenerationEnabled, isTrue);
+      expect(rp.diaryEnabled, isTrue);
+      expect(rp.toolPromptsEnabled, isTrue);
+      expect(rp.rpDailyLifeToolsEnabled, isTrue);
+    },
+  );
 
   test(
     'daily shell grant is frozen while every economy module is off',

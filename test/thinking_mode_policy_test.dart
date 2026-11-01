@@ -139,11 +139,8 @@ void main() {
         );
     final onStaticHash = OpenRouterService.lastCacheDiagnostics['static_hash'];
 
-    expect(offBody['reasoning'], <String, dynamic>{
-      'enabled': false,
-      'exclude': true,
-    });
-    expect(onBody['reasoning'], <String, dynamic>{'enabled': true});
+    expect(offBody.containsKey('reasoning'), isFalse);
+    expect(onBody['reasoning'], <String, dynamic>{'effort': 'medium'});
     expect(offStaticHash, isNotEmpty);
     expect(onStaticHash, offStaticHash);
   });

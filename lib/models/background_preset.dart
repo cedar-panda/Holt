@@ -17,6 +17,8 @@ class BackgroundPreset {
   final int? chatBubbleTextColor;
   final int? chatThinkingTextColor;
   final double? chatBubbleOpacity;
+  /// Which custom image is reused on the call screen: none/home/chat.
+  final String callBackgroundScope;
 
   const BackgroundPreset({
     required this.slot,
@@ -35,6 +37,7 @@ class BackgroundPreset {
     this.chatBubbleTextColor,
     this.chatThinkingTextColor,
     this.chatBubbleOpacity,
+    this.callBackgroundScope = 'none',
   });
 
   bool get hasHomeImage => homePath.trim().isNotEmpty;
@@ -58,6 +61,7 @@ class BackgroundPreset {
     Object? chatBubbleTextColor = _unchanged,
     Object? chatThinkingTextColor = _unchanged,
     Object? chatBubbleOpacity = _unchanged,
+    String? callBackgroundScope,
   }) {
     return BackgroundPreset(
       slot: slot ?? this.slot,
@@ -86,6 +90,7 @@ class BackgroundPreset {
       chatBubbleOpacity: identical(chatBubbleOpacity, _unchanged)
           ? this.chatBubbleOpacity
           : chatBubbleOpacity as double?,
+      callBackgroundScope: callBackgroundScope ?? this.callBackgroundScope,
     );
   }
 
@@ -106,6 +111,7 @@ class BackgroundPreset {
     'chat_bubble_text_color': chatBubbleTextColor,
     'chat_thinking_text_color': chatThinkingTextColor,
     'chat_bubble_opacity': chatBubbleOpacity,
+    'call_background_scope': callBackgroundScope,
   };
 
   factory BackgroundPreset.fromJson(
@@ -135,6 +141,13 @@ class BackgroundPreset {
       chatBubbleOpacity: (json['chat_bubble_opacity'] as num?)
           ?.toDouble()
           .clamp(0.15, 1.0),
+      callBackgroundScope: switch (
+        json['call_background_scope']?.toString()
+      ) {
+        'home' => 'home',
+        'chat' => 'chat',
+        _ => 'none',
+      },
     );
   }
 }

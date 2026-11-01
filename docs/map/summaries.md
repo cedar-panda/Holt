@@ -16,6 +16,7 @@
 
 - `lib/screens/chat_screen_compression.dart:_triggerContextCompression` 及 `_performContextCompression` 依 token／消息條件啟動壓縮。
 - `lib/services/context_compressor.dart:ContextCompressor.compress` 串行化同一角色、模式、故事線的摘要工作。
+- 日常摘要把來源消息標為 `speaker:姓名(user|char)`，輸出維持 `## 前情提要／## 本次摘要`，正文正規化為直接具名的 `- ` 輕手記條目；不再強套編號、粗體分類與「摘要：」公文殼。
 - `lib/services/rp_summary_prompt.dart:RpSummaryPrompt.compose` 要求按當前劇情節點保留主線、活躍支線與未結線索；不再要求每個舊事件永遠留在滾動摘要。仍影響現在的重要不可逆事件壓成同段 1～2 句，已結且不再影響後文的事件可退出當前摘要。模型只為每段輸出 `segment_order + title + anchor + 單一 keyword`，不再在 `recall_segments` 重抄摘要正文。
 - `lib/services/context_compressor.dart:ContextCompressor.buildRpRecallSegmentDrafts` 依 `anchor`、標題與段落順序，把輕量索引重新綁回最終摘要的完整段落；舊版仍帶 `content` 的回應繼續相容，SQLite 內保存的仍是完整段落。
 - `lib/services/context_compressor.dart:ContextCompressor.compactRpSummaryToHardLimit` 依主線、未結衝突／伏筆／承諾與關係轉折等優先級保留完整事件短段；低優先級整段淘汰，不留下只有標題的空殼。
@@ -27,6 +28,7 @@
 
 - `lib/screens/chat_screen_compression.dart:_buildStaticWindowSummaryPrompt` 讀窗口首次建立時固定的摘要，放入 window/static snapshot。
 - `lib/screens/chat_screen_compression.dart:_buildDynamicWindowSummaryPrompt` 依 cache／上下文限制模式載入最新摘要或關鍵詞命中段落，放入 dynamic/live 區。
+- 日常窗口摘要注入時另加身分錨點：手記中的角色姓名是模型自己、user 姓名是眼前對方；回覆回到第一人稱，不模仿手記的第三人稱敘述。
 - RP 的「截斷前情」也由 `_buildDynamicWindowSummaryPrompt` 處理：啟用上下文限制且本輪歷史將超出消息條數上限時，額外補入最新一份有效摘要，並以 1200 字為上限；未發生截斷時不補這份。
 - RP 動態摘要按「固定前情 → 截斷前情 → 關鍵詞召回」分配同一個 2000 字計算預算；關鍵詞召回使用 `max(400, 2000 - 固定前情字數 - 截斷前情字數)`，因此至少保留 400 字，極端情況下實際合計可略高於 2000 字。
 - 生成流程再以約 4000 字元約束「窗口固定／動態摘要 + 續接摘要 + RP 劇情參考」整體連續性內容。RP 劇情參考現已包含一般記憶、RP 時間線、人物／關係、狀態與世界書，且自身另有 1800 字元單輪硬上限；角色卡與工具協議不在此額度。
@@ -43,7 +45,7 @@
 
 ## 日常 / RP 差異
 
-- 日常可取最近摘要與一個關鍵詞召回結果。
+- 日常可取最近摘要與一個關鍵詞召回結果；摘要正文採具名輕手記格式。
 - RP 有固定窗口摘要、最新摘要、分段關鍵詞召回與獨立字數預算；RP 摘要另會投影時間線、人物、關係與劇情狀態。
 - RP 摘要由 `lib/services/rp_summary_prompt.dart:RpSummaryPrompt.compose` 使用獨立 prompt；世界書不在此 prompt 內。
 - RP 摘要歸檔上下文只帶一份當前 user 人設與本輪原文實際提及人物的精簡欄位；不再重複送同一人物卡，也不送 evidence、來源消息 ID、建立時間等內部欄位。

@@ -1,13 +1,13 @@
-import 'dart:convert';
+import 'dart:async';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
-import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 import 'package:audioplayers/audioplayers.dart';
 import '../memory/database.dart';
 import 'api_adapter.dart';
-import 'settings_manager.dart';
-import 'token_tracker.dart';
+import 'protocol_tags.dart';
+import 'tts_synthesizer.dart';
+import '../utils/app_directories.dart';
 
 /// TTS 播放狀態
 enum TtsState { idle, connecting, playing }
@@ -76,30 +76,18 @@ class TtsService {
       }
     }
 
-    final provider = await TtsSettings.getTtsProvider();
-
-    if (provider == 'elevenlabs') {
-      // TODO: WebSocket 流式暫時停用（Android dart:io 兼容問題）
-      await _serialSpeakElevenLabs(
-        text,
-        messageId: messageId,
-        conversationId: conversationId,
-        conversationTitle: conversationTitle,
-        characterId: characterId,
-      );
-    } else {
-      await _serialSpeak(
-        text,
-        messageId: messageId,
-        conversationId: conversationId,
-        conversationTitle: conversationTitle,
-        characterId: characterId,
-      );
-    }
+    await _synthesizeAndPlay(
+      text,
+      messageId: messageId,
+      conversationId: conversationId,
+      conversationTitle: conversationTitle,
+      characterId: characterId,
+    );
   }
 
-  /// ElevenLabs HTTP 串行播放（v3 等不支持 WebSocket 的模型）
-  static Future<void> _serialSpeakElevenLabs(
+  /// 合成 → 寫暫存檔 → 背景存語音庫 → 播放。
+  /// 供應商請求在 [TtsSynthesizer]（與通話共用），這裡只管播放狀態。
+  static Future<void> _synthesizeAndPlay(
     String text, {
     String? messageId,
     String? conversationId,
@@ -110,63 +98,30 @@ class TtsService {
       stateNotifier.value = TtsState.connecting;
       playingMessageId.value = messageId;
 
-      final bytes = await _elevenLabsGenerate(text, characterId: characterId);
-
-      final dir = await getTemporaryDirectory();
-      final file = File(
-        '${dir.path}/tts_${DateTime.now().millisecondsSinceEpoch}.mp3',
-      );
-      await file.writeAsBytes(bytes);
-
-      _saveToLibrary(
-        bytes,
+      final config = await TtsSynthesizer.resolve(characterId: characterId);
+      final bytes = await TtsSynthesizer.synthesize(
+        config,
         text,
-        messageId: messageId,
-        conversationId: conversationId,
-        conversationTitle: conversationTitle,
         characterId: characterId,
+        recordUsage: true,
       );
+
+      // 只寫一份：直接播語音庫裡那個檔。舊版另外寫一份 tmp/tts_*.mp3
+      // 播完從不刪，每次朗讀都多佔一份。語音庫存失敗才退回暫存檔。
+      unawaited(_purgeLegacyTempAudio());
+      final playPath =
+          await _saveToLibrary(
+            bytes,
+            text,
+            messageId: messageId,
+            conversationId: conversationId,
+            conversationTitle: conversationTitle,
+            characterId: characterId,
+          ) ??
+          await _writeTempAudio(bytes);
 
       stateNotifier.value = TtsState.playing;
-      await _player.play(DeviceFileSource(file.path));
-    } catch (e) {
-      stateNotifier.value = TtsState.idle;
-      playingMessageId.value = null;
-      rethrow;
-    }
-  }
-
-  /// 串行播放（OpenAI TTS）
-  static Future<void> _serialSpeak(
-    String text, {
-    String? messageId,
-    String? conversationId,
-    String? conversationTitle,
-    String? characterId,
-  }) async {
-    try {
-      stateNotifier.value = TtsState.connecting;
-      playingMessageId.value = messageId;
-
-      final bytes = await _openaiGenerate(text, characterId: characterId);
-
-      final dir = await getTemporaryDirectory();
-      final file = File(
-        '${dir.path}/tts_${DateTime.now().millisecondsSinceEpoch}.mp3',
-      );
-      await file.writeAsBytes(bytes);
-
-      _saveToLibrary(
-        bytes,
-        text,
-        messageId: messageId,
-        conversationId: conversationId,
-        conversationTitle: conversationTitle,
-        characterId: characterId,
-      );
-
-      stateNotifier.value = TtsState.playing;
-      await _player.play(DeviceFileSource(file.path));
+      await _player.play(DeviceFileSource(playPath));
     } catch (e) {
       stateNotifier.value = TtsState.idle;
       playingMessageId.value = null;
@@ -191,28 +146,32 @@ class TtsService {
     characterId: characterId,
   );
 
-  /// 角色卡優先的 ElevenLabs voice id 解析
-  static Future<String> resolveElevenVoiceId(String? characterId) async {
-    if (characterId != null) {
-      final char = await DatabaseHelper.getCharacter(characterId);
-      final v = char?['tts_voice_id'] as String?;
-      if (v != null && v.isNotEmpty) return v;
-    }
-    return TtsSettings.getTtsElevenlabsVoiceId();
+  static Future<String> _writeTempAudio(Uint8List bytes) async {
+    final dir = await getTemporaryDirectory();
+    final file = File('${dir.path}/tts_playback.mp3');
+    await file.writeAsBytes(bytes, flush: true);
+    return file.path;
   }
 
-  /// 角色卡優先的 OpenAI voice 解析
-  static Future<String> resolveOpenaiVoice(String? characterId) async {
-    if (characterId != null) {
-      final char = await DatabaseHelper.getCharacter(characterId);
-      final v = char?['tts_voice_id'] as String?;
-      if (v != null && v.isNotEmpty) return v;
-    }
-    return TtsSettings.getTtsVoice();
+  static bool _legacyTempPurged = false;
+
+  /// 清掉舊版留下的 tmp/tts_<時間戳>.mp3（每次啟動只跑一次）。
+  static Future<void> _purgeLegacyTempAudio() async {
+    if (_legacyTempPurged) return;
+    _legacyTempPurged = true;
+    try {
+      final dir = await getTemporaryDirectory();
+      await for (final entity in dir.list()) {
+        final name = entity.uri.pathSegments.last;
+        if (entity is File && RegExp(r'^tts_\d+\.mp3$').hasMatch(name)) {
+          await entity.delete();
+        }
+      }
+    } catch (_) {}
   }
 
-  /// 後台保存語音到持久目錄 + DB
-  static Future<void> _saveToLibrary(
+  /// 保存語音到持久目錄 + DB；回傳檔案路徑，失敗回 null。
+  static Future<String?> _saveToLibrary(
     Uint8List bytes,
     String text, {
     String? messageId,
@@ -221,7 +180,7 @@ class TtsService {
     String? characterId,
   }) async {
     try {
-      final appDir = await getApplicationDocumentsDirectory();
+      final appDir = await getAppDocumentsDirectory();
       final voiceDir = Directory('${appDir.path}/voices');
       if (!await voiceDir.exists()) await voiceDir.create(recursive: true);
 
@@ -241,8 +200,10 @@ class TtsService {
         characterId: characterId ?? 'default',
         fileSize: bytes.length,
       );
+      return filePath;
     } catch (_) {
       // 保存失敗不影響播放
+      return null;
     }
   }
 
@@ -275,12 +236,14 @@ class TtsService {
   /// Removes app-owned inline action markers while preserving ordinary prose.
   ///
   /// Hidden XML/tool blocks are stripped only by [VisibleModelOutput.finalOnly]
-  /// and the shared protocol tag registry. Notifications reuse this narrow
+  /// and its shared [ProtocolTags] registry. Notifications reuse this narrow
   /// helper instead of duplicating protocol-tag regular expressions.
   static String stripFunctionalMarkers(String raw) {
     var text = VisibleModelOutput.finalOnly(raw);
     text = text.replaceAll(RegExp(r'\[sticker:\d+\]'), '');
     text = text.replaceAll(RegExp(r'\[transfer:\d+\]'), '');
+    text = text.replaceAll(RegExp(r'\[gift:[^\]]*\]'), '');
+    text = text.replaceAll(RegExp(r'\[gift_received:[^\]]*\]'), '');
     text = text.replaceAll(RegExp(r'\[scratch_gift:[^\]]*\]'), '');
     text = text.replaceAll(RegExp(r'\[call_event:[^\]]*\]'), '');
     return text.trim();
@@ -292,55 +255,11 @@ class TtsService {
   static String extractSpeechContent(String raw, {bool keepAudioTags = false}) {
     var text = stripFunctionalMarkers(raw);
 
-    // 1) 思考鏈
-    text = text.replaceAll(RegExp(r'<think>.*?</think>', dotAll: true), '');
-    text = text.replaceAll(
-      RegExp(r'<thinking>.*?</thinking>', dotAll: true),
-      '',
-    );
+    // 思考鏈與所有協議標籤已由 finalOnly 剝除（清單見 ProtocolTags）。
 
-    // 1.5) 內部標籤（情緒 / 記憶 / 畫圖 / 自我註記）
-    text = text.replaceAll(RegExp(r'<emo>.*?</emo>', dotAll: true), '');
-    text = text.replaceAll(
-      RegExp(r'<emo_resolve>.*?</emo_resolve>', dotAll: true),
-      '',
-    );
-    text = text.replaceAll(RegExp(r'<memo>.*?</memo>', dotAll: true), '');
-    text = text.replaceAll(
-      RegExp(r'<memo_del>.*?</memo_del>', dotAll: true),
-      '',
-    );
-    text = text.replaceAll(
-      RegExp(r'<memo_merge>.*?</memo_merge>', dotAll: true),
-      '',
-    );
-    text = text.replaceAll(
-      RegExp(r'<memo_update>.*?</memo_update>', dotAll: true),
-      '',
-    );
-    text = text.replaceAll(
-      RegExp(r'<persona_note>.*?</persona_note>', dotAll: true),
-      '',
-    );
-    text = text.replaceAll(RegExp(r'<draw>.*?</draw>', dotAll: true), '');
-    text = text.replaceAll(RegExp(r'<clock>.*?</clock>', dotAll: true), '');
-    text = text.replaceAll(
-      RegExp(r'<clock_keep>.*?</clock_keep>', dotAll: true),
-      '',
-    );
-    text = text.replaceAll(
-      RegExp(r'<clock_update\b[^>]*>.*?</clock_update>', dotAll: true),
-      '',
-    );
-    text = text.replaceAll(
-      RegExp(r'<clock_del>.*?</clock_del>', dotAll: true),
-      '',
-    );
-    text = text.replaceAll(
-      RegExp(r'<life_fix>.*?</life_fix>', dotAll: true),
-      '',
-    );
-    text = text.replaceAll(RegExp(r'<home>.*?</home>', dotAll: true), '');
+    // 2.3) 裸 JSON 動作區塊已由 finalOnly 剝除（ProtocolTags.stripBareJsonActions）。
+    //      這裡只拿掉模型的英文自我修正句，例如「Wait — I need to redo this.」
+    text = VisibleModelOutput.removeSelfCorrectionMarkers(text);
 
     // 2.5) 情緒標記（[sigh] [laughing] [whispers] 等）
     //      v3 模式保留——它們是給 TTS 的演出指令
@@ -460,115 +379,6 @@ class TtsService {
     return false;
   }
 
-  // ═══ OpenAI TTS ═══
-  static Future<Uint8List> _openaiGenerate(
-    String text, {
-    String? characterId,
-  }) async {
-    final apiKey = await TtsSettings.getTtsOpenaiKey();
-    if (apiKey.isEmpty) throw Exception('OpenAI TTS API Key 未設定');
-
-    String voice = '';
-    if (characterId != null) {
-      final char = await DatabaseHelper.getCharacter(characterId);
-      if (char != null) {
-        final charVoice = char['tts_voice_id'] as String?;
-        if (charVoice != null && charVoice.isNotEmpty) {
-          voice = charVoice;
-        }
-      }
-    }
-    if (voice.isEmpty) {
-      voice = await TtsSettings.getTtsVoice();
-    }
-
-    final response = await http.post(
-      Uri.parse('https://api.openai.com/v1/audio/speech'),
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer $apiKey',
-      },
-      body: jsonEncode({
-        'model': 'tts-1',
-        'voice': voice.isEmpty ? 'nova' : voice,
-        'input': text.length > 4096 ? text.substring(0, 4096) : text,
-        'response_format': 'mp3',
-      }),
-    );
-
-    if (response.statusCode != 200) {
-      throw Exception('OpenAI TTS 錯誤 ${response.statusCode}');
-    }
-    await TokenTracker().recordBillableOperation(
-      provider: 'openai',
-      model: 'tts-1',
-      estimatedCost: 0,
-      characterId: characterId ?? 'default',
-      requestKind: ApiRequestKind.tts,
-    );
-    return response.bodyBytes;
-  }
-
-  // ═══ ElevenLabs TTS ═══
-  static Future<Uint8List> _elevenLabsGenerate(
-    String text, {
-    String? characterId,
-  }) async {
-    final apiKey = await TtsSettings.getTtsElevenlabsKey();
-    if (apiKey.isEmpty) throw Exception('ElevenLabs API Key 未設定');
-
-    String voiceId = '';
-    if (characterId != null) {
-      final char = await DatabaseHelper.getCharacter(characterId);
-      if (char != null) {
-        final charVoiceId = char['tts_voice_id'] as String?;
-        if (charVoiceId != null && charVoiceId.isNotEmpty) {
-          voiceId = charVoiceId;
-        }
-      }
-    }
-    if (voiceId.isEmpty) {
-      voiceId = await TtsSettings.getTtsElevenlabsVoiceId();
-    }
-    if (voiceId.isEmpty) throw Exception('ElevenLabs Voice ID 未設定');
-    final model = await TtsSettings.getTtsElevenlabsModel();
-    final stability = await TtsSettings.getTtsElevenlabsStability();
-    final similarity = await TtsSettings.getTtsElevenlabsSimilarity();
-
-    final response = await http.post(
-      Uri.parse('https://api.elevenlabs.io/v1/text-to-speech/$voiceId'),
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'audio/mpeg',
-        'xi-api-key': apiKey,
-      },
-      body: jsonEncode({
-        'text': text,
-        'model_id': model.isEmpty ? 'eleven_multilingual_v2' : model,
-        'voice_settings': {
-          'stability': stability,
-          'similarity_boost': similarity,
-        },
-      }),
-    );
-
-    if (response.statusCode != 200) {
-      throw Exception(
-        'ElevenLabs 錯誤 ${response.statusCode}: '
-        '${response.body.length > 100 ? response.body.substring(0, 100) : response.body}',
-      );
-    }
-    await TokenTracker().recordBillableOperation(
-      provider: 'elevenlabs',
-      model: model.isEmpty ? 'eleven_multilingual_v2' : model,
-      estimatedCost: 0,
-      characterId: characterId ?? 'default',
-      requestKind: ApiRequestKind.tts,
-    );
-    return response.bodyBytes;
-  }
-
-  /// ElevenLabs 可選模型
   static const elevenlabsModels = {
     'eleven_flash_v2_5': 'Flash v2.5（低延遲）',
     'eleven_multilingual_v2': 'Multilingual v2（高品質）',

@@ -12,6 +12,7 @@ import '../theme/app_theme.dart';
 import 'marriage_cert_card.dart';
 import 'pixel_art_editor.dart';
 import 'managed_text_controllers.dart';
+import 'shell_coin_icon.dart';
 
 // ════════════════════════════════════════════════════════════════════
 // 商店 Bottom Sheet
@@ -1050,11 +1051,7 @@ class _ShopItemCardState extends State<_ShopItemCard> {
                         child: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            Image.asset(
-                              'assets/images/shell_coin.png',
-                              width: 13,
-                              height: 13,
-                            ),
+                            ShellCoinIcon(size: 13),
                             const SizedBox(width: 3),
                             Text(
                               '${item.price}',

@@ -2,6 +2,9 @@
 
 part of 'chat_screen.dart';
 
+/// 頂欄左右圖示的透明度：比角色名字（0.94）低一號存在感。
+const double _headerIconAlpha = 0.58;
+
 extension _ChatAppBarMethods on _ChatScreenState {
   Widget _buildAppBar() {
     final headerPrimary =
@@ -45,7 +48,7 @@ extension _ChatAppBarMethods on _ChatScreenState {
                       children: <Widget>[
                         Flexible(
                           child: Text(
-                            _characterName.isNotEmpty ? _characterName : 'Holt',
+                            _characterDisplayName,
                             style: TextStyle(
                               fontSize: 15,
                               fontWeight: FontWeight.w400,
@@ -191,13 +194,14 @@ extension _ChatAppBarMethods on _ChatScreenState {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
+              // 返回鍵：圖示縮小、存在感比名字（0.94）低一號；IconButton
+              // 本身仍是 48×48，點擊範圍不變。右上角狀態鍵同一透明度。
               IconButton(
                 tooltip: L.pick(en: 'Back', zhTW: '返回', zhCN: '返回'),
                 icon: Icon(
                   Icons.arrow_back_ios_rounded,
-                  size: 20,
-                  color:
-                      _boundChatForeground?.primary ?? YanciTheme.textPrimary,
+                  size: 17,
+                  color: headerPrimary.withValues(alpha: _headerIconAlpha),
                 ),
                 onPressed: () => Navigator.of(context).pop(_walletChanged),
               ),
@@ -210,9 +214,9 @@ extension _ChatAppBarMethods on _ChatScreenState {
                     child: _showHeaderModelDetails
                         ? null
                         : ChatWindowStatusButton(
-                            color:
-                                _boundChatForeground?.primary ??
-                                YanciTheme.textPrimary,
+                            color: headerPrimary.withValues(
+                              alpha: _headerIconAlpha,
+                            ),
                             accentColor: YanciTheme.accent,
                             playAttention: _statusButtonNeedsAttention,
                             onAttentionComplete: () {

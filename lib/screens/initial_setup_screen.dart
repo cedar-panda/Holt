@@ -5,13 +5,17 @@ import '../main.dart' show themeNotifier;
 import '../memory/database.dart';
 import '../services/initial_setup_service.dart';
 import '../services/locale_strings.dart';
+import '../services/settings/character_signature_settings.dart';
+import '../services/settings/context_mode_settings.dart';
 import '../services/settings/theme_settings.dart';
 import '../services/settings/memory_settings.dart';
 import '../services/settings/user_settings.dart';
 import '../services/static_token_estimator.dart';
+import '../services/tool_feature_settings.dart';
 import 'splash_screen.dart';
 import '../theme/app_theme.dart';
 import '../theme/theme_presets.dart';
+import '../widgets/ambient_particles.dart';
 import '../widgets/gradient_background.dart';
 import '../widgets/yanci_bottom_nav_bar.dart';
 
@@ -382,52 +386,99 @@ class _InitialSetupScreenState extends State<InitialSetupScreen> {
   Future<void> _continueFromMode(String mode) async {
     if (_busy) return;
     setState(() => _busy = true);
-    await UserSettings.saveInitialSetupMode(mode);
-    if (mode == 'basic') {
-      await MemorySettings.setAbilityEnabled('emotion', false);
-      await MemorySettings.setAbilityEnabled('bioclock', false);
-      await MemorySettings.saveTimelineEnabled(false);
-      await MemorySettings.saveSelfNotesEnabled(true);
-      await MemorySettings.saveTimelinePromptMode('normal');
-    } else if (mode == 'advanced') {
-      await MemorySettings.setAbilityEnabled('emotion', true);
-      await MemorySettings.setAbilityEnabled('bioclock', true);
-      await MemorySettings.saveTimelineEnabled(true);
-      await MemorySettings.saveSelfNotesEnabled(true);
-      await MemorySettings.saveTimelinePromptMode('normal');
-    } else if (mode == 'rp') {
-      await MemorySettings.setAbilityEnabled('emotion', false);
-      await MemorySettings.setAbilityEnabled('bioclock', false);
-      await MemorySettings.saveTimelineEnabled(true);
-      await MemorySettings.saveSelfNotesEnabled(false);
-      await MemorySettings.saveTimelinePromptMode('plot');
-    } else {
-      await MemorySettings.setAbilityEnabled('emotion', _customEmotion);
-      await MemorySettings.setAbilityEnabled('bioclock', _customBioclock);
-      await MemorySettings.saveTimelineEnabled(_customTimeline);
-      await MemorySettings.saveSelfNotesEnabled(_customSelfNotes);
-      await UserSettings.saveShowChatAvatar(_customAvatar);
-      await MemorySettings.saveTimelinePromptMode('normal');
-    }
-    // 方案只設定預設值；不鎖定策略。已有角色重新走引導時，先套用
-    // 「含記憶方案預設使用蛛網記憶」，之後仍可在能力模組切回經典記憶。
-    if (_hasExistingCharacter) {
-      final activeId = await UserSettings.getActiveCharacterId();
-      if (activeId != 'default') {
-        await DatabaseHelper.updateCharacter(activeId, {
-          'is_spider_web_enabled': 1,
-        });
+    try {
+      await UserSettings.saveInitialSetupMode(mode);
+      if (mode == 'basic') {
+        await ContextModeSettings.setGlobalRpEnabled(false);
+        await MemorySettings.setAbilityEnabled('emotion', false);
+        await MemorySettings.setAbilityEnabled('bioclock', false);
+        await MemorySettings.saveTimelineEnabled(false);
+        await MemorySettings.saveSelfNotesEnabled(false);
+        await MemorySettings.saveTimelinePromptMode('normal');
+        await MemorySettings.saveRpWorldbookAutoWriteEnabled(false);
+        await CharacterSignatureSettings.setEnabled(false);
+        await ToolFeatureSettings.setToolPromptsEnabled(false);
+        await ToolFeatureSettings.setShellEconomyEnabled(false);
+        await ToolFeatureSettings.setDiaryEnabled(false);
+        await ToolFeatureSettings.setModelGreetingEnabled(false);
+        await ToolFeatureSettings.setImageGenerationEnabled(false);
+        await ToolFeatureSettings.setEmailDraftEnabled(false);
+        await ToolFeatureSettings.setRpDailyLifeToolsEnabled(false);
+      } else if (mode == 'advanced') {
+        await ContextModeSettings.setGlobalRpEnabled(false);
+        await MemorySettings.setAbilityEnabled('emotion', true);
+        await MemorySettings.setAbilityEnabled('bioclock', true);
+        await MemorySettings.saveTimelineEnabled(true);
+        await MemorySettings.saveSelfNotesEnabled(true);
+        await MemorySettings.saveTimelinePromptMode('normal');
+        await MemorySettings.saveRpWorldbookAutoWriteEnabled(false);
+        await CharacterSignatureSettings.setEnabled(true);
+        await ToolFeatureSettings.setToolPromptsEnabled(true);
+        await ToolFeatureSettings.setShellEconomyEnabled(true);
+        await ToolFeatureSettings.setDiaryEnabled(true);
+        await ToolFeatureSettings.setModelGreetingEnabled(true);
+        await ToolFeatureSettings.setImageGenerationEnabled(true);
+        await ToolFeatureSettings.setEmailDraftEnabled(true);
+        await ToolFeatureSettings.setRpDailyLifeToolsEnabled(false);
+      } else if (mode == 'rp') {
+        await ContextModeSettings.setGlobalRpEnabled(true);
+        await MemorySettings.setAbilityEnabled('emotion', false);
+        await MemorySettings.setAbilityEnabled('bioclock', false);
+        await MemorySettings.saveTimelineEnabled(true);
+        await MemorySettings.saveSelfNotesEnabled(false);
+        await MemorySettings.saveTimelinePromptMode('plot');
+        await MemorySettings.saveRpWorldbookAutoWriteEnabled(true);
+        await CharacterSignatureSettings.setEnabled(false);
+        // RP 的修正、記憶與世界書動作依賴工具協議；重跑引導時不能
+        // 沿用基礎模式留下的關閉狀態。日常生活工具仍由下方總開關隔離。
+        await ToolFeatureSettings.setToolPromptsEnabled(true);
+        await ToolFeatureSettings.setImageGenerationEnabled(true);
+        await ToolFeatureSettings.setDiaryEnabled(true);
+        await ToolFeatureSettings.setRpDailyLifeToolsEnabled(false);
+      } else {
+        await ContextModeSettings.setGlobalRpEnabled(false);
+        await MemorySettings.setAbilityEnabled('emotion', _customEmotion);
+        await MemorySettings.setAbilityEnabled('bioclock', _customBioclock);
+        await MemorySettings.saveTimelineEnabled(_customTimeline);
+        await MemorySettings.saveSelfNotesEnabled(_customSelfNotes);
+        await UserSettings.saveShowChatAvatar(_customAvatar);
+        await MemorySettings.saveTimelinePromptMode('normal');
       }
+      // 方案只設定預設值；不鎖定策略。已有角色重新走引導時，先套用
+      // 「含記憶方案預設使用蛛網記憶」，之後仍可在能力模組切回經典記憶。
+      if (_hasExistingCharacter) {
+        final activeId = await UserSettings.getActiveCharacterId();
+        if (activeId != 'default') {
+          await DatabaseHelper.updateCharacter(activeId, {
+            'is_spider_web_enabled': 1,
+          });
+        }
+      }
+      if (mounted) StaticTokenEstimator.showAfterToggle(context);
+      final nextStep = _hasExistingCharacter ? 3 : 1;
+      await UserSettings.saveInitialSetupStep(nextStep);
+      if (!mounted) return;
+      HapticFeedback.selectionClick();
+      setState(() {
+        _busy = false;
+        _step = nextStep;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _busy = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            L.pick(
+              en: 'Could not save this setup. Please try again.',
+              zhTW: '暫時無法保存這套設定，請再試一次。',
+              zhCN: '暂时无法保存这套设置，请再试一次。',
+            ),
+          ),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
     }
-    if (mounted) StaticTokenEstimator.showAfterToggle(context);
-    final nextStep = _hasExistingCharacter ? 3 : 1;
-    await UserSettings.saveInitialSetupStep(nextStep);
-    if (!mounted) return;
-    HapticFeedback.selectionClick();
-    setState(() {
-      _busy = false;
-      _step = nextStep;
-    });
   }
 
   Future<void> _skipAllGuidance() => _finish(skipAllGuidance: true);
@@ -486,107 +537,118 @@ class _InitialSetupScreenState extends State<InitialSetupScreen> {
       child: Scaffold(
         resizeToAvoidBottomInset: true,
         body: GradientBackground(
-          child: SafeArea(
-            child: AnimatedSwitcher(
-              duration: reduceMotion
-                  ? Duration.zero
-                  : const Duration(milliseconds: 240),
-              switchInCurve: Curves.easeOutCubic,
-              switchOutCurve: Curves.easeInCubic,
-              transitionBuilder: (child, animation) =>
-                  FadeTransition(opacity: animation, child: child),
-              child: switch (_step) {
-                0 => _ModeStep(
-                  key: const ValueKey('initial-mode-step'),
-                  selectedMode: _selectedMode,
-                  customEmotion: _customEmotion,
-                  customBioclock: _customBioclock,
-                  customTimeline: _customTimeline,
-                  customAvatar: _customAvatar,
-                  customSelfNotes: _customSelfNotes,
-                  busy: _busy,
-                  onBack: _returnToLanguageSelection,
-                  onModeChanged: (mode) => setState(() => _selectedMode = mode),
-                  onCustomChanged: (key, value) {
-                    setState(() {
-                      switch (key) {
-                        case 'emotion':
-                          _customEmotion = value;
-                        case 'bioclock':
-                          _customBioclock = value;
-                        case 'timeline':
-                          _customTimeline = value;
-                        case 'avatar':
-                          _customAvatar = value;
-                        case 'selfNotes':
-                          _customSelfNotes = value;
-                      }
-                    });
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              const IgnorePointer(
+                child: ExcludeSemantics(
+                  child: RepaintBoundary(child: AmbientParticleField()),
+                ),
+              ),
+              SafeArea(
+                child: AnimatedSwitcher(
+                  duration: reduceMotion
+                      ? Duration.zero
+                      : const Duration(milliseconds: 240),
+                  switchInCurve: Curves.easeOutCubic,
+                  switchOutCurve: Curves.easeInCubic,
+                  transitionBuilder: (child, animation) =>
+                      FadeTransition(opacity: animation, child: child),
+                  child: switch (_step) {
+                    0 => _ModeStep(
+                      key: const ValueKey('initial-mode-step'),
+                      selectedMode: _selectedMode,
+                      customEmotion: _customEmotion,
+                      customBioclock: _customBioclock,
+                      customTimeline: _customTimeline,
+                      customAvatar: _customAvatar,
+                      customSelfNotes: _customSelfNotes,
+                      busy: _busy,
+                      onBack: _returnToLanguageSelection,
+                      onModeChanged: (mode) =>
+                          setState(() => _selectedMode = mode),
+                      onCustomChanged: (key, value) {
+                        setState(() {
+                          switch (key) {
+                            case 'emotion':
+                              _customEmotion = value;
+                            case 'bioclock':
+                              _customBioclock = value;
+                            case 'timeline':
+                              _customTimeline = value;
+                            case 'avatar':
+                              _customAvatar = value;
+                            case 'selfNotes':
+                              _customSelfNotes = value;
+                          }
+                        });
+                      },
+                      onContinue: () => _continueFromMode(_selectedMode),
+                      onSkip: () => _continueFromMode(_selectedMode),
+                      onSkipAll: _skipAllGuidance,
+                    ),
+                    1 => _NameStep(
+                      key: const ValueKey('initial-name-step'),
+                      controller: _userNameController,
+                      focusNode: _userNameFocus,
+                      busy: _busy,
+                      onBack: _returnToPreviousStep,
+                      onContinue: _continueFromName,
+                      onSkip: _skipName,
+                      onSkipAll: _skipAllGuidance,
+                    ),
+                    2 => _CharacterStep(
+                      key: const ValueKey('initial-character-step'),
+                      nameController: _characterNameController,
+                      genderController: _genderController,
+                      relationshipController: _relationshipController,
+                      descriptionController: _descriptionController,
+                      nameFocusNode: _characterNameFocus,
+                      busy: _busy,
+                      onBack: _returnToPreviousStep,
+                      showNameError: _showCharacterNameError,
+                      onNameChanged: (_) {
+                        if (_showCharacterNameError) {
+                          setState(() => _showCharacterNameError = false);
+                        }
+                      },
+                      onSave: _saveCharacter,
+                      onSkip: _skipCharacter,
+                      onSkipAll: _skipAllGuidance,
+                    ),
+                    _ => _ThemeStep(
+                      key: const ValueKey('initial-theme-step'),
+                      presets: _choosingDarkTheme
+                          ? _darkThemePresets
+                          : _lightThemePresets,
+                      preset: _choosingDarkTheme
+                          ? _darkThemePresets[_darkPreviewIndex]
+                          : _lightThemePresets[_lightPreviewIndex],
+                      lightPreset: _lightThemePresets[_lightPreviewIndex],
+                      darkPreset: _darkThemePresets[_darkPreviewIndex],
+                      previewIndex: _choosingDarkTheme
+                          ? _darkPreviewIndex
+                          : _lightPreviewIndex,
+                      controller: _choosingDarkTheme
+                          ? _darkThemeCarouselController
+                          : _lightThemeCarouselController,
+                      choosingDarkTheme: _choosingDarkTheme,
+                      lightThemeConfirmed: _lightThemeConfirmed,
+                      darkThemeConfirmed: _darkThemeConfirmed,
+                      busy: _busy,
+                      reduceMotion: reduceMotion,
+                      onBack: _returnToPreviousStep,
+                      onSelectLight: () => _selectThemeMode(false),
+                      onSelectDark: () => _selectThemeMode(true),
+                      onPreviewChanged: _previewTheme,
+                      onApply: _confirmPreviewedTheme,
+                      onSkip: _skipTheme,
+                      onSkipAll: _skipAllGuidance,
+                    ),
                   },
-                  onContinue: () => _continueFromMode(_selectedMode),
-                  onSkip: () => _continueFromMode(_selectedMode),
-                  onSkipAll: _skipAllGuidance,
                 ),
-                1 => _NameStep(
-                  key: const ValueKey('initial-name-step'),
-                  controller: _userNameController,
-                  focusNode: _userNameFocus,
-                  busy: _busy,
-                  onBack: _returnToPreviousStep,
-                  onContinue: _continueFromName,
-                  onSkip: _skipName,
-                  onSkipAll: _skipAllGuidance,
-                ),
-                2 => _CharacterStep(
-                  key: const ValueKey('initial-character-step'),
-                  nameController: _characterNameController,
-                  genderController: _genderController,
-                  relationshipController: _relationshipController,
-                  descriptionController: _descriptionController,
-                  nameFocusNode: _characterNameFocus,
-                  busy: _busy,
-                  onBack: _returnToPreviousStep,
-                  showNameError: _showCharacterNameError,
-                  onNameChanged: (_) {
-                    if (_showCharacterNameError) {
-                      setState(() => _showCharacterNameError = false);
-                    }
-                  },
-                  onSave: _saveCharacter,
-                  onSkip: _skipCharacter,
-                  onSkipAll: _skipAllGuidance,
-                ),
-                _ => _ThemeStep(
-                  key: const ValueKey('initial-theme-step'),
-                  presets: _choosingDarkTheme
-                      ? _darkThemePresets
-                      : _lightThemePresets,
-                  preset: _choosingDarkTheme
-                      ? _darkThemePresets[_darkPreviewIndex]
-                      : _lightThemePresets[_lightPreviewIndex],
-                  lightPreset: _lightThemePresets[_lightPreviewIndex],
-                  darkPreset: _darkThemePresets[_darkPreviewIndex],
-                  previewIndex: _choosingDarkTheme
-                      ? _darkPreviewIndex
-                      : _lightPreviewIndex,
-                  controller: _choosingDarkTheme
-                      ? _darkThemeCarouselController
-                      : _lightThemeCarouselController,
-                  choosingDarkTheme: _choosingDarkTheme,
-                  lightThemeConfirmed: _lightThemeConfirmed,
-                  darkThemeConfirmed: _darkThemeConfirmed,
-                  busy: _busy,
-                  reduceMotion: reduceMotion,
-                  onBack: _returnToPreviousStep,
-                  onSelectLight: () => _selectThemeMode(false),
-                  onSelectDark: () => _selectThemeMode(true),
-                  onPreviewChanged: _previewTheme,
-                  onApply: _confirmPreviewedTheme,
-                  onSkip: _skipTheme,
-                  onSkipAll: _skipAllGuidance,
-                ),
-              },
-            ),
+              ),
+            ],
           ),
         ),
       ),
@@ -634,7 +696,11 @@ class _ModeStep extends StatelessWidget {
   };
 
   String _description(String mode) => switch (mode) {
-    'basic' => L.pick(en: 'Memory stays on', zhTW: '記憶開啟', zhCN: '记忆开启'),
+    'basic' => L.pick(
+      en: 'Minimal features; toggle anytime in the app',
+      zhTW: '功能極簡，可在 App 內開關',
+      zhCN: '功能极简，可在 App 内开关',
+    ),
     'advanced' => L.pick(
       en: 'Basic / Emotion / Bio clock / Timeline',
       zhTW: '基礎 / 情緒 / 生物鐘 / 時間線',
@@ -654,6 +720,7 @@ class _ModeStep extends StatelessWidget {
 
   Widget _modeCard(BuildContext context, String mode) {
     final selected = selectedMode == mode;
+    final recommended = mode == 'advanced' || mode == 'rp';
     return Center(
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 300),
@@ -675,21 +742,61 @@ class _ModeStep extends StatelessWidget {
                 borderRadius: BorderRadius.circular(18),
                 border: Border.all(
                   color: selected
-                      ? YanciTheme.accent.withValues(alpha: 0.7)
-                      : YanciTheme.glassBorder,
+                      ? YanciTheme.accent.withValues(alpha: 0.55)
+                      : YanciTheme.accent.withValues(alpha: 0.15),
+                  width: selected ? 1 : 0.7,
                 ),
               ),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text(
-                    _label(mode),
-                    textAlign: TextAlign.center,
-                    style: YanciTheme.bodyText.copyWith(
-                      fontSize: (YanciTheme.bodyText.fontSize ?? 15) + 2,
-                      fontWeight: FontWeight.w800,
-                      color: YanciTheme.textPrimary,
-                    ),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Flexible(
+                        child: Text(
+                          _label(mode),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          textAlign: TextAlign.center,
+                          style: YanciTheme.bodyText.copyWith(
+                            fontSize: (YanciTheme.bodyText.fontSize ?? 15) + 2,
+                            fontWeight: FontWeight.w600,
+                            color: YanciTheme.textPrimary,
+                          ),
+                        ),
+                      ),
+                      if (recommended) ...[
+                        const SizedBox(width: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 2,
+                          ),
+                          decoration: BoxDecoration(
+                            color: YanciTheme.accent.withValues(alpha: 0.14),
+                            borderRadius: BorderRadius.circular(
+                              YanciTheme.radiusPill,
+                            ),
+                            border: Border.all(
+                              color: YanciTheme.accent.withValues(alpha: 0.38),
+                              width: 0.6,
+                            ),
+                          ),
+                          child: Text(
+                            L.pick(en: 'Recommended', zhTW: '推薦', zhCN: '推荐'),
+                            maxLines: 1,
+                            style: TextStyle(
+                              fontFamily: YanciTheme.fontFamily,
+                              fontSize: 10.5,
+                              fontWeight: FontWeight.w600,
+                              color: YanciTheme.accent,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
                   ),
                   const SizedBox(height: 6),
                   Text(
@@ -715,18 +822,66 @@ class _ModeStep extends StatelessWidget {
     String description,
     bool value,
   ) {
-    return SwitchListTile.adaptive(
-      contentPadding: EdgeInsets.zero,
-      title: Text(title, style: YanciTheme.bodyText.copyWith(fontSize: 14)),
-      subtitle: Text(
-        description,
-        style: YanciTheme.bodySmall.copyWith(
-          color: YanciTheme.textSecondary.withValues(alpha: 0.7),
+    final enabled = !busy;
+    return Semantics(
+      container: true,
+      toggled: value,
+      enabled: enabled,
+      label: '$title，$description',
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14),
+        onTap: enabled ? () => onCustomChanged(key, !value) : null,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minHeight: 56),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        title,
+                        style: YanciTheme.bodyText.copyWith(fontSize: 14),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        description,
+                        style: YanciTheme.bodySmall.copyWith(
+                          color: YanciTheme.textSecondary.withValues(
+                            alpha: 0.7,
+                          ),
+                          height: 1.3,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                SizedBox.square(
+                  dimension: 48,
+                  child: Center(
+                    child: IgnorePointer(
+                      child: ExcludeSemantics(
+                        child: Transform.scale(
+                          scale: 0.78,
+                          child: Switch.adaptive(
+                            value: value,
+                            activeThumbColor: YanciTheme.accent,
+                            onChanged: enabled ? (_) {} : null,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
         ),
       ),
-      value: value,
-      activeThumbColor: YanciTheme.accent,
-      onChanged: busy ? null : (next) => onCustomChanged(key, next),
     );
   }
 
@@ -753,6 +908,7 @@ class _ModeStep extends StatelessWidget {
                   zhTW: '選擇你們的相處模式',
                   zhCN: '选择你们的相处模式',
                 ),
+                textScaler: const TextScaler.linear(1),
                 style: YanciTheme.headingLarge.copyWith(
                   color: YanciTheme.textPrimary,
                   fontSize: 27,
@@ -892,6 +1048,7 @@ class _NameStep extends StatelessWidget {
             Text(
               L.pick(en: 'What should I call you?', zhTW: '怎麼稱呼你～'),
               key: const ValueKey('initial-name-title'),
+              textScaler: const TextScaler.linear(1),
               style: YanciTheme.headingLarge.copyWith(
                 color: YanciTheme.textPrimary,
                 fontSize: 27,
@@ -1047,12 +1204,19 @@ class _CharacterStep extends StatelessWidget {
                       hintStyle: YanciTheme.bodySmall.copyWith(
                         color: YanciTheme.textSecondary.withValues(alpha: 0.48),
                       ),
-                      filled: true,
-                      fillColor: YanciTheme.glassWhite.withValues(alpha: 0.16),
-                      border: _fieldBorder(),
-                      enabledBorder: _fieldBorder(),
-                      focusedBorder: _fieldBorder(color: YanciTheme.accent),
-                      contentPadding: const EdgeInsets.all(13),
+                      filled: false,
+                      border: const UnderlineInputBorder(),
+                      enabledBorder: UnderlineInputBorder(
+                        borderSide: BorderSide(
+                          color: YanciTheme.textSecondary.withValues(
+                            alpha: 0.22,
+                          ),
+                        ),
+                      ),
+                      focusedBorder: UnderlineInputBorder(
+                        borderSide: BorderSide(color: YanciTheme.accent),
+                      ),
+                      contentPadding: const EdgeInsets.symmetric(vertical: 10),
                     ),
                   ),
                 ],
@@ -1130,6 +1294,7 @@ class _ThemeStep extends StatelessWidget {
                   child: Text(
                     L.pick(en: 'Choose day and night', zhTW: '選擇日間與夜間主題'),
                     key: const ValueKey('initial-theme-title'),
+                    textScaler: const TextScaler.linear(1),
                     style: YanciTheme.headingMedium.copyWith(
                       color: YanciTheme.textPrimary,
                       fontSize: 20,
@@ -1406,22 +1571,19 @@ class _ThemePreviewScene extends StatelessWidget {
           child: Stack(
             children: [
               Positioned(
-                right: 22,
-                top: 48,
-                child: Icon(
-                  Icons.auto_awesome,
-                  size: 15,
-                  color: preset.starColor.withValues(alpha: 0.7),
-                ),
+                right: 18,
+                top: 42,
+                child: _PreviewGlowDot(preset: preset, size: 22),
               ),
               Positioned(
-                right: 52,
-                top: 70,
-                child: Icon(
-                  Icons.auto_awesome,
-                  size: 8,
-                  color: preset.starColor.withValues(alpha: 0.5),
-                ),
+                right: 50,
+                top: 68,
+                child: _PreviewGlowDot(preset: preset, size: 11),
+              ),
+              Positioned(
+                right: 82,
+                top: 35,
+                child: _PreviewGlowDot(preset: preset, size: 7),
               ),
               Padding(
                 padding: const EdgeInsets.fromLTRB(18, 15, 18, 14),
@@ -1535,31 +1697,90 @@ class _PreviewBubble extends StatelessWidget {
   Widget build(BuildContext context) {
     return FractionallySizedBox(
       widthFactor: fromUser ? 0.68 : 0.82,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 10),
-        decoration: BoxDecoration(
-          color: fromUser ? preset.userBubble : preset.aiBubble,
-          gradient: fromUser || preset.aiBubbleTop == null
-              ? null
-              : LinearGradient(
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                  colors: [preset.aiBubbleTop!, preset.aiBubble],
-                ),
-          borderRadius: BorderRadius.circular(15),
-          border: Border.all(
-            color: fromUser ? preset.userBubbleBorder : preset.aiBubbleBorder,
-          ),
-        ),
-        child: Text(
-          text,
-          maxLines: 2,
-          overflow: TextOverflow.ellipsis,
-          style: TextStyle(
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final textStyle = TextStyle(
             color: preset.textOnBubble,
             fontFamily: YanciTheme.fontFamily,
             fontSize: 12,
             height: 1.35,
+          );
+          final painter = TextPainter(
+            text: TextSpan(text: text, style: textStyle),
+            maxLines: 2,
+            textDirection: Directionality.of(context),
+            textScaler: MediaQuery.textScalerOf(context),
+          )..layout(maxWidth: constraints.maxWidth - 26);
+          final singleLine = painter.computeLineMetrics().length <= 1;
+          final bubbleColor = fromUser ? preset.userBubble : preset.aiBubble;
+          final borderColor = fromUser
+              ? preset.userBubbleBorder
+              : preset.aiBubbleBorder;
+          final presetGradient = !fromUser && preset.aiBubbleTop != null
+              ? LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [preset.aiBubbleTop!, preset.aiBubble],
+                )
+              : null;
+          return Container(
+            padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 10),
+            decoration: BoxDecoration(
+              color: bubbleColor,
+              gradient:
+                  presetGradient ??
+                  YanciTheme.bubbleGlazeGradient(
+                    bubbleColor,
+                    isDark: preset.isDark,
+                  ),
+              borderRadius: BorderRadius.circular(
+                singleLine ? YanciTheme.radiusPill : 22,
+              ),
+              border: Border.all(
+                color: YanciTheme.bubbleGlazeBorderColor(
+                  borderColor,
+                  isDark: preset.isDark,
+                ),
+                width: 0.65,
+              ),
+              boxShadow: YanciTheme.bubbleGlazeShadows(isDark: preset.isDark),
+            ),
+            child: Text(
+              text,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: textStyle,
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _PreviewGlowDot extends StatelessWidget {
+  const _PreviewGlowDot({required this.preset, required this.size});
+
+  final ThemePreset preset;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    return IgnorePointer(
+      child: ExcludeSemantics(
+        child: Container(
+          width: size,
+          height: size,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            gradient: RadialGradient(
+              colors: [
+                preset.starColor.withValues(alpha: 0.48),
+                preset.starGlow.withValues(alpha: 0.34),
+                preset.starGlow.withValues(alpha: 0),
+              ],
+              stops: const [0, 0.34, 1],
+            ),
           ),
         ),
       ),
@@ -1748,6 +1969,7 @@ class _ThemeStartSheet extends StatelessWidget {
             Text(
               L.pick(en: 'Which one should we begin with?', zhTW: '現在先用哪一種？'),
               key: const ValueKey('initial-theme-start-title'),
+              textScaler: const TextScaler.linear(1),
               style: YanciTheme.headingMedium.copyWith(
                 color: YanciTheme.textPrimary,
                 fontSize: 21,
@@ -1907,21 +2129,20 @@ class _TaTitle extends StatelessWidget {
       return Text(
         'The one beside you',
         key: const ValueKey('initial-character-title'),
-        style: baseStyle.copyWith(fontStyle: FontStyle.italic),
+        textScaler: const TextScaler.linear(1),
+        style: baseStyle,
       );
     }
     return Text.rich(
       key: const ValueKey('initial-character-title'),
+      textScaler: const TextScaler.linear(1),
       TextSpan(
         style: baseStyle,
         children: [
           TextSpan(
             text: L.pick(en: '', zhTW: '與你相伴的那個'),
           ),
-          const TextSpan(
-            text: 'TA',
-            style: TextStyle(fontStyle: FontStyle.italic),
-          ),
+          const TextSpan(text: 'TA'),
         ],
       ),
     );
@@ -2174,7 +2395,7 @@ class _SkipAllButton extends StatelessWidget {
         minimumSize: const Size(200, 48),
       ),
       child: Text(
-        L.pick(en: 'Skip all guidance and explore', zhTW: '無需引導 自我探索'),
+        L.pick(en: 'Skip guidance', zhTW: '無需引導', zhCN: '无需引导'),
         textAlign: TextAlign.center,
         style: YanciTheme.bodySmall.copyWith(
           color: YanciTheme.textSecondary.withValues(alpha: 0.76),
@@ -2202,9 +2423,13 @@ class _PrimaryButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final background = backgroundColor ?? YanciTheme.accent;
-    final foreground =
-        foregroundColor ?? (YanciTheme.isDark ? Colors.black : Colors.white);
+    final accent = backgroundColor ?? YanciTheme.accent;
+    final background = Color.lerp(
+      YanciTheme.surfacePanel,
+      accent,
+      YanciTheme.isDark ? 0.28 : 0.22,
+    )!;
+    final foreground = foregroundColor ?? YanciTheme.textPrimary;
     return SizedBox(
       width: double.infinity,
       height: 52,
@@ -2214,8 +2439,12 @@ class _PrimaryButton extends StatelessWidget {
           backgroundColor: background,
           foregroundColor: foreground,
           disabledBackgroundColor: background.withValues(alpha: 0.45),
+          disabledForegroundColor: foreground.withValues(alpha: 0.62),
+          side: BorderSide(color: accent.withValues(alpha: 0.48), width: 0.9),
+          elevation: 0,
+          overlayColor: accent.withValues(alpha: 0.08),
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(YanciTheme.radiusMd),
+            borderRadius: BorderRadius.circular(YanciTheme.radiusPill),
           ),
         ),
         child: busy

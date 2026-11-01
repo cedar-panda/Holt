@@ -23,6 +23,7 @@ import '../widgets/scroll_edge_fade.dart';
 import '../widgets/pending_image_tray.dart';
 import '../widgets/atom_thinking.dart';
 import '../services/api_adapter.dart';
+import '../services/protocol_tags.dart';
 import '../services/api_error_localizer.dart';
 import '../services/app_error_log_service.dart';
 import '../services/reply_notification_service.dart';
@@ -37,6 +38,7 @@ import '../services/character_signature_service.dart';
 import '../services/model_cost_policy.dart';
 import '../services/memory_actions.dart';
 import '../services/chat_search_follow_up.dart';
+import '../services/conversation_time_context.dart';
 import '../services/memory_guard_service.dart';
 import '../services/image_gen_service.dart';
 import '../memory/emotion_coordinates.dart';
@@ -53,6 +55,9 @@ import '../memory/retriever.dart';
 import '../services/bio_clock_service.dart';
 import '../services/shop_service.dart';
 import '../utils/text_safety.dart';
+import '../utils/split_reply_parser.dart';
+import '../utils/thinking_blocks.dart';
+import '../desktop/desktop_layout.dart';
 import '../services/marriage_service.dart';
 import '../services/tool_prompts.dart';
 import '../services/home_note_service.dart';
@@ -85,6 +90,7 @@ import '../models/chat_diagnostic_event.dart';
 import '../models/memory_action_proposal.dart';
 import '../models/chat_session_identity.dart';
 import '../models/context_mode.dart';
+import '../services/mood_glow_service.dart';
 import '../models/background_preset.dart';
 import '../services/background_preset_service.dart';
 import '../services/background_foreground_service.dart';
@@ -120,6 +126,7 @@ import '../services/call_audio_pipeline.dart';
 import '../services/chat_long_screenshot_service.dart';
 import '../services/dream_curation_service.dart';
 import '../services/user_persona_service.dart';
+import '../widgets/shell_coin_icon.dart';
 
 part 'chat_screen_generation.dart';
 part 'chat_screen_actions.dart';
@@ -347,6 +354,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   bool _shouldAutoName = false;
   String _conversationTitle = '';
   String _characterName = '';
+  String _characterRemark = '';
+  String get _characterDisplayName => _characterRemark.trim().isNotEmpty
+      ? _characterRemark.trim()
+      : (_characterName.trim().isNotEmpty ? _characterName.trim() : 'Holt');
   String _composerHint = '';
   final List<String> _pendingImagePaths = <String>[];
   final ValueNotifier<bool> _composerDrawerOpen = ValueNotifier<bool>(false);
@@ -441,9 +452,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     multiLine: true,
     caseSensitive: false,
   );
-  static final _openTagRe = RegExp(
-    r'<(emo|emo_resolve|memo|memo_del|memo_merge|memo_update|memo_link|force_recall|persona_note|draw|clock|clock_keep|clock_update|clock_del|life_fix|home|whisper|search_chat|search_web|call|scratch|transfer|transfer_accept|transfer_decline|buy|x_post|shop_view|pack_star|sign_marriage|propose_marriage|email_draft|holt_diary)\b[\s\S]*$',
-  );
+  static final _openTagRe = ProtocolTags.openToEnd;
 
   static final _shopViewTagRe = RegExp(
     r'<shop_view\s*/?>',
@@ -462,6 +471,12 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
 
   /// 消息尾送禮標記（卡片跟隨氣泡顯示）
   static final _giftTagRe = RegExp(r'\[gift:([^\]\n]{1,40})\]');
+
+  /// 角色從商店送給 user 的禮物標記。與 [gift:...] 分開，避免後續
+  /// prompt 把角色自己送出的禮物誤解成 user 剛送給角色。
+  static final _receivedGiftTagRe = RegExp(
+    r'\[gift_received:([^\]\n]{1,40})\]',
+  );
 
   /// 結婚證簽署標籤（她簽字）
   static final _signMarriageRe = RegExp(
@@ -1057,481 +1072,477 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                     )
                   : const SizedBox.shrink(),
             ),
-            Scaffold(
-              backgroundColor: Colors.transparent,
-              // Keep the composer above the IME and let the message viewport
-              // use the remaining height without resizing the background.
-              resizeToAvoidBottomInset: true,
-              body: GestureDetector(
-                onTap: () => FocusScope.of(context).unfocus(),
-                child: SafeArea(
-                  child: Column(
-                    children: [
-                      const SizedBox(height: _chatHeaderHeight),
-                      Expanded(
-                        child: Stack(
-                          clipBehavior: Clip.none,
-                          children: [
-                            _isLoading
-                                ? const Center(
-                                    child: CircularProgressIndicator(),
-                                  )
-                                : _initializationFailed
-                                ? _buildInitializationError()
-                                : _messages.isEmpty &&
-                                      _streamingText.isEmpty &&
-                                      !_isGenerating
-                                ? _buildEmptyState()
-                                : Positioned(
-                                    key: const ValueKey(
-                                      'chat-message-viewport-underlay',
-                                    ),
-                                    top: -_chatHeaderHeight,
-                                    left: 0,
-                                    right: 0,
-                                    bottom: -_composerViewportUnderlay,
-                                    child: ComposerDrawerDismissLayer(
-                                      open: _composerDrawerOpen,
-                                      child: ScrollEdgeFade(
-                                        controller: _scrollController,
-                                        topInset: _chatHeaderHeight - 12,
-                                        topExtent: _chatHeaderHeight + 70,
-                                        bottomExtent: 104,
-                                        blurSigma: 0,
-                                        topBlurSigma: 0,
-                                        bottomBlurSigma: 0,
-                                        alwaysFadeTop: true,
-                                        alwaysFadeBottom: true,
-                                        child: _buildMessageList(),
+            // Windows 寬視窗：聊天收成置中一欄，背景與粒子照樣鋪滿。手機原樣。
+            DesktopContentWidth(
+              child: Scaffold(
+                backgroundColor: Colors.transparent,
+                // Keep the composer above the IME and let the message viewport
+                // use the remaining height without resizing the background.
+                resizeToAvoidBottomInset: true,
+                body: GestureDetector(
+                  onTap: () => FocusScope.of(context).unfocus(),
+                  child: SafeArea(
+                    child: Column(
+                      children: [
+                        const SizedBox(height: _chatHeaderHeight),
+                        Expanded(
+                          child: Stack(
+                            clipBehavior: Clip.none,
+                            children: [
+                              _isLoading
+                                  ? const Center(
+                                      child: CircularProgressIndicator(),
+                                    )
+                                  : _initializationFailed
+                                  ? _buildInitializationError()
+                                  : _messages.isEmpty &&
+                                        _streamingText.isEmpty &&
+                                        !_isGenerating
+                                  ? _buildEmptyState()
+                                  : Positioned(
+                                      key: const ValueKey(
+                                        'chat-message-viewport-underlay',
+                                      ),
+                                      top: -_chatHeaderHeight,
+                                      left: 0,
+                                      right: 0,
+                                      bottom: -_composerViewportUnderlay,
+                                      child: ComposerDrawerDismissLayer(
+                                        open: _composerDrawerOpen,
+                                        child: ScrollEdgeFade(
+                                          controller: _scrollController,
+                                          topInset: _chatHeaderHeight - 12,
+                                          topExtent: _chatHeaderHeight + 70,
+                                          bottomExtent: 104,
+                                          blurSigma: 0,
+                                          topBlurSigma: 0,
+                                          bottomBlurSigma: 0,
+                                          alwaysFadeTop: true,
+                                          alwaysFadeBottom: true,
+                                          child: _buildMessageList(),
+                                        ),
                                       ),
                                     ),
-                                  ),
-                            // 一鍵滾底按鈕
-                            if (_showScrollToBottom)
-                              Positioned(
-                                right: YanciTheme.spacingMd,
-                                bottom: YanciTheme.spacingSm,
-                                child: Semantics(
-                                  button: true,
-                                  label: L.pick(
-                                    en: 'Jump to latest message',
-                                    zhTW: '跳到最新消息',
-                                    zhCN: '跳到最新消息',
-                                  ),
-                                  child: GestureDetector(
-                                    behavior: HitTestBehavior.opaque,
-                                    onTap: () {
-                                      _userScrolledUp = false;
-                                      _scrollToBottom(force: true);
-                                    },
-                                    child: SizedBox.square(
-                                      dimension: 44,
-                                      child: Center(
-                                        child: Container(
-                                          width: 36,
-                                          height: 36,
-                                          decoration: BoxDecoration(
-                                            color: YanciTheme.glassInputBg,
-                                            shape: BoxShape.circle,
-                                            boxShadow: [
-                                              BoxShadow(
-                                                color: Colors.black.withValues(
-                                                  alpha: 0.08,
+                              // 一鍵滾底按鈕
+                              if (_showScrollToBottom)
+                                Positioned(
+                                  right: YanciTheme.spacingMd,
+                                  bottom: YanciTheme.spacingSm,
+                                  child: Semantics(
+                                    button: true,
+                                    label: L.pick(
+                                      en: 'Jump to latest message',
+                                      zhTW: '跳到最新消息',
+                                      zhCN: '跳到最新消息',
+                                    ),
+                                    child: GestureDetector(
+                                      behavior: HitTestBehavior.opaque,
+                                      onTap: () {
+                                        _userScrolledUp = false;
+                                        _scrollToBottom(force: true);
+                                      },
+                                      child: SizedBox.square(
+                                        dimension: 44,
+                                        child: Center(
+                                          child: Container(
+                                            width: 36,
+                                            height: 36,
+                                            decoration: BoxDecoration(
+                                              color: YanciTheme.glassInputBg,
+                                              shape: BoxShape.circle,
+                                              boxShadow: [
+                                                BoxShadow(
+                                                  color: Colors.black
+                                                      .withValues(alpha: 0.08),
+                                                  blurRadius: 8,
                                                 ),
-                                                blurRadius: 8,
-                                              ),
-                                            ],
-                                          ),
-                                          child: Icon(
-                                            Icons.keyboard_arrow_down_rounded,
-                                            size: 22,
-                                            color: YanciTheme.accent,
+                                              ],
+                                            ),
+                                            child: Icon(
+                                              Icons.keyboard_arrow_down_rounded,
+                                              size: 22,
+                                              color: YanciTheme.accent,
+                                            ),
                                           ),
                                         ),
                                       ),
                                     ),
                                   ),
                                 ),
-                              ),
-                          ],
-                        ),
-                      ),
-                      CompositedTransformTarget(
-                        link: _noticeAnchorLink,
-                        child: const SizedBox(
-                          key: ValueKey('chat-notice-anchor'),
-                          width: double.infinity,
-                          height: 0,
-                        ),
-                      ),
-                      // ═══ 待發圖片預覽 ═══
-                      if (_pendingImagePaths.isNotEmpty)
-                        Container(
-                          padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
-                          child: PendingImageTray(
-                            paths: _pendingImagePaths,
-                            onTap: _openPendingImagePreview,
-                            onAdd: _pickMorePendingImages,
-                            onRemove: (index) {
-                              if (index < 0 ||
-                                  index >= _pendingImagePaths.length) {
-                                return;
-                              }
-                              setState(
-                                () => _pendingImagePaths.removeAt(index),
-                              );
-                            },
+                            ],
                           ),
                         ),
-                      // ═══ 待發表情包預覽 ═══
-                      if (_pendingSticker != null)
-                        Container(
-                          padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
-                          child: Row(
-                            children: [
-                              ClipRRect(
-                                borderRadius: BorderRadius.circular(8),
-                                child: Image.file(
-                                  File(_pendingSticker!.filePath),
-                                  width: 48,
-                                  height: 48,
-                                  cacheWidth:
-                                      StickerPreviewQuality.cacheDimension(
-                                        context,
-                                        logicalSize: 48,
-                                        previousMinimum: 64,
-                                      ),
-                                  cacheHeight:
-                                      StickerPreviewQuality.cacheDimension(
-                                        context,
-                                        logicalSize: 48,
-                                        previousMinimum: 64,
-                                      ),
-                                  fit: BoxFit.cover,
-                                  filterQuality: FilterQuality.medium,
-                                  errorBuilder: (_, _, _) => Container(
+                        CompositedTransformTarget(
+                          link: _noticeAnchorLink,
+                          child: const SizedBox(
+                            key: ValueKey('chat-notice-anchor'),
+                            width: double.infinity,
+                            height: 0,
+                          ),
+                        ),
+                        // ═══ 待發圖片預覽 ═══
+                        if (_pendingImagePaths.isNotEmpty)
+                          Container(
+                            padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+                            child: PendingImageTray(
+                              paths: _pendingImagePaths,
+                              onTap: _openPendingImagePreview,
+                              onAdd: _pickMorePendingImages,
+                              onRemove: (index) {
+                                if (index < 0 ||
+                                    index >= _pendingImagePaths.length) {
+                                  return;
+                                }
+                                setState(
+                                  () => _pendingImagePaths.removeAt(index),
+                                );
+                              },
+                            ),
+                          ),
+                        // ═══ 待發表情包預覽 ═══
+                        if (_pendingSticker != null)
+                          Container(
+                            padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+                            child: Row(
+                              children: [
+                                ClipRRect(
+                                  borderRadius: BorderRadius.circular(8),
+                                  child: Image.file(
+                                    File(_pendingSticker!.filePath),
                                     width: 48,
                                     height: 48,
-                                    color: YanciTheme.glassInputBg,
-                                    child: const Icon(
-                                      Icons.broken_image,
-                                      size: 16,
+                                    cacheWidth:
+                                        StickerPreviewQuality.cacheDimension(
+                                          context,
+                                          logicalSize: 48,
+                                          previousMinimum: 64,
+                                        ),
+                                    cacheHeight:
+                                        StickerPreviewQuality.cacheDimension(
+                                          context,
+                                          logicalSize: 48,
+                                          previousMinimum: 64,
+                                        ),
+                                    fit: BoxFit.cover,
+                                    filterQuality: FilterQuality.medium,
+                                    errorBuilder: (_, _, _) => Container(
+                                      width: 48,
+                                      height: 48,
+                                      color: YanciTheme.glassInputBg,
+                                      child: const Icon(
+                                        Icons.broken_image,
+                                        size: 16,
+                                      ),
                                     ),
                                   ),
                                 ),
-                              ),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: Text(
-                                  _pendingSticker!.line ??
-                                      _pendingSticker!.mood ??
-                                      '',
-                                  style: TextStyle(
-                                    fontSize: 11,
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    _pendingSticker!.line ??
+                                        _pendingSticker!.mood ??
+                                        '',
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      color: YanciTheme.textSecondary
+                                          .withValues(alpha: 0.5),
+                                    ),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                                IconButton(
+                                  tooltip: L.pick(
+                                    en: 'Remove sticker',
+                                    zhTW: '取消表情',
+                                    zhCN: '取消表情',
+                                  ),
+                                  onPressed: () =>
+                                      setState(() => _pendingSticker = null),
+                                  constraints: const BoxConstraints.tightFor(
+                                    width: 44,
+                                    height: 44,
+                                  ),
+                                  padding: EdgeInsets.zero,
+                                  icon: Icon(
+                                    Icons.close_rounded,
+                                    size: 18,
                                     color: YanciTheme.textSecondary.withValues(
-                                      alpha: 0.5,
+                                      alpha: 0.4,
                                     ),
                                   ),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
                                 ),
-                              ),
-                              IconButton(
-                                tooltip: L.pick(
-                                  en: 'Remove sticker',
-                                  zhTW: '取消表情',
-                                  zhCN: '取消表情',
-                                ),
-                                onPressed: () =>
-                                    setState(() => _pendingSticker = null),
-                                constraints: const BoxConstraints.tightFor(
-                                  width: 44,
-                                  height: 44,
-                                ),
-                                padding: EdgeInsets.zero,
-                                icon: Icon(
-                                  Icons.close_rounded,
-                                  size: 18,
-                                  color: YanciTheme.textSecondary.withValues(
-                                    alpha: 0.4,
-                                  ),
-                                ),
-                              ),
-                            ],
+                              ],
+                            ),
                           ),
-                        ),
-                      // ═══ 待發轉帳預覽 ═══
-                      if (_pendingUserTransfer != null)
-                        Container(
-                          padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
-                          child: Row(
-                            children: [
-                              Container(
-                                width: 48,
-                                height: 48,
-                                decoration: BoxDecoration(
-                                  color: const Color(
-                                    0xFFF2C96D,
-                                  ).withValues(alpha: 0.10),
-                                  borderRadius: BorderRadius.circular(8),
-                                  border: Border.all(
-                                    color: const Color(
-                                      0xFFF2C96D,
-                                    ).withValues(alpha: 0.35),
-                                    width: 0.8,
-                                  ),
-                                ),
-                                child: Center(
-                                  child: Image.asset(
-                                    'assets/images/shell_coin.png',
-                                    width: 24,
-                                    height: 24,
-                                    filterQuality: FilterQuality.none,
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: Text(
-                                  L.pick(
-                                    en: 'Transfer ${_pendingUserTransfer!.amount} shells',
-                                    zhTW: L.pick(
-                                      en: 'Pending transfer: ${_pendingUserTransfer!.amount} shells',
-                                      zhTW:
-                                          '待轉帳 ${_pendingUserTransfer!.amount} 貝殼',
-                                    ),
-                                  ),
-                                  style: TextStyle(
-                                    fontSize: 11,
-                                    color: YanciTheme.textSecondary.withValues(
-                                      alpha: 0.5,
-                                    ),
-                                  ),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              ),
-                              IconButton(
-                                tooltip: L.pick(
-                                  en: 'Cancel transfer',
-                                  zhTW: '取消轉帳',
-                                  zhCN: '取消转账',
-                                ),
-                                onPressed: () =>
-                                    setState(() => _pendingUserTransfer = null),
-                                constraints: const BoxConstraints.tightFor(
-                                  width: 44,
-                                  height: 44,
-                                ),
-                                padding: EdgeInsets.zero,
-                                icon: Icon(
-                                  Icons.close_rounded,
-                                  size: 18,
-                                  color: YanciTheme.textSecondary.withValues(
-                                    alpha: 0.4,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      // ═══ 待發刮刮卡預覽（讓 TA 刮）═══
-                      if (_pendingScratchGiftWho != null)
-                        Container(
-                          padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
-                          child: Row(
-                            children: [
-                              Container(
-                                width: 48,
-                                height: 48,
-                                decoration: BoxDecoration(
-                                  color: YanciTheme.accent.withValues(
-                                    alpha: 0.10,
-                                  ),
-                                  borderRadius: BorderRadius.circular(8),
-                                  border: Border.all(
+                        // ═══ 待發轉帳預覽 ═══
+                        if (_pendingUserTransfer != null)
+                          Container(
+                            padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+                            child: Row(
+                              children: [
+                                Container(
+                                  width: 48,
+                                  height: 48,
+                                  decoration: BoxDecoration(
                                     color: YanciTheme.accent.withValues(
-                                      alpha: 0.28,
+                                      alpha: 0.10,
                                     ),
-                                    width: 0.8,
+                                    borderRadius: BorderRadius.circular(8),
+                                    border: Border.all(
+                                      color: YanciTheme.accent.withValues(
+                                        alpha: 0.35,
+                                      ),
+                                      width: 0.8,
+                                    ),
+                                  ),
+                                  child: Center(child: ShellCoinIcon(size: 24)),
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    L.pick(
+                                      en: 'Transfer ${_pendingUserTransfer!.amount} shells',
+                                      zhTW: L.pick(
+                                        en: 'Pending transfer: ${_pendingUserTransfer!.amount} shells',
+                                        zhTW:
+                                            '待轉帳 ${_pendingUserTransfer!.amount} 貝殼',
+                                      ),
+                                    ),
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      color: YanciTheme.textSecondary
+                                          .withValues(alpha: 0.5),
+                                    ),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
                                   ),
                                 ),
-                                child: Icon(
-                                  Icons.confirmation_number_outlined,
-                                  size: 24,
-                                  color: YanciTheme.accent.withValues(
-                                    alpha: 0.78,
+                                IconButton(
+                                  tooltip: L.pick(
+                                    en: 'Cancel transfer',
+                                    zhTW: '取消轉帳',
+                                    zhCN: '取消转账',
                                   ),
+                                  onPressed: () => setState(
+                                    () => _pendingUserTransfer = null,
+                                  ),
+                                  constraints: const BoxConstraints.tightFor(
+                                    width: 44,
+                                    height: 44,
+                                  ),
+                                  padding: EdgeInsets.zero,
+                                  icon: Icon(
+                                    Icons.close_rounded,
+                                    size: 18,
+                                    color: YanciTheme.textSecondary.withValues(
+                                      alpha: 0.4,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        // ═══ 待發刮刮卡預覽（讓 TA 刮）═══
+                        if (_pendingScratchGiftWho != null)
+                          Container(
+                            padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+                            child: Row(
+                              children: [
+                                Container(
+                                  width: 48,
+                                  height: 48,
+                                  decoration: BoxDecoration(
+                                    color: YanciTheme.accent.withValues(
+                                      alpha: 0.10,
+                                    ),
+                                    borderRadius: BorderRadius.circular(8),
+                                    border: Border.all(
+                                      color: YanciTheme.accent.withValues(
+                                        alpha: 0.28,
+                                      ),
+                                      width: 0.8,
+                                    ),
+                                  ),
+                                  child: Icon(
+                                    Icons.confirmation_number_outlined,
+                                    size: 24,
+                                    color: YanciTheme.accent.withValues(
+                                      alpha: 0.78,
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    L.pick(
+                                      en: 'Scratch card for them',
+                                      zhTW: '待發刮刮卡：讓 TA 刮',
+                                    ),
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      color: YanciTheme.textSecondary
+                                          .withValues(alpha: 0.5),
+                                    ),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                                IconButton(
+                                  tooltip: L.pick(
+                                    en: 'Remove scratch card',
+                                    zhTW: '取消刮刮卡',
+                                    zhCN: '取消刮刮卡',
+                                  ),
+                                  onPressed: () => setState(
+                                    () => _pendingScratchGiftWho = null,
+                                  ),
+                                  constraints: const BoxConstraints.tightFor(
+                                    width: 44,
+                                    height: 44,
+                                  ),
+                                  padding: EdgeInsets.zero,
+                                  icon: Icon(
+                                    Icons.close_rounded,
+                                    size: 18,
+                                    color: YanciTheme.textSecondary.withValues(
+                                      alpha: 0.4,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        // ═══ 圖片生成中 banner ═══
+                        if (_isGeneratingImage)
+                          Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 16,
+                              vertical: 8,
+                            ),
+                            decoration: BoxDecoration(
+                              color: YanciTheme.accent.withValues(alpha: 0.08),
+                              border: Border(
+                                bottom: BorderSide(
+                                  color: YanciTheme.accent.withValues(
+                                    alpha: 0.12,
+                                  ),
+                                  width: 0.5,
                                 ),
                               ),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: Text(
+                            ),
+                            child: Row(
+                              children: [
+                                SizedBox(
+                                  width: 14,
+                                  height: 14,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 1.5,
+                                    color: YanciTheme.accent.withValues(
+                                      alpha: 0.6,
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Text(
                                   L.pick(
-                                    en: 'Scratch card for them',
-                                    zhTW: '待發刮刮卡：讓 TA 刮',
+                                    en: 'Generating image...',
+                                    zhTW: '圖片生成中……',
                                   ),
                                   style: TextStyle(
-                                    fontSize: 11,
-                                    color: YanciTheme.textSecondary.withValues(
-                                      alpha: 0.5,
+                                    fontSize: 12,
+                                    color: YanciTheme.accent.withValues(
+                                      alpha: 0.7,
                                     ),
                                   ),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
                                 ),
-                              ),
-                              IconButton(
-                                tooltip: L.pick(
-                                  en: 'Remove scratch card',
-                                  zhTW: '取消刮刮卡',
-                                  zhCN: '取消刮刮卡',
-                                ),
-                                onPressed: () => setState(
-                                  () => _pendingScratchGiftWho = null,
-                                ),
-                                constraints: const BoxConstraints.tightFor(
-                                  width: 44,
-                                  height: 44,
-                                ),
-                                padding: EdgeInsets.zero,
-                                icon: Icon(
-                                  Icons.close_rounded,
-                                  size: 18,
-                                  color: YanciTheme.textSecondary.withValues(
-                                    alpha: 0.4,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      // ═══ 圖片生成中 banner ═══
-                      if (_isGeneratingImage)
-                        Container(
-                          width: double.infinity,
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 16,
-                            vertical: 8,
-                          ),
-                          decoration: BoxDecoration(
-                            color: YanciTheme.accent.withValues(alpha: 0.08),
-                            border: Border(
-                              bottom: BorderSide(
-                                color: YanciTheme.accent.withValues(
-                                  alpha: 0.12,
-                                ),
-                                width: 0.5,
-                              ),
+                              ],
                             ),
                           ),
-                          child: Row(
-                            children: [
-                              SizedBox(
-                                width: 14,
-                                height: 14,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 1.5,
-                                  color: YanciTheme.accent.withValues(
-                                    alpha: 0.6,
+                        if (_manualSummarySelecting)
+                          _buildManualSummarySelectionBar()
+                        else
+                          IgnorePointer(
+                            ignoring: !_isChatReady,
+                            child: Opacity(
+                              opacity: _isChatReady ? 1 : 0.45,
+                              child: ValueListenableBuilder<ToolFeatureState>(
+                                valueListenable: ToolFeatureSettings.state,
+                                builder: (context, toolFeatures, _) => InputBar(
+                                  sendStyle: sendButtonStyleFromName(
+                                    YanciTheme.sendButtonStyle,
                                   ),
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              Text(
-                                L.pick(
-                                  en: 'Generating image...',
-                                  zhTW: '圖片生成中……',
-                                ),
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  color: YanciTheme.accent.withValues(
-                                    alpha: 0.7,
+                                  sendCustomPath:
+                                      YanciTheme.sendButtonCustomPath,
+                                  externalController: _inputController,
+                                  hintText: _composerHint.isEmpty
+                                      ? null
+                                      : _composerHint,
+                                  onSend: (text) => _onSendMessage(
+                                    text,
+                                    clearComposerOnAccept: true,
                                   ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      if (_manualSummarySelecting)
-                        _buildManualSummarySelectionBar()
-                      else
-                        IgnorePointer(
-                          ignoring: !_isChatReady,
-                          child: Opacity(
-                            opacity: _isChatReady ? 1 : 0.45,
-                            child: ValueListenableBuilder<ToolFeatureState>(
-                              valueListenable: ToolFeatureSettings.state,
-                              builder: (context, toolFeatures, _) => InputBar(
-                                sendStyle: sendButtonStyleFromName(
-                                  YanciTheme.sendButtonStyle,
-                                ),
-                                sendCustomPath: YanciTheme.sendButtonCustomPath,
-                                externalController: _inputController,
-                                hintText: _composerHint.isEmpty
-                                    ? null
-                                    : _composerHint,
-                                onSend: (text) => _onSendMessage(
-                                  text,
-                                  clearComposerOnAccept: true,
-                                ),
-                                isSendBlocked:
-                                    !_isChatReady ||
-                                    _sendSubmissionInProgress ||
-                                    _isGenerating ||
-                                    _isGeneratingImage ||
-                                    _localModelLoading,
-                                hasPendingContent:
-                                    _pendingImagePaths.isNotEmpty ||
-                                    _pendingSticker != null ||
-                                    _pendingUserTransfer != null ||
-                                    _pendingScratchGiftWho != null ||
-                                    _pendingGift != null,
-                                isGeneratingImage: _isGeneratingImage,
-                                drawerOpen: _composerDrawerOpen,
-                                isGeneratingResponse: _isGenerating,
-                                onStopGeneration: () {
-                                  if (_isGenerating) {
-                                    _stopActiveGeneration();
-                                  } else {
-                                    _cancelActiveImageGeneration();
-                                  }
-                                },
-                                onImagesPicked: _addPendingImages,
-                                onStickerTap: _showStickerPicker,
-                                onScratchGift: _onScratchGift,
-                                onShopGift: _openChatShop,
-                                onBackpackTap: _openChatBackpack,
-                                onStoryArchiveTap:
-                                    _sessionIdentity?.contextMode ==
-                                        ContextMode.rp
-                                    ? _openRpStoryArchive
-                                    : null,
-                                onCallTap:
-                                    _sessionIdentity?.contextMode ==
-                                        ContextMode.daily
-                                    ? () => _openCall()
-                                    : null,
-                                pendingGiftName: _pendingGift?.itemName,
-                                onCancelGift: _cancelPendingGift,
-                                onTransfer: _onTransferToChar,
-                                showTransfer: toolFeatures.transferEnabled,
-                                showScratch: toolFeatures.scratchEnabled,
-                                showShop: toolFeatures.shopEnabled,
-                                showBackpack: toolFeatures.shopEnabled,
-                                showMarriageCert:
-                                    _marriageUnlocked && !_pendingMarriageCert,
-                                onMarriageCert: () =>
-                                    setState(() => _pendingMarriageCert = true),
-                                marriageCertPending: _pendingMarriageCert,
-                                onCancelMarriageCert: () => setState(
-                                  () => _pendingMarriageCert = false,
+                                  isSendBlocked:
+                                      !_isChatReady ||
+                                      _sendSubmissionInProgress ||
+                                      _isGenerating ||
+                                      _isGeneratingImage ||
+                                      _localModelLoading,
+                                  hasPendingContent:
+                                      _pendingImagePaths.isNotEmpty ||
+                                      _pendingSticker != null ||
+                                      _pendingUserTransfer != null ||
+                                      _pendingScratchGiftWho != null ||
+                                      _pendingGift != null,
+                                  isGeneratingImage: _isGeneratingImage,
+                                  drawerOpen: _composerDrawerOpen,
+                                  isGeneratingResponse: _isGenerating,
+                                  onStopGeneration: () {
+                                    if (_isGenerating) {
+                                      _stopActiveGeneration();
+                                    } else {
+                                      _cancelActiveImageGeneration();
+                                    }
+                                  },
+                                  onImagesPicked: _addPendingImages,
+                                  onStickerTap: _showStickerPicker,
+                                  onScratchGift: _onScratchGift,
+                                  onShopGift: _openChatShop,
+                                  onBackpackTap: _openChatBackpack,
+                                  onStoryArchiveTap:
+                                      _sessionIdentity?.contextMode ==
+                                          ContextMode.rp
+                                      ? _openRpStoryArchive
+                                      : null,
+                                  onCallTap:
+                                      _sessionIdentity?.contextMode ==
+                                          ContextMode.daily
+                                      ? () => _openCall()
+                                      : null,
+                                  pendingGiftName: _pendingGift?.itemName,
+                                  onCancelGift: _cancelPendingGift,
+                                  onTransfer: _onTransferToChar,
+                                  showTransfer: toolFeatures.transferEnabled,
+                                  showScratch: toolFeatures.scratchEnabled,
+                                  showShop: toolFeatures.shopEnabled,
+                                  showBackpack: toolFeatures.shopEnabled,
+                                  showMarriageCert:
+                                      _marriageUnlocked &&
+                                      !_pendingMarriageCert,
+                                  onMarriageCert: () => setState(
+                                    () => _pendingMarriageCert = true,
+                                  ),
+                                  marriageCertPending: _pendingMarriageCert,
+                                  onCancelMarriageCert: () => setState(
+                                    () => _pendingMarriageCert = false,
+                                  ),
                                 ),
                               ),
                             ),
                           ),
-                        ),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
               ),
@@ -1549,7 +1560,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
               top: 0,
               left: 0,
               right: 0,
-              child: SafeArea(bottom: false, child: _buildAppBar()),
+              child: DesktopContentWidth(
+                child: SafeArea(bottom: false, child: _buildAppBar()),
+              ),
             ),
           ],
         ),
@@ -1926,10 +1939,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   List<String> _streamingSplitParts() {
     final display = _displayStreamingText;
     if (display.isEmpty) return [''];
-    final parts = display
-        .split('\n\n')
-        .where((p) => p.trim().isNotEmpty)
-        .toList();
+    final parts = splitReplyParagraphs(display);
     return parts.isEmpty ? [display] : parts;
   }
 
@@ -2178,6 +2188,9 @@ class _DisplayItem {
   final int? dbMessageId;
   final int originalIndex;
   final bool showToolbar;
+  final String? toolbarText;
+  final String? toolbarMessageId;
+  final bool isSplitReplySegment;
   final bool cacheHit;
   final bool incomplete;
   final String memoryLog;
@@ -2207,6 +2220,9 @@ class _DisplayItem {
 
   /// 禮物之後對方已回覆 → 卡片顯示「已收下」
   final bool giftAccepted;
+
+  /// 角色從商店送給 user；卡片顯示為 user 已收到，而非「禮物已送出」。
+  final bool giftReceivedFromCharacter;
 
   /// 消息帶結婚證邀請標記 → 氣泡下跟證書卡
   final bool hasMarriageCert;
@@ -2238,18 +2254,28 @@ class _DisplayItem {
     this.emailDraft,
     this.personaCard,
     this.showToolbar = true,
+    this.toolbarText,
+    this.toolbarMessageId,
+    this.isSplitReplySegment = false,
     this.cacheHit = false,
     this.incomplete = false,
     this.callDivider,
     this.callDividerIcon,
     this.giftName,
     this.giftAccepted = false,
+    this.giftReceivedFromCharacter = false,
     this.hasMarriageCert = false,
     this.certFromChar = false,
     this.summaryRecordedId,
     this.continuationKind,
   });
 }
+
+bool _isSameSplitReplyGroup(_DisplayItem previous, _DisplayItem next) =>
+    previous.isSplitReplySegment &&
+    next.isSplitReplySegment &&
+    previous.dbMessageId != null &&
+    previous.dbMessageId == next.dbMessageId;
 
 bool _canGroupDisplayItems(_DisplayItem previous, _DisplayItem next) {
   if (previous.isUser != next.isUser) return false;

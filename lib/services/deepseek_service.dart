@@ -1,19 +1,13 @@
-import 'dart:async';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
-import 'api_adapter.dart';
 import 'model_info.dart';
-import 'sse_stream.dart';
-import 'stream_transport.dart';
-import 'system_context_debug.dart';
+import 'openai_style_chat_service.dart';
 
 /// DeepSeek API（OpenAI 兼容格式，自動 prompt caching）
 /// 不需要手動標記 cache_control，DeepSeek 自動緩存重複前綴
 /// 官方快取命中按 64-token 區塊計算，且沒有可由客戶端指定的固定 TTL。
-class DeepSeekService implements ApiAdapter {
-  final String apiKey;
-  final bool thinkingEnabled;
-  http.Client? _activeClient;
+/// 請求／流式流程在 [OpenAiStyleChatService]，這裡只放 DeepSeek 的差異。
+class DeepSeekService extends OpenAiStyleChatService {
   static const String _baseUrl = 'https://api.deepseek.com/chat/completions';
 
   /// 最近一次緩存統計
@@ -23,7 +17,28 @@ class DeepSeekService implements ApiAdapter {
     lastCacheStats = {};
   }
 
-  DeepSeekService({required this.apiKey, this.thinkingEnabled = false});
+  DeepSeekService({required super.apiKey, super.thinkingEnabled});
+
+  @override
+  String get providerLabel => 'DeepSeek';
+
+  @override
+  String get debugProviderId => 'deepseek';
+
+  @override
+  String get chatCompletionsUrl => _baseUrl;
+
+  @override
+  String get usageCacheReadKey => 'cache_hit';
+
+  @override
+  bool get requireStreamTerminal => true;
+
+  @override
+  bool get debugCacheEnabled => true;
+
+  @override
+  void onRequestStart() => resetCacheStats();
 
   static Future<List<ModelInfo>> fetchModels(
     String apiKey, {
@@ -63,246 +78,8 @@ class DeepSeekService implements ApiAdapter {
     }
   }
 
-  Map<String, dynamic> debugBuildBodyForTesting({
-    required List<Map<String, String>> messages,
-    required String model,
-    String? systemPrompt,
-    StructuredPrompt? structuredPrompt,
-  }) {
-    return _buildBody(
-      messages,
-      model,
-      systemPrompt,
-      structuredPrompt: structuredPrompt,
-      stream: false,
-    );
-  }
-
   @override
-  Future<String> sendMessage({
-    required List<Map<String, String>> messages,
-    required String model,
-    String? systemPrompt,
-    StructuredPrompt? structuredPrompt,
-    ApiUsageCallback? onUsage,
-  }) async {
-    resetCacheStats();
-    final body = _buildBody(
-      messages,
-      model,
-      systemPrompt,
-      structuredPrompt: structuredPrompt,
-      stream: false,
-    );
-
-    final client = http.Client();
-    _activeClient?.close();
-    _activeClient = client;
-    try {
-      final response = await client
-          .post(
-            Uri.parse(_baseUrl),
-            headers: _headers(),
-            body: jsonEncode(body),
-          )
-          .timeout(const Duration(seconds: 180));
-
-      if (response.statusCode != 200) {
-        throw Exception('DeepSeek 錯誤 ${response.statusCode}: ${response.body}');
-      }
-
-      final data = jsonDecode(response.body);
-      final stats = _extractCacheStats(data);
-      if (stats != null) {
-        onUsage?.call(ApiUsage.fromStats(stats, cacheReadKey: 'cache_hit'));
-      }
-      final message = data['choices']?[0]?['message'];
-      final content = message is Map ? '${message['content'] ?? ''}' : '';
-      final reasoning = message is Map
-          ? ProviderReasoning.fromMap(message)
-          : '';
-      if (thinkingEnabled && reasoning.isNotEmpty) {
-        return '<think>$reasoning</think>$content';
-      }
-      return content;
-    } finally {
-      if (identical(_activeClient, client)) _activeClient = null;
-      client.close();
-    }
-  }
-
-  @override
-  Stream<String> sendMessageStream({
-    required List<Map<String, String>> messages,
-    required String model,
-    String? systemPrompt,
-    StructuredPrompt? structuredPrompt,
-    ApiUsageCallback? onUsage,
-  }) async* {
-    resetCacheStats();
-    final body = _buildBody(
-      messages,
-      model,
-      systemPrompt,
-      structuredPrompt: structuredPrompt,
-      stream: true,
-    );
-
-    final request = http.Request('POST', Uri.parse(_baseUrl));
-    request.headers.addAll(_headers());
-    request.body = jsonEncode(body);
-
-    // client 自己開的自己關（finally），連接超時 30s 防永久轉圈
-    final client = http.Client();
-    _activeClient?.close();
-    _activeClient = client;
-    try {
-      final response = await StreamTransport.waitForResponseStart(
-        client.send(request),
-        provider: 'DeepSeek',
-      );
-
-      if (response.statusCode != 200) {
-        final err = await response.stream.bytesToString().timeout(
-          SseStream.defaultIdleTimeout,
-        );
-        throw Exception('DeepSeek 錯誤 ${response.statusCode}: $err');
-      }
-
-      Map<String, int>? requestStats;
-      var reasoningOpen = false;
-      var sawDone = false;
-      String? terminalFinishReason;
-      final diagnostics = SseStreamDiagnostics();
-      await for (final data in SseStream.data(
-        response.stream,
-        diagnostics: diagnostics,
-      )) {
-        if (data == '[DONE]') {
-          sawDone = true;
-          break;
-        }
-
-        try {
-          final json = jsonDecode(data);
-          if (json['usage'] != null) requestStats = _extractCacheStats(json);
-          final finishReason = json['choices']?[0]?['finish_reason']
-              ?.toString();
-          if (finishReason != null && finishReason.isNotEmpty) {
-            terminalFinishReason = finishReason;
-          }
-          final deltaMap = json['choices']?[0]?['delta'];
-          final reasoning = deltaMap is Map
-              ? ProviderReasoning.fromMap(deltaMap)
-              : '';
-          if (reasoning.isNotEmpty && thinkingEnabled) {
-            if (!reasoningOpen) {
-              reasoningOpen = true;
-              yield '<think>';
-            }
-            yield reasoning;
-          }
-          final delta = deltaMap is Map ? deltaMap['content'] : null;
-          if (delta is String && delta.isNotEmpty) {
-            if (reasoningOpen) {
-              reasoningOpen = false;
-              yield '</think>';
-            }
-            yield delta;
-          }
-        } catch (_) {}
-      }
-      if (reasoningOpen) yield '</think>';
-      final streamDiagnostics = <String, Object?>{
-        'malformed_utf8_replacements': diagnostics.malformedUtf8Replacements,
-      };
-      if (requestStats != null) {
-        onUsage?.call(
-          ApiUsage.fromStats(
-            requestStats,
-            cacheReadKey: 'cache_hit',
-            diagnostics: streamDiagnostics,
-          ),
-        );
-      } else {
-        onUsage?.call(ApiUsage(diagnostics: streamDiagnostics));
-      }
-      StreamTerminalGuard.requireOpenAiCompatible(
-        provider: 'DeepSeek',
-        sawDone: sawDone,
-        finishReason: terminalFinishReason,
-      );
-    } finally {
-      if (identical(_activeClient, client)) _activeClient = null;
-      client.close();
-    }
-  }
-
-  @override
-  void cancelActive() {
-    final client = _activeClient;
-    _activeClient = null;
-    client?.close();
-  }
-
-  Map<String, String> _headers() => {
-    'Content-Type': 'application/json',
-    'Authorization': 'Bearer $apiKey',
-  };
-
-  Map<String, dynamic> _buildBody(
-    List<Map<String, String>> messages,
-    String model,
-    String? systemPrompt, {
-    StructuredPrompt? structuredPrompt,
-    required bool stream,
-  }) {
-    final allMessages = <Map<String, dynamic>>[];
-
-    // system 僅保留穩定前綴；動態 runtime 在歷史後作 request-only system。
-    final systemParts =
-        structuredPrompt?.cacheableParts ?? <String>[systemPrompt ?? ''];
-    for (final part in systemParts.where((part) => part.isNotEmpty)) {
-      allMessages.add({'role': 'system', 'content': part});
-    }
-
-    for (final m in messages) {
-      allMessages.add({
-        'role': m['role'] ?? 'user',
-        'content': m['content'] ?? '',
-      });
-    }
-
-    final liveState = structuredPrompt?.requestOnlyPart ?? '';
-    final attached = RuntimeContextSidecar.insertSystemBeforeLatestUser(
-      allMessages,
-      liveState,
-    );
-
-    final body = <String, dynamic>{
-      'model': model.contains('/') ? model.split('/').last : model,
-      'messages': allMessages,
-      'stream': stream,
-    };
-    if (structuredPrompt != null) {
-      SystemContextDebug.recordChatRequest(
-        provider: 'deepseek',
-        model: model,
-        cacheChannel: structuredPrompt.cacheChannel,
-        sessionId: structuredPrompt.cacheSessionId,
-        transport: attached ? 'system_before_latest_user' : '',
-        sourceMessages: messages,
-        requestMessages: allMessages,
-        stableContext: systemParts.join('\n\n'),
-        liveState: structuredPrompt.liveStatePart,
-        cacheEnabled: true,
-        expectTime: structuredPrompt.liveStatePart.trim().isNotEmpty,
-      );
-    }
-    return body;
-  }
-
-  Map<String, int>? _extractCacheStats(Map<String, dynamic> data) {
+  Map<String, int>? extractUsage(Map<String, dynamic> data) {
     final usage = data['usage'];
     if (usage == null) return null;
     final stats = <String, int>{

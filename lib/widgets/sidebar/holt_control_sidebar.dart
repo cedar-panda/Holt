@@ -10,6 +10,7 @@ import 'sidebar_behavior_settings.dart';
 import 'sidebar_feature_settings.dart';
 import 'sidebar_model_settings.dart';
 import 'sidebar_visual_tokens.dart';
+import '../shell_coin_icon.dart';
 
 // UI_SLOT: sidebar_header
 // UI_SLOT: sidebar_models_section
@@ -91,60 +92,85 @@ class _HoltControlSidebarState extends State<HoltControlSidebar> {
     FocusManager.instance.primaryFocus?.unfocus();
   }
 
-  // ── section title: text only, without underline/divider decoration ──
+  // ── section title：大分組標題。除第一組外，上方有一條左右漸隱的分隔線；
+  // 標題與下方內容之間留出呼吸距離，讓「分組 → 條目」的層級看得出來。
 
   Widget _sectionTitle(
     String label, {
     required bool expanded,
     required VoidCallback onTap,
+    bool showDivider = true,
   }) {
     final accent = SidebarVisualTokens.accent;
-    return Semantics(
-      button: true,
-      expanded: expanded,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(10),
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(18, 22, 18, 6),
-          child: Row(
-            children: [
-              // accent dot
-              Container(
-                width: 3.5,
-                height: 3.5,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: accent.withValues(alpha: 0.72),
+    final lineColor = SidebarVisualTokens.secondary.withValues(alpha: 0.22);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (showDivider)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(18, 18, 18, 0),
+            child: Container(
+              height: 0.8,
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  colors: <Color>[
+                    lineColor.withValues(alpha: 0),
+                    lineColor,
+                    lineColor.withValues(alpha: 0),
+                  ],
                 ),
               ),
-              const SizedBox(width: 8),
+            ),
+          ),
+        Semantics(
+          button: true,
+          expanded: expanded,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(10),
+            onTap: onTap,
+            child: Padding(
+              padding: EdgeInsets.fromLTRB(18, showDivider ? 16 : 20, 18, 12),
+              child: Row(
+                children: [
+                  // accent dot
+                  Container(
+                    width: 4,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: accent.withValues(alpha: 0.78),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
 
-              // label
-              Text(
-                label,
-                style: YanciTheme.bodySmall.copyWith(
-                  color: accent.withValues(alpha: 0.9),
-                  fontSize: 11.5,
-                  fontWeight: FontWeight.w600,
-                  letterSpacing: 0.6,
-                ),
+                  // label
+                  Text(
+                    label,
+                    style: YanciTheme.bodySmall.copyWith(
+                      color: accent.withValues(alpha: 0.92),
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w600,
+                      letterSpacing: 0.8,
+                    ),
+                  ),
+                  const Spacer(),
+                  AnimatedRotation(
+                    turns: expanded ? 0.5 : 0,
+                    duration: const Duration(milliseconds: 180),
+                    curve: Curves.easeOutCubic,
+                    child: Icon(
+                      Icons.expand_more_rounded,
+                      size: 16,
+                      color: accent.withValues(alpha: 0.68),
+                    ),
+                  ),
+                ],
               ),
-              const Spacer(),
-              AnimatedRotation(
-                turns: expanded ? 0.5 : 0,
-                duration: const Duration(milliseconds: 180),
-                curve: Curves.easeOutCubic,
-                child: Icon(
-                  Icons.expand_more_rounded,
-                  size: 16,
-                  color: accent.withValues(alpha: 0.68),
-                ),
-              ),
-            ],
+            ),
           ),
         ),
-      ),
+      ],
     );
   }
 
@@ -356,12 +382,7 @@ class _HoltControlSidebarState extends State<HoltControlSidebar> {
                                 child: Row(
                                   mainAxisSize: MainAxisSize.min,
                                   children: [
-                                    Image.asset(
-                                      'assets/images/shell_coin.png',
-                                      width: 19,
-                                      height: 19,
-                                      filterQuality: FilterQuality.none,
-                                    ),
+                                    ShellCoinIcon(size: 19, color: accent),
                                     const SizedBox(width: 5),
                                     CoinAmountText(widget.shellBalance),
                                   ],
@@ -412,6 +433,7 @@ class _HoltControlSidebarState extends State<HoltControlSidebar> {
                             zhTW: '模型與連線',
                             zhCN: '模型与连接',
                           ),
+                          showDivider: false,
                           expanded: _modelsExpanded,
                           onTap: () {
                             _dismissKeyboard();

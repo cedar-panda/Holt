@@ -49,6 +49,8 @@ html {
   padding-top: env(safe-area-inset-top);
   margin: 0;
   overflow: hidden;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
 }
 
 body {
@@ -1239,12 +1241,22 @@ html.theme-is-dark .pwa-splash {
 .message-action-btn {
   display: grid;
   place-items: center;
+  flex: 0 0 32px;
   width: 32px;
   height: 32px;
+  padding: 0;
+  overflow: hidden;
   border-radius: 50%;
   color: var(--ink-faint);
   background: transparent;
   font: 500 14px/1 var(--font);
+}
+.message-action-icon {
+  display: block;
+  width: 16px;
+  height: 16px;
+  flex: none;
+  pointer-events: none;
 }
 .message-action-btn.is-active { color: var(--accent); }
 .message-action-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }

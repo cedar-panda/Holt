@@ -1,8 +1,8 @@
 import 'dart:convert';
 import 'dart:io';
 import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
 import '../memory/database.dart';
+import '../utils/app_directories.dart';
 
 /// JSON 導出 — 對話記錄 + 記憶
 class JsonExporter {
@@ -178,6 +178,6 @@ class JsonExporter {
   /// 零權限、全平台（Android／iOS／桌面）一致、絕不失敗。
   /// 之後若要讓使用者在系統「檔案」中取得，接 share_plus 即可。
   static Future<Directory> _exportDir() async {
-    return getApplicationDocumentsDirectory();
+    return getAppDocumentsDirectory();
   }
 }

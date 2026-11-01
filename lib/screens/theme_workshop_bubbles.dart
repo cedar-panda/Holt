@@ -30,11 +30,42 @@ extension _ThemeWorkshopBubbleMethods on _ThemeWorkshopScreenState {
                     color: YanciTheme.accent,
                   ),
                 ),
+                const Spacer(),
+                if (_homeBgPath.isNotEmpty || _chatBgPath.isNotEmpty) ...[
+                  Text(
+                    L.pick(en: 'Set', zhTW: '已設定', zhCN: '已设置'),
+                    style: TextStyle(
+                      fontSize: 10.5,
+                      color: YanciTheme.textSecondary.withValues(alpha: 0.52),
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                ],
+                Icon(
+                  Icons.chevron_right_rounded,
+                  size: 18,
+                  color: YanciTheme.textSecondary.withValues(alpha: 0.42),
+                ),
               ],
             ),
           ),
         ),
       ),
+    );
+  }
+
+  Widget _buildBackgroundEntryCard(ThemePreset preset) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(YanciTheme.radiusCard),
+        border: Border.all(
+          color: preset.accent.withValues(alpha: 0.15),
+          width: 0.8,
+        ),
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 5),
+      child: _buildBackgroundMenuButton(),
     );
   }
 
@@ -124,13 +155,13 @@ extension _ThemeWorkshopBubbleMethods on _ThemeWorkshopScreenState {
                     preset: preset,
                     label: L.pick(en: 'Bubble', zhTW: '氣泡'),
                     selected: !_aiBubbleFlat,
-                    onTap: () => _setAiBubbleFlat(false),
+                    onTap: () => unawaited(_setAiBubbleFlat(false)),
                   ),
                   _aiBubbleStyleItem(
                     preset: preset,
                     label: L.pick(en: 'Flat', zhTW: '平鋪'),
                     selected: _aiBubbleFlat,
-                    onTap: () => _setAiBubbleFlat(true),
+                    onTap: () => unawaited(_setAiBubbleFlat(true)),
                   ),
                 ],
               ),
@@ -172,10 +203,23 @@ extension _ThemeWorkshopBubbleMethods on _ThemeWorkshopScreenState {
     );
   }
 
-  void _setAiBubbleFlat(bool flat) {
+  Future<void> _setAiBubbleFlat(bool flat) async {
     setState(() => _aiBubbleFlat = flat);
     YanciTheme.aiBubbleFlat = flat;
-    ThemeSettings.saveAiBubbleFlat(flat);
+    await ThemeSettings.saveAiBubbleFlat(flat);
+    if (flat && await MemorySettings.getSplitReply()) {
+      await MemorySettings.saveSplitReply(false);
+      if (mounted) {
+        showThemedPillNotice(
+          context,
+          L.pick(
+            en: 'Multi-bubble reply turned off in flat mode',
+            zhTW: '平鋪模式下已自動關閉多氣泡回覆',
+            zhCN: '平铺模式下已自动关闭多气泡回复',
+          ),
+        );
+      }
+    }
     _notifyThemeChanged();
   }
 
@@ -203,9 +247,18 @@ extension _ThemeWorkshopBubbleMethods on _ThemeWorkshopScreenState {
     final validation = await ImageService.validateSendButtonPng(picked.path);
     if (validation != SendButtonImageValidation.valid) {
       if (!mounted) return;
-      final message = validation == SendButtonImageValidation.notSquare
-          ? L.get('theme_send_button_square_error')
-          : L.get('theme_send_button_png_error');
+      final message = switch (validation) {
+        SendButtonImageValidation.notSquare => L.get(
+          'theme_send_button_square_error',
+        ),
+        SendButtonImageValidation.noTransparentBackground => L.get(
+          'theme_send_button_transparent_error',
+        ),
+        SendButtonImageValidation.notWhiteLineArt => L.get(
+          'theme_send_button_white_line_error',
+        ),
+        _ => L.get('theme_send_button_png_error'),
+      };
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text(message)));
@@ -243,12 +296,15 @@ extension _ThemeWorkshopBubbleMethods on _ThemeWorkshopScreenState {
     Widget image;
     switch (style) {
       case SendButtonStyle.leaf:
-        image = Image.asset(
-          'assets/images/send_leaf.png',
-          width: 32,
-          height: 32,
-          fit: BoxFit.contain,
-          filterQuality: FilterQuality.none,
+        image = ColorFiltered(
+          colorFilter: ColorFilter.mode(preset.accent, BlendMode.modulate),
+          child: Image.asset(
+            'assets/images/send_maple_leaf.png',
+            width: 26,
+            height: 26,
+            fit: BoxFit.contain,
+            filterQuality: FilterQuality.none,
+          ),
         );
         break;
       case SendButtonStyle.paw:
@@ -256,8 +312,8 @@ extension _ThemeWorkshopBubbleMethods on _ThemeWorkshopScreenState {
           colorFilter: ColorFilter.mode(preset.accent, BlendMode.modulate),
           child: Image.asset(
             'assets/images/send_paw.png',
-            width: 32,
-            height: 32,
+            width: 26,
+            height: 26,
             fit: BoxFit.contain,
             filterQuality: FilterQuality.none,
           ),
@@ -265,11 +321,11 @@ extension _ThemeWorkshopBubbleMethods on _ThemeWorkshopScreenState {
         break;
       case SendButtonStyle.shell:
         image = ColorFiltered(
-          colorFilter: shellHueColorFilter(preset.accent),
+          colorFilter: ColorFilter.mode(preset.accent, BlendMode.modulate),
           child: Image.asset(
-            'assets/images/shell_coin.png',
-            width: 32,
-            height: 32,
+            'assets/images/send_paper_boat.png',
+            width: 26,
+            height: 26,
             fit: BoxFit.contain,
             filterQuality: FilterQuality.none,
           ),
@@ -278,16 +334,22 @@ extension _ThemeWorkshopBubbleMethods on _ThemeWorkshopScreenState {
       case SendButtonStyle.custom:
         final custom = File(_sendButtonCustomPath);
         image = _sendButtonCustomPath.isNotEmpty && custom.existsSync()
-            ? Image.file(
-                custom,
-                width: 32,
-                height: 32,
-                fit: BoxFit.contain,
-                filterQuality: FilterQuality.none,
-                errorBuilder: (_, _, _) => Icon(
-                  Icons.add_photo_alternate_outlined,
-                  size: 24,
-                  color: preset.accent,
+            ? ColorFiltered(
+                colorFilter: ColorFilter.mode(
+                  preset.accent,
+                  BlendMode.modulate,
+                ),
+                child: Image.file(
+                  custom,
+                  width: 26,
+                  height: 26,
+                  fit: BoxFit.contain,
+                  filterQuality: FilterQuality.none,
+                  errorBuilder: (_, _, _) => Icon(
+                    Icons.add_photo_alternate_outlined,
+                    size: 24,
+                    color: preset.accent,
+                  ),
                 ),
               )
             : Icon(
@@ -309,64 +371,106 @@ extension _ThemeWorkshopBubbleMethods on _ThemeWorkshopScreenState {
     };
     return Padding(
       padding: const EdgeInsets.only(left: 4, right: 4, bottom: 8),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Text(
-            L.get('theme_send_button'),
-            style: TextStyle(
-              fontSize: 13,
-              fontWeight: FontWeight.w500,
-              color: preset.textPrimary,
-            ),
-          ),
-          const Spacer(),
-          for (final style in SendButtonStyle.values) ...[
-            Tooltip(
-              message: labels[style]!,
-              child: Semantics(
-                button: true,
-                selected: _sendButtonStyle == style,
-                label: labels[style],
-                child: GestureDetector(
-                  key: ValueKey('theme-send-button-${style.name}'),
-                  behavior: HitTestBehavior.opaque,
-                  onTap: () => _selectSendButtonStyle(style),
-                  onLongPress: style == SendButtonStyle.custom
-                      ? _pickCustomSendButton
-                      : null,
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 180),
-                    width: 48,
-                    height: 48,
-                    margin: const EdgeInsets.only(left: 5),
-                    decoration: BoxDecoration(
-                      color: _sendButtonStyle == style
-                          ? preset.accent.withValues(alpha: 0.10)
-                          : Colors.transparent,
-                      borderRadius: BorderRadius.circular(14),
-                      border: Border.all(
-                        color: _sendButtonStyle == style
-                            ? preset.accent.withValues(alpha: 0.76)
-                            : preset.textSecondary.withValues(alpha: 0.16),
-                        width: _sendButtonStyle == style ? 1.2 : 0.7,
-                      ),
-                    ),
-                    child: Stack(
-                      alignment: Alignment.center,
-                      children: [
-                        _sendButtonPreview(style, preset),
-                        if (style == SendButtonStyle.custom &&
-                            _sendButtonCustomPath.isNotEmpty)
-                          Positioned(
-                            right: 2,
-                            bottom: 2,
-                            child: Icon(
-                              Icons.refresh_rounded,
-                              size: 11,
-                              color: preset.accent,
+          Row(
+            children: [
+              Icon(
+                Icons.send_rounded,
+                size: 18,
+                color: preset.textSecondary.withValues(alpha: 0.70),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                L.get('theme_send_button'),
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w500,
+                  color: preset.textPrimary,
+                ),
+              ),
+              const Spacer(),
+              for (final style in SendButtonStyle.values) ...[
+                Tooltip(
+                  message: labels[style]!,
+                  child: Semantics(
+                    button: true,
+                    selected: _sendButtonStyle == style,
+                    label: labels[style],
+                    child: GestureDetector(
+                      key: ValueKey('theme-send-button-${style.name}'),
+                      behavior: HitTestBehavior.opaque,
+                      onTap: () => _selectSendButtonStyle(style),
+                      onLongPress: style == SendButtonStyle.custom
+                          ? _pickCustomSendButton
+                          : null,
+                      // The visible tile is 38×38, while the transparent outer
+                      // box keeps a platform-safe 44×44 touch target.
+                      child: SizedBox(
+                        width: 44,
+                        height: 44,
+                        child: Center(
+                          child: AnimatedContainer(
+                            duration: const Duration(milliseconds: 180),
+                            width: 38,
+                            height: 38,
+                            decoration: BoxDecoration(
+                              color: _sendButtonStyle == style
+                                  ? preset.accent.withValues(alpha: 0.10)
+                                  : Colors.transparent,
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(
+                                color: _sendButtonStyle == style
+                                    ? preset.accent.withValues(alpha: 0.76)
+                                    : preset.textSecondary.withValues(
+                                        alpha: 0.16,
+                                      ),
+                                width: _sendButtonStyle == style ? 1.2 : 0.7,
+                              ),
+                            ),
+                            child: Stack(
+                              alignment: Alignment.center,
+                              children: [
+                                _sendButtonPreview(style, preset),
+                                if (style == SendButtonStyle.custom &&
+                                    _sendButtonCustomPath.isNotEmpty)
+                                  Positioned(
+                                    right: 1,
+                                    bottom: 1,
+                                    child: Icon(
+                                      Icons.refresh_rounded,
+                                      size: 10,
+                                      color: preset.accent,
+                                    ),
+                                  ),
+                              ],
                             ),
                           ),
-                      ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ],
+          ),
+          if (_sendButtonStyle == SendButtonStyle.custom) ...[
+            const SizedBox(height: 5),
+            Align(
+              alignment: Alignment.centerRight,
+              child: Tooltip(
+                message: L.get('theme_send_button_custom_hint'),
+                triggerMode: TooltipTriggerMode.tap,
+                child: Semantics(
+                  button: true,
+                  label: L.get('theme_send_button_custom_hint'),
+                  child: Padding(
+                    padding: const EdgeInsets.all(8),
+                    child: Icon(
+                      Icons.help_outline_rounded,
+                      size: 17,
+                      color: preset.textSecondary.withValues(alpha: .72),
                     ),
                   ),
                 ),
@@ -380,21 +484,18 @@ extension _ThemeWorkshopBubbleMethods on _ThemeWorkshopScreenState {
 
   // ═══ 氣泡設定區 ═══
   Widget _buildBubbleSection(ThemePreset preset) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 12),
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(YanciTheme.radiusCard),
+        border: Border.all(
+          color: preset.accent.withValues(alpha: 0.15),
+          width: 0.8,
+        ),
+      ),
+      padding: const EdgeInsets.fromLTRB(16, 10, 16, 8),
       child: Column(
         children: [
-          // ── 自訂背景：與回應方式同級，但保留主題重點色 ──
-          Padding(
-            padding: const EdgeInsets.only(
-              left: 4,
-              right: 4,
-              top: 2,
-              bottom: 4,
-            ),
-            child: _buildBackgroundMenuButton(),
-          ),
-
           // ── 回應方式（氣泡 / 平鋪）：決定是否有氣泡，故置於氣泡設定之上 ──
           Padding(
             padding: const EdgeInsets.only(
@@ -453,249 +554,81 @@ extension _ThemeWorkshopBubbleMethods on _ThemeWorkshopScreenState {
               padding: const EdgeInsets.only(left: 8, right: 4, bottom: 8),
               child: Column(
                 children: [
-                  // AI 氣泡顏色
-                  _bubbleColorRow(
-                    label: L.pick(en: 'AI Bubble', zhTW: 'AI 氣泡'),
-                    color: YanciTheme.aiBubble,
-                    role: ThemeBubbleColorRole.aiBubble,
-                    preset: preset,
-                    isTextColor: false,
-                  ),
-                  const SizedBox(height: 6),
-                  // 使用者氣泡顏色
-                  _bubbleColorRow(
-                    label: L.pick(en: 'My Bubble', zhTW: '我的氣泡'),
-                    color: YanciTheme.userBubble,
-                    role: ThemeBubbleColorRole.userBubble,
-                    preset: preset,
-                    isTextColor: false,
-                  ),
-                  const SizedBox(height: 6),
-                  // 字體顏色
-                  _bubbleColorRow(
-                    label: L.pick(en: 'Text', zhTW: '字體'),
-                    color: YanciTheme.textOnBubble,
-                    role: ThemeBubbleColorRole.textOnBubble,
-                    preset: preset,
-                    isTextColor: true,
-                  ),
-                  const SizedBox(height: 10),
-                  // 透明度
                   Row(
                     children: [
-                      SizedBox(
-                        width: 56,
-                        child: Text(
-                          L.pick(en: 'Opacity', zhTW: '透明度'),
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: preset.textSecondary.withValues(alpha: 0.7),
-                          ),
-                        ),
-                      ),
                       Expanded(
-                        child: SliderTheme(
-                          data: SliderThemeData(
-                            trackHeight: 3,
-                            thumbShape: const RoundSliderThumbShape(
-                              enabledThumbRadius: 6,
-                            ),
-                            activeTrackColor: preset.accent,
-                            inactiveTrackColor: preset.textSecondary.withValues(
-                              alpha: 0.15,
-                            ),
-                            thumbColor: preset.accent,
-                            overlayColor: preset.accent.withValues(alpha: 0.12),
-                          ),
-                          child: Slider(
-                            value: _bubbleOpacity,
-                            min: 0.1,
-                            max: 1.0,
-                            onChanged: (v) {
-                              setState(() => _bubbleOpacity = v);
-                              YanciTheme.bubbleOpacity = v;
-                              ThemeSettings.saveBubbleOpacity(v);
-                              _notifyThemeChanged();
-                            },
-                          ),
+                        child: _bubbleColorRow(
+                          label: L.pick(en: 'AI', zhTW: 'AI 氣泡', zhCN: 'AI 气泡'),
+                          color: YanciTheme.aiBubble,
+                          role: ThemeBubbleColorRole.aiBubble,
+                          preset: preset,
+                          isTextColor: false,
                         ),
                       ),
-                      SizedBox(
-                        width: 32,
-                        child: Text(
-                          '${(_bubbleOpacity * 100).round()}',
-                          textAlign: TextAlign.right,
-                          style: TextStyle(
-                            fontSize: 10,
-                            color: preset.textSecondary.withValues(alpha: 0.5),
-                          ),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: _bubbleColorRow(
+                          label: L.pick(en: 'Mine', zhTW: '我的氣泡', zhCN: '我的气泡'),
+                          color: YanciTheme.userBubble,
+                          role: ThemeBubbleColorRole.userBubble,
+                          preset: preset,
+                          isTextColor: false,
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: _bubbleColorRow(
+                          label: L.pick(en: 'Text', zhTW: '字體', zhCN: '字体'),
+                          color: YanciTheme.textOnBubble,
+                          role: ThemeBubbleColorRole.textOnBubble,
+                          preset: preset,
+                          isTextColor: true,
                         ),
                       ),
                     ],
                   ),
-                  const SizedBox(height: 6),
-
-                  // ── 更多設置 ──
-                  GestureDetector(
-                    onTap: () => setState(
-                      () => _bubbleMoreExpanded = !_bubbleMoreExpanded,
-                    ),
-                    behavior: HitTestBehavior.opaque,
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 4),
-                      child: Row(
-                        children: [
-                          Text(
-                            L.pick(en: 'More', zhTW: '更多設置'),
-                            style: TextStyle(
-                              fontSize: 11,
-                              color: preset.textSecondary.withValues(
-                                alpha: 0.55,
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 4),
-                          AnimatedRotation(
-                            turns: _bubbleMoreExpanded ? 0.5 : 0,
-                            duration: const Duration(milliseconds: 200),
-                            child: Icon(
-                              Icons.keyboard_arrow_down_rounded,
-                              size: 16,
-                              color: preset.textSecondary.withValues(
-                                alpha: 0.4,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
+                  const SizedBox(height: 10),
+                  _bubbleSlider(
+                    label: L.pick(en: 'Opacity', zhTW: '透明度', zhCN: '透明度'),
+                    value: _bubbleOpacity,
+                    min: 0.1,
+                    max: 1.0,
+                    displayValue: '${(_bubbleOpacity * 100).round()}',
+                    preset: preset,
+                    onChanged: (v) {
+                      setState(() => _bubbleOpacity = v);
+                      YanciTheme.bubbleOpacity = v;
+                      ThemeSettings.saveBubbleOpacity(v);
+                      _notifyThemeChanged();
+                    },
                   ),
-                  AnimatedCrossFade(
-                    firstChild: const SizedBox.shrink(),
-                    secondChild: Column(
-                      children: [
-                        // 圓角
-                        Row(
-                          children: [
-                            SizedBox(
-                              width: 56,
-                              child: Text(
-                                L.pick(en: 'Radius', zhTW: '圓角'),
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  color: preset.textSecondary.withValues(
-                                    alpha: 0.7,
-                                  ),
-                                ),
-                              ),
-                            ),
-                            Expanded(
-                              child: SliderTheme(
-                                data: SliderThemeData(
-                                  trackHeight: 3,
-                                  thumbShape: const RoundSliderThumbShape(
-                                    enabledThumbRadius: 6,
-                                  ),
-                                  activeTrackColor: preset.accent,
-                                  inactiveTrackColor: preset.textSecondary
-                                      .withValues(alpha: 0.15),
-                                  thumbColor: preset.accent,
-                                  overlayColor: preset.accent.withValues(
-                                    alpha: 0.12,
-                                  ),
-                                ),
-                                child: Slider(
-                                  value: _bubbleRadius,
-                                  min: 2,
-                                  max: 32,
-                                  onChanged: (v) {
-                                    setState(() => _bubbleRadius = v);
-                                    YanciTheme.bubbleRadius = v;
-                                    ThemeSettings.saveBubbleRadius(v);
-                                    _notifyThemeChanged();
-                                  },
-                                ),
-                              ),
-                            ),
-                            SizedBox(
-                              width: 32,
-                              child: Text(
-                                '${_bubbleRadius.round()}',
-                                textAlign: TextAlign.right,
-                                style: TextStyle(
-                                  fontSize: 10,
-                                  color: preset.textSecondary.withValues(
-                                    alpha: 0.5,
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                        // 亮度
-                        Row(
-                          children: [
-                            SizedBox(
-                              width: 56,
-                              child: Text(
-                                L.pick(en: 'Bright', zhTW: '亮度'),
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  color: preset.textSecondary.withValues(
-                                    alpha: 0.7,
-                                  ),
-                                ),
-                              ),
-                            ),
-                            Expanded(
-                              child: SliderTheme(
-                                data: SliderThemeData(
-                                  trackHeight: 3,
-                                  thumbShape: const RoundSliderThumbShape(
-                                    enabledThumbRadius: 6,
-                                  ),
-                                  activeTrackColor: preset.accent,
-                                  inactiveTrackColor: preset.textSecondary
-                                      .withValues(alpha: 0.15),
-                                  thumbColor: preset.accent,
-                                  overlayColor: preset.accent.withValues(
-                                    alpha: 0.12,
-                                  ),
-                                ),
-                                child: Slider(
-                                  value: _bubbleBrightness,
-                                  min: -0.3,
-                                  max: 0.3,
-                                  onChanged: (v) {
-                                    setState(() => _bubbleBrightness = v);
-                                    YanciTheme.bubbleBrightness = v;
-                                    ThemeSettings.saveBubbleBrightness(v);
-                                    _notifyThemeChanged();
-                                  },
-                                ),
-                              ),
-                            ),
-                            SizedBox(
-                              width: 32,
-                              child: Text(
-                                '${(_bubbleBrightness * 100).round()}',
-                                textAlign: TextAlign.right,
-                                style: TextStyle(
-                                  fontSize: 10,
-                                  color: preset.textSecondary.withValues(
-                                    alpha: 0.5,
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
-                    crossFadeState: _bubbleMoreExpanded
-                        ? CrossFadeState.showSecond
-                        : CrossFadeState.showFirst,
-                    duration: const Duration(milliseconds: 200),
+                  _bubbleSlider(
+                    label: L.pick(en: 'Radius', zhTW: '圓角', zhCN: '圆角'),
+                    value: _bubbleRadius,
+                    min: 2,
+                    max: 32,
+                    displayValue: '${_bubbleRadius.round()}',
+                    preset: preset,
+                    onChanged: (v) {
+                      setState(() => _bubbleRadius = v);
+                      YanciTheme.bubbleRadius = v;
+                      ThemeSettings.saveBubbleRadius(v);
+                      _notifyThemeChanged();
+                    },
+                  ),
+                  _bubbleSlider(
+                    label: L.pick(en: 'Bright', zhTW: '亮度', zhCN: '亮度'),
+                    value: _bubbleBrightness,
+                    min: -0.3,
+                    max: 0.3,
+                    displayValue: '${(_bubbleBrightness * 100).round()}',
+                    preset: preset,
+                    onChanged: (v) {
+                      setState(() => _bubbleBrightness = v);
+                      YanciTheme.bubbleBrightness = v;
+                      ThemeSettings.saveBubbleBrightness(v);
+                      _notifyThemeChanged();
+                    },
                   ),
                 ],
               ),
@@ -707,6 +640,60 @@ extension _ThemeWorkshopBubbleMethods on _ThemeWorkshopScreenState {
           ),
         ],
       ),
+    );
+  }
+
+  Widget _bubbleSlider({
+    required String label,
+    required double value,
+    required double min,
+    required double max,
+    required String displayValue,
+    required ThemePreset preset,
+    required ValueChanged<double> onChanged,
+  }) {
+    return Row(
+      children: [
+        SizedBox(
+          width: 56,
+          child: Text(
+            label,
+            style: TextStyle(
+              fontSize: 11,
+              color: preset.textSecondary.withValues(alpha: 0.7),
+            ),
+          ),
+        ),
+        Expanded(
+          child: SliderTheme(
+            data: SliderThemeData(
+              trackHeight: 3,
+              thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
+              activeTrackColor: preset.accent,
+              inactiveTrackColor: preset.textSecondary.withValues(alpha: 0.15),
+              thumbColor: preset.accent,
+              overlayColor: preset.accent.withValues(alpha: 0.12),
+            ),
+            child: Slider(
+              value: value,
+              min: min,
+              max: max,
+              onChanged: onChanged,
+            ),
+          ),
+        ),
+        SizedBox(
+          width: 32,
+          child: Text(
+            displayValue,
+            textAlign: TextAlign.right,
+            style: TextStyle(
+              fontSize: 10,
+              color: preset.textSecondary.withValues(alpha: 0.5),
+            ),
+          ),
+        ),
+      ],
     );
   }
 
@@ -745,14 +732,22 @@ extension _ThemeWorkshopBubbleMethods on _ThemeWorkshopScreenState {
         );
       },
       behavior: HitTestBehavior.opaque,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 3),
+      child: Container(
+        constraints: const BoxConstraints(minHeight: 44),
+        padding: const EdgeInsets.only(left: 7, right: 3),
+        decoration: BoxDecoration(
+          color: preset.accent.withValues(alpha: 0.035),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: preset.textSecondary.withValues(alpha: 0.12),
+            width: 0.6,
+          ),
+        ),
         child: Row(
           children: [
-            // 色塊 chip
             Container(
-              width: isTextColor ? 28 : 24,
-              height: isTextColor ? 18 : 18,
+              width: isTextColor ? 22 : 19,
+              height: 16,
               decoration: BoxDecoration(
                 color: isTextColor
                     ? Colors.transparent
@@ -779,15 +774,18 @@ extension _ThemeWorkshopBubbleMethods on _ThemeWorkshopScreenState {
                     )
                   : null,
             ),
-            const SizedBox(width: 10),
-            Text(
-              label,
-              style: TextStyle(
-                fontSize: 12,
-                color: preset.textSecondary.withValues(alpha: 0.8),
+            const SizedBox(width: 5),
+            Expanded(
+              child: Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 10.5,
+                  color: preset.textSecondary.withValues(alpha: 0.8),
+                ),
               ),
             ),
-            const Spacer(),
             if (hasOverride)
               IconButton(
                 key: ValueKey('theme-bubble-${role.name}-reset'),
@@ -796,7 +794,8 @@ extension _ThemeWorkshopBubbleMethods on _ThemeWorkshopScreenState {
                   zhTW: '重置為目前主題預設',
                 ),
                 visualDensity: VisualDensity.compact,
-                constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 28, minHeight: 44),
                 onPressed: () async {
                   await ThemeSettings.saveThemeBubbleColor(
                     _selectedId,
@@ -809,14 +808,14 @@ extension _ThemeWorkshopBubbleMethods on _ThemeWorkshopScreenState {
                 },
                 icon: Icon(
                   Icons.restart_alt_rounded,
-                  size: 17,
+                  size: 15,
                   color: preset.textSecondary.withValues(alpha: 0.55),
                 ),
               )
             else
               Icon(
                 Icons.chevron_right_rounded,
-                size: 16,
+                size: 14,
                 color: preset.textSecondary.withValues(alpha: 0.3),
               ),
           ],

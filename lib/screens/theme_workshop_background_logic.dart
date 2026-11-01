@@ -39,6 +39,7 @@ extension _ThemeWorkshopBackgroundLogic on _ThemeWorkshopScreenState {
         ? null
         : Color(preset.chatThinkingTextColor!);
     _chatBgBubbleOpacity = preset.chatBubbleOpacity;
+    _callBackgroundScope = preset.callBackgroundScope;
   }
 
   BackgroundPreset _currentBackgroundPreset() => BackgroundPreset(
@@ -58,7 +59,18 @@ extension _ThemeWorkshopBackgroundLogic on _ThemeWorkshopScreenState {
     chatBubbleTextColor: _chatBgBubbleTextColor?.toARGB32(),
     chatThinkingTextColor: _chatBgThinkingTextColor?.toARGB32(),
     chatBubbleOpacity: _chatBgBubbleOpacity,
+    callBackgroundScope: _callBackgroundScope,
   );
+
+  Future<void> _setCallBackgroundScope(
+    String scope,
+    StateSetter setPageState,
+  ) async {
+    final next = _callBackgroundScope == scope ? 'none' : scope;
+    setPageState(() => _callBackgroundScope = next);
+    await _persistCurrentBackgroundPreset();
+    _notifyThemeChanged();
+  }
 
   Future<void> _persistCurrentBackgroundPreset() async {
     await BackgroundPresetService.saveAndActivate(_currentBackgroundPreset());

@@ -4,6 +4,7 @@ import 'package:http/http.dart' as http;
 
 import 'model_info.dart';
 import 'openai_compatible_service.dart';
+import 'reasoning_effort.dart';
 
 /// DeepInfra direct API through its first-party OpenAI-compatible endpoint.
 ///
@@ -19,7 +20,11 @@ class DeepInfraService extends OpenAICompatibleService {
       'https://api.deepinfra.com/v1/openai/embeddings';
   static const String defaultModel = 'Qwen/Qwen3.8-Flash';
 
-  DeepInfraService({required super.apiKey, super.thinkingEnabled = false})
+  DeepInfraService({
+    required super.apiKey,
+    super.thinkingEnabled = false,
+    super.reasoningEffort = ReasoningEffort.auto,
+  })
     : super(
         baseUrl: chatCompletionsUrl,
         providerId: 'deepinfra',

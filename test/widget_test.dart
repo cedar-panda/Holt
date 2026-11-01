@@ -168,10 +168,15 @@ void main() {
       final systemBlocks = system['content'] as List;
       expect(system['role'], 'system');
       expect(systemBlocks.length, 3);
-      expect((systemBlocks[2] as Map<String, dynamic>)['cache_control'], const {
+      // 斷點在 control 之前（profile），文字與通話共用這段前綴快取。
+      expect((systemBlocks[1] as Map<String, dynamic>)['cache_control'], const {
         'type': 'ephemeral',
         'ttl': '1h',
       });
+      expect(
+        (systemBlocks[2] as Map<String, dynamic>).containsKey('cache_control'),
+        isFalse,
+      );
       expect(
         systemBlocks.map((block) => (block as Map)['text']).join('\n'),
         isNot(contains('fresh dynamic')),

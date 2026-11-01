@@ -1,13 +1,22 @@
 import 'dart:convert';
 import 'dart:collection';
+import 'dart:math' as math;
+import 'package:flutter/foundation.dart' show compute;
 import 'package:image/image.dart' as img;
 import 'dart:io';
 import 'dart:typed_data';
-import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
 import 'background_foreground_service.dart';
+import '../utils/app_directories.dart';
 
-enum SendButtonImageValidation { valid, notPng, notSquare, unreadable }
+enum SendButtonImageValidation {
+  valid,
+  notPng,
+  notSquare,
+  noTransparentBackground,
+  notWhiteLineArt,
+  unreadable,
+}
 
 /// 圖片壓縮 & 編碼服務
 ///
@@ -42,6 +51,31 @@ class ImageService {
     if (decoded.width != decoded.height) {
       return SendButtonImageValidation.notSquare;
     }
+    var transparentPixels = 0;
+    var visiblePixels = 0;
+    var whiteLinePixels = 0;
+    for (final pixel in decoded) {
+      final alpha = pixel.a.toInt();
+      if (alpha <= 16) {
+        transparentPixels++;
+        continue;
+      }
+      visiblePixels++;
+      final red = pixel.r.toInt();
+      final green = pixel.g.toInt();
+      final blue = pixel.b.toInt();
+      final darkest = <int>[red, green, blue].reduce(math.min);
+      final lightest = <int>[red, green, blue].reduce(math.max);
+      if (darkest >= 180 && lightest - darkest <= 56) {
+        whiteLinePixels++;
+      }
+    }
+    if (transparentPixels == 0) {
+      return SendButtonImageValidation.noTransparentBackground;
+    }
+    if (visiblePixels == 0 || whiteLinePixels / visiblePixels < 0.85) {
+      return SendButtonImageValidation.notWhiteLineArt;
+    }
     return SendButtonImageValidation.valid;
   }
 
@@ -63,7 +97,7 @@ class ImageService {
     if (validation != SendButtonImageValidation.valid) {
       throw FormatException(validation.name);
     }
-    final dir = await getApplicationDocumentsDirectory();
+    final dir = await getAppDocumentsDirectory();
     final outPath = p.join(
       dir.path,
       'send_button_images',
@@ -86,7 +120,7 @@ class ImageService {
   static Future<void> deleteSendButtonFile(String path) async {
     if (path.trim().isEmpty) return;
     try {
-      final dir = await getApplicationDocumentsDirectory();
+      final dir = await getAppDocumentsDirectory();
       final root = p.normalize(p.join(dir.path, 'send_button_images'));
       final target = p.normalize(path);
       if (!p.isWithin(root, target)) return;
@@ -95,16 +129,24 @@ class ImageService {
     } catch (_) {}
   }
 
+  /// 同一毫秒內多張圖並行複製時，靠這個序號保證檔名不撞。
+  static int _copySequence = 0;
+
   /// 複製圖片到 app 目錄（防止相簿清理後丟失）
+  ///
+  /// 多圖發送會用 Future.wait 並行呼叫；舊版只用毫秒時間戳命名，
+  /// 同一毫秒的幾張圖會寫進同一個檔案互相覆蓋（顯示只剩一張、
+  /// 檔案內容被交錯寫壞後 provider 回「無法處理圖片」）。
   static Future<String> copyToAppDir(String sourcePath) async {
     final file = File(sourcePath);
     if (!await file.exists()) return sourcePath;
 
-    final dir = await getApplicationDocumentsDirectory();
+    final dir = await getAppDocumentsDirectory();
     final ext = p.extension(sourcePath).isNotEmpty
         ? p.extension(sourcePath)
         : '.jpg';
-    final name = 'img_${DateTime.now().millisecondsSinceEpoch}$ext';
+    final name =
+        'img_${DateTime.now().microsecondsSinceEpoch}_${_copySequence++}$ext';
     final outPath = p.join(dir.path, 'chat_images', name);
     await Directory(p.dirname(outPath)).create(recursive: true);
     await file.copy(outPath);
@@ -121,7 +163,7 @@ class ImageService {
     final file = File(sourcePath);
     if (!await file.exists()) return sourcePath;
 
-    final dir = await getApplicationDocumentsDirectory();
+    final dir = await getAppDocumentsDirectory();
     final ext = p.extension(sourcePath).isNotEmpty
         ? p.extension(sourcePath)
         : '.jpg';
@@ -154,7 +196,7 @@ class ImageService {
     String? except,
   }) async {
     try {
-      final dir = await getApplicationDocumentsDirectory();
+      final dir = await getAppDocumentsDirectory();
       final safeScope = scope.replaceAll(RegExp(r'[^a-zA-Z0-9_-]'), '_');
       final bgDir = Directory(p.join(dir.path, 'background_images'));
       if (!await bgDir.exists()) return;
@@ -174,7 +216,7 @@ class ImageService {
   static Future<void> deleteBackgroundFile(String path) async {
     if (path.trim().isEmpty) return;
     try {
-      final dir = await getApplicationDocumentsDirectory();
+      final dir = await getAppDocumentsDirectory();
       final root = p.normalize(p.join(dir.path, 'background_images'));
       final target = p.normalize(path);
       if (!p.isWithin(root, target)) return;
@@ -256,7 +298,7 @@ class ImageService {
     }
 
     final outBytes = img.encodePng(targetImage);
-    final dir = await getApplicationDocumentsDirectory();
+    final dir = await getAppDocumentsDirectory();
     final name = 'transparent_${DateTime.now().millisecondsSinceEpoch}.png';
     final outPath = p.join(dir.path, 'shop_items', name);
     await Directory(p.dirname(outPath)).create(recursive: true);
@@ -315,28 +357,61 @@ class ImageService {
     return null;
   }
 
+  /// 已編碼結果的小型 LRU：窗口內的舊圖每輪都會重送，避免每輪重新解碼。
+  /// key 含檔案大小與修改時間，檔案被替換時自然失效。
+  static const int _kDataUrlCacheSize = 24;
+  static final LinkedHashMap<String, String> _dataUrlCache =
+      LinkedHashMap<String, String>();
+
   static Future<String?> toBase64DataUrl(String imagePath) async {
     final file = File(imagePath);
     if (!await file.exists()) return null;
 
-    var bytes = await file.readAsBytes();
+    final stat = await file.stat();
+    final cacheKey =
+        '$imagePath|${stat.size}|${stat.modified.microsecondsSinceEpoch}';
+    final cached = _dataUrlCache.remove(cacheKey);
+    if (cached != null) {
+      _dataUrlCache[cacheKey] = cached;
+      return cached;
+    }
+
+    final bytes = await file.readAsBytes();
+    // 解碼／重新編碼是純 Dart 運算，放到背景 isolate，避免多圖時卡 UI。
+    // 用 compute 而不是 Isolate.run：Web 版沒有 dart:isolate。
+    final dataUrl = await compute(_encodeForApi, bytes);
+    _dataUrlCache[cacheKey] = dataUrl;
+    while (_dataUrlCache.length > _kDataUrlCacheSize) {
+      _dataUrlCache.remove(_dataUrlCache.keys.first);
+    }
+    return dataUrl;
+  }
+
+  /// 送 API 前的圖片正規化（在背景 isolate 執行）。
+  ///
+  /// - 一律先解碼驗證：壞檔在本地擋下，不送出去讓 provider 整輪 400。
+  /// - 小於 [_kSkipBytes] 的 JPEG／PNG／WebP 原樣送出（位元組不變）。
+  /// - GIF 一律轉檔：Gemini 不收 GIF。
+  /// - 其他情況縮到長邊 [_kMaxSide]；有透明通道 → PNG，否則 → JPEG。
+  ///   （舊版不透明的大 PNG 截圖仍重編成 PNG，一張 1～2MB，多圖很容易撐爆請求。）
+  static String _encodeForApi(Uint8List source) {
+    var bytes = source;
     var mime = _detectMimeType(bytes);
 
-    // ═══ 壓縮：原圖整張 base64 會概率性撞 provider 體積上限
-    // （手機原相機照片動輒 4~12MB，base64 再膨脹 1.33x）═══
-    // 不明格式也走一次正規化：能解碼就轉成明確的 PNG/JPEG，
-    // 不能解碼則在本地阻止錯誤 payload，避免重試時反覆燒請求。
-    if (bytes.length > _kSkipBytes || mime == null) {
-      img.Image? decoded;
-      try {
-        decoded = img.decodeImage(bytes);
-      } catch (_) {
-        decoded = null;
-      }
-      if (decoded == null) {
-        throw const FormatException('無法辨識圖片內容，請將圖片另存為 PNG、JPEG、GIF 或 WebP 後重試');
-      }
+    img.Image? decoded;
+    try {
+      decoded = img.decodeImage(bytes);
+    } catch (_) {
+      decoded = null;
+    }
+    if (decoded == null) {
+      throw const FormatException('無法辨識圖片內容，請將圖片另存為 PNG、JPEG、GIF 或 WebP 後重試');
+    }
 
+    final passThrough =
+        bytes.length <= _kSkipBytes &&
+        (mime == 'image/jpeg' || mime == 'image/png' || mime == 'image/webp');
+    if (!passThrough) {
       var normalized = decoded;
       final maxSide = normalized.width > normalized.height
           ? normalized.width
@@ -347,9 +422,7 @@ class ImageService {
             : img.copyResize(normalized, height: _kMaxSide);
       }
 
-      // 真正的 PNG 保留 PNG；其他格式有透明通道時也轉 PNG，
-      // 沒透明通道則以 JPEG 控制上傳體積。
-      if (mime == 'image/png' || normalized.hasAlpha) {
+      if (normalized.hasAlpha) {
         bytes = img.encodePng(normalized);
         mime = 'image/png';
       } else {

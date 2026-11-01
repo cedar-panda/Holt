@@ -4,7 +4,6 @@ import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:path_provider/path_provider.dart';
 
 import '../memory/database.dart';
 import '../models/context_mode.dart';
@@ -20,6 +19,7 @@ import '../widgets/avatar_cropper.dart';
 import '../widgets/context_mode_pill.dart';
 import '../widgets/gradient_background.dart';
 import '../widgets/user_persona_avatar_pair.dart';
+import '../utils/app_directories.dart';
 
 /// Mode-aware user role file. Base identity is shared until a mode-specific
 /// edit creates an override; the companion binding is shared across modes.
@@ -172,7 +172,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
       imageQuality: 90,
     );
     if (picked == null) return;
-    final appDir = await getApplicationDocumentsDirectory();
+    final appDir = await getAppDocumentsDirectory();
     final avatarDir = Directory('${appDir.path}/avatars');
     if (!avatarDir.existsSync()) avatarDir.createSync(recursive: true);
     final outputPath =
@@ -311,9 +311,14 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
   @override
   Widget build(BuildContext context) {
     return PopScope(
-      canPop: false,
+      // 允許右滑返回：彈出時補存（_save 內 setState 都有 mounted 保護）。
+      canPop: true,
       onPopInvokedWithResult: (didPop, _) {
-        if (!didPop) _handleBack();
+        if (didPop) {
+          unawaited(_save(showNotice: false).catchError((_) {}));
+        } else {
+          _handleBack();
+        }
       },
       child: Scaffold(
         body: GestureDetector(

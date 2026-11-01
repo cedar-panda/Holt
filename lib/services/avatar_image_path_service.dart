@@ -1,11 +1,11 @@
 import 'dart:io';
 
 import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
 import 'package:sqflite/sqflite.dart';
 
 import '../memory/database.dart';
 import 'settings/user_settings.dart';
+import '../utils/app_directories.dart';
 
 /// Repairs app-owned avatar paths after iOS assigns a new data-container UUID.
 ///
@@ -22,7 +22,7 @@ class AvatarImagePathService {
   };
 
   static Future<int> repairStoredPaths() async {
-    final documents = await getApplicationDocumentsDirectory();
+    final documents = await getAppDocumentsDirectory();
     final db = await DatabaseHelper.database;
     var repaired = await repairDatabasePaths(db, documents.path);
 

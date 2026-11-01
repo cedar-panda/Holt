@@ -37,6 +37,8 @@
 - RP 只落庫離散事件；scene、body、promise、identity 等持續狀態由 `RpStoryStateService` 管理。
 - RP 支援 narrative layer、event key 與 user 原文修正；日常另有生活狀態修正標籤。
 - RP 生成的共享 Story Reference 中，時間線排在劇情狀態、人物／關係、動態世界書與一般記憶之後，作為離散歷史補充；日常順序不受影響。
+- 角色頁的日常時間線保留橫向節點；`RpStorylineTimelineScreen` 傳入 `fullScreenVertical: true`，由 `CharacterTimelinePanel._buildVerticalTimeline` 自己持有直向滾動，以左軸線與右側事件卡顯示。無劇情時間時顯示「第 N 節／Scene N」，內部 `state_key` 不在預覽或詳情暴露。
+- 全域 RP 開啟時，時間線模式膠囊點「日常」會先由 `confirmDisableGlobalRp` 說明影響範圍；確認後解除全域覆蓋、保存該角色的日常偏好並刷新本頁，既有 RP 窗口仍保持原模式。
 
 ## 相關開關
 

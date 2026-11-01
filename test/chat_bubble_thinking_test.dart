@@ -1187,8 +1187,16 @@ void main() {
     final copyGlyph = glyphs.singleWhere(
       (glyph) => glyph.type == BubbleActionGlyphType.copy,
     );
-    expect(copyGlyph.size, 15);
-    expect(copyGlyph.size, BubbleActionGlyph.defaultSize);
+    final bookmarkGlyph = glyphs.singleWhere(
+      (glyph) => glyph.type == BubbleActionGlyphType.bookmark,
+    );
+    final soundWaveGlyph = glyphs.singleWhere(
+      (glyph) => glyph.type == BubbleActionGlyphType.soundWave,
+    );
+    expect(copyGlyph.size, 12);
+    expect(copyGlyph.size, BubbleActionGlyph.defaultSize * 0.8);
+    expect(bookmarkGlyph.size, closeTo(16.8, 0.001));
+    expect(soundWaveGlyph.size, closeTo(16.8, 0.001));
     expect(BubbleActionGlyph.strokeWidth, 1);
     expect(
       BubbleActionGlyph.strokeWidth,
@@ -1204,6 +1212,14 @@ void main() {
     expect(tester.getSize(copySlot), const Size.square(22));
     expect(tester.getSize(bookmarkSlot), const Size.square(22));
     expect(tester.getSize(ttsSlot), const Size.square(22));
+    expect(
+      tester.getCenter(bookmarkSlot).dx - tester.getCenter(copySlot).dx,
+      closeTo(38, 0.01),
+    );
+    expect(
+      tester.getCenter(ttsSlot).dx - tester.getCenter(bookmarkSlot).dx,
+      closeTo(38, 0.01),
+    );
     expect(
       tester.getCenter(copySlot).dy,
       closeTo(tester.getCenter(bookmarkSlot).dy, 0.01),
@@ -1234,13 +1250,22 @@ void main() {
     );
 
     expect(find.byIcon(Icons.bolt_rounded), findsOneWidget);
+    expect(
+      tester.widget<Icon>(find.byIcon(Icons.bolt_rounded)).size,
+      closeTo(12.8, 0.001),
+    );
     expect(find.text('命中上下文緩存'), findsNothing);
 
     await tester.tap(find.byIcon(Icons.bolt_rounded));
     await tester.pump();
 
-    expect(find.text('⚡ 命中上下文緩存'), findsOneWidget);
-    await tester.pump(const Duration(milliseconds: 900));
+    expect(find.byKey(const ValueKey('cache-hit-popover')), findsOneWidget);
+    expect(find.text('已命中緩存'), findsOneWidget);
+
+    // 點空白處收起
+    await tester.tapAt(const Offset(5, 5));
+    await tester.pump();
+    expect(find.text('已命中緩存'), findsNothing);
   });
 
   testWidgets('pending memory badge opens review from the source reply', (

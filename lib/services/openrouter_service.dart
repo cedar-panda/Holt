@@ -24,6 +24,7 @@ class OpenRouterService implements ApiAdapter {
 
   final String apiKey;
   final bool thinkingEnabled;
+  final String reasoningEffort;
   http.Client? _activeClient;
   static const String _baseUrl =
       'https://openrouter.ai/api/v1/chat/completions';
@@ -51,7 +52,15 @@ class OpenRouterService implements ApiAdapter {
     return id.length <= 256 ? id : id.substring(0, 256);
   }
 
-  OpenRouterService({required this.apiKey, this.thinkingEnabled = false});
+  OpenRouterService({
+    required this.apiKey,
+    this.thinkingEnabled = false,
+    this.reasoningEffort = ReasoningEffort.medium,
+  });
+
+  String get _normalizedReasoningEffort => ReasoningEffort.normalize(
+    thinkingEnabled ? reasoningEffort : ReasoningEffort.off,
+  );
 
   Future<Map<String, dynamic>> debugBuildBodyForTesting({
     required List<Map<String, String>> messages,
@@ -403,6 +412,7 @@ class OpenRouterService implements ApiAdapter {
 
         try {
           final json = jsonDecode(data);
+          StreamPayloadException.throwIfPresent(json, provider: 'OpenRouter');
           _captureUpstreamDiagnostics(json, requestDiagnostics);
           // usage 通常在最後幾個 chunk 之一。先保留，等 debug
           // echo / router metadata 都收齊後再寫診斷，避免上游 TTL 缺席。
@@ -441,6 +451,8 @@ class OpenRouterService implements ApiAdapter {
               yield content;
             }
           }
+        } on StreamPayloadException {
+          rethrow;
         } catch (_) {}
       }
       if (reasoningTagOpen) yield '</think>';
@@ -592,17 +604,32 @@ class OpenRouterService implements ApiAdapter {
       if (enableCache) {
         // Anthropic 模型 + cache on：system 只放可快取的穩定前綴。
         // turn 會在 rolling breakpoint 設好後作獨立 system message。
-        final contentBlocks = <Map<String, dynamic>>[
+        final sharedBlocks = <Map<String, dynamic>>[
           if (staticText.isNotEmpty) {'type': 'text', 'text': staticText},
           if (profileText.isNotEmpty) {'type': 'text', 'text': profileText},
           if (windowText.isNotEmpty) {'type': 'text', 'text': windowText},
-          if (controlText.isNotEmpty) {'type': 'text', 'text': controlText},
         ];
-        if (contentBlocks.isNotEmpty) {
-          contentBlocks.last['cache_control'] = Map<String, String>.from(
+        // system 斷點放在 control 之前：static／profile／window 是文字與
+        // 通話共用的同一段前綴，只有 control 不同。斷點落在這裡，打電話
+        // 會讀到並續命文字那份快取，掛斷後回到文字也能命中（舊版斷點在
+        // control 之後，兩個頻道各寫各的，通話期間文字快取照樣過期）。
+        // control 仍由歷史上的 resume／rolling 斷點涵蓋。
+        final breakpointBlocks = sharedBlocks.isNotEmpty
+            ? sharedBlocks
+            : <Map<String, dynamic>>[
+                if (controlText.isNotEmpty)
+                  {'type': 'text', 'text': controlText},
+              ];
+        if (breakpointBlocks.isNotEmpty) {
+          breakpointBlocks.last['cache_control'] = Map<String, String>.from(
             cacheControl,
           );
         }
+        final contentBlocks = <Map<String, dynamic>>[
+          ...breakpointBlocks,
+          if (sharedBlocks.isNotEmpty && controlText.isNotEmpty)
+            {'type': 'text', 'text': controlText},
+        ];
         if (contentBlocks.isNotEmpty) {
           allMessages.add({'role': 'system', 'content': contentBlocks});
         }
@@ -869,20 +896,16 @@ class OpenRouterService implements ApiAdapter {
           // 強制推理的模型：思考預算從 max_tokens 按比例切出，
           // 4096 會讓正文只剩一半左右，提高上限避免回覆被截斷。
           : (_reasoningIsMandatory(model) ? 8192 : 4096),
-      // Thinking is request policy, not prompt-cache content. Explicitly send
-      // both states so models whose OpenRouter default enables reasoning do
-      // not keep reasoning after the UI switch is turned off.
-      'reasoning': _reasoningIsMandatory(model)
-          ? <String, dynamic>{
-              // Argon 與 Claude Opus／Sonnet 5.5 等模型一定會推理。「關閉」改成
-              // 降低 effort 並隱藏思考內容，而不是送 enabled:false 被拒。
-              'effort': thinkingEnabled ? 'medium' : 'low',
-              'exclude': !thinkingEnabled,
-            }
-          : <String, dynamic>{
-              'enabled': thinkingEnabled,
-              if (!thinkingEnabled) 'exclude': true,
-            },
+      // `auto` deliberately omits the parameter so each provider/model keeps
+      // its native default. Explicit low/medium/high are request policy only
+      // and do not alter the prompt-cache prefix.
+      if (_normalizedReasoningEffort != ReasoningEffort.auto)
+        'reasoning': _reasoningIsMandatory(model)
+            ? <String, dynamic>{
+                'effort': _normalizedReasoningEffort,
+                'exclude': false,
+              }
+            : <String, dynamic>{'effort': _normalizedReasoningEffort},
       // streaming 的 cache stats 需要 final usage chunk；沒有它會看起來
       // 像完全沒命中，實際只是客戶端沒有收到 usage。
       if (stream) 'stream_options': {'include_usage': true},

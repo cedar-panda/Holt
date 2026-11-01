@@ -13,11 +13,47 @@ void main() {
     await L.setLocale('zh_TW');
   });
 
+  testWidgets('thinking switch preserves the selected strength', (
+    tester,
+  ) async {
+    final enabledChanges = <bool>[];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SizedBox(
+            width: 320,
+            height: 320,
+            child: ChatModelPickerPanel(
+              entries: const [],
+              currentModelId: '',
+              currentProvider: 'openrouter',
+              initialReasoningEffort: 'high',
+              initialThinkingEnabled: true,
+              accentColor: const Color(0xFF906CB4),
+              onThinkingEnabledChanged: (enabled) async =>
+                  enabledChanges.add(enabled),
+              onReasoningEffortChanged: (_) async {},
+              onModelSelected: (_) async {},
+              onUnavailableProviderSelected: (_) {},
+            ),
+          ),
+        ),
+      ),
+    );
+    final toggle = find.byKey(const ValueKey('chat-model-thinking-switch'));
+    expect(tester.widget<Switch>(toggle).value, isTrue);
+    await tester.tap(toggle);
+    await tester.pump();
+    expect(enabledChanges, <bool>[false]);
+    expect(tester.widget<Switch>(toggle).value, isFalse);
+    expect(find.text('高'), findsWidgets);
+  });
+
   testWidgets(
     'model picker uses a theme capsule, active light and local section',
     (tester) async {
       const customAccent = Color(0xFF2A8C7D);
-      bool? thinkingValue;
+      String? reasoningEffort;
       String? selectedModel;
 
       await tester.pumpWidget(
@@ -56,10 +92,10 @@ void main() {
                   ],
                   currentModelId: 'cloud-popular',
                   currentProvider: 'openrouter',
-                  initialThinking: false,
+                  initialReasoningEffort: 'off',
                   accentColor: customAccent,
-                  onThinkingChanged: (value) async {
-                    thinkingValue = value;
+                  onReasoningEffortChanged: (value) async {
+                    reasoningEffort = value;
                   },
                   onModelSelected: (entry) async {
                     selectedModel = entry.id;
@@ -72,7 +108,7 @@ void main() {
         ),
       );
 
-      expect(find.text('Thinking'), findsOneWidget);
+      expect(find.text('思考強度'), findsOneWidget);
       expect(find.text('本地'), findsOneWidget);
       expect(find.text('OpenRouter'), findsOneWidget);
       expect(find.text('Gemini'), findsOneWidget);
@@ -123,11 +159,9 @@ void main() {
       expect(selectedDecoration.color, isNot(Colors.transparent));
       expect(selectedDecoration.borderRadius, BorderRadius.circular(999));
 
-      await tester.tap(
-        find.byKey(const ValueKey('chat-model-thinking-toggle')),
-      );
+      await tester.tap(find.byKey(const ValueKey('chat-model-reasoning-low')));
       await tester.pump(const Duration(milliseconds: 250));
-      expect(thinkingValue, isTrue);
+      expect(reasoningEffort, 'low');
 
       await tester.tap(
         find.byKey(const ValueKey('chat-model-row-gemini-cloud-other')),
@@ -162,9 +196,9 @@ void main() {
                 ],
                 currentModelId: 'cloud',
                 currentProvider: 'gemini',
-                initialThinking: true,
+                initialReasoningEffort: 'high',
                 accentColor: const Color(0xFF906CB4),
-                onThinkingChanged: (_) async {},
+                onReasoningEffortChanged: (_) async {},
                 onModelSelected: (_) async {},
                 onUnavailableProviderSelected: (_) {},
               ),
@@ -205,9 +239,9 @@ void main() {
               ],
               currentModelId: 'another-model',
               currentProvider: 'openrouter',
-              initialThinking: false,
+              initialReasoningEffort: 'off',
               accentColor: const Color(0xFF906CB4),
-              onThinkingChanged: (_) async {},
+              onReasoningEffortChanged: (_) async {},
               onModelSelected: (entry) async => selectedEntry = entry,
               onUnavailableProviderSelected: (entry) {
                 unavailableEntry = entry;
@@ -265,9 +299,9 @@ void main() {
                 ],
                 currentModelId: 'shared/model',
                 currentProvider: 'openrouter',
-                initialThinking: false,
+                initialReasoningEffort: 'off',
                 accentColor: const Color(0xFF906CB4),
-                onThinkingChanged: (_) async {},
+                onReasoningEffortChanged: (_) async {},
                 onModelSelected: (entry) async => selectedEntry = entry,
                 onUnavailableProviderSelected: (_) {},
               ),
@@ -285,11 +319,12 @@ void main() {
         findsOneWidget,
       );
 
-      await tester.tap(
-        find.byKey(
-          const ValueKey('chat-model-row-openai_compatible-shared/model'),
-        ),
+      final alternateRow = find.byKey(
+        const ValueKey('chat-model-row-openai_compatible-shared/model'),
       );
+      await tester.ensureVisible(alternateRow);
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.tap(alternateRow);
       await tester.pump();
 
       expect(selectedEntry?.provider, 'openai_compatible');

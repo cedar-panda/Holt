@@ -1,8 +1,8 @@
-# 蛛網記憶
+# 進階記憶（底層蛛網）
 
 ## 它是做什麼的（一兩句話）
 
-在日常記憶上增加記憶節點之間的可審核關聯、活躍日清晰度、情緒共振排序與孤島封存。它不是另一份記憶正文：正文仍在 `memories`，蛛網只保存連線與顯示狀態。
+在日常記憶上增加可審核的「記憶關聯」、活躍日清晰度、情緒共振排序與孤島封存。使用者與模型看到的名稱是「進階記憶」；為零遷移風險，資料表、欄位與程式類名仍保留 spider web 命名。它不是另一份記憶正文：正文仍在 `memories`。
 
 ## 資料存在哪（資料表 / SharedPreferences key）
 
@@ -37,7 +37,8 @@
 
 - 底層召回仍使用記憶條目的觸發詞、FTS/BM25 與可選向量混合檢索。
 - 蛛網額外排序使用：角色活躍日清晰度、mention 次數、目前情緒座標距離。
-- `memory.force_recall` 保存窗口內關鍵詞，下一輪優先找正文包含該詞的活躍記憶；成功送達後才消耗。
+- `memory.force_recall` 保存窗口內關鍵詞，下一輪以正文或記憶 triggers 匹配；成功注入並送達後才消耗，且 `SpiderWebCore.triggerMemory` 會把命中記憶清晰度喚醒並傳導 confirmed 鄰居。
+- 日常進階記憶每輪可從未注入且清晰度低於 0.85 的記憶取最多 3 個 triggers，作為「模糊舊詞」放在 live 記憶區末尾；同一窗口同一天使用確定性排序，避免每輪隨機改動提示。模型只有產生共鳴時才調用 `memory.force_recall`。
 - confirmed 連線不直接把所有鄰居正文注入；命中時只更新鄰居 `last_accessed`。
 
 ## 日常 / RP 差異
@@ -71,6 +72,7 @@
 - `test/existing_memory_scanner_test.dart`
 - `test/memory_guard_service_test.dart`
 - `test/backup_format_test.dart`
+- `test/retriever_window_scope_test.dart`
 
 ## ❓ 不確定的地方
 

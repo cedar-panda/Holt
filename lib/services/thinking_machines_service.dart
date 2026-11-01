@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 
 import 'api_adapter.dart';
 import 'locale_strings.dart';
+import 'reasoning_effort.dart';
 import 'sse_stream.dart';
 import 'stream_transport.dart';
 import 'system_context_debug.dart';
@@ -411,7 +412,8 @@ class ThinkingMachinesService implements ApiAdapter {
       if (systemParts.isNotEmpty) 'system': systemParts.join('\n\n'),
       if (thinkingEnabled)
         'output_config': <String, dynamic>{'effort': _normalizedEffort}
-      else
+      else if (ReasoningEffort.normalize(thinkingEffort) !=
+          ReasoningEffort.auto)
         'thinking': const <String, dynamic>{'type': 'disabled'},
     };
     if (structuredPrompt != null) {
